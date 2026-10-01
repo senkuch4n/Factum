@@ -5,6 +5,7 @@ import { Menu } from "primereact/menu";
 import type { MenuItem } from "primereact/menuitem";
 import { LogOut, UserCog } from "lucide-react";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
+import { hasRealSigla } from "@/lib/format";
 
 interface Props {
   user: { name: string; sigla: string; dni: string } | null;
@@ -61,7 +62,8 @@ export function UserMenu({ user, onLogout, onOpenProfile }: Props) {
           <div className="px-3.5 py-3">
             <p className="truncate text-[13px] font-semibold text-fx-text">{user.name}</p>
             <p className="mt-0.5 text-xs text-fx-text-3">
-              DNI {user.dni} · {user.sigla}
+              DNI {user.dni}
+              {hasRealSigla(user.sigla) && ` · ${user.sigla.trim()}`}
             </p>
           </div>
         ),

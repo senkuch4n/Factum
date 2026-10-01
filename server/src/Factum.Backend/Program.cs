@@ -45,12 +45,22 @@ var builder = WebApplication.CreateBuilder(args);
 var port = int.Parse(Environment.GetEnvironmentVariable("PORT") ?? "8080");
 builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(port));
 
+// ── Auth y soporte: config resuelta y validada antes de registrar servicios ──
+// Si la config es inválida, el backend no arranca (fail-fast): la excepción sale por
+// stderr / docker logs con la lista de errores.
+var authSettings = AuthSettingsResolver.Resolve(builder.Configuration, builder.Environment.IsDevelopment());
+var supportSettings = SupportSettingsResolver.Resolve(builder.Configuration);
+var configErrors = authSettings.Errors.Concat(supportSettings.Errors).ToList();
+if (configErrors.Count > 0)
+    throw new InvalidOperationException(
+        "Configuración inválida, el backend no arranca:" + string.Concat(configErrors.Select(e => "\n  - " + e)));
+builder.Services.AddSingleton(authSettings);
+builder.Services.AddSingleton(supportSettings);
+
 // ── Configuración tipada ──────────────────────────────────────────────────────
 builder.Services.Configure<MongoOptions>(builder.Configuration.GetSection("MongoDb"));
 builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection("Storage"));
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
-builder.Services.Configure<MpfOptions>(builder.Configuration.GetSection("Auth"));
-builder.Services.Configure<FaroIntegrationOptions>(builder.Configuration.GetSection("FaroIntegration"));
 builder.Services.Configure<Factum.Backend.Controllers.AuditOptions>(builder.Configuration.GetSection("Audit"));
 builder.Services.Configure<Factum.Backend.Services.Updates.TatanaUpdatesOptions>(builder.Configuration.GetSection("TatanaUpdates"));
 builder.Services.Configure<BrandingOptions>(builder.Configuration.GetSection("Branding"));
@@ -97,11 +107,11 @@ builder.Services.AddSingleton<IBrandingService, BrandingService>();
 builder.Services.AddSingleton<IReportSettings, ReportSettings>();
 builder.Services.AddSingleton<IExpertProfileRepository, ExpertProfileRepository>();
 
-// ── Auth provider (dev o MPF según config) ────────────────────────────────────
-var authMode = builder.Configuration["Auth:Mode"] ?? "dev";
-if (authMode == "mpf")
+// ── Auth provider (dev o external según AuthSettingsResolver) ─────────────────
+if (authSettings.Mode == AuthModes.External)
 {
-    builder.Services.AddHttpClient<IAuthProvider, MpfAuthProvider>();
+    builder.Services.AddHttpClient<IAuthProvider, ExternalHttpAuthProvider>(c =>
+        c.Timeout = TimeSpan.FromSeconds(authSettings.External!.TimeoutSeconds));
 }
 else
 {
@@ -113,7 +123,19 @@ builder.Services.AddSingleton<IAuthService, AuthService>();
 builder.Services.AddSingleton<IReportService, ReportService>();
 builder.Services.AddScoped<IExpertProfileService, ExpertProfileService>();
 builder.Services.AddScoped<ICaseService, CaseService>();
-builder.Services.AddHttpClient<ISupportService, SupportService>();
+// Soporte (Faro) opcional: apagado no se instancia ningún HttpClient hacia Faro.
+if (supportSettings.Enabled)
+{
+    builder.Services.AddHttpClient<ISupportService, SupportService>(c =>
+    {
+        c.BaseAddress = new Uri(supportSettings.Options.BaseUrl);
+        c.Timeout = TimeSpan.FromSeconds(supportSettings.Options.TimeoutSeconds);
+    });
+}
+else
+{
+    builder.Services.AddSingleton<ISupportService, DisabledSupportService>();
+}
 builder.Services.AddHttpClient<Factum.Backend.Services.Updates.ITatanaUpdatesService,
     Factum.Backend.Services.Updates.TatanaUpdatesService>();
 
@@ -139,6 +161,17 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
+app.Logger.LogInformation("Auth: modo {Mode}", authSettings.Mode);
+if (authSettings.ExternalLoginUri is { } loginUri)
+    app.Logger.LogInformation("Auth: login externo en {Url}",
+        loginUri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped));
+if (supportSettings.Enabled)
+    app.Logger.LogInformation("Soporte: habilitado ({Host})", new Uri(supportSettings.Options.BaseUrl).Authority);
+else
+    app.Logger.LogInformation("Soporte: deshabilitado");
+foreach (var warning in authSettings.Warnings.Concat(supportSettings.Warnings))
+    app.Logger.LogWarning("{Warning}", warning);
+
 // Branding se carga una sola vez; resolverlo acá hace que sus warnings (logo inválido,
 // textos truncados) salgan en el log de arranque y no en el primer request.
 app.Services.GetRequiredService<IBrandingService>();
@@ -160,7 +193,7 @@ app.MapGet("/health", () => Results.Ok(new
 {
     status = "ok",
     version = "2.0.0",
-    auth_mode = authMode
+    auth_mode = authSettings.Mode
 }));
 
 app.MapControllers();

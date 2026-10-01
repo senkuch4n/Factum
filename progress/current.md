@@ -39,3 +39,9 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — `implementer-frontend` done -> progress/impl_frontend_informe-pericial-de-parte.md (tsc/build OK; recorrido e2e pendiente hasta que el backend tenga los endpoints). Esperando backend.
 - 2026-10-01 — `implementer-backend` done -> progress/impl_backend_informe-pericial-de-parte.md (sin bloqueos). HU → en_revision, lanzado `reviewer`.
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_informe-pericial-de-parte.md. verify OK. HU → aprobada, history.md. Commit en su rama. Siguiente: auth-e-integraciones-sin-mpf.
+- 2026-10-01 — Commit f3471e7 (informe-pericial-de-parte). Rama feat/auth-e-integraciones-sin-mpf creada desde ella. auth → arquitectura_lista (SDD adelantada) → implementando.
+- 2026-10-01 — `implementer-frontend` (auth) done -> progress/impl_frontend_auth-e-integraciones-sin-mpf.md (tsc/build OK; F13/F15 ya cubiertos por informe-pericial). Esperando backend.
+- 2026-10-01 — `afinador` done -> docs/hu-zip-cifrado-real.md (11 dudas) → validada (autónomo). SDD adelantada con `architect`.
+- 2026-10-01 — `implementer-backend` (auth) done -> progress/impl_backend_auth-e-integraciones-sin-mpf.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `afinador` done -> docs/hu-rediseno-dashboard.md (11 dudas) → validada (autónomo). D1 C: paraguas + 4 hijas (historial, wizard, captura, cierre-legacy) en backlog, validadas. Lanzado `architect` para historial.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_auth-e-integraciones-sin-mpf.md. verify OK. auth → aprobada, commit. rediseno-pagina-inicio → implementando en feat/rediseno-pagina-inicio.

@@ -12,6 +12,7 @@ import {
   todayIso, validateCaseForm, validateProfile,
 } from "@/lib/pericial";
 import { useExpertProfile, profileToForm, sameProfile } from "@/hooks/useExpertProfile";
+import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { ReportStep } from "@/components/ReportStep";
 import { useAuth } from "@/hooks/useAuth";
 import { useAgentConnection } from "@/hooks/useAgentConnection";
@@ -63,6 +64,8 @@ function newCaseForm(historyCases: Case[]): CaseFormData {
 
 export default function Dashboard() {
   const { isDark, toggle: toggleTheme } = useTheme();
+  // Soporte opcional: sin la integración habilitada no hay dock, botón en la guía ni modal.
+  const { supportEnabled } = usePublicConfig();
 
   // ── Navigation ──────────────────────────────────────────────────
   const [mode, setMode] = useState<"history" | "wizard">("history");
@@ -415,12 +418,14 @@ export default function Dashboard() {
         {guideOpen && (
           <GuideModal
             onClose={() => setGuideOpen(false)}
-            onSupport={() => { setGuideOpen(false); setReportModal(true); }}
+            onSupport={supportEnabled ? () => { setGuideOpen(false); setReportModal(true); } : undefined}
           />
         )}
       </AnimatePresence>
 
-      <SoporteModal open={reportModal} user={user} onClose={() => setReportModal(false)} />
+      {supportEnabled && (
+        <SoporteModal open={reportModal} user={user} onClose={() => setReportModal(false)} />
+      )}
 
       <FloatingDock
         items={[
@@ -430,12 +435,14 @@ export default function Dashboard() {
             onClick: () => setGuideOpen(true),
             active: guideOpen,
           },
-          {
-            title: "¿Bug o idea? Contanos",
-            icon: <FaroIcon className="h-full w-full" />,
-            onClick: () => setReportModal(true),
-            active: reportModal,
-          },
+          ...(supportEnabled
+            ? [{
+                title: "¿Bug o idea? Contanos",
+                icon: <FaroIcon className="h-full w-full" />,
+                onClick: () => setReportModal(true),
+                active: reportModal,
+              }]
+            : []),
           {
             title: isDark ? "Modo claro" : "Modo oscuro",
             icon: isDark

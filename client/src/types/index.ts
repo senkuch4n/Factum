@@ -2,6 +2,7 @@ export type {
   User, Case, DeviceInput, PublicConfig,
   PeritoSnapshot, ReportTexts, ReportTextsInput, CaptureRole, CaptureRoleValue,
   ExpertProfile, ExpertProfileRequest, CaseDataRequest, FileSource, Tratamiento,
+  AuthMode,
 } from "@/lib/api";
 export type { Device, AgentEvent, AgentFile, VideoVariant } from "@/lib/agent";
 

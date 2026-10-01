@@ -10,6 +10,7 @@ namespace Factum.Backend.Controllers;
 [Route("api/support")]
 [Authorize]
 [Produces("application/json")]
+[TypeFilter(typeof(RequireSupportEnabledFilter))]
 public sealed class SupportController(ISupportService supportService) : ControllerBase
 {
     private User Officer => (User)HttpContext.Items["User"]!;
@@ -20,6 +21,7 @@ public sealed class SupportController(ISupportService supportService) : Controll
     [HttpPost("tokens")]
     [ProducesResponseType<ReportarProblemaResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> ReportarProblema(
         [FromBody] ReportarProblemaRequest request, CancellationToken ct)
     {
@@ -31,6 +33,7 @@ public sealed class SupportController(ISupportService supportService) : Controll
 
     [HttpGet("tokens")]
     [ProducesResponseType<List<MiTokenDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> ListarMisReportes(CancellationToken ct)
     {
         var result = await supportService.ListarMisReportesAsync(Officer, ct);
@@ -44,6 +47,7 @@ public sealed class SupportController(ISupportService supportService) : Controll
     [HttpGet("faro-sso")]
     [ProducesResponseType<FaroSsoLinkResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> ObtenerLinkFaro(CancellationToken ct)
     {
         var result = await supportService.ObtenerLinkFaroAsync(Officer, ct);
@@ -55,6 +59,7 @@ public sealed class SupportController(ISupportService supportService) : Controll
     [HttpPost("tokens/{idToken:int}/calificacion")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Calificar(
         int idToken, [FromBody] CalificarTokenRequest request, CancellationToken ct)
     {

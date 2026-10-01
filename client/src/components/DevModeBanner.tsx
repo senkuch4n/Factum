@@ -3,10 +3,10 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { FlaskConical } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, type AuthMode } from "@/lib/api";
 
 export function DevModeBanner() {
-  const [mode, setMode] = useState<"dev" | "mpf" | null>(null);
+  const [mode, setMode] = useState<AuthMode | null>(null);
 
   useEffect(() => {
     api.getMode().then(setMode).catch(() => {});
@@ -27,7 +27,7 @@ export function DevModeBanner() {
           exit={{ height: 0, opacity: 0 }}
         >
           <FlaskConical className="w-3 h-3" />
-          MODO DESARROLLO — Autenticación simulada · No apto para uso oficial
+          MODO DESARROLLO — Autenticación simulada · No apto para producción
         </motion.div>
       )}
     </AnimatePresence>

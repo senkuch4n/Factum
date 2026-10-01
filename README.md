@@ -9,10 +9,11 @@ hacia un servidor de terceros. El informe sale con la identidad de la
 organización que lo emite (ver
 [Identidad de la organización (Branding)](#identidad-de-la-organización-branding)).
 
-También integra con **[Faro](https://gitlab.com/joelserrudo/faro-sistema-de-tokens)**,
-la mesa de ayuda (sistema de tokens): un oficial puede reportar un problema
-técnico de Factum y hacerle seguimiento sin salir de la app, y comparte la
-misma identidad de usuario (DNI) que Faro — ver [Integración con Faro](#integración-con-faro).
+Como **integración opcional de soporte** (apagada por defecto) se puede
+conectar con **[Faro](https://gitlab.com/joelserrudo/faro-sistema-de-tokens)**,
+una mesa de ayuda (sistema de tokens): el usuario reporta un problema técnico
+de Factum y le hace seguimiento sin salir de la app, con la misma identidad
+(DNI) — ver [Integración de soporte (Faro)](#integración-de-soporte-faro).
 
 ## Arquitectura
 
@@ -27,9 +28,9 @@ El proyecto tiene 4 partes que corren por separado:
         │ WebSocket + HTTP (localhost:8765)      │ HTTP + X-Service-Key
         ▼                                        ▼
 ┌─────────────────┐                    ┌──────────────────────┐
-│  server/.../Agent │  (proceso local) │  Faro (sistema de     │
+│  server/.../Agent │  (proceso local) │  Faro (soporte,       │
 │  "Tatana"          │ ◀── ADB/USB ──  │  gestión de tokens)   │
-│  habla con el      │     dispositivo │  ver repo hermano     │
+│  habla con el      │     dispositivo │  opcional)            │
 │  celular por USB   │                 └──────────────────────┘
 └─────────────────┘
         ▲
@@ -43,10 +44,12 @@ El proyecto tiene 4 partes que corren por separado:
 - **`client/`** — Frontend web en Next.js 16 (App Router) + React 19 +
   Tailwind. Login, dashboard, wizard de inspección (guía USB → conectar
   dispositivo → datos del expediente → captura → generar informe → resultado),
-  historial de casos, y el modal de soporte (Faro).
+  historial de casos, y el modal de soporte (solo si la integración
+  opcional de soporte está habilitada).
 - **`server/src/Factum.Backend`** — API en ASP.NET Core (.NET 10) +
   MongoDB. Autenticación JWT, gestión de casos/expedientes, generación de
-  informes (DOCX + ZIP cifrado), y el cliente HTTP de Faro (mesa de ayuda).
+  informes (DOCX + ZIP cifrado), y el cliente HTTP de la integración
+  opcional de soporte (Faro).
 - **`server/src/Factum.Agent`** ("Tatana") — Un segundo servicio ASP.NET
   Core que **corre en la PC del oficial**, no en el servidor. Se comunica con
   el celular conectado por USB (Android vía ADB, iOS vía `pymobiledevice3`) y
@@ -68,7 +71,7 @@ El proyecto tiene 4 partes que corren por separado:
 | Agente local | ASP.NET Core (.NET 10), WebSockets, ADB / pymobiledevice3 |
 | UI del agente | Electron + Vite |
 | Base de datos | MongoDB 7 |
-| Auth | JWT (access token corto) — modos `dev` (mock) y `mpf` (proveedor HTTP externo) |
+| Auth | JWT (access token corto) — modos `dev` (mock) y `external` (proveedor HTTP externo genérico) |
 
 ## Requisitos previos
 
@@ -169,11 +172,15 @@ npm run package   # empaqueta la app instalable
 |---|---|
 | `MongoDb:ConnectionString` / `DatabaseName` | Conexión a Mongo |
 | `Jwt:Secret` / `ExpiryHours` | Firma y expiración del token de sesión |
-| `Auth:Mode` | `dev` (identidad simulada) o `mpf` (login real contra un proveedor HTTP externo) |
-| `Auth:MpfBaseUrl` / `MpfLoginPath` / `MpfTimeoutSeconds` | Solo si `Auth:Mode=mpf` |
-| `FaroIntegration:BaseUrl` | URL del backend de Faro (`http://localhost:5038` en local) |
-| `FaroIntegration:ServiceKey` | Clave compartida servicio-a-servicio con Faro (debe coincidir con `Integrations:ServiceKey` de Faro) |
-| `FaroIntegration:FrontendUrl` | URL del frontend de Faro, para armar el link de SSO (`http://localhost:3001` en local) |
+| `Auth:Mode` | `dev` (identidad simulada, default) o `external` (login real contra un proveedor HTTP externo). Sin distinguir mayúsculas; cualquier otro valor impide arrancar |
+| `Auth:External:BaseUrl` / `LoginPath` / `TimeoutSeconds` | Solo si `Auth:Mode=external`. Se hace `POST {BaseUrl}{LoginPath}` (default `/auth/login`); timeout entre 1 y 120 s (default 10) |
+| `Auth:External:Request:DniField` / `UserField` / `PasswordField` | Nombres de los campos del body JSON que se manda al proveedor (default `dni` / `user` / `password`). Tienen que ser distintos |
+| `Auth:External:Response:NameField` / `SiglaField` | Campos que se leen de la respuesta (default `name` / `sigla`). Admiten rutas con puntos (`data.user.fullName`). `SiglaField` vacío = no se lee sigla |
+| `Integrations:Support:Enabled` | `true` activa la integración opcional de soporte (Faro). Default `false` |
+| `Integrations:Support:BaseUrl` | URL del backend de Faro (`http://localhost:5038` en local). Obligatoria si está habilitada |
+| `Integrations:Support:ServiceKey` | Clave compartida servicio-a-servicio con Faro (debe coincidir con `Integrations:ServiceKey` de Faro). Obligatoria si está habilitada. **No va en el repo**: `appsettings.Local.json` o variable de entorno |
+| `Integrations:Support:TimeoutSeconds` | Timeout de las llamadas a Faro, entre 1 y 120 s (default 10) |
+| `Integrations:Support:FrontendUrl` | URL del frontend de Faro, para armar el link de SSO (`http://localhost:3001` en local). Obligatoria si está habilitada |
 | `Storage:DataDirectory` | Carpeta local donde se guardan los ZIP/PDF generados (dev) |
 | `Audit:AdminDnis` | DNIs habilitados a leer `GET /api/agent-events` (auditoría de uso del agente) |
 | `TatanaUpdates:ProjectId` / `ProjectRawBaseUrl` / `PrivateToken` | Proyecto de GitLab del que se espeja la última release de Tatana |
@@ -196,22 +203,41 @@ npm run package   # empaqueta la app instalable
 | `Agent:Mock` | `true` simula dispositivos sin USB real — útil para desarrollar sin celular a mano |
 | `Agent:DataDirectory` | Carpeta temporal de capturas antes de subirlas al backend |
 
-> Los secretos que están commiteados (`Jwt:Secret`, `FaroIntegration:ServiceKey`)
-> son valores de desarrollo, pensados para correr todo en local. Rotalos antes
-> de cualquier despliegue real.
+> `Jwt:Secret` sigue commiteado con un valor de desarrollo, pensado para correr
+> todo en local: rotalo antes de cualquier despliegue real. La `ServiceKey` de
+> soporte **ya no está en el repo**: va en `appsettings.Local.json` (ignorado por
+> git) o en la variable de entorno `Integrations__Support__ServiceKey`. La clave
+> que quedó expuesta en el historial de git hay que rotarla (en Faro y en tu
+> config local).
 
 ## Autenticación
 
-El login pide **DNI + usuario + contraseña** — es la misma identidad (DNI)
-que usa Faro, no un usuario propio de Factum.
+El login pide **DNI + usuario + contraseña**. El DNI identifica al usuario
+(si la integración de soporte está activa, es la misma identidad que usa Faro).
 
 - **Modo `dev`** (default): cualquier DNI de 7-8 dígitos y cualquier
   contraseña no vacía autentican. El nombre se arma a partir del usuario con
   la convención `nombre.apellido` (ej: usuario `carlos.mendoza` → "Carlos
   Mendoza"). No hace falta pre-registrar a nadie: el usuario se crea la
   primera vez que loguea.
-- **Modo `mpf`**: valida contra un proveedor HTTP externo
-  (`Auth:MpfBaseUrl` + `Auth:MpfLoginPath`).
+  Si el backend corre con `Auth:Mode=dev` fuera de `Development`, avisa en el
+  log de arranque que acepta cualquier contraseña.
+- **Modo `external`**: valida contra un proveedor HTTP externo genérico
+  (`POST {Auth:External:BaseUrl}{Auth:External:LoginPath}`). Los nombres de los
+  campos del request y de la respuesta se configuran en
+  `Auth:External:Request:*` / `Auth:External:Response:*` (la respuesta admite
+  rutas con puntos). Un 401/403 del proveedor es "Credenciales inválidas"; un
+  proveedor caído, lento o con 5xx da "No se pudo conectar al servicio de
+  autenticación…", y cualquier otra respuesta rara, "El servicio de
+  autenticación respondió de forma inesperada." El detalle técnico va al log,
+  nunca a la pantalla.
+
+Si `Auth:Mode` (o la config de `external`) es inválida, **el backend no
+arranca** y dice por qué, en vez de caer en `dev` sin avisar. El log de
+arranque muestra el modo y, en `external`, la URL de login efectiva.
+
+> Compatibilidad: `Auth:Mode=mpf` y `Auth:MpfBaseUrl`/`MpfLoginPath`/`MpfTimeoutSeconds`
+> se aceptan como legado, con un warning al arrancar.
 
 ## Identidad de la organización (Branding)
 
@@ -344,22 +370,50 @@ hash.
 **Regenerar la plantilla v4** (por ejemplo, si cambia la plantilla de origen):
 ver `ops/plantilla/README.md`.
 
-## Integración con Faro
+## Integración de soporte (Faro)
 
-Factum y Faro comparten la misma identidad de usuario (DNI). Desde el
-dashboard de Factum, un oficial puede:
+Es **opcional y está apagada por defecto**. Apagada, el backend no llama a Faro,
+`GET /api/config/public` devuelve `support_enabled: false`, el dashboard no
+muestra el soporte y `/api/support/*` responde `404`.
+
+Encendida, Factum y Faro comparten la misma identidad de usuario (DNI). Desde el
+dashboard de Factum, un usuario puede:
 
 1. **Reportar un problema** (botón del ícono del faro) — se crea un token de
    soporte real en Faro, con el DNI, nombre, número interno y teléfono del
    oficial.
 2. **Ver el estado de sus reportes y calificarlos** sin salir de Factum.
-3. **Abrir Faro ya logueado** ("Ver todo en Faro") — usa un código de
+3. **Abrir Faro ya logueado** ("Ver todo en el portal de soporte") — usa un código de
    intercambio de un solo uso (SSO) generado por Faro, así el oficial no
    vuelve a poner su contraseña ahí.
 
-Para que esto funcione en local, el backend de Faro tiene que estar corriendo
-y `FaroIntegration:ServiceKey` tiene que ser idéntico al `Integrations:ServiceKey`
-configurado en Faro. Ver el README de Faro para levantarlo.
+Para activarla en local, con el backend de Faro corriendo (ver su README),
+agregá en `server/src/Factum.Backend/appsettings.Local.json` (ignorado por git):
+
+```json
+{
+  "Integrations": {
+    "Support": {
+      "Enabled": true,
+      "BaseUrl": "http://localhost:5038",
+      "ServiceKey": "<clave-compartida-con-faro>",
+      "FrontendUrl": "http://localhost:3001"
+    }
+  }
+}
+```
+
+`ServiceKey` tiene que ser idéntica al `Integrations:ServiceKey` configurado en
+Faro. En Docker/producción se usan las variables de entorno
+`Integrations__Support__Enabled`, `Integrations__Support__BaseUrl`,
+`Integrations__Support__ServiceKey` y `Integrations__Support__FrontendUrl`. Con
+`Enabled=true`, si falta `BaseUrl`, `ServiceKey` o `FrontendUrl` el backend no
+arranca y dice qué clave falta.
+
+Una sección vieja `FaroIntegration` **no activa** el soporte: el backend arranca
+con el soporte apagado y avisa en el log. Con `Enabled=true`, las claves que
+falten en `Integrations:Support` se toman de `FaroIntegration` (también con un
+warning); conviene renombrarlas.
 
 ## Estructura del proyecto
 
@@ -374,10 +428,10 @@ factum/
 │   ├── Factum.Backend/         # API principal (.NET)
 │   │   ├── Controllers/
 │   │   ├── Services/
-│   │   │   ├── Auth/              # Proveedores de identidad (Dev/Mpf)
+│   │   │   ├── Auth/              # Proveedores de identidad (Dev/External)
 │   │   │   ├── Branding/          # Identidad de la organización (nombre, logo, contacto)
 │   │   │   ├── Reports/           # Informe DOCX + ZIP
-│   │   │   └── Support/           # Integración con Faro
+│   │   │   └── Support/           # Integración de soporte opcional (Faro)
 │   │   └── Models/
 │   └── Factum.Agent/           # Agente local "Tatana" (.NET)
 ├── agent-ui/                      # UI de escritorio del agente (Electron)

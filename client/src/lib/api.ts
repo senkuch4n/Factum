@@ -180,7 +180,12 @@ export interface PublicConfig {
   organization_name: string | null;
   /** Ruta relativa a la raíz del backend (empieza con `/`), con `?v=` para la caché. */
   organization_logo_url: string | null;
+  /** `true` solo si el backend tiene la integración de soporte habilitada. */
+  support_enabled: boolean;
 }
+
+/** Modo de autenticación del backend (`GET /api/auth/mode`). */
+export type AuthMode = "dev" | "external";
 
 export interface DeviceInput {
   serial: string;
@@ -311,8 +316,8 @@ export const api = {
     return `${BACKEND_URL}${path}`;
   },
 
-  async getMode(): Promise<"dev" | "mpf"> {
-    const data = await request<{ mode: "dev" | "mpf" }>("/api/auth/mode");
+  async getMode(): Promise<AuthMode> {
+    const data = await request<{ mode: AuthMode }>("/api/auth/mode");
     return data.mode;
   },
 

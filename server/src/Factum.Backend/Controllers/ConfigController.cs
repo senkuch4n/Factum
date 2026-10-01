@@ -1,5 +1,6 @@
 using Factum.Backend.DTOs;
 using Factum.Backend.Services.Branding;
+using Factum.Backend.Services.Support;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -7,12 +8,13 @@ namespace Factum.Backend.Controllers;
 
 /// <summary>
 /// Configuración pública (sin autenticación): la usa el login antes de que exista un token.
-/// Solo expone el nombre y el logo de la organización; <c>ContactLines</c> no sale de acá.
+/// Expone el nombre y el logo de la organización y si la integración de soporte está habilitada
+/// (<c>support_enabled</c>); <c>ContactLines</c> y la config de soporte no salen de acá.
 /// </summary>
 [ApiController]
 [Route("api/config")]
 [AllowAnonymous]
-public sealed class ConfigController(IBrandingService branding) : ControllerBase
+public sealed class ConfigController(IBrandingService branding, SupportSettings support) : ControllerBase
 {
     public const string LogoPath = "/api/config/branding/logo";
 
@@ -23,7 +25,7 @@ public sealed class ConfigController(IBrandingService branding) : ControllerBase
     {
         var snap = branding.Current;
         var logoUrl = snap.Logo is { } logo ? $"{LogoPath}?v={logo.Version}" : null;
-        return Ok(new PublicConfigResponse(snap.OrganizationName, logoUrl));
+        return Ok(new PublicConfigResponse(snap.OrganizationName, logoUrl, support.Enabled));
     }
 
     // El parámetro "v" de la query es solo cache-busting del lado del cliente; se ignora.

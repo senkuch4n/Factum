@@ -27,3 +27,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos.
 - **Rama:** `feat/informe-pericial-de-parte` (encadenada sobre `feat/marca-comercial-sin-mpf-gfd`).
 - **Pendiente:** revisar la v4 en Word/WPS y los textos por defecto; cargar `Report:DomicilioConstituido`; recorrido e2e con dispositivo real; código muerto de conversión a PDF (T16); `zip-cifrado-real` desbloqueada.
+
+## auth-e-integraciones-sin-mpf — APROBADA (2026-10-01)
+
+- **Qué:** `MpfAuthProvider` reemplazado por `ExternalHttpAuthProvider` genérico y configurable (`Auth:External:*`, campos de respuesta configurables, URL = BaseUrl + LoginPath, solo 401/403 = credenciales inválidas); modo `"mpf"` → `"external"` con compatibilidad y warning para `Auth:Mode=mpf`/`Auth:Mpf*`; modo desconocido o config incompleta falla seguro; Faro como integración opcional "Soporte" apagada por defecto (`DisabledSupportService`, filtro `RequireSupportEnabled`, flag en config pública, dock sin el ítem); `ServiceKey` fuera de los archivos versionados; `UserMenu` sin "sigla".
+- **Decisiones:** D1 A, D2 A, D3 B validadas por el usuario; D1–D12 de la HU, DP1 A y DP2 A en modo autónomo.
+- **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos.
+- **Rama:** `feat/auth-e-integraciones-sin-mpf` (encadenada sobre `feat/informe-pericial-de-parte`).
+- **Pendiente:** **rotar la `ServiceKey` de Faro** (sigue en el historial de git; acción del usuario); prueba manual 11.4 (login contra proveedor real/falso, soporte encendido/apagado).

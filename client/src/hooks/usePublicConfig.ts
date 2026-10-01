@@ -3,30 +3,39 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
-export interface PublicBranding {
+export interface PublicClientConfig {
   organizationName: string | null;
   /** URL absoluta del logo de la organización (lista para `<img src>`). */
   organizationLogoSrc: string | null;
+  /** `true` solo si el backend tiene la integración de soporte habilitada. */
+  supportEnabled: boolean;
 }
 
-const EMPTY: PublicBranding = { organizationName: null, organizationLogoSrc: null };
+const EMPTY: PublicClientConfig = {
+  organizationName: null,
+  organizationLogoSrc: null,
+  supportEnabled: false,
+};
 
 /* Caché a nivel de módulo: un solo fetch por carga de la app, compartido por
    todos los componentes que usan el hook. Si falla, queda en "sin branding"
-   (sin toast ni reintento: la UI simplemente no muestra la organización). */
-let cached: PublicBranding | null = null;
-let pending: Promise<PublicBranding> | null = null;
+   y sin soporte (sin toast ni reintento: la UI simplemente no muestra la
+   organización ni el acceso al soporte). */
+let cached: PublicClientConfig | null = null;
+let pending: Promise<PublicClientConfig> | null = null;
 
-function loadPublicBranding(): Promise<PublicBranding> {
+function loadPublicConfig(): Promise<PublicClientConfig> {
   if (cached) return Promise.resolve(cached);
   pending ??= api
     .getPublicConfig()
-    .then((cfg): PublicBranding => {
+    .then((cfg): PublicClientConfig => {
       const name = cfg.organization_name?.trim() || null;
       const logoPath = cfg.organization_logo_url || null;
       return {
         organizationName: name,
         organizationLogoSrc: logoPath ? api.brandingLogoURL(logoPath) : null,
+        // Un backend viejo sin el campo (o cualquier valor no booleano) = apagado.
+        supportEnabled: cfg.support_enabled === true,
       };
     })
     .catch(() => EMPTY)
@@ -38,22 +47,23 @@ function loadPublicBranding(): Promise<PublicBranding> {
 }
 
 /**
- * Nombre y logo de la organización emisora (`GET /api/config/public`).
- * Arranca en `null` (igual que en el render del servidor, así no hay
- * desajuste de hidratación) y se completa cuando llega la respuesta.
+ * Config pública del backend (`GET /api/config/public`): nombre, logo de la
+ * organización emisora y flags públicos (`supportEnabled`).
+ * Arranca vacía (igual que en el render del servidor, así no hay desajuste de
+ * hidratación) y se completa cuando llega la respuesta.
  */
-export function usePublicConfig(): PublicBranding {
-  const [branding, setBranding] = useState<PublicBranding>(() => cached ?? EMPTY);
+export function usePublicConfig(): PublicClientConfig {
+  const [config, setConfig] = useState<PublicClientConfig>(() => cached ?? EMPTY);
 
   useEffect(() => {
     let active = true;
-    loadPublicBranding().then((b) => {
-      if (active) setBranding(b);
+    loadPublicConfig().then((c) => {
+      if (active) setConfig(c);
     });
     return () => {
       active = false;
     };
   }, []);
 
-  return branding;
+  return config;
 }

@@ -7,6 +7,7 @@ import { api, type MiToken } from "@/lib/api";
 import type { User } from "@/lib/api";
 import { FaroIcon } from "@/components/FaroIcon";
 import { cn } from "@/lib/utils";
+import { hasRealSigla } from "@/lib/format";
 
 interface Props {
   open: boolean;
@@ -190,9 +191,9 @@ export function SoporteModal({ open, user, onClose }: Props) {
                     <FaroIcon className="w-4 h-4" style={{ color: "var(--text-secondary)" }} aria-hidden="true" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>Faro - Sistema de tokens</p>
+                    <p className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>Soporte</p>
                     <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
-                      Reportá un problema a traves de un token o seguílo con Faro
+                      Reportá un problema o seguí el estado de tus reportes.
                     </p>
                   </div>
                   <button
@@ -306,7 +307,7 @@ export function SoporteModal({ open, user, onClose }: Props) {
                       {user && (
                         <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
                           Se va a reportar como <span style={{ color: "var(--text-secondary)" }}>{user.name}</span>
-                          {user.sigla && user.sigla !== "-" ? ` (${user.sigla})` : ""}.
+                          {hasRealSigla(user.sigla) ? ` (${user.sigla.trim()})` : ""}.
                         </p>
                       )}
 
@@ -355,7 +356,7 @@ export function SoporteModal({ open, user, onClose }: Props) {
                         ) : (
                           <ExternalLink className="w-3 h-3" aria-hidden="true" />
                         )}
-                        Ver todo en Faro
+                        Ver todo en el portal de soporte
                       </button>
                     </div>
                     {loadingTokens ? (
