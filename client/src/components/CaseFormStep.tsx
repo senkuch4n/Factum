@@ -1,12 +1,16 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { Button } from "primereact/button";
+import { Calendar } from "primereact/calendar";
+import type { CalendarPassThroughOptions } from "primereact/calendar";
+import { InputText } from "primereact/inputtext";
+import { Tag } from "primereact/tag";
 import {
-  Loader2, AlertTriangle, ChevronRight,
-  Hash, User, FileText, RotateCcw, Landmark, Building2, Scale, Users, Calendar,
+  ChevronRight, ArrowLeft,
+  Hash, User, FileText, Landmark, Building2, Scale, Users, Calendar as CalendarIcon,
   MapPin, UserCheck, Briefcase, BadgeCheck, Smartphone, Phone,
-  ArrowRight, CheckCircle2, ScanLine,
+  ArrowRight, CheckCircle2, ScanLine, Usb,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { agent, type Device } from "@/lib/agent";
@@ -19,8 +23,44 @@ import { PhoneFrame } from "./PhoneFrame";
 import { SpecRow } from "./SpecRow";
 import { FormField, describedBy } from "./FormField";
 import { ExpertProfileCard } from "./ExpertProfileCard";
+import { FxBanner } from "@/components/feedback/FxBanner";
+import { StepHeader } from "@/components/wizard/StepHeader";
+import { StepActions } from "@/components/wizard/StepActions";
 
-const EASE = [0.22, 1, 0.36, 1] as const;
+const FADE_IN = "motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]";
+
+/** `YYYY-MM-DD` → `Date` local (sin pasar por UTC). Cualquier otro formato → null. */
+function isoToLocalDate(s: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+/** `Date` local → `YYYY-MM-DD` (mismo criterio que `todayIso()`). */
+function localDateToIso(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/**
+ * Calendar no reenvía `aria-describedby`/`aria-invalid` al `<input>`: van por
+ * `pt.input.root` (el InputText interno). Es un objeto, no una función, así se
+ * suma al pt global de `inputtext` del hijo; `pr-10` deja lugar al botón.
+ * `root` ocupa todo el ancho de la columna (el global es `sm:w-auto`).
+ */
+function calendarPt(aria: { describedBy?: string; invalid: boolean }): CalendarPassThroughOptions {
+  return {
+    root: { className: "w-full sm:w-full" },
+    input: {
+      root: {
+        className: "pr-10",
+        "aria-required": true,
+        "aria-invalid": aria.invalid || undefined,
+        "aria-describedby": aria.describedBy,
+      },
+    },
+  } as unknown as CalendarPassThroughOptions; // `input` anidado (InputText hijo): los tipos lo declaran plano
+}
 
 /* ── Types ─────────────────────────────────────────────────── */
 type SectionId = "perfil" | "actuacion" | "partes" | "equipo";
@@ -113,16 +153,19 @@ function FormSection({
   id, title, open, onToggle, children,
 }: { id: SectionId; title: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
   return (
-    <section aria-labelledby={`case-section-${id}-title`} className="border-t pt-3" style={{ borderColor: "var(--border)" }}>
+    <section aria-labelledby={`case-section-${id}-title`} className="border-t border-fx-border pt-3">
       <h3 id={`case-section-${id}-title`} className="m-0">
         <button
           type="button"
           onClick={onToggle}
           aria-expanded={open}
           aria-controls={`case-section-${id}`}
-          className="flex w-full items-center gap-1.5 rounded-sm section-label text-left fx-focus-ring"
+          className="flex w-full min-h-11 items-center gap-2 rounded-fx-sm border-0 bg-transparent p-0 text-left text-fx-label uppercase text-fx-text-2 hover:text-fx-text transition-colors duration-fx-fast ease-fx fx-focus-ring cursor-pointer"
         >
-          <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} aria-hidden="true" />
+          <ChevronRight
+            className={cn("h-4 w-4 transition-transform duration-fx-fast motion-reduce:transition-none", open && "rotate-90")}
+            aria-hidden="true"
+          />
           {title}
         </button>
       </h3>
@@ -185,7 +228,6 @@ export function CaseFormStep({
   ];
   const requiredTotal  = requiredValues.length;
   const requiredFilled = requiredValues.filter(v => v.trim().length > 0).length;
-  const formComplete   = requiredFilled === requiredTotal;
 
   async function takeShot() {
     setLoadingShot(true);
@@ -229,6 +271,7 @@ export function CaseFormStep({
     const id = caseFieldId(f.key);
     const error = errors[f.key];
     const value = form[f.key];
+    const ariaDescribedBy = describedBy(id, { hint: f.hint, error });
     return (
       <div key={f.key} className={f.wide ? "sm:col-span-2" : undefined}>
         <FormField
@@ -240,30 +283,46 @@ export function CaseFormStep({
           error={error}
           required={f.required}
         >
-          <div className="relative">
-            <input
-              id={id}
+          {f.type === "date" ? (
+            <Calendar
+              inputId={id}
               name={f.key}
-              type={f.type ?? "text"}
-              inputMode={f.inputMode}
-              autoComplete="off"
-              aria-required={f.required || undefined}
-              aria-invalid={!!error || undefined}
-              aria-describedby={describedBy(id, { hint: f.hint, error })}
-              className={cn("input", f.required && f.type !== "date" && "pr-9", error && "input-error")}
-              placeholder={f.placeholder}
-              maxLength={f.type === "date" ? undefined : f.maxLength ?? MAX_LEN_LINE}
-              value={value}
-              onChange={e => set(f.key, e.target.value)}
+              value={isoToLocalDate(value)}
+              onChange={e => set(f.key, e.value instanceof Date ? localDateToIso(e.value) : "")}
+              dateFormat="dd/mm/yy"
+              showIcon
+              icon={<CalendarIcon className="h-4 w-4" aria-hidden="true" />}
+              placeholder="dd/mm/aaaa"
+              invalid={!!error}
+              pt={calendarPt({ describedBy: ariaDescribedBy, invalid: !!error })}
             />
-            {f.required && f.type !== "date" && value.trim().length > 0 && !error && (
-              <CheckCircle2
-                className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2"
-                style={{ color: "var(--green)" }}
-                aria-hidden="true"
+          ) : (
+            <div className="relative">
+              <InputText
+                id={id}
+                name={f.key}
+                inputMode={f.inputMode}
+                autoComplete="off"
+                aria-required={f.required || undefined}
+                invalid={!!error}
+                aria-invalid={!!error || undefined}
+                aria-describedby={ariaDescribedBy}
+                placeholder={f.placeholder}
+                maxLength={f.maxLength ?? MAX_LEN_LINE}
+                value={value}
+                onChange={e => set(f.key, e.target.value)}
+                // Por pt y no por className: el className de props se fusiona antes
+                // que el pt global y tailwind-merge se quedaría con su `px-3`.
+                pt={{ root: { className: cn(f.required && "pr-9") } }}
               />
-            )}
-          </div>
+              {f.required && value.trim().length > 0 && !error && (
+                <CheckCircle2
+                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fx-success"
+                  aria-hidden="true"
+                />
+              )}
+            </div>
+          )}
         </FormField>
       </div>
     );
@@ -271,136 +330,94 @@ export function CaseFormStep({
 
   return (
     <div className="space-y-4">
-
-      {/* ── Two-column layout ── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1.75fr]">
 
-        {/* ── Left: Device identity — única fuente de verdad para los datos del
-            dispositivo (antes se repetían nombre/modelo/OS en un banner superior,
-            debajo del mockup y en la ficha de specs). ── */}
-        <motion.div
-          className="rounded-lg overflow-hidden flex flex-col"
-          style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, ease: EASE }}
-        >
-          {/* Header: plataforma + estado de conexión */}
-          <div className="flex items-center gap-2.5 px-4 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        {/* ── Izquierda: identidad del equipo (única fuente de verdad de sus datos). ── */}
+        <div className={cn("flex flex-col overflow-hidden rounded-fx-lg border border-fx-border bg-fx-surface-1", FADE_IN)}>
+          <div className="flex items-center gap-2.5 border-b border-fx-border px-4 py-3">
+            {/* contenido de imagen */}
             <img
               src={isIOS ? "/apple.svg" : "/android.svg"}
               alt=""
-              className="w-3.5 h-3.5 opacity-70 dark:invert dark:opacity-70 flex-shrink-0"
+              width={14}
+              height={14}
+              className="h-3.5 w-3.5 shrink-0 dark:invert"
             />
-            <span
-              className="text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full flex-shrink-0"
-              style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}
-            >
-              {osLabel}
-            </span>
-            <div className="flex-1" />
-            <span className="flex items-center gap-1.5 text-[10px] font-medium flex-shrink-0" style={{ color: "var(--green)" }}>
-              <span className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--green)" }} />
-              USB conectado
+            <Tag value={osLabel} />
+            <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-fx-success">
+              <Usb className="h-3.5 w-3.5" aria-hidden="true" /> USB conectado
             </span>
           </div>
 
-          <div className="flex-1 p-5 flex flex-col items-center gap-5">
-            {/* Screenshot status */}
-            <div className="w-full flex items-center justify-end h-3.5">
-              <AnimatePresence>
-                {screenshotSrc && !loadingShot && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.8 }}
-                    className="flex items-center gap-1 text-[9px]"
-                    style={{ color: "var(--green)" }}
-                  >
-                    <CheckCircle2 className="w-3 h-3" aria-hidden="true" />
-                    pantalla capturada
-                  </motion.div>
-                )}
-              </AnimatePresence>
+          <div className="flex flex-1 flex-col items-center gap-4 p-5">
+            <div role="status" className="flex h-4 w-full items-center justify-end">
+              {screenshotSrc && !loadingShot && (
+                <span className={cn("inline-flex items-center gap-1 text-xs text-fx-success", FADE_IN)}>
+                  <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  Pantalla capturada
+                </span>
+              )}
             </div>
 
-            {/* Phone mockup */}
-            <div className="pb-10">
-              <PhoneFrame
-                src={screenshotSrc}
-                platform={device.platform ?? "android"}
-                loading={loadingShot}
-                onRefresh={takeShot}
-              />
-            </div>
+            <PhoneFrame
+              src={screenshotSrc}
+              platform={device.platform ?? "android"}
+              loading={loadingShot}
+              onRefresh={takeShot}
+            />
 
-            {/* Device identity — único lugar donde aparece el nombre completo */}
-            <div className="w-full text-center">
-              <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{device.manufacturer} {device.model}</p>
-            </div>
+            <p className="m-0 w-full text-center text-fx-body-sm font-semibold text-fx-text">
+              {device.manufacturer} {device.model}
+            </p>
           </div>
 
-          {/* Specs section */}
-          <div className="px-5 pb-4" style={{ background: "var(--bg-elevated)", borderTop: "1px solid var(--border)" }}>
-            <p className="section-label py-3">Especificaciones</p>
-            <SpecRow icon={Hash}     label="IMEI"   value={imeiDisplay !== "INGRESAR_MANUALMENTE" ? imeiDisplay : "—"} mono accent={!imeiManual} />
-            <SpecRow icon={FileText} label="Serial" value={device.serial.slice(0, 24)} mono />
-            {device.name && device.name !== device.model && (
-              <SpecRow icon={User} label="Nombre" value={device.name} />
-            )}
+          <div className="border-t border-fx-border bg-fx-surface-2 px-5 pb-4">
+            <h3 className="m-0 py-3 text-fx-label uppercase text-fx-text-2">Especificaciones</h3>
+            <dl className="m-0">
+              <SpecRow icon={Hash}     label="IMEI"   value={imeiDisplay !== "INGRESAR_MANUALMENTE" ? imeiDisplay : "—"} mono accent={!imeiManual} />
+              <SpecRow icon={FileText} label="Serial" value={device.serial.slice(0, 24)} mono />
+              {device.name && device.name !== device.model && (
+                <SpecRow icon={User} label="Nombre" value={device.name} />
+              )}
+            </dl>
           </div>
 
-          {/* IMEI manual warning */}
           {imeiManual && (
-            <div
-              className="mx-4 mb-4 rounded-md p-3 text-[11px]"
-              style={{ background: "rgba(217,119,6,0.07)", border: "1px solid rgba(217,119,6,0.22)" }}
-            >
-              <p className="font-semibold mb-0.5" style={{ color: "var(--amber)" }}>IMEI no detectado automáticamente</p>
-              <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                Completá el campo IMEI. Marcá <strong style={{ color: "var(--amber)" }}>*#06#</strong> en el celular para verlo.
+            <FxBanner tone="warn" role="status" className="mx-4 mb-4 w-auto">
+              <p className="m-0 font-semibold">IMEI no detectado automáticamente</p>
+              <p className="m-0 mt-0.5 text-xs font-normal text-fx-text-2">
+                Completá el campo IMEI. Marcá <kbd className="font-mono font-bold text-fx-text">*#06#</kbd> en el celular para verlo.
               </p>
-            </div>
+            </FxBanner>
           )}
-        </motion.div>
+        </div>
 
-        {/* ── Right: Form ── */}
-        <motion.div
-          className="rounded-lg p-5 space-y-4"
-          style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
-          initial={{ opacity: 0, x: 16 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.3, ease: EASE, delay: 0.05 }}
-        >
+        {/* ── Derecha: formulario ── */}
+        <div className={cn("space-y-4 rounded-fx-lg border border-fx-border bg-fx-surface-1 p-5", FADE_IN)}>
           {isLegacy && (
-            <div
-              role="status"
-              className="flex items-start gap-2.5 rounded-md px-3.5 py-3 text-xs leading-relaxed"
-              style={{ background: "rgba(217,119,6,0.07)", border: "1px solid rgba(217,119,6,0.22)", color: "var(--text-secondary)" }}
-            >
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" style={{ color: "var(--amber)" }} aria-hidden="true" />
+            <FxBanner tone="warn" role="status">
               Este caso se creó antes del informe pericial. Completá los datos de la causa para continuar.
-            </div>
+            </FxBanner>
           )}
 
-          {/* Título + progreso de obligatorios de todo el paso */}
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="section-label m-0">Datos de la causa</h2>
-            <div className="flex items-center gap-2">
-              <div className="h-1.5 w-20 overflow-hidden rounded-full" style={{ background: "var(--border)" }} aria-hidden="true">
-                <div
-                  className="h-full w-full origin-left rounded-full transition-transform duration-300"
-                  style={{ background: "var(--text-primary)", transform: `scaleX(${requiredTotal ? requiredFilled / requiredTotal : 0})` }}
-                />
+          <StepHeader
+            title="Datos de la causa"
+            aside={
+              <div className="flex items-center gap-2">
+                <div aria-hidden="true" className="h-1.5 w-20 overflow-hidden rounded-full bg-fx-surface-3">
+                  <div
+                    className="h-full w-full origin-left rounded-full bg-fx-accent transition-transform duration-fx-slow ease-fx motion-reduce:transition-none"
+                    style={{ transform: `scaleX(${requiredTotal ? requiredFilled / requiredTotal : 0})` }}
+                  />
+                </div>
+                <span className="text-xs tabular-nums text-fx-text-2">
+                  {requiredFilled}/{requiredTotal}
+                  <span className="sr-only"> obligatorios completos</span>
+                </span>
               </div>
-              <span className="text-[10px] tabular-nums" style={{ color: "var(--text-muted)" }}>
-                {requiredFilled}/{requiredTotal}
-                <span className="sr-only"> obligatorios completos</span>
-              </span>
-            </div>
-          </div>
+            }
+          />
 
-          {/* Tus datos de perito */}
           <ExpertProfileCard
             profile={profile}
             loading={profileLoading}
@@ -429,34 +446,26 @@ export function CaseFormStep({
               {/* IMEI: dato de solo lectura cuando se detecta; campo real solo si hay que cargarlo a mano. */}
               <div className="sm:col-span-2">
                 {!imeiManual ? (
-                  <div
-                    className="flex items-center gap-3 rounded-md px-3.5 py-2.5"
-                    style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}
-                  >
-                    <Hash className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "var(--blue-lg)" }} aria-hidden="true" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[0.62rem] font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>IMEI</p>
-                      <p className="text-sm font-mono truncate" style={{ color: "var(--text-primary)" }}>{imeiDisplay}</p>
+                  <div className="flex items-center gap-3 rounded-fx-md border border-fx-border bg-fx-surface-2 px-3.5 py-2.5">
+                    <Hash className="h-3.5 w-3.5 shrink-0 text-fx-text-2" aria-hidden="true" />
+                    <div className="min-w-0 flex-1">
+                      <p className="m-0 text-fx-label uppercase text-fx-text-2">IMEI</p>
+                      <p className="m-0 truncate font-mono text-fx-body-sm text-fx-text" translate="no">{imeiDisplay}</p>
                     </div>
-                    <span
-                      className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full flex-shrink-0"
-                      style={{ background: "rgba(45,212,191,0.1)", color: "var(--blue-lg)" }}
-                    >
-                      <ScanLine className="w-2.5 h-2.5" aria-hidden="true" /> detectado
-                    </span>
+                    <Tag severity="success" icon={<ScanLine className="h-3 w-3" aria-hidden="true" />} value="Detectado" />
                   </div>
                 ) : (
                   <FormField id="case-imei" icon={Hash} label="IMEI" sublabel="· ingresalo manualmente" error={errors.imei} required>
-                    <input
+                    <InputText
                       id="case-imei"
                       name="imei"
-                      type="text"
                       inputMode="numeric"
                       autoComplete="off"
                       aria-required
+                      invalid={!!errors.imei}
                       aria-invalid={!!errors.imei || undefined}
                       aria-describedby={describedBy("case-imei", { error: errors.imei })}
-                      className={cn("input text-sm font-mono", errors.imei && "input-error")}
+                      pt={{ root: { className: "font-mono" } }}
                       placeholder="15 dígitos (marcá *#06#)…"
                       value={form.imeiOverride}
                       maxLength={17}
@@ -468,39 +477,38 @@ export function CaseFormStep({
             </div>
           </FormSection>
 
-          {/* Actions */}
-          <div className="flex gap-3 pt-1">
+          <StepActions>
             {mode === "create" && (
-              <motion.button type="button" className="btn-secondary flex-shrink-0" onClick={onBack} whileTap={{ scale: 0.98 }}>
-                <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
-                Atrás
-              </motion.button>
+              <Button
+                type="button"
+                severity="secondary"
+                icon={<ArrowLeft className="h-4 w-4" aria-hidden="true" />}
+                label="Atrás"
+                onClick={onBack}
+                className="w-full sm:w-auto min-h-11"
+              />
             )}
             {mode === "edit" && !isLegacy && (
-              <motion.button type="button" className="btn-secondary flex-shrink-0" onClick={onCancel} disabled={loading} whileTap={{ scale: 0.98 }}>
-                Cancelar
-              </motion.button>
+              <Button
+                type="button"
+                severity="secondary"
+                label="Cancelar"
+                onClick={onCancel}
+                disabled={loading}
+                className="w-full sm:w-auto min-h-11"
+              />
             )}
-
-            <motion.button
+            <Button
               type="button"
-              className="btn-primary flex-1"
-              style={!formComplete ? { opacity: 0.5 } : undefined}
+              label={loading ? "Guardando…" : mode === "edit" ? "Guardar y continuar" : "Crear caso y continuar"}
+              icon={<ArrowRight className="h-4 w-4" aria-hidden="true" />}
+              iconPos="right"
+              loading={loading}
               onClick={onSubmit}
-              disabled={loading}
-              whileTap={{ scale: 0.98 }}
-            >
-              {loading ? (
-                <><Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> Guardando…</>
-              ) : (
-                <>
-                  {mode === "edit" ? "Guardar y continuar" : "Crear caso y continuar"}
-                  <ArrowRight className="w-4 h-4" aria-hidden="true" />
-                </>
-              )}
-            </motion.button>
-          </div>
-        </motion.div>
+              className="w-full sm:flex-1 min-h-11"
+            />
+          </StepActions>
+        </div>
       </div>
     </div>
   );

@@ -15,6 +15,8 @@ import { DataTable } from "primereact/datatable";
 import { Column } from "primereact/column";
 import { Paginator } from "primereact/paginator";
 import { InputTextarea } from "primereact/inputtextarea";
+import { Dropdown } from "primereact/dropdown";
+import { ProgressBar } from "primereact/progressbar";
 import { toast as sonner } from "sonner";
 import {
   AlertCircle, CalendarRange, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, CircleDashed, Clock,
@@ -29,6 +31,9 @@ import { FxTip } from "@/components/overlay/FxTip";
 import { FxBanner } from "@/components/feedback/FxBanner";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { useFxToast } from "@/components/shell/FxToastProvider";
+import { StepIndicator, StepIndicatorCompact } from "@/components/StepIndicator";
+import { PhoneFrame, PhoneShell } from "@/components/PhoneFrame";
+import { CopyButton } from "@/components/ui/CopyButton";
 
 /* ── Datos de ejemplo (ficticios) ──────────────────────────────────── */
 
@@ -162,6 +167,20 @@ const DEMO_ROWS: DemoRow[] = [
 
 /* ── Piezas de layout ─────────────────────────────────────────────── */
 
+const DEMO_TRATAMIENTO = [
+  { label: "El suscripto", value: "suscripto" },
+  { label: "La suscripta", value: "suscripta" },
+];
+const DEMO_CAMERAS = ["Cámara integrada", "Cámara USB externa"];
+const DEMO_STEPS = [
+  { id: 1, label: "Dispositivo", sublabel: "Seleccionando dispositivo" },
+  { id: 2, label: "Causa", sublabel: "Datos de la causa" },
+  { id: 3, label: "Captura", sublabel: "Capturando" },
+  { id: 4, label: "Informe", sublabel: "Redactando" },
+  { id: 5, label: "Generar", sublabel: "Creando informe" },
+  { id: 6, label: "Listo", sublabel: "Resumiendo" },
+];
+
 function Section({ id, title, intro, children }: { id: string; title: string; intro?: string; children: React.ReactNode }) {
   return (
     <section id={id} aria-labelledby={`${id}-title`} className="scroll-mt-20 space-y-6 border-t border-fx-border pt-10">
@@ -204,6 +223,12 @@ export function DesignSystemShowcase() {
   const [demoSort, setDemoSort] = useState<{ field: keyof DemoRow; order: 1 | -1 }>({ field: "fecha", order: -1 });
   const [demoFirst, setDemoFirst] = useState(0);
   const [confirmTone, setConfirmTone] = useState<"destructive" | "neutral" | null>(null);
+
+  // Demos del wizard (T12 de rediseno-dashboard-wizard).
+  const [demoTratamiento, setDemoTratamiento] = useState<string>("suscripto");
+  const [demoInvalidOpt, setDemoInvalidOpt] = useState<string | null>(null);
+  const [demoStep, setDemoStep] = useState(3);
+  const [demoPhoneLoading, setDemoPhoneLoading] = useState(false);
   const demoSorted = [...DEMO_ROWS].sort((a, b) =>
     a[demoSort.field] < b[demoSort.field] ? -demoSort.order : a[demoSort.field] > b[demoSort.field] ? demoSort.order : 0,
   );
@@ -705,6 +730,107 @@ export function DesignSystemShowcase() {
               <FxBanner role="note" tone="warn">Tatana sin conexión: abrí el agente para adquirir.</FxBanner>
               <FxBanner role="note" tone="success">Informe generado y firmado.</FxBanner>
               <FxBanner role="note" tone="info">Preparando la inspección…</FxBanner>
+            </div>
+          </Subsection>
+
+          <Subsection title="Dropdown">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <label htmlFor="ds-dd-tratamiento" className="block text-fx-body-sm font-medium text-fx-text">Tratamiento en el informe</label>
+                <Dropdown
+                  inputId="ds-dd-tratamiento"
+                  value={demoTratamiento}
+                  options={DEMO_TRATAMIENTO}
+                  optionLabel="label"
+                  optionValue="value"
+                  onChange={(e) => setDemoTratamiento(e.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="ds-dd-invalid" className="block text-fx-body-sm font-medium text-fx-text">Cámara</label>
+                <Dropdown
+                  inputId="ds-dd-invalid"
+                  value={demoInvalidOpt}
+                  options={DEMO_CAMERAS}
+                  onChange={(e) => setDemoInvalidOpt(e.value)}
+                  placeholder="Elegí una cámara…"
+                  invalid={!demoInvalidOpt}
+                  aria-describedby="ds-dd-invalid-msg"
+                />
+                <p id="ds-dd-invalid-msg" className={demoInvalidOpt ? "m-0 text-xs text-fx-text-3" : "m-0 text-xs text-fx-danger"}>
+                  {demoInvalidOpt ? "Cámara elegida." : "Elegí una cámara para continuar."}
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="ds-dd-disabled" className="block text-fx-body-sm font-medium text-fx-text-disabled">Micrófono (deshabilitado)</label>
+                <Dropdown inputId="ds-dd-disabled" value="Micrófono integrado" options={["Micrófono integrado"]} disabled />
+              </div>
+            </div>
+          </Subsection>
+
+          <Subsection title="ProgressBar">
+            <div className="grid max-w-md grid-cols-1 gap-4">
+              {[0, 50, 100].map((v) => (
+                <div key={v} className="space-y-1.5">
+                  <p className="m-0 text-xs text-fx-text-2">{v} %</p>
+                  <ProgressBar value={v} showValue={false} aria-label={`Progreso de ejemplo al ${v} %`} />
+                </div>
+              ))}
+            </div>
+          </Subsection>
+
+          <Subsection title="Riel de pasos (StepIndicator + StepIndicatorCompact)">
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-[13rem_1fr]">
+              <StepIndicator steps={DEMO_STEPS} current={demoStep} minJumpable={2} onSelect={setDemoStep} />
+              <div className="space-y-3">
+                <StepIndicatorCompact steps={DEMO_STEPS} current={demoStep} />
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    severity="secondary"
+                    size="small"
+                    label="Retroceder"
+                    disabled={demoStep <= 1}
+                    onClick={() => setDemoStep((n) => Math.max(1, n - 1))}
+                  />
+                  <Button
+                    size="small"
+                    label="Avanzar"
+                    disabled={demoStep >= DEMO_STEPS.length}
+                    onClick={() => setDemoStep((n) => Math.min(DEMO_STEPS.length, n + 1))}
+                  />
+                </div>
+              </div>
+            </div>
+          </Subsection>
+
+          <Subsection title="Marco de teléfono (PhoneShell + PhoneFrame)">
+            <div className="flex flex-wrap items-start gap-8">
+              <div className="w-32 space-y-2 text-center">
+                <PhoneShell platform="android">
+                  <div className="absolute inset-0 flex items-center justify-center bg-fx-surface-2 text-xs text-fx-text-3">Android</div>
+                </PhoneShell>
+              </div>
+              <div className="w-32 space-y-2 text-center">
+                <PhoneShell platform="ios">
+                  <div className="absolute inset-0 flex items-center justify-center bg-fx-surface-2 text-xs text-fx-text-3">iOS</div>
+                </PhoneShell>
+              </div>
+              <div className="space-y-3">
+                <PhoneFrame src={null} platform="android" loading={demoPhoneLoading} onRefresh={() => {}} />
+                <Button
+                  severity="secondary"
+                  size="small"
+                  label={demoPhoneLoading ? "Ver vacío" : "Ver cargando"}
+                  onClick={() => setDemoPhoneLoading((v) => !v)}
+                />
+              </div>
+            </div>
+          </Subsection>
+
+          <Subsection title="CopyButton">
+            <div className="flex flex-wrap items-center gap-3">
+              <span translate="no" className="select-all font-mono text-fx-body font-bold text-fx-text">k7Q2-mX9p-4Lr8</span>
+              <CopyButton text="k7Q2-mX9p-4Lr8" label="Copiar contraseña de ejemplo" />
             </div>
           </Subsection>
 

@@ -61,3 +61,6 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — `architect` done -> Refactorizaciones/rediseno-dashboard-captura.md; DP1–DP6 A (autónomo). Queda validada hasta su turno. SDD de cierre-legacy se escribe recién con las partes 1–3 implementadas (inventario de código muerto depende de ellas).
 - 2026-10-01 — `implementer-frontend` (historial) done -> progress/impl_frontend_rediseno-dashboard-historial.md. HU → en_revision, lanzado `reviewer`.
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-dashboard-historial.md. historial → aprobada, history.md, commit. Siguiente: rediseno-dashboard-wizard en feat/rediseno-dashboard-wizard.
+- 2026-10-01 — Rama feat/rediseno-dashboard-wizard desde historial. wizard → implementando; lanzado `implementer-frontend` (opus).
+- 2026-10-01 — `implementer-frontend` (wizard) done -> progress/impl_frontend_rediseno-dashboard-wizard.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-dashboard-wizard.md. wizard → aprobada, commit. Rama feat/rediseno-dashboard-captura; captura → implementando, lanzado `implementer-frontend`.

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Button } from "primereact/button";
 import { Check, Copy, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -54,27 +55,28 @@ export function CopyButton({ text, label, className }: Props) {
 
   return (
     <span className={cn("inline-flex items-center gap-2", className)}>
-      <button
+      <Button
         type="button"
-        onClick={handleCopy}
-        className="btn-secondary btn-sm min-h-[32px]"
+        severity="secondary"
+        size="small"
+        icon={
+          <Icon
+            className={cn(
+              "h-3.5 w-3.5",
+              state === "copied" && "text-fx-success",
+              state === "failed" && "text-fx-warning",
+            )}
+            aria-hidden="true"
+          />
+        }
+        label="Copiar"
         aria-label={label}
-      >
-        <Icon
-          className={cn(
-            "h-3.5 w-3.5",
-            state === "copied" && "text-emerald-500",
-            state === "failed" && "text-amber-500",
-          )}
-          aria-hidden="true"
-        />
-        Copiar
-      </button>
+        onClick={handleCopy}
+      />
       <span
         aria-live="polite"
         role="status"
-        className="text-[11px] font-medium"
-        style={{ color: state === "failed" ? "var(--amber)" : "var(--text-secondary)" }}
+        className={cn("text-xs font-medium", state === "failed" ? "text-fx-warning" : "text-fx-text-2")}
       >
         {state === "copied" ? "Copiada" : state === "failed" ? "No se pudo copiar" : ""}
       </span>

@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, AlertCircle, Plus, Play, ChevronRight, ArrowLeft, Smartphone, X, HelpCircle, LifeBuoy } from "lucide-react";
+import { motion, AnimatePresence, MotionConfig } from "framer-motion";
+import { Loader2, Plus, Play, ChevronRight, ArrowLeft, Smartphone, HelpCircle, LifeBuoy } from "lucide-react";
 import { Button } from "primereact/button";
 import { api, ApiError, type DeviceInput } from "@/lib/api";
 import { agent } from "@/lib/agent";
@@ -25,7 +25,7 @@ import { DashboardStats } from "@/components/dashboard/DashboardStats";
 import { ResumeDeviceModal } from "@/components/dashboard/ResumeDeviceModal";
 import { SoporteModal } from "@/components/dashboard/SoporteModal";
 import { GenerateStep } from "@/components/dashboard/GenerateStep";
-import { StepIndicator } from "@/components/StepIndicator";
+import { StepIndicator, StepIndicatorCompact } from "@/components/StepIndicator";
 import { GuideModal } from "@/components/GuideModal";
 import { DeviceConnect } from "@/components/DeviceConnect";
 import { CaptureStep } from "@/components/CaptureStep";
@@ -210,6 +210,37 @@ export default function Dashboard() {
   function goToField(n: number, fieldId: string) {
     setFocusFieldId(fieldId);
     go(n);
+  }
+
+  // ── Foco y scroll al cambiar de paso (DP4 A) ─────────────────────
+  // Al avanzar o retroceder, el foco va a la región "Paso N de 6: …" (el lector
+  // la anuncia) y la vista vuelve arriba: si no, el foco cae en <body> al
+  // desmontarse el botón que se tocó.
+  const wizardTopRef = useRef<HTMLDivElement>(null);
+  const stepRegionRef = useRef<HTMLDivElement>(null);
+  const lastFocusedStep = useRef<number | null>(null);
+  useEffect(() => {
+    if (mode !== "wizard") { lastFocusedStep.current = null; return; }
+    if (lastFocusedStep.current === step) return;
+    lastFocusedStep.current = step;
+    if (focusFieldId) return; // el paso enfoca su campo (checklist de "Generar")
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    wizardTopRef.current?.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+    stepRegionRef.current?.focus({ preventScroll: true });
+    // focusFieldId se lee a propósito sin dependencia: solo importa al cambiar de paso.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, step]);
+
+  /**
+   * El paso nuevo ya está montado y visible (fin de la transición). El paso 3
+   * no recibe `focusFieldId`, así que el enlace del checklist hacia el bloque
+   * de marcas de captura se resuelve acá.
+   */
+  function handleStepShown() {
+    if (step !== 3 || !focusFieldId) return;
+    const el = document.getElementById(focusFieldId);
+    if (el) { el.focus({ preventScroll: true }); el.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    setFocusFieldId(null);
   }
 
   // ── Actions ──────────────────────────────────────────────────────
@@ -610,89 +641,51 @@ export default function Dashboard() {
           </div>
         )}
 
-        <AnimatePresence mode="wait">
-          {mode === "wizard" && (
-            <motion.div
-              key="wizard"
-              className="p-6"
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              transition={{ duration: 0.18 }}
-            >
-              <div className="max-w-6xl mx-auto">
-                <div className="flex items-center justify-end mb-4">
-                  <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    Paso {step} de {STEPS.length}
-                  </span>
-                </div>
+        {mode === "wizard" && (
+          <div ref={wizardTopRef} className="scroll-mt-0 p-4 sm:p-6 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]">
+            <div className="mx-auto flex max-w-6xl items-start gap-8">
+              {/* Riel vertical de pasos (md+). Los pasos completados son navegables,
+                  salvo que eso implique duplicar el caso ya creado (ver minJumpable). */}
+              <aside aria-label="Progreso de la inspección" className="sticky top-6 hidden w-52 shrink-0 md:block">
+                <StepIndicator
+                  steps={STEPS}
+                  current={step}
+                  minJumpable={result ? 6 : currentCase ? 2 : 1}
+                  onSelect={go}
+                />
+              </aside>
 
-                <div className="flex gap-8 items-start">
-                  {/* Riel vertical de pasos — reemplaza el indicador horizontal y ocupa el
-                      espacio que dejaba libre la sidebar. Los pasos ya completados son
-                      clickeables para volver atrás, salvo que eso implique duplicar el caso
-                      ya creado (ver minJumpable). */}
-                  <div className="hidden md:block w-52 flex-shrink-0 sticky top-6">
-                    <StepIndicator
-                      steps={STEPS}
-                      current={step}
-                      minJumpable={result ? 6 : currentCase ? 2 : 1}
-                      onSelect={go}
-                    />
-                  </div>
+              <div className="min-w-0 flex-1 space-y-4">
+                <StepIndicatorCompact steps={STEPS} current={step} className="md:hidden" />
 
-                  <div className="flex-1 min-w-0 space-y-7">
-                    <AnimatePresence>
-                      {globalError && (
-                        <motion.div
-                          className="flex items-start gap-3 rounded-md px-4 py-3 text-sm border border-red-500/20 bg-red-500/[0.07] text-red-600 dark:text-red-400"
-                          initial={{ opacity: 0, y: -10, height: 0 }} animate={{ opacity: 1, y: 0, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                          role="alert"
-                        >
-                          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
-                          <span className="flex-1">{globalError}</span>
-                          <button onClick={() => setGlobal("")} aria-label="Cerrar"><X className="w-3.5 h-3.5" aria-hidden="true" /></button>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                {globalError && (
+                  <FxBanner tone="error" onClose={() => setGlobal("")}>{globalError}</FxBanner>
+                )}
+                {statusMsg && (
+                  <FxBanner tone="info" icon={<Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />}>
+                    {statusMsg}
+                  </FxBanner>
+                )}
+                {isResuming && step === 3 && currentCase && (
+                  <FxBanner tone="info" icon={<Play className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}>
+                    <p className="m-0 font-semibold">Retomando inspección · {currentCase.nro_referencia}</p>
+                    <p className="m-0 mt-0.5 text-xs font-normal leading-relaxed text-fx-text-2">
+                      {currentCase.device.manufacturer} {currentCase.device.model} — los archivos de evidencia no se almacenan en el servidor.
+                      Reconectá el dispositivo para capturar nueva evidencia y volver a generar el informe.
+                    </p>
+                  </FxBanner>
+                )}
 
-                    <AnimatePresence>
-                      {statusMsg && (
-                        <motion.div
-                          className="flex items-center gap-2.5 rounded-md px-4 py-2.5 text-sm border border-teal-500/20 bg-teal-500/[0.07] text-teal-600 dark:text-teal-300"
-                          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        >
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />{statusMsg}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-
-                    <AnimatePresence>
-                      {isResuming && step === 3 && currentCase && (
-                        <motion.div
-                          className="rounded-md px-4 py-3.5 flex items-start gap-3"
-                          style={{ background: "rgba(13,148,136,0.06)", border: "1px solid var(--border-accent)" }}
-                          initial={{ opacity: 0, y: -10, height: 0 }} animate={{ opacity: 1, y: 0, height: "auto" }}
-                          exit={{ opacity: 0, y: -6, height: 0 }} transition={{ duration: 0.24, ease: EASE }}
-                          role="status"
-                        >
-                          <div
-                            className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5"
-                            style={{ background: "rgba(13,148,136,0.12)", border: "1px solid var(--border-accent)" }}
-                          >
-                            <Play className="w-3.5 h-3.5" style={{ color: "var(--blue-lg)" }} aria-hidden="true" />
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold" style={{ color: "var(--blue-lg)" }}>
-                              Retomando inspección · {currentCase.nro_referencia}
-                            </p>
-                            <p className="text-xs mt-0.5 leading-relaxed" style={{ color: "var(--text-secondary)" }}>
-                              {currentCase.device.manufacturer} {currentCase.device.model} — los archivos de evidencia no se almacenan en el servidor.
-                              Reconectá el dispositivo para capturar nueva evidencia y volver a generar el informe.
-                            </p>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-
+                <div
+                  ref={stepRegionRef}
+                  tabIndex={-1}
+                  role="region"
+                  aria-label={`Paso ${step} de ${STEPS.length}: ${STEPS[step - 1]?.label}`}
+                  className="scroll-mt-6 rounded-fx-xl outline-none"
+                >
+                  {/* reducedMotion="user": con reduced motion framer omite el desplazamiento
+                      en x y conserva solo el fundido. */}
+                  <MotionConfig reducedMotion="user">
                     <AnimatePresence mode="wait" custom={dir}>
                       <motion.div
                         key={step}
@@ -702,11 +695,10 @@ export default function Dashboard() {
                         animate="animate"
                         exit="exit"
                         transition={{ duration: 0.28, ease: EASE }}
+                        onAnimationComplete={def => { if (def === "animate") handleStepShown(); }}
                       >
-                        {/* Paso 3: `!overflow-visible` porque `.card` trae overflow:hidden,
-                            que rompe el position:sticky de las columnas (teléfono + controles).
-                            Los demás pasos conservan el clip original. */}
-                        <div className={`card p-6 sm:p-8 lg:p-9${step === 3 ? " !overflow-visible" : ""}`}>
+                        {/* fx-card no recorta (sin overflow), así el sticky del paso 3 funciona. */}
+                        <div className="fx-card rounded-fx-xl p-5 sm:p-8 lg:p-9">
                           {step === 1 && (
                             <DeviceConnect
                               devices={devices}
@@ -840,12 +832,12 @@ export default function Dashboard() {
                         </div>
                       </motion.div>
                     </AnimatePresence>
-                  </div>
+                  </MotionConfig>
                 </div>
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>

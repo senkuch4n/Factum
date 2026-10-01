@@ -226,7 +226,7 @@
     {
       "id": "rediseno-dashboard-wizard",
       "titulo": "Rediseño /dashboard parte 2: contenedor del wizard y pasos 1, 2, 4, 5 y 6",
-      "estado": "validada",
+      "estado": "aprobada",
       "creada": "2026-10-01T00:00:00-03:00",
       "actualizada": "2026-10-01",
       "intentos_revision": 0,
@@ -241,14 +241,14 @@
         "reviewer_model": "sonnet",
         "skill": null,
         "rama": "feat/rediseno-dashboard-wizard",
-        "fase": "pendiente"
+        "fase": "cerrada"
       },
-      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 2. SDD lista 2026-10-01: Refactorizaciones/rediseno-dashboard-wizard.md; DP1–DP6 A (autónomo)."
+      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 2. SDD lista 2026-10-01: Refactorizaciones/rediseno-dashboard-wizard.md; DP1–DP6 A (autónomo). 2026-10-01: implementando en feat/rediseno-dashboard-wizard (desde historial). Reviewer APROBADA 2026-10-01 (0 rechazos)."
     },
     {
       "id": "rediseno-dashboard-captura",
       "titulo": "Rediseño /dashboard parte 3: paso 3 (captura) y sus modales",
-      "estado": "validada",
+      "estado": "implementando",
       "creada": "2026-10-01T00:00:00-03:00",
       "actualizada": "2026-10-01",
       "intentos_revision": 0,
@@ -263,9 +263,9 @@
         "reviewer_model": "sonnet",
         "skill": null,
         "rama": "feat/rediseno-dashboard-captura",
-        "fase": "pendiente"
+        "fase": "implementacion"
       },
-      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 3. SDD lista 2026-10-01: Refactorizaciones/rediseno-dashboard-captura.md; DP1–DP6 A (autónomo)."
+      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 3. SDD lista 2026-10-01: Refactorizaciones/rediseno-dashboard-captura.md; DP1–DP6 A (autónomo). 2026-10-01: implementando en feat/rediseno-dashboard-captura (desde wizard)."
     },
     {
       "id": "rediseno-cierre-legacy",

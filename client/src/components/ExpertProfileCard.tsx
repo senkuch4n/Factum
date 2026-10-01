@@ -1,8 +1,9 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
-import { BadgeCheck, Briefcase, ChevronDown, Pencil, Scale, User, UserRound } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Button } from "primereact/button";
+import { Dropdown } from "primereact/dropdown";
+import { InputText } from "primereact/inputtext";
+import { BadgeCheck, Briefcase, ChevronUp, Pencil, Scale, User, UserRound } from "lucide-react";
 import { FormField, describedBy } from "./FormField";
 import {
   MAX_LEN_MATRICULA, MAX_LEN_PROFILE, profileErrorKey, profileFieldId,
@@ -15,6 +16,11 @@ const PROFILE_FIELDS = [
   { key: "profesion", label: "Profesión",       icon: Briefcase,  placeholder: "Ej.: Ingeniero/a en sistemas…",   maxLength: MAX_LEN_PROFILE },
   { key: "caracter",  label: "Carácter",        icon: Scale,      placeholder: "Ej.: perito informático de parte…", maxLength: MAX_LEN_PROFILE },
 ] as const;
+
+const TRATAMIENTO_OPTIONS = [
+  { label: "El suscripto", value: "suscripto" },
+  { label: "La suscripta", value: "suscripta" },
+];
 
 /**
  * Los cinco campos del perfil del perito. Los usan la tarjeta del paso "Causa"
@@ -39,14 +45,13 @@ export function ExpertProfileFields({
         const error = errors[profileErrorKey(key)];
         return (
           <FormField key={key} id={id} icon={icon} label={label} error={error} required>
-            <input
+            <InputText
               id={id}
               name={`perfil-${key}`}
-              type="text"
               autoComplete={key === "nombre" ? "name" : "off"}
+              invalid={!!error}
               aria-invalid={!!error || undefined}
               aria-describedby={describedBy(id, { error })}
-              className={cn("input", error && "input-error")}
               placeholder={placeholder}
               maxLength={maxLength}
               value={form[key]}
@@ -56,16 +61,16 @@ export function ExpertProfileFields({
         );
       })}
       <FormField id={fid("tratamiento")} icon={UserRound} label="Tratamiento en el informe">
-        <select
-          id={fid("tratamiento")}
+        <Dropdown
+          inputId={fid("tratamiento")}
           name="perfil-tratamiento"
-          className="input"
           value={form.tratamiento}
-          onChange={e => onChange({ ...form, tratamiento: e.target.value === "suscripta" ? "suscripta" : "suscripto" })}
-        >
-          <option value="suscripto">El suscripto</option>
-          <option value="suscripta">La suscripta</option>
-        </select>
+          options={TRATAMIENTO_OPTIONS}
+          optionLabel="label"
+          optionValue="value"
+          onChange={e => onChange({ ...form, tratamiento: e.value === "suscripta" ? "suscripta" : "suscripto" })}
+          className="w-full"
+        />
       </FormField>
     </div>
   );
@@ -91,53 +96,46 @@ export function ExpertProfileCard({
     .filter(Boolean).join(" · ");
 
   return (
-    <div className="rounded-md" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
+    <div className="rounded-fx-lg border border-fx-border bg-fx-surface-2">
       <div className="flex items-center gap-3 px-3.5 py-2.5">
-        <User className="h-3.5 w-3.5 flex-shrink-0" style={{ color: "var(--blue-lg)" }} aria-hidden="true" />
+        <UserRound className="h-4 w-4 shrink-0 text-fx-text-2" aria-hidden="true" />
         <div className="min-w-0 flex-1">
-          <p className="text-[0.62rem] font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>
-            Tus datos de perito
-          </p>
+          <h3 className="m-0 text-fx-label uppercase text-fx-text-2">Tus datos de perito</h3>
           {!expanded && (
-            <p className="truncate text-sm" style={{ color: "var(--text-primary)" }}>
+            <p className="m-0 truncate text-fx-body-sm text-fx-text">
               {loading ? "Cargando…" : summary || "Sin completar"}
             </p>
           )}
           {expanded && profile && !profile.is_complete && (
-            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            <p className="m-0 text-xs text-fx-text-3">
               Se guardan en tu perfil y se copian a cada caso nuevo.
             </p>
           )}
         </div>
-        <button
+        <Button
           type="button"
-          onClick={onToggle}
+          text
+          severity="secondary"
+          size="small"
+          icon={expanded
+            ? <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+            : <Pencil className="h-3.5 w-3.5" aria-hidden="true" />}
+          label={expanded ? "Plegar" : "Editar"}
           aria-expanded={expanded}
           aria-controls="expert-profile-fields"
-          className="btn-ghost btn-sm flex flex-shrink-0 items-center gap-1.5"
-        >
-          {expanded
-            ? <><ChevronDown className="h-3.5 w-3.5 rotate-180" aria-hidden="true" /> Plegar</>
-            : <><Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Editar</>}
-        </button>
+          onClick={onToggle}
+          className="shrink-0"
+        />
       </div>
 
-      <AnimatePresence initial={false}>
-        {expanded && (
-          <motion.div
-            id="expert-profile-fields"
-            className="overflow-hidden"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <div className="border-t px-3.5 pb-3.5 pt-3" style={{ borderColor: "var(--border)" }}>
-              <ExpertProfileFields form={form} errors={errors} onChange={onChange} onClearError={onClearError} />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {expanded && (
+        <div
+          id="expert-profile-fields"
+          className="border-t border-fx-border px-3.5 pb-3.5 pt-3 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]"
+        >
+          <ExpertProfileFields form={form} errors={errors} onChange={onChange} onClearError={onClearError} />
+        </div>
+      )}
     </div>
   );
 }

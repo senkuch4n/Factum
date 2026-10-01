@@ -4,12 +4,14 @@ import { calendar } from "./calendar";
 import { column } from "./column";
 import { datatable } from "./datatable";
 import { dialog } from "./dialog";
+import { dropdown } from "./dropdown";
 import { inputtext } from "./inputtext";
 import { inputtextarea } from "./inputtextarea";
 import { menu } from "./menu";
 import { message } from "./message";
 import { paginator } from "./paginator";
 import { password } from "./password";
+import { progressbar } from "./progressbar";
 import { selectbutton } from "./selectbutton";
 import { tag } from "./tag";
 import { toast } from "./toast";
@@ -38,4 +40,6 @@ export const fxPassThrough: PrimeReactPTOptions = {
   calendar,
   tooltip,
   inputtextarea,
+  dropdown,
+  progressbar,
 };

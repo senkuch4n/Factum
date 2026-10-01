@@ -59,3 +59,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** architect (sesión), implementer-frontend opus, reviewer sonnet. 0 rechazos.
 - **Rama:** `feat/rediseno-dashboard-historial` (encadenada sobre `feat/zip-cifrado-real`).
 - **Pendiente:** prueba manual (chip online/REC con equipo real, contraste con DevTools, regresión del wizard 1–6); token `rounded-fx-pill` para la parte 4; typos preexistentes ("inspecciónes", orden lexicográfico de N° de causa).
+
+## rediseno-dashboard-wizard — APROBADA (2026-10-01)
+
+- **Qué:** parte 2 del rediseño de /dashboard: contenedor del wizard (riel de pasos con ProgressBar, franja compacta mobile, banners, foco y scroll al cambiar de paso, `MotionConfig reducedMotion`), pasos 1, 2, 4, 5 y 6 (CaseFormStep con Calendar/Dropdown, DeviceConnect, PhoneFrame + `PhoneShell`, ReportStep, GenerateStep, ResultStep), `components/wizard/` (StepHeader, StepActions), `CopyButton` migrado con la misma firma. Nuevos pt: dropdown, progressbar. Borrado `ui/dotted-glow-background.tsx`.
+- **Decisiones:** DP1–DP6 A (autónomo).
+- **Modelos:** architect (sesión), implementer-frontend opus, reviewer sonnet. 0 rechazos.
+- **Rama:** `feat/rediseno-dashboard-wizard` (encadenada sobre `feat/rediseno-dashboard-historial`).
+- **Pendiente:** prueba manual con Tatana real, `sticky` del paso 3 dentro de `fx-card`, contraste con DevTools, "Restaurar texto por defecto" con backend real.

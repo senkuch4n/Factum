@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { Dialog } from "primereact/dialog";
 import { Button } from "primereact/button";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { FxBanner } from "@/components/feedback/FxBanner";
 import { useFxToast } from "@/components/shell/FxToastProvider";
 import { ApiError } from "@/lib/api";
 import { PROFILE_REQUIRED_KEYS, profileErrorKey, profileFieldId, validateProfile } from "@/lib/pericial";
@@ -63,7 +64,13 @@ export function ExpertProfileDialog({ visible, onHide }: { visible: boolean; onH
       header="Mi perfil de perito"
       visible={visible}
       onHide={() => { if (!saving) onHide(); }}
-      className="w-[min(40rem,100%)]"
+      // Ancho y pantalla completa en < sm por pt (no className/maskClassName):
+      // en unstyled `maskClassName` no se aplica y el pt de la instancia se
+      // fusiona después del global (mismo patrón que SoporteModal).
+      pt={{
+        root: { className: "w-[min(40rem,100%)] max-sm:w-full max-sm:h-full max-sm:max-h-full max-sm:rounded-none max-sm:border-0" },
+        mask: { className: "max-sm:p-0" },
+      }}
       footer={
         <>
           <Button label="Cancelar" severity="secondary" onClick={onHide} disabled={saving} />
@@ -75,15 +82,13 @@ export function ExpertProfileDialog({ visible, onHide }: { visible: boolean; onH
         Estos datos van al informe pericial. Se copian a cada caso al crearlo o editarlo; los casos ya generados no cambian.
       </p>
       {loading ? (
-        <p className="flex items-center gap-2 text-fx-text-3" role="status">
+        <p className="m-0 flex items-center gap-2 text-fx-text-2" role="status">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Cargando tu perfil…
         </p>
       ) : (
         <>
           {(error || saveError) && (
-            <p role="alert" className="m-0 mb-3 flex items-start gap-2 text-fx-body-sm text-fx-danger">
-              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" /> {saveError || error}
-            </p>
+            <FxBanner tone="error" className="mb-3">{saveError || error}</FxBanner>
           )}
           <ExpertProfileFields
             form={form}
@@ -93,7 +98,7 @@ export function ExpertProfileDialog({ visible, onHide }: { visible: boolean; onH
             idPrefix={ID_PREFIX}
           />
           {profile && !profile.exists && (
-            <p className="m-0 mt-3 text-[11px] text-fx-text-3">Todavía no guardaste tu perfil: los valores son sugeridos.</p>
+            <p className="m-0 mt-3 text-xs text-fx-text-3">Todavía no guardaste tu perfil: los valores son sugeridos.</p>
           )}
         </>
       )}

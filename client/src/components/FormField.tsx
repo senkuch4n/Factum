@@ -1,6 +1,5 @@
 "use client";
 
-import { motion, AnimatePresence } from "framer-motion";
 import { AlertCircle } from "lucide-react";
 
 /** `aria-describedby` para un control dentro de `FormField` (ayuda + error). */
@@ -20,36 +19,31 @@ export function FormField({
 }) {
   return (
     <div>
-      <label htmlFor={id} className="flex items-center gap-1.5 mb-1.5">
-        <Icon className="w-3 h-3" style={{ color: "var(--text-muted)" }} aria-hidden="true" />
-        <span className="text-[0.62rem] font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>
-          {label}
+      {/* Ícono fijo a la izquierda y el texto fluye al lado: con flex-wrap una
+          etiqueta larga en media columna dejaba el ícono solo en su línea. */}
+      <label htmlFor={id} className="mb-1.5 flex items-start gap-1.5">
+        <Icon className="mt-px h-3.5 w-3.5 shrink-0 text-fx-text-3" aria-hidden="true" />
+        <span className="min-w-0">
+          <span className="text-fx-label uppercase text-fx-text-2">{label}</span>
+          {required && <span aria-hidden="true" className="ml-1 text-fx-danger">*</span>}
+          {sublabel && <span className="ml-1.5 text-xs normal-case text-fx-text-3">{sublabel}</span>}
         </span>
-        {required && <span className="text-red-500 text-[9px] leading-none ml-0.5" aria-hidden="true">*</span>}
-        {sublabel && (
-          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{sublabel}</span>
-        )}
       </label>
       {children}
       {hint && (
-        <p id={id ? `${id}-hint` : undefined} className="mt-1 text-[11px] leading-snug" style={{ color: "var(--text-muted)" }}>
+        <p id={id ? `${id}-hint` : undefined} className="m-0 mt-1.5 text-xs leading-snug text-fx-text-3">
           {hint}
         </p>
       )}
-      <AnimatePresence>
-        {error && (
-          <motion.p
-            id={id ? `${id}-error` : undefined}
-            role="alert"
-            className="text-xs text-red-500 mt-1.5 flex items-center gap-1"
-            initial={{ opacity: 0, height: 0, y: -4 }}
-            animate={{ opacity: 1, height: "auto", y: 0 }}
-            exit={{ opacity: 0, height: 0 }}
-          >
-            <AlertCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" /> {error}
-          </motion.p>
-        )}
-      </AnimatePresence>
+      {error && (
+        <p
+          id={id ? `${id}-error` : undefined}
+          role="alert"
+          className="m-0 mt-1.5 flex items-center gap-1 text-xs font-medium text-fx-danger motion-safe:animate-[fx-fade-in_var(--fx-dur-fast)_var(--fx-ease-out)_both]"
+        >
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> {error}
+        </p>
+      )}
     </div>
   );
 }

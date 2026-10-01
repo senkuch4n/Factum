@@ -1,16 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { Button } from "primereact/button";
+import { InputTextarea } from "primereact/inputtextarea";
 import {
-  AlertCircle, ArrowRight, Check, ClipboardList, FileText, Loader2, RotateCcw, Undo2,
+  AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, ClipboardList, FileText, Loader2, Undo2,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/utils";
 import { EMPTY_REPORT_TEXTS, MAX_LEN_TEXT, reportFieldId } from "@/lib/pericial";
 import type { ReportTexts, ReportTextsInput } from "@/types";
 import { FormField } from "./FormField";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
+import { FxBanner } from "@/components/feedback/FxBanner";
+import { StepHeader } from "@/components/wizard/StepHeader";
+import { StepActions } from "@/components/wizard/StepActions";
 
 type TextKey = keyof ReportTextsInput;
 
@@ -39,13 +42,6 @@ interface Props {
   onContinue: () => void;
 }
 
-/** Ajusta el alto del textarea a su contenido. */
-function autosize(el: HTMLTextAreaElement | null) {
-  if (!el) return;
-  el.style.height = "auto";
-  el.style.height = `${el.scrollHeight + 2}px`;
-}
-
 /**
  * Paso 4 "Informe": los textos largos del informe pericial, con autoguardado
  * en el servidor (`PUT /api/cases/{id}/report-texts`).
@@ -62,7 +58,6 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
   const timerRef = useRef<number | null>(null);
   const seqRef = useRef(0);
   const defaultsRef = useRef<ReportTextsInput | null>(null);
-  const areaRefs = useRef<Partial<Record<TextKey, HTMLTextAreaElement | null>>>({});
   const onSavedRef = useRef(onSaved);
   useEffect(() => { onSavedRef.current = onSaved; }, [onSaved]);
 
@@ -138,11 +133,6 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
     }
   }, [caseId]);
 
-  // Alto de los textarea según contenido.
-  useEffect(() => {
-    (Object.keys(areaRefs.current) as TextKey[]).forEach(k => autosize(areaRefs.current[k] ?? null));
-  }, [texts, state]);
-
   // Foco pedido desde el checklist, una vez cargado.
   useEffect(() => {
     if (!focusFieldId || state === "loading") return;
@@ -207,33 +197,30 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
         tone="neutral"
       />
 
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="step-title">Redactá el informe</h2>
-          <p className="mt-2 text-sm" style={{ color: "var(--text-secondary)" }}>
-            Cada sección va al informe pericial tal como la escribas. Los cambios se guardan solos.
-          </p>
-        </div>
-        <SaveIndicator state={state} onRetry={() => { void save(); }} />
-      </div>
+      <StepHeader
+        title="Redactá el informe"
+        description="Cada sección va al informe pericial tal como la escribas. Los cambios se guardan solos."
+        aside={<SaveIndicator state={state} onRetry={() => { void save(); }} />}
+      />
 
       {state === "load-error" ? (
-        <div
-          role="alert"
-          className="flex items-start gap-3 rounded-md px-4 py-3 text-sm border border-red-500/20 bg-red-500/[0.07] text-red-600 dark:text-red-400"
-        >
-          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
-          <span className="flex-1">{loadError}</span>
-          <button type="button" className="btn-secondary btn-sm" onClick={() => { void load(); }}>
-            Reintentar
-          </button>
-        </div>
+        <FxBanner tone="error">
+          <p className="m-0">{loadError}</p>
+          <Button
+            type="button"
+            severity="secondary"
+            size="small"
+            label="Reintentar"
+            onClick={() => { void load(); }}
+            className="mt-2"
+          />
+        </FxBanner>
       ) : state === "loading" ? (
-        <div className="flex items-center justify-center gap-2 py-12 text-sm" style={{ color: "var(--text-muted)" }}>
+        <div role="status" className="flex items-center justify-center gap-2 py-12 text-fx-body-sm text-fx-text-2">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Cargando los textos del informe…
         </div>
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-5 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]">
           {SECTIONS.map(({ key, label, required, hasDefault, placeholder }) => {
             const id = reportFieldId(key);
             return (
@@ -245,12 +232,13 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
                   sublabel={required ? undefined : "· opcional"}
                   required={required}
                 >
-                  <textarea
+                  <InputTextarea
                     id={id}
                     name={key}
-                    ref={el => { areaRefs.current[key] = el; autosize(el); }}
-                    className="input text-sm leading-relaxed"
-                    style={{ minHeight: 96, overflow: "hidden" }}
+                    autoResize
+                    rows={4}
+                    // Por pt: el pt global (`min-h-[5rem]`) pisaría un className de props.
+                    pt={{ root: { className: "min-h-24 leading-relaxed" } }}
                     aria-required={required || undefined}
                     maxLength={MAX_LEN_TEXT}
                     placeholder={placeholder}
@@ -260,18 +248,17 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
                   />
                 </FormField>
                 {hasDefault && (
-                  <button
+                  <Button
                     type="button"
+                    text
+                    severity="secondary"
+                    size="small"
+                    icon={<Undo2 className="h-3.5 w-3.5" aria-hidden="true" />}
+                    label="Restaurar texto por defecto"
+                    loading={restoring === key}
                     onClick={() => { void requestRestore(key); }}
-                    disabled={restoring === key}
-                    className="mt-1.5 inline-flex items-center gap-1 rounded text-[11px] font-medium underline-offset-2 hover:underline disabled:opacity-50 fx-focus-ring"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    {restoring === key
-                      ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                      : <Undo2 className="h-3 w-3" aria-hidden="true" />}
-                    Restaurar texto por defecto
-                  </button>
+                    className="mt-1.5"
+                  />
                 )}
               </div>
             );
@@ -279,20 +266,26 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
         </div>
       )}
 
-      <div className="flex gap-3">
-        <motion.button type="button" className="btn-secondary" onClick={() => { void handleBack(); }} disabled={state === "saving"} whileTap={{ scale: 0.98 }}>
-          <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /> Atrás
-        </motion.button>
-        <motion.button
+      <StepActions>
+        <Button
           type="button"
-          className={cn("btn-primary flex flex-1 items-center justify-center gap-2")}
-          onClick={() => { void handleContinue(); }}
+          severity="secondary"
+          icon={<ArrowLeft className="h-4 w-4" aria-hidden="true" />}
+          label="Atrás"
+          onClick={() => { void handleBack(); }}
+          disabled={state === "saving"}
+          className="w-full sm:w-auto min-h-11"
+        />
+        <Button
+          type="button"
+          label="Continuar"
+          icon={<ArrowRight className="h-4 w-4" aria-hidden="true" />}
+          iconPos="right"
           disabled={blocked}
-          whileTap={{ scale: blocked ? 1 : 0.98 }}
-        >
-          Continuar <ArrowRight className="h-4 w-4" aria-hidden="true" />
-        </motion.button>
-      </div>
+          onClick={() => { void handleContinue(); }}
+          className="w-full sm:flex-1 min-h-11"
+        />
+      </StepActions>
     </div>
   );
 }
@@ -300,23 +293,21 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
 /* ── Estado del autoguardado (aria-live). ── */
 function SaveIndicator({ state, onRetry }: { state: SaveState; onRetry: () => void }) {
   return (
-    <div className="flex min-h-[28px] items-center gap-2 text-xs" role="status" aria-live="polite">
+    <div className="flex min-h-7 items-center gap-2 text-xs" role="status" aria-live="polite">
       {state === "saving" && (
-        <span className="flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Guardando…
+        <span className="flex items-center gap-1.5 text-fx-text-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-fx-text-3" aria-hidden="true" /> Guardando…
         </span>
       )}
       {state === "saved" && (
-        <span className="flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
-          <Check className="h-3.5 w-3.5" style={{ color: "#10b981" }} aria-hidden="true" /> Guardado hace un momento
+        <span className="flex items-center gap-1.5 text-fx-text-2">
+          <CheckCircle2 className="h-3.5 w-3.5 text-fx-success" aria-hidden="true" /> Guardado hace un momento
         </span>
       )}
       {state === "error" && (
-        <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
+        <span className="flex items-center gap-1.5 font-medium text-fx-danger">
           <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" /> No se pudo guardar ·
-          <button type="button" onClick={onRetry} className="rounded font-semibold underline underline-offset-2 fx-focus-ring">
-            Reintentar
-          </button>
+          <Button type="button" link size="small" label="Reintentar" onClick={onRetry} pt={{ root: { className: "p-0" } }} />
         </span>
       )}
     </div>
