@@ -179,6 +179,7 @@ npm run package   # empaqueta la app instalable
 | `TatanaUpdates:ProjectId` / `ProjectRawBaseUrl` / `PrivateToken` | Proyecto de GitLab del que se espeja la última release de Tatana |
 | `TatanaUpdates:PublicBaseUrl` | URL pública de este backend — a la que apuntan el instalador Electron y el `.bat` portátil para actualizarse |
 | `Branding:OrganizationName` / `OrganizationLogo` / `ContactLines` | Identidad de la organización que emite los informes — ver [Branding](#identidad-de-la-organización-branding). Vacío en el repo |
+| `Report:TimeZone` / `DomicilioConstituido` / `DefaultTexts:*` | Zona horaria, domicilio constituido y textos por defecto del informe pericial — ver [Informe pericial](#informe-pericial-configuración). Domicilio vacío en el repo |
 
 **`client/.env.local`**
 
@@ -284,21 +285,64 @@ plantilla), así que ninguna plantilla la puede sacar.
 
 ### Placeholders de la plantilla del informe
 
-La plantilla (`server/src/Factum.Backend/Templates/plantilla_informe_v3.docx`)
-se completa reemplazando estos textos, en el cuerpo y en los
-encabezados/pies (incluidas las cajas de texto):
+La plantilla (`server/src/Factum.Backend/Templates/plantilla_informe_v4.docx`)
+no se edita a mano: la genera `ops/plantilla/build_plantilla_v4.py` (ver
+[Informe pericial: configuración](#informe-pericial-configuración)). Se
+completa en el cuerpo y en los encabezados/pies:
 
 | Placeholder | Reemplazo |
 |---|---|
-| `{NROREF}`, `{FECHA_HORA}`, `{fHora}`, `{DEPENDENCIA}` | Referencia del caso, fecha y hora (UTC), sigla del operador |
-| `{NOMBRE_DENUNCIANTE}`, `{DNI_DENUNCIANTE}`, `{NOMBRE_FUNCIONARIO}`, `{DNI_LEGAJO}` | Datos de las personas del caso |
-| `{MARCA}`, `{MODELO}`, `{IMEI}`, `{SO}`, `{NRO_SERIE}` | Datos del dispositivo |
-| `{OBSERVACIONES}`, `{ARCHIVOS}`, `{ARCHIVO_GENERADO}`, `{HASH}` / `{HASH_ZIP_COMPLETO}`, `{CLAVE}` | Observaciones, lista de archivos con su SHA-256, nombre, hash y contraseña del ZIP |
-| `{FOTO_FUNCIONARIO}`, `{FOTO_DENUNCIANTE}`, `{CAPTURAS}` | Imágenes (párrafo completo) |
-| `{ORGANIZACION}` | `Branding:OrganizationName` (vacío si no hay). Ponelo en su propio run, sin separadores pegados. |
+| `{nombreTribunal}`, `{organismoTribunal}`, `{tipoCausa}`, `{numeroCausa}`, `{caratula}`, `{parteDenunciante}`, `{parteDenunciada}`, `{objetoCausa}`, `{ambitoCausa}`, `{fechaIntervencion}` | Datos de la causa (los opcionales vacíos salen como "No informado") |
+| `{tramiteAnte}`, `{fraseIntegracion}`, `{fraseDomicilio}`, `{datosProponente}`, `{elSuscripto}` | Frases armadas en código, para que un dato opcional vacío no deje una frase rota |
+| `{nombrePerito}`, `{matriculaPerito}`, `{profesionPerito}`, `{caracterPerito}` | La copia del perfil del perito guardada en el caso |
+| `{fechaInspeccion}`, `{horaInspeccion}` | Creación del caso, en la zona `Report:TimeZone` |
+| `{tipoDispositivo}`, `{marcaModeloDispositivo}`, `{imeiDispositivo}`, `{lineaDispositivo}`, `{titularDispositivo}` | Datos del equipo |
+| `{objetoInforme}`, `{descripcion…}` | Textos del paso Informe, un párrafo por línea (párrafo completo) |
+| `{nombreArchivo}` / `{hashArchivo}` | Fila modelo de la tabla de hashes: una fila por archivo más la del ZIP |
+| `{capturasImeiModelo}`, `{capturasNombreDispositivo}`, `{anexoCapturas}` | Capturas marcadas por rol y anexo con las capturas sin marca (párrafo completo) |
+| `{#clave}` … `{/clave}` | Bloque condicional (párrafos propios): desaparece si el dato está vacío |
+| `{ORGANIZACION}` | `Branding:OrganizationName` (vacío si no hay). |
 | `{CONTACTO}` | `Branding:ContactLines`, una por línea (mismo formato del run) |
 | `{CONTACTO_EN_LINEA}` | `Branding:ContactLines` unidas con " · " |
 | `{LOGO_ORGANIZACION}` / `{LOGO_ORGANIZACION:4x1.2}` | Logo de la organización (párrafo completo), ajustado sin recortar a una caja de 5 × 1.5 cm o del tamaño indicado en cm. Sin logo, el párrafo queda vacío. |
+
+Un placeholder que la plantilla traiga y Factum no conozca se borra y se
+loguea un warning (`Plantilla: placeholder desconocido {x}`).
+
+## Informe pericial: configuración
+
+El informe es el **Informe Pericial Técnico Informático** del perito de parte.
+Los datos del perito salen del perfil de cada usuario ("Mi perfil de perito",
+colección `expert_profiles`) y se copian al caso al crearlo o editarlo. Lo que
+es propio del estudio va en la sección `Report` del backend:
+
+| Clave | Qué es |
+|---|---|
+| `Report:TimeZone` | Zona IANA de la fecha y hora de la inspección (default `America/Argentina/Buenos_Aires`). Si no existe en el sistema, se loguea un warning y se usa UTC-03:00 fijo. |
+| `Report:DomicilioConstituido` | Domicilio constituido del perito, para la presentación ("…, con domicilio constituido en …"). Máx. 300 caracteres. Vacío = la frase se omite. |
+| `Report:DefaultTexts:OperacionesRealizadas` / `AseguramientoEvidencia` / `NotasTecnicas` / `Reserva` | Textos por defecto propios del estudio para el paso Informe. Vacío = el texto neutro versionado en `Services/Reports/ReportDefaultTexts.cs`. Admiten los tokens `{fechaInspeccion}`, `{horaInspeccion}`, `{tipoDispositivo}`, `{marcaModeloDispositivo}`, `{imeiDispositivo}`, `{sistemaOperativo}`, `{zonaHoraria}`, `{elSuscripto}` y `{cantidadCapturas}`/`{cantidadGrabaciones}`/`{cantidadArchivosExtraidos}`/`{cantidadOtros}`. |
+
+Como con `Branding`, **el domicilio real no va al repo**: va en
+`appsettings.Local.json` (ignorado por git) o en `Report__DomicilioConstituido`.
+La config se lee una sola vez al arrancar. Ejemplo (valores ficticios):
+
+```json
+{
+  "Report": {
+    "TimeZone": "America/Argentina/Buenos_Aires",
+    "DomicilioConstituido": "Calle Ejemplo 123, Ciudad"
+  }
+}
+```
+
+**Hashes:** el ZIP de evidencia se cierra antes de generar el informe y no se
+vuelve a abrir, así que el hash del ZIP que figura en la tabla del informe es
+el del ZIP que se descarga. El DOCX va aparte (no dentro del ZIP) y su SHA-256
+se guarda en el caso (`report_hash`); el informe no puede contener su propio
+hash.
+
+**Regenerar la plantilla v4** (por ejemplo, si cambia la plantilla de origen):
+ver `ops/plantilla/README.md`.
 
 ## Integración con Faro
 

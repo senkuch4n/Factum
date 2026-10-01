@@ -11,13 +11,16 @@ interface Props {
   zipFile: string;
   pdfFile: string;
   password: string;
+  /** SHA-256 del ZIP de evidencia (el que figura en el informe). */
   hash: string;
+  /** SHA-256 del DOCX generado. */
+  reportHash: string;
   caseId: string;
   backendURL: string;
   onNewCase: () => void;
 }
 
-export function ResultStep({ caseNumber, zipFile, pdfFile, password, hash, caseId, backendURL, onNewCase }: Props) {
+export function ResultStep({ caseNumber, zipFile, pdfFile, password, hash, reportHash, caseId, backendURL, onNewCase }: Props) {
   const downloadURL = (file: string) => api.downloadURL(caseId, file);
   const prefersReducedMotion = useReducedMotion();
   const { isDark } = useTheme();
@@ -69,9 +72,9 @@ export function ResultStep({ caseNumber, zipFile, pdfFile, password, hash, caseI
       </div>
 
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
-        <h2 className="step-title text-2xl sm:text-3xl" style={{ color: "var(--text-primary)" }}>¡Expediente completado!</h2>
+        <h2 className="step-title text-2xl sm:text-3xl" style={{ color: "var(--text-primary)" }}>¡Informe pericial generado!</h2>
         <p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}>
-          El mismo <span className="font-semibold" style={{ color: "var(--blue-lg)" }}>{caseNumber}</span> está encriptado y con firma digital.
+          Descargá el ZIP de evidencia y el informe del caso <span className="font-semibold" style={{ color: "var(--blue-lg)" }}>{caseNumber}</span>.
         </p>
       </motion.div>
 
@@ -84,7 +87,7 @@ export function ResultStep({ caseNumber, zipFile, pdfFile, password, hash, caseI
         transition={{ delay: 0.4 }}
       >
         <p className="section-label flex items-center gap-1.5">
-          <ShieldCheck className="w-3 h-3" aria-hidden="true" /> Datos que te van a ser util
+          <ShieldCheck className="w-3 h-3" aria-hidden="true" /> Datos que te van a ser útiles
         </p>
 
         <div className="flex items-start gap-3">
@@ -94,7 +97,7 @@ export function ResultStep({ caseNumber, zipFile, pdfFile, password, hash, caseI
           <div>
             <p className="section-label">Contraseña del ZIP</p>
             <p className="font-mono text-base font-bold mt-1 select-all" style={{ color: "var(--text-primary)" }}>{password}</p>
-            <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>Incluida en el informe Word · Guardala por seguridad</p>
+            <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>Guardala por seguridad</p>
           </div>
         </div>
 
@@ -102,15 +105,29 @@ export function ResultStep({ caseNumber, zipFile, pdfFile, password, hash, caseI
           <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(45,212,191,0.12)", border: "1px solid rgba(45,212,191,0.25)" }}>
             <Hash className="w-3.5 h-3.5 text-teal-400" aria-hidden="true" />
           </div>
-          <div>
-            <p className="section-label">Hash SHA-256 del ZIP</p>
-            <p className="font-mono text-[10px] break-all select-all mt-1" style={{ color: "var(--text-secondary)" }}>{hash}</p>
+          <div className="min-w-0">
+            <p className="section-label">Hash SHA-256 del ZIP de evidencia</p>
+            <p className="font-mono text-[11px] break-all select-all mt-1" style={{ color: "var(--text-secondary)" }}>{hash}</p>
+            <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>Es el que figura en el informe.</p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(45,212,191,0.12)", border: "1px solid rgba(45,212,191,0.25)" }}>
+            <FileText className="w-3.5 h-3.5 text-teal-400" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <p className="section-label">Hash SHA-256 del informe (DOCX)</p>
+            <p className="font-mono text-[11px] break-all select-all mt-1" style={{ color: "var(--text-secondary)" }}>{reportHash || "—"}</p>
+            <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+              El informe no puede contener su propio hash: guardalo junto con la entrega.
+            </p>
           </div>
         </div>
 
         {/* Checks */}
         <div className="grid grid-cols-2 gap-2 pt-1">
-          {["Expediente encriptado", "Hash verificado", "Word oficial generado"].map(t => (
+          {["Hash SHA-256 por archivo", "Hash del ZIP verificable", "Informe pericial generado"].map(t => (
             <div key={t} className="flex items-center gap-2 text-[11px]" style={{ color: "var(--text-secondary)" }}>
               <CheckCircle2 className="w-3 h-3 text-emerald-400 flex-shrink-0" aria-hidden="true" /> {t}
             </div>
@@ -133,7 +150,7 @@ export function ResultStep({ caseNumber, zipFile, pdfFile, password, hash, caseI
           <Archive className="w-6 h-6" aria-hidden="true" />
           <div>
             <div>Descargar ZIP</div>
-            <div className="text-[10px] opacity-60 font-normal">Expediente cifrado</div>
+            <div className="text-[11px] opacity-70 font-normal">Evidencia</div>
           </div>
         </motion.a>
 
@@ -145,7 +162,7 @@ export function ResultStep({ caseNumber, zipFile, pdfFile, password, hash, caseI
           <FileText className="w-6 h-6" aria-hidden="true" />
           <div>
             <div>Informe Word</div>
-            <div className="text-[10px] opacity-60 font-normal">Puedes descargarlo haciendo click aqui</div>
+            <div className="text-[11px] opacity-70 font-normal">Informe pericial (.docx)</div>
           </div>
         </motion.a>
       </motion.div>

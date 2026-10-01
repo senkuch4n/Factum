@@ -19,3 +19,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementer-backend y implementer-frontend opus, reviewer sonnet. 0 rechazos. Dos acciones bloqueadas por permisos (borrado B9 y escritura del PNG en server/) resueltas con autorización explícita del usuario.
 - **Rama:** `feat/marca-comercial-sin-mpf-gfd` (encadenada sobre `feat/rediseno-base-primereact`).
 - **Pendiente:** plantilla v4 y terminología → `informe-pericial-de-parte`; login/modo/Faro → `auth-e-integraciones-sin-mpf`; prueba manual (informe de punta a punta, empaquetado de Tatana); no commitear `agent-ui/tsconfig.web.tsbuildinfo`.
+
+## informe-pericial-de-parte — APROBADA (2026-10-01)
+
+- **Qué:** el informe pasa a ser un Informe Pericial Técnico Informático. Perfil persistente del perito (`expert_profiles`, por DNI de login, copiado al caso); campos nuevos de causa (tribunal, organismo, sala, integrantes, carátula, partes, proponente, titular del dispositivo…); paso 4 "Informe" (`ReportStep`) con textos largos y borrador de operaciones; roles de captura (IMEI/modelo, nombre del dispositivo) y anexo de capturas; `plantilla_informe_v4.docx` (placeholders canónicos, frases neutralizadas, membrete del estudio, firma) generada desde `ops/plantilla/`, sin datos reales; domicilio constituido en config local (`Report:DomicilioConstituido`); D10: el DOCX sale del ZIP y el hash informado es el del ZIP entregado; hora local configurable (America/Argentina/Buenos_Aires); terminología no fiscal solo en etiquetas. v3 y `sin-foto-placeholder.png` borrados.
+- **Decisiones:** D1–D16 recomendadas (validadas por el usuario; es el perito). DP1/DP2 (textos por defecto y frases fijas) aceptados en modo autónomo; pendientes de revisión del usuario.
+- **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos.
+- **Rama:** `feat/informe-pericial-de-parte` (encadenada sobre `feat/marca-comercial-sin-mpf-gfd`).
+- **Pendiente:** revisar la v4 en Word/WPS y los textos por defecto; cargar `Report:DomicilioConstituido`; recorrido e2e con dispositivo real; código muerto de conversión a PDF (T16); `zip-cifrado-real` desbloqueada.

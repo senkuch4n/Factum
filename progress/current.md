@@ -26,3 +26,16 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — `implementer-frontend` done -> progress/impl_frontend_marca-comercial-sin-mpf-gfd.md; pendiente factum-sello.png en server/Templates (escritura rechazada por permisos) → consultado al usuario.
 - 2026-10-01 — factum-sello.png generado (autorizado). HU → en_revision, lanzado `reviewer` (sonnet).
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_marca-comercial-sin-mpf-gfd.md. verify OK. HU → aprobada, resumen en history.md. Pendiente: prueba manual y commit.
+- 2026-10-01 — Commit 61ae0f4 (marca-comercial-sin-mpf-gfd) en feat/marca-comercial-sin-mpf-gfd. Próxima HU: `informe-pericial-de-parte`; usuario va a pasar una plantilla nueva con datos adicionales antes de afinar.
+- 2026-10-01 — Usuario dejó la plantilla 'INFORME PERICIAL TÉCNICO INFORMÁTICO - FACTUM.docx' (placeholders {…}) en docs/ (excluida de git). `informe-pericial-de-parte` → afinando, lanzado `afinador` con extracción de texto en scratchpad.
+- 2026-10-01 — `afinador` done -> docs/hu-informe-pericial-de-parte.md (16 dudas). Hallazgos: hash del ZIP informado ≠ ZIP descargado (D10); ZIP no está cifrado (fuera de alcance, a consultar). HU → afinada_pendiente_validacion.
+- 2026-10-01 — Usuario valida D1–D16 (recomendadas; es el perito). Alta `zip-cifrado-real` (no_afinada). `informe-pericial-de-parte` → en_arquitectura en rama feat/informe-pericial-de-parte (encadenada sobre feat/marca-comercial-sin-mpf-gfd). Lanzado `architect`.
+- 2026-10-01 — Usuario activa MODO AUTÓNOMO: 'realizá todas las HU que puedas de manera autónoma; si no podés con una, avanzá con otra'. Desde acá el orquestador toma las opciones recomendadas como validadas (constancia en cada HU), commitea cada HU aprobada en su rama encadenada, sin push. Adelantando afinado de auth-e-integraciones-sin-mpf y rediseno-pagina-inicio.
+- 2026-10-01 — `afinador` done -> docs/hu-rediseno-pagina-inicio.md (9 dudas) → validada (autónomo, recomendadas). Adelantando SDD con `architect` (queda en validada en backlog: una activa a la vez).
+- 2026-10-01 — `afinador` done -> docs/hu-auth-e-integraciones-sin-mpf.md (12 dudas) → validada (autónomo). Hallazgo D8: ServiceKey de Faro commiteada → avisar rotación al usuario. SDD adelantada con `architect`.
+- 2026-10-01 — `architect` done -> Refactorizaciones/rediseno-pagina-inicio.md (0 DP). Queda en validada (SDD adelantada) hasta su turno.
+- 2026-10-01 — `architect` done -> Refactorizaciones/auth-e-integraciones-sin-mpf.md; DP1 A, DP2 A (autónomo). Queda en validada hasta su turno.
+- 2026-10-01 — `architect` done -> Refactorizaciones/informe-pericial-de-parte.md; DP1/DP2 aceptadas (autónomo). verify OK → arquitectura_lista → implementando. Lanzados implementer-backend y implementer-frontend (opus) en paralelo.
+- 2026-10-01 — `implementer-frontend` done -> progress/impl_frontend_informe-pericial-de-parte.md (tsc/build OK; recorrido e2e pendiente hasta que el backend tenga los endpoints). Esperando backend.
+- 2026-10-01 — `implementer-backend` done -> progress/impl_backend_informe-pericial-de-parte.md (sin bloqueos). HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_informe-pericial-de-parte.md. verify OK. HU → aprobada, history.md. Commit en su rama. Siguiente: auth-e-integraciones-sin-mpf.

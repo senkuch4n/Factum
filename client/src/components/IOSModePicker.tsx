@@ -60,7 +60,7 @@ const IOS_MODES: Array<{
     color: "#10b981", bg: "rgba(16,185,129,0.07)", border: "rgba(16,185,129,0.3)",
     badge: "RECOMENDADO",
     title: "Grabación nativa del iPhone", subtitle: "Audio del sistema incluido",
-    desc: "Captura audio de apps (WhatsApp, videos). El fiscal activa la grabación desde el Centro de Control.",
+    desc: "Captura audio de apps (WhatsApp, videos). El perito activa la grabación desde el Centro de Control.",
     illustration: (
       <svg viewBox="0 0 56 40" fill="none" className="w-14 h-10" aria-hidden="true">
         <rect x="8" y="1" width="22" height="36" rx="3.5" stroke="#10b981" strokeWidth="1.4" fill="#10b981" fillOpacity="0.06"/>

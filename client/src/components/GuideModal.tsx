@@ -64,7 +64,7 @@ export function GuideModal({ onClose, onSupport }: { onClose: () => void; onSupp
           className="flex flex-shrink-0 items-center justify-between gap-3 px-5 py-3 text-[11px]"
           style={{ borderTop: "1px solid var(--border)", color: "var(--text-muted)" }}
         >
-          <span>Guía del Gabinete de Informática Forense</span>
+          <span>Guía de uso de Factum</span>
           {onSupport && (
             <button
               type="button"

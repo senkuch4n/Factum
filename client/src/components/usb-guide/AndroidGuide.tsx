@@ -136,7 +136,7 @@ export function AndroidGuide({ onDone }: { onDone: () => void }) {
         </div>
       ) : (
         <div>
-          <p className="section-label mb-2.5">En el celular del denunciante</p>
+          <p className="section-label mb-2.5">En el celular a inspeccionar</p>
           <GuideStepList steps={menuSteps.map(s => ({ title: s.title, detail: s.detail, tip: s.tip }))} />
         </div>
       )}

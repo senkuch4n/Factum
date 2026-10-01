@@ -10,7 +10,7 @@ interface Props {
   steps: Step[];
   current: number;
   /** Pasos completados con id < minJumpable no se pueden re-visitar (evita, p. ej., duplicar
-   *  un caso ya creado si se retrocede a "Dispositivo" o "Expediente" después de generar). */
+   *  un caso ya creado si se retrocede a "Dispositivo" o "Causa" después de generar). */
   minJumpable?: number;
   onSelect?: (id: number) => void;
 }

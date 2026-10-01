@@ -1,14 +1,59 @@
-using System.ComponentModel.DataAnnotations;
 using Factum.Backend.Models;
 
 namespace Factum.Backend.DTOs;
 
+// JSON en snake_case_lower (Program.cs). Todos los campos de texto son string? y SIN
+// [Required]: con <Nullable>enable</Nullable> + [ApiController], un string no anulable es
+// obligatorio implícito y responde un ProblemDetails que el cliente no lee. La validación de
+// obligatorios vive en Services/Cases/CaseValidation.cs y responde { error, missing }.
+
 public sealed record CreateCaseRequest(
-    [Required] string NroReferencia,
-    [Required] string NombreDenunciante,
-    [Required] string DniDenunciante,
-    string Observaciones,
-    DeviceInfoDto? Device
+    string? NroReferencia = null,
+    string? NombreDenunciante = null,
+    string? DniDenunciante = null,
+    string? Observaciones = null,
+    string? NombreTribunal = null,
+    string? OrganismoTribunal = null,
+    string? SalaTribunal = null,
+    string? IntegrantesTribunal = null,
+    string? TipoCausa = null,
+    string? Caratula = null,
+    string? ParteDenunciante = null,
+    string? ParteDenunciada = null,
+    string? ObjetoCausa = null,
+    string? AmbitoCausa = null,
+    string? FechaIntervencion = null,
+    string? NombreProponente = null,
+    string? ProfesionProponente = null,
+    string? MatriculaProponente = null,
+    string? TipoDispositivo = null,
+    string? LineaDispositivo = null,
+    DeviceInfoDto? Device = null
+);
+
+/// <summary>PUT /api/cases/{id}: los campos de la causa sin <c>device</c>, más <c>imei</c>.</summary>
+public sealed record UpdateCaseRequest(
+    string? NroReferencia = null,
+    string? NombreDenunciante = null,
+    string? DniDenunciante = null,
+    string? Observaciones = null,
+    string? NombreTribunal = null,
+    string? OrganismoTribunal = null,
+    string? SalaTribunal = null,
+    string? IntegrantesTribunal = null,
+    string? TipoCausa = null,
+    string? Caratula = null,
+    string? ParteDenunciante = null,
+    string? ParteDenunciada = null,
+    string? ObjetoCausa = null,
+    string? AmbitoCausa = null,
+    string? FechaIntervencion = null,
+    string? NombreProponente = null,
+    string? ProfesionProponente = null,
+    string? MatriculaProponente = null,
+    string? TipoDispositivo = null,
+    string? LineaDispositivo = null,
+    string? Imei = null
 );
 
 public sealed record DeviceInfoDto(
@@ -18,8 +63,29 @@ public sealed record DeviceInfoDto(
     int AndroidVersion,
     string Imei,
     string Platform = "android",
-    string OsVersion = ""
+    string OsVersion = "",
+    // JSON "name" (string, default ""). Anulable en C# para que no sea obligatorio implícito:
+    // un cliente viejo que no lo manda sigue funcionando.
+    string? Name = null
 );
+
+/// <summary>Textos del paso Informe (PUT …/report-texts y GET …/report-texts/defaults).</summary>
+public sealed record ReportTextsDto(
+    string? ObjetoInforme = null,
+    string? OperacionesRealizadas = null,
+    string? AseguramientoEvidencia = null,
+    string? Resultados = null,
+    string? ValoracionTecnica = null,
+    string? Conclusiones = null,
+    string? NotasTecnicas = null,
+    string? Reserva = null
+);
+
+public sealed record CaptureRoleDto(string? Filename = null, string? Role = null);
+
+public sealed record CaptureRolesRequest(List<CaptureRoleDto>? CaptureRoles = null);
+
+public sealed record CaptureRolesResponse(List<CaptureRole> CaptureRoles);
 
 public sealed record FileInfoDto(
     string Name,
@@ -33,7 +99,8 @@ public sealed record GenerateResponse(
     Case Case,
     string ZipHash,
     string Password,
-    FilesDto Files
+    FilesDto Files,
+    string ReportHash
 );
 
 public sealed record FilesDto(string Zip, string Pdf);

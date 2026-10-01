@@ -3,12 +3,14 @@
 import { useId, useMemo, useRef, useState } from "react";
 import { Menu } from "primereact/menu";
 import type { MenuItem } from "primereact/menuitem";
-import { LogOut } from "lucide-react";
+import { LogOut, UserCog } from "lucide-react";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 
 interface Props {
   user: { name: string; sigla: string; dni: string } | null;
   onLogout: () => void;
+  /** Abre el diálogo "Mi perfil de perito". */
+  onOpenProfile?: () => void;
 }
 
 /**
@@ -17,7 +19,7 @@ interface Props {
  * ítems informativos `disabled`) y el foco que vuelve al disparador los
  * resuelve Prime.
  */
-export function UserMenu({ user, onLogout }: Props) {
+export function UserMenu({ user, onLogout, onOpenProfile }: Props) {
   const menuRef = useRef<Menu>(null);
   const [open, setOpen] = useState(false);
   const menuId = `user-menu-${useId().replace(/:/g, "")}`;
@@ -66,6 +68,13 @@ export function UserMenu({ user, onLogout }: Props) {
       },
       ...orgItem,
       { separator: true },
+      ...(onOpenProfile
+        ? [{
+            label: "Mi perfil de perito",
+            icon: <UserCog className="h-4 w-4" aria-hidden="true" />,
+            command: () => onOpenProfile(),
+          }]
+        : []),
       {
         label: "Cerrar sesión",
         icon: <LogOut className="h-4 w-4" aria-hidden="true" />,
@@ -73,7 +82,7 @@ export function UserMenu({ user, onLogout }: Props) {
         command: () => onLogout(),
       },
     ];
-  }, [user, onLogout, organizationName, organizationLogoSrc, orgLogoFailed]);
+  }, [user, onLogout, onOpenProfile, organizationName, organizationLogoSrc, orgLogoFailed]);
 
   if (!user) return null;
 

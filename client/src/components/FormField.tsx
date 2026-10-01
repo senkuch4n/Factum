@@ -3,11 +3,20 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertCircle } from "lucide-react";
 
+/** `aria-describedby` para un control dentro de `FormField` (ayuda + error). */
+export function describedBy(id: string, opts: { hint?: string; error?: string }): string | undefined {
+  const ids = [opts.hint ? `${id}-hint` : null, opts.error ? `${id}-error` : null].filter(Boolean);
+  return ids.length ? ids.join(" ") : undefined;
+}
+
 export function FormField({
-  id, label, sublabel, icon: Icon, error, required, children,
+  id, label, sublabel, icon: Icon, error, required, hint, children,
 }: {
   id?: string; label: string; sublabel?: string; icon: React.ElementType;
-  error?: string; required?: boolean; children: React.ReactNode;
+  error?: string; required?: boolean;
+  /** Ayuda persistente debajo del control (id `${id}-hint`, para aria-describedby). */
+  hint?: string;
+  children: React.ReactNode;
 }) {
   return (
     <div>
@@ -22,6 +31,11 @@ export function FormField({
         )}
       </label>
       {children}
+      {hint && (
+        <p id={id ? `${id}-hint` : undefined} className="mt-1 text-[11px] leading-snug" style={{ color: "var(--text-muted)" }}>
+          {hint}
+        </p>
+      )}
       <AnimatePresence>
         {error && (
           <motion.p

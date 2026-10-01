@@ -38,7 +38,8 @@ export function CaseGridCard({ cas, index, onResume }: { cas: Case; index: numbe
               {cas.nro_referencia}
             </p>
             <p className="text-[11px] truncate mt-0.5" style={{ color: "var(--text-secondary)" }}>
-              {cas.nombre_denunciante} · DNI {cas.dni_denunciante}
+              {cas.caratula || cas.nombre_denunciante}
+              {cas.dni_denunciante && ` · DNI ${cas.dni_denunciante}`}
             </p>
           </div>
           <StatusBadge status={cas.status} />
@@ -60,7 +61,7 @@ export function CaseGridCard({ cas, index, onResume }: { cas: Case; index: numbe
           </div>
           <div className="col-span-2 flex items-center gap-1 truncate">
             <UserCheck className="w-2.5 h-2.5 flex-shrink-0" aria-hidden="true" />
-            <span className="truncate">{cas.officer.name}</span>
+            <span className="truncate"><span className="sr-only">Perito: </span>{cas.perito?.nombre ?? cas.officer.name}</span>
           </div>
         </div>
       </div>

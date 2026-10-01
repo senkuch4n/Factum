@@ -21,9 +21,12 @@ import { CyclingPlaceholderInput } from "@/components/ui/cycling-placeholder-inp
 import { Tip } from "@/components/ui/tooltip";
 import { DataTable, type Column, type SortState } from "@/components/ui/data-table";
 
+/** Carátula del caso; los casos previos al informe pericial muestran el titular. */
+const caratulaOf = (c: Case) => c.caratula || c.nombre_denunciante;
+
 const SORT_ACCESSORS: Record<string, (c: Case) => string | number> = {
-  expediente:  (c) => c.nro_referencia.toLowerCase(),
-  denunciante: (c) => c.nombre_denunciante.toLowerCase(),
+  causa:       (c) => c.nro_referencia.toLowerCase(),
+  caratula:    (c) => caratulaOf(c).toLowerCase(),
   fecha:       (c) => new Date(c.created_at).getTime(),
   estado:      (c) => c.status,
 };
@@ -66,12 +69,14 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
 
     if (hasQuery) {
       const q = query.toLowerCase().trim();
+      const has = (v: string | null | undefined) => !!v && v.toLowerCase().includes(q);
       result = result.filter(c =>
-        c.nro_referencia.toLowerCase().includes(q) ||
-        c.nombre_denunciante.toLowerCase().includes(q) ||
-        c.dni_denunciante.includes(q) ||
-        c.officer.name.toLowerCase().includes(q) ||
-        c.officer.sigla.toLowerCase().includes(q) ||
+        has(c.nro_referencia) ||
+        has(c.caratula) ||
+        has(c.parte_denunciante) ||
+        has(c.parte_denunciada) ||
+        has(c.nombre_denunciante) ||
+        has(c.dni_denunciante) ||
         c.device.manufacturer.toLowerCase().includes(q) ||
         c.device.model.toLowerCase().includes(q) ||
         (c.device.imei && c.device.imei.includes(q))
@@ -132,15 +137,17 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
 
   const caseColumns: Column<Case>[] = [
     {
-      key: "expediente", header: "Expediente", sortable: true,
+      key: "causa", header: "N° de causa", sortable: true,
       cell: (c) => <span className="font-medium">{c.nro_referencia}</span>,
     },
     {
-      key: "denunciante", header: "Denunciante", sortable: true,
+      key: "caratula", header: "Carátula", sortable: true,
       cell: (c) => (
         <div className="min-w-0">
-          <div className="truncate">{c.nombre_denunciante}</div>
-          <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>DNI {c.dni_denunciante}</div>
+          <div className="truncate">{caratulaOf(c)}</div>
+          {c.caratula && (
+            <div className="truncate text-[11px]" style={{ color: "var(--text-muted)" }}>{c.nombre_denunciante}</div>
+          )}
         </div>
       ),
     },
@@ -209,11 +216,11 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
             ariaLabel="Buscar inspecciones"
             value={query}
             onChange={setQuery}
-            staticPlaceholder="Buscar por expediente, celular, fiscal, IMEI…"
+            staticPlaceholder="Buscar por carátula, titular o IMEI…"
             placeholders={[
-              "Buscar por número de expediente…",
-              "Buscar por denunciante o DNI…",
-              "Buscar por fiscal o sigla…",
+              "Buscar por número de causa…",
+              "Buscar por carátula o partes…",
+              "Buscar por titular o DNI…",
               "Buscar por equipo o IMEI…",
             ]}
           />

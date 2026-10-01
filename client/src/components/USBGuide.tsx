@@ -21,7 +21,7 @@ export function USBGuide({ onDone }: Props) {
       <div>
         <h2 className="step-title">Preparar el dispositivo</h2>
         <p className="mt-1.5 text-sm" style={{ color: "var(--text-secondary)" }}>
-          Guía para habilitar la conexión USB del celular del denunciante.
+          Guía para habilitar la conexión USB del celular a inspeccionar.
         </p>
       </div>
 

@@ -1,13 +1,17 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { Menu } from "primereact/menu";
+import type { MenuItem } from "primereact/menuitem";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   Camera, Video, VideoOff, ImageIcon, UploadCloud,
   RotateCcw, Maximize2, ExternalLink, Mic, MicOff, FolderOpen, FileText,
   AlertTriangle, Paperclip, Volume2, Trash2, Smartphone, WifiOff, Loader2, Wifi,
-  Shield, User, Check, ChevronRight,
+  Shield, User, Check, ChevronRight, Tag, Info,
 } from "lucide-react";
+import type { CaptureRole, CaptureRoleValue } from "@/lib/api";
+import { CAPTURE_ROLES_FIELD_ID, CAPTURE_ROLE_LABELS, isRoleEligible } from "@/lib/pericial";
 import type { VideoVariant } from "@/lib/agent";
 import { agentFileURL } from "@/lib/agent";
 import { cn } from "@/lib/utils";
@@ -19,7 +23,7 @@ import { VideoCard } from "./VideoCard";
 import { IdentityCard } from "./IdentityCard";
 import { IOSModePicker, type IOSRecordMode } from "./IOSModePicker";
 
-interface CapturedFile { name: string; uploaded: boolean; sourcePath?: string; }
+interface CapturedFile { name: string; uploaded: boolean; sourcePath?: string; captureRole?: CaptureRoleValue; }
 interface LocalFile { file: File; url: string; filename: string; kind: "image" | "video" | "audio"; }
 
 interface Props {
@@ -34,11 +38,16 @@ interface Props {
   iosRecordMode?: IOSRecordMode | null;
   onSelectIosMode?: (mode: IOSRecordMode) => void;
   onCancelIosMode?: () => void;
-  onPhotoFuncionario: (blob: Blob, filename: string) => void;
-  onPhotoDenunciante: (blob: Blob, filename: string) => void;
-  // Datos del denunciante (ya cargados en el caso) para mostrarlos junto a su foto.
-  denuncianteNombre?: string;
-  denuncianteDni?: string;
+  // Fotos de identificación (opcionales). Los nombres de archivo y el tipo del agente
+  // siguen siendo `foto_funcionario_*` / `foto_denunciante_*` (contrato con Tatana).
+  onPhotoPerito: (blob: Blob, filename: string) => void;
+  onPhotoTitular: (blob: Blob, filename: string) => void;
+  // Datos del titular del dispositivo (ya cargados en el caso) para mostrarlos junto a su foto.
+  titularNombre?: string;
+  titularDni?: string;
+  /** Marcas ya persistidas en el caso (`capture_roles`); se unen con las locales. */
+  captureRoles?: CaptureRole[];
+  onSetCaptureRole?: (filename: string, role: CaptureRoleValue | null) => void;
   onUploadAndContinue: () => void;
   onRemoveFile?: (filename: string) => void;
   loading: Record<string, boolean>;
@@ -149,8 +158,9 @@ export function CaptureStep({
   isRecording, androidVersion, platform = "android", deviceSerial, files,
   onScreenshot, onToggleRecord,
   iosModePicker, iosRecordMode, onSelectIosMode, onCancelIosMode,
-  onPhotoFuncionario, onPhotoDenunciante,
-  denuncianteNombre, denuncianteDni,
+  onPhotoPerito, onPhotoTitular,
+  titularNombre, titularDni,
+  captureRoles = [], onSetCaptureRole,
   onUploadAndContinue, onRemoveFile, loading,
   deviceOffline,
   disconnectedDuringRecord,
@@ -196,6 +206,21 @@ export function CaptureStep({
     galleryItems.push({ kind, key: `local-${lf.filename}`, name: lf.file.name, url: lf.url, localIdx: idx });
   });
   const totalItems = galleryItems.length;
+
+  // ── Marcas de captura: las persistidas en el caso + las locales (que mandan) ──
+  const roleByName = useMemo(() => {
+    const m = new Map<string, CaptureRoleValue>();
+    captureRoles.forEach(r => m.set(r.filename, r.role));
+    files.forEach(f => {
+      if (!isRoleEligible(f.name)) return;
+      if (f.captureRole) m.set(f.name, f.captureRole);
+      else m.delete(f.name);
+    });
+    return m;
+  }, [captureRoles, files]);
+  const roleCount = (r: CaptureRoleValue) => [...roleByName.values()].filter(v => v === r).length;
+  const imeiCount = roleCount("imei_modelo");
+  const nameCount = roleCount("nombre_dispositivo");
   const selected = galleryItems.find(i => i.key === selectedKey) ?? galleryItems[galleryItems.length - 1] ?? null;
 
   // Capturas del propio teléfono (van al "escenario" con marco de celular) vs. adjuntos
@@ -224,8 +249,8 @@ export function CaptureStep({
     const ts = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}_${String(d.getHours()).padStart(2,"0")}${String(d.getMinutes()).padStart(2,"0")}${String(d.getSeconds()).padStart(2,"0")}`;
     const filename = `foto_${webcamTarget}_${ts}.jpg`;
     setBlobURLs(prev => ({ ...prev, [filename]: URL.createObjectURL(blob) }));
-    if (webcamTarget === "funcionario") onPhotoFuncionario(blob, filename);
-    else if (webcamTarget === "denunciante") onPhotoDenunciante(blob, filename);
+    if (webcamTarget === "funcionario") onPhotoPerito(blob, filename);
+    else if (webcamTarget === "denunciante") onPhotoTitular(blob, filename);
     setWebcam(null);
   }
 
@@ -264,7 +289,7 @@ export function CaptureStep({
         {webcamTarget && (
           <WebcamCaptureModal
             key={webcamTarget}
-            label={webcamTarget === "funcionario" ? "Foto del fiscal" : "Foto del denunciante"}
+            label={webcamTarget === "funcionario" ? "Foto del perito" : "Foto del titular"}
             icon={webcamTarget === "funcionario" ? Shield : User}
             onCapture={handleWebcamCapture}
             onClose={() => setWebcam(null)}
@@ -302,22 +327,21 @@ export function CaptureStep({
       {/* ══ Identificación — fila full-width ═══════════════════════ */}
       <div className="mb-6 rounded-2xl p-4 sm:p-5" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
         <p className="section-label mb-1 flex items-center gap-1.5">
-          <Camera className="w-3 h-3" /> Identificación
-          <span className="text-[10px] font-normal normal-case tracking-normal" style={{ color: "var(--text-muted)" }}>opcional</span>
+          <Camera className="w-3 h-3" aria-hidden="true" /> Identificación · opcional
         </p>
         <p className="mb-3 text-[11px]" style={{ color: "var(--text-muted)" }}>
-          Foto del fiscal y del denunciante para dejar constancia de quién realiza la extracción.
+          Fotos opcionales del perito y del titular. Se guardan en el ZIP con su hash; no se incluyen en el informe.
         </p>
         <div className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3.5">
-          <IdentityCard label="Fiscal" role="Funcionario" icon={Shield}
+          <IdentityCard label="Perito" role="Quien realiza la inspección" icon={Shield}
             done={hasFuncionario}
             blobURL={fotoFunc ? blobURLs[fotoFunc.name] : undefined}
             agentFilename={fotoFunc?.name}
             onCapture={() => setWebcam("funcionario")}
             loading={!!loading.photo} />
-          <IdentityCard label="Denunciante" role="Titular" icon={User}
-            name={denuncianteNombre || undefined}
-            dni={denuncianteDni || undefined}
+          <IdentityCard label="Titular del dispositivo" role="Titular" icon={User}
+            name={titularNombre || undefined}
+            dni={titularDni || undefined}
             done={hasDenunciante}
             blobURL={fotoDen ? blobURLs[fotoDen.name] : undefined}
             agentFilename={fotoDen?.name}
@@ -734,6 +758,7 @@ export function CaptureStep({
                         active={item.key === selected?.key}
                         index={i}
                         total={screenItems.length}
+                        role={roleByName.get(item.name)}
                         onSelect={() => setSelectedKey(item.key)}
                         onRemove={() => removeItem(item)}
                       />
@@ -846,6 +871,42 @@ export function CaptureStep({
             )}
           </div>
 
+          {/* ── Marcas de identificación del equipo (rol de captura para el informe) ── */}
+          <div
+            id={CAPTURE_ROLES_FIELD_ID}
+            tabIndex={-1}
+            className="space-y-2 rounded-2xl px-3.5 py-3 outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-lg)]"
+            style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
+            aria-labelledby="capture-roles-title"
+          >
+            <p id="capture-roles-title" className="section-label flex items-center gap-1.5">
+              <Tag className="h-3 w-3" aria-hidden="true" /> Capturas de identificación del equipo
+            </p>
+            <div className="flex flex-wrap gap-1.5 text-[11px] font-semibold" aria-live="polite">
+              <RoleChip
+                ok={imeiCount > 0}
+                text={imeiCount > 0
+                  ? `IMEI y modelo: ${imeiCount} ${imeiCount === 1 ? "captura" : "capturas"}`
+                  : "IMEI y modelo: falta"}
+                tone={imeiCount > 0 ? "ok" : "warn"}
+              />
+              <RoleChip
+                ok={nameCount > 0}
+                text={nameCount > 0
+                  ? `Nombre del dispositivo: ${nameCount}`
+                  : "Nombre del dispositivo: sin marcar (opcional)"}
+                tone={nameCount > 0 ? "ok" : "muted"}
+              />
+            </div>
+            <p className="flex items-start gap-1.5 text-[11px] leading-snug" style={{ color: "var(--text-muted)" }}>
+              <Info className="mt-px h-3 w-3 flex-shrink-0" aria-hidden="true" />
+              <span>
+                Marcá *#06# o abrí Ajustes › Acerca del teléfono y capturá la pantalla. Después elegí la captura y
+                usá «Marcar como…».
+              </span>
+            </p>
+          </div>
+
           {/* ── Escenario: el ítem seleccionado en marco de teléfono. Sticky: queda fijo
                  mientras se scrollea la columna de trabajo de la derecha. ── */}
           <div className="flex flex-shrink-0 flex-col items-center gap-3 rounded-2xl p-4 sm:p-5 lg:sticky lg:top-6 lg:z-20"
@@ -889,8 +950,15 @@ export function CaptureStep({
                     <div className="mx-auto flex w-full max-w-[420px] items-center gap-2">
                       <span className="flex flex-shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold"
                         style={{ background: "var(--bg-elevated)", color: m.color, border: "1px solid var(--border)" }}>
-                        <m.Icon className="h-3 w-3" /> {m.label}
+                        <m.Icon className="h-3 w-3" aria-hidden="true" /> {m.label}
                       </span>
+                      {selected.kind === "screenshot" && isRoleEligible(selected.name) && onSetCaptureRole && (
+                        <CaptureRoleMenu
+                          filename={selected.name}
+                          role={roleByName.get(selected.name)}
+                          onChange={role => onSetCaptureRole(selected.name, role)}
+                        />
+                      )}
                       <span className="min-w-0 flex-1 truncate font-mono text-xs" style={{ color: "var(--text-secondary)" }} title={selected.name}>
                         {selected.name}
                         {selected.sourcePath && (
@@ -1028,8 +1096,11 @@ function GridPattern() {
    el borrar es un botón hermano (HTML no permite <button> dentro de <button>). El
    chequeo en la esquina refuerza la selección para quien no distingue colores. ── */
 function EvidenceTrayTile({
-  item, active, index, total, onSelect, onRemove,
-}: { item: GItem; active: boolean; index: number; total: number; onSelect: () => void; onRemove: () => void }) {
+  item, active, index, total, role, onSelect, onRemove,
+}: {
+  item: GItem; active: boolean; index: number; total: number; role?: CaptureRoleValue;
+  onSelect: () => void; onRemove: () => void;
+}) {
   const meta = kindMeta(item.kind);
   const isImg = item.kind === "screenshot" || item.kind === "local-image";
 
@@ -1039,7 +1110,7 @@ function EvidenceTrayTile({
         type="button"
         onClick={onSelect}
         aria-pressed={active}
-        aria-label={`Ver ${meta.label.toLowerCase()} ${index + 1} de ${total} — ${item.name}`}
+        aria-label={`Ver ${meta.label.toLowerCase()} ${index + 1} de ${total} — ${item.name}${role ? ` — marcada como ${CAPTURE_ROLE_LABELS[role]}` : ""}`}
         className="block h-[76px] w-[76px] overflow-hidden rounded-xl transition"
         style={{ border: `2px solid ${active ? "var(--blue-lg)" : "var(--border)"}`, background: "var(--bg-elevated)" }}
         initial={{ opacity: 0, scale: 0.85 }}
@@ -1050,6 +1121,17 @@ function EvidenceTrayTile({
           ? <SafeImg src={srcOf(item)} alt={item.name} className="h-full w-full object-cover" />
           : <span className="flex h-full w-full items-center justify-center"><meta.Icon className="h-5 w-5" style={{ color: "var(--text-muted)" }} /></span>}
       </motion.button>
+
+      {role && (
+        <span
+          aria-hidden="true"
+          title={CAPTURE_ROLE_LABELS[role]}
+          className="pointer-events-none absolute inset-x-1 bottom-1 truncate rounded px-1 py-px text-center text-[9px] font-bold leading-tight text-white"
+          style={{ background: "rgba(15,23,42,0.82)" }}
+        >
+          {role === "imei_modelo" ? "IMEI" : "Nombre"}
+        </span>
+      )}
 
       {active && (
         <span
@@ -1100,5 +1182,78 @@ function AttachmentChip({
         <Trash2 className="h-3 w-3 text-red-400" />
       </button>
     </span>
+  );
+}
+
+/* ── Chip de estado de las marcas: texto + ícono, nunca solo color. ── */
+function RoleChip({ text, tone, ok }: { text: string; tone: "ok" | "warn" | "muted"; ok: boolean }) {
+  const style =
+    tone === "ok"   ? { background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.28)", color: "var(--text-primary)" } :
+    tone === "warn" ? { background: "rgba(217,119,6,0.08)",  border: "1px solid rgba(217,119,6,0.3)",   color: "var(--text-primary)" } :
+                      { background: "var(--bg-elevated)",    border: "1px solid var(--border)",         color: "var(--text-muted)" };
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5" style={style}>
+      {ok
+        ? <Check className="h-3 w-3 flex-shrink-0" style={{ color: "#10b981" }} strokeWidth={3} aria-hidden="true" />
+        : tone === "warn"
+          ? <AlertTriangle className="h-3 w-3 flex-shrink-0" style={{ color: "var(--amber)" }} aria-hidden="true" />
+          : null}
+      {text}
+    </span>
+  );
+}
+
+/* ── "Marcar como…": Menu popup de PrimeReact (teclado, Escape y foco de vuelta los
+   resuelve Prime). Una sola etiqueta por captura. ── */
+function CaptureRoleMenu({
+  filename, role, onChange,
+}: { filename: string; role?: CaptureRoleValue; onChange: (role: CaptureRoleValue | null) => void }) {
+  const menuRef = useRef<Menu>(null);
+  const [open, setOpen] = useState(false);
+  const menuId = "capture-role-menu";
+
+  const items: MenuItem[] = [
+    ...(["imei_modelo", "nombre_dispositivo"] as const).map(r => ({
+      label: CAPTURE_ROLE_LABELS[r],
+      icon: role === r
+        ? <Check className="h-4 w-4" aria-hidden="true" />
+        : <span className="inline-block h-4 w-4" aria-hidden="true" />,
+      command: () => onChange(r),
+    })),
+    { separator: true },
+    {
+      label: "Sin marca",
+      icon: !role
+        ? <Check className="h-4 w-4" aria-hidden="true" />
+        : <span className="inline-block h-4 w-4" aria-hidden="true" />,
+      command: () => onChange(null),
+    },
+  ];
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={e => menuRef.current?.toggle(e)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? `${menuId}_list` : undefined}
+        aria-label={`Marcar como… ${filename}${role ? ` (actual: ${CAPTURE_ROLE_LABELS[role]})` : ""}`}
+        className="flex flex-shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-[var(--bg-hover)] fx-focus-ring"
+        style={{ border: "1px solid var(--border-md)", color: "var(--text-secondary)" }}
+      >
+        <Tag className="h-3 w-3" aria-hidden="true" />
+        {role ? CAPTURE_ROLE_LABELS[role] : "Marcar como…"}
+      </button>
+      <Menu
+        ref={menuRef}
+        id={menuId}
+        model={items}
+        popup
+        pt={{ menu: { "aria-label": "Marcar captura como" } }}
+        onShow={() => setOpen(true)}
+        onHide={() => setOpen(false)}
+      />
+    </>
   );
 }

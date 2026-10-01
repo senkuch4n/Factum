@@ -37,3 +37,6 @@ agent-ui/resources/agent/
 # Identidad real del cliente (Branding): config local y logo, nunca al repo
 **/appsettings.Local.json
 server/src/Factum.Backend/branding/
+
+# Plantillas e informes del usuario con datos reales (la v4 se deriva con ops/plantilla/)
+docs/INFORME*

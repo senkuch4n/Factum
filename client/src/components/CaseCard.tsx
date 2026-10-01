@@ -30,7 +30,7 @@ export function CaseCard({ cas, index, onResume }: { cas: Case; index: number; o
         className="w-full text-left p-4 flex items-center gap-4 group"
         onClick={() => setOpen(o => !o)}
         aria-expanded={open}
-        aria-label={`Expediente ${cas.nro_referencia} — ${open ? "ocultar" : "ver"} detalle`}
+        aria-label={`Causa ${cas.nro_referencia} — ${open ? "ocultar" : "ver"} detalle`}
       >
         <div className={cn(
           "w-10 h-10 rounded-md flex items-center justify-center flex-shrink-0 transition",
@@ -49,7 +49,8 @@ export function CaseCard({ cas, index, onResume }: { cas: Case; index: number; o
             <StatusBadge status={cas.status} />
           </div>
           <p className="text-xs truncate mt-0.5" style={{ color: "var(--text-secondary)" }}>
-            {cas.nombre_denunciante} · DNI {cas.dni_denunciante}
+            {cas.caratula || cas.nombre_denunciante}
+            {cas.dni_denunciante && ` · DNI ${cas.dni_denunciante}`}
           </p>
           <div className="flex items-center gap-3 mt-1 flex-wrap">
             <span className="text-[11px] flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
@@ -97,13 +98,14 @@ export function CaseCard({ cas, index, onResume }: { cas: Case; index: number; o
 
               <div className="grid grid-cols-2 gap-3 text-xs">
                 {[
-                  { label: "Fiscal",         value: cas.officer.name },
+                  { label: "Perito",         value: cas.perito?.nombre ?? cas.officer.name },
                   { label: "Unidad",         value: cas.officer.sigla },
-                  { label: "DNI Fiscal",     value: cas.officer.dni },
+                  { label: "Titular",        value: cas.nombre_denunciante || "—" },
                   { label: "Sistema op.",    value: cas.device.os_version || `Android ${cas.device.android_version}` },
+                  ...(cas.caratula ? [{ label: "Carátula", value: cas.caratula, full: true }] : []),
                   { label: "IMEI",           value: cas.device.imei || "—", full: true },
-                  { label: "Observaciones",  value: cas.observaciones,       full: true },
-                ].map(({ label, value, full }) => (
+                  ...(cas.observaciones ? [{ label: "Observaciones", value: cas.observaciones, full: true }] : []),
+                ].map(({ label, value, full }: { label: string; value: string; full?: boolean }) => (
                   <div key={label} className={full ? "col-span-2" : ""}>
                     <p className="section-label">{label}</p>
                     <p className="mt-1 break-words" style={{ color: "var(--text-primary)" }}>{value}</p>
@@ -114,7 +116,7 @@ export function CaseCard({ cas, index, onResume }: { cas: Case; index: number; o
               {isDone && (
                 <div className="rounded-md border p-3.5 space-y-3.5" style={{ border: "1px solid var(--border-accent)", background: "rgba(45,212,191,0.04)" }}>
                   <p className="section-label flex items-center gap-1.5">
-                    <Shield className="w-3 h-3" aria-hidden="true" /> Paquete forense
+                    <Shield className="w-3 h-3" aria-hidden="true" /> Paquete del informe
                   </p>
                   {cas.zip_password && (
                     <div className="flex items-start gap-2.5">
@@ -128,9 +130,22 @@ export function CaseCard({ cas, index, onResume }: { cas: Case; index: number; o
                   {cas.zip_hash && (
                     <div className="flex items-start gap-2.5">
                       <Hash className="w-3.5 h-3.5 text-teal-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
-                      <div>
-                        <p className="section-label">SHA-256 del ZIP</p>
+                      <div className="min-w-0">
+                        <p className="section-label">
+                          {(cas.schema_version ?? 0) >= 1
+                            ? "Hash SHA-256 del ZIP"
+                            : "Hash SHA-256 de la evidencia (sin el informe)"}
+                        </p>
                         <p className="font-mono text-[10px] break-all select-all mt-1" style={{ color: "var(--text-secondary)" }}>{cas.zip_hash}</p>
+                      </div>
+                    </div>
+                  )}
+                  {(cas.schema_version ?? 0) >= 1 && cas.report_hash && (
+                    <div className="flex items-start gap-2.5">
+                      <FileText className="w-3.5 h-3.5 text-teal-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                      <div className="min-w-0">
+                        <p className="section-label">Hash SHA-256 del informe</p>
+                        <p className="font-mono text-[10px] break-all select-all mt-1" style={{ color: "var(--text-secondary)" }}>{cas.report_hash}</p>
                       </div>
                     </div>
                   )}

@@ -100,7 +100,7 @@ const CONTRAST_PAIRS: { fg: string; bg: string; label: string; dark: string; lig
 const TYPE_SCALE = [
   { cls: "text-fx-display", label: "Display", sample: "Evidencia íntegra" },
   { cls: "text-fx-h1", label: "H1", sample: "Inspecciones del día" },
-  { cls: "text-fx-h2", label: "H2", sample: "Datos del expediente" },
+  { cls: "text-fx-h2", label: "H2", sample: "Datos de la causa" },
   { cls: "text-fx-h3", label: "H3", sample: "Dispositivo conectado" },
   { cls: "text-fx-body", label: "Body", sample: "El informe se firma con el hash de cada archivo capturado." },
   { cls: "text-fx-body-sm", label: "Body sm", sample: "Última sincronización hace 3 minutos." },
@@ -122,7 +122,7 @@ const SHADOWS = [
 
 const DEMO_CARDS = [
   { title: "Samsung Galaxy A54", meta: "Android 14 · 32 capturas", icon: Smartphone },
-  { title: "Expediente 1234/26", meta: "Informe PDF + ZIP cifrado", icon: FileText },
+  { title: "Causa 1234/26", meta: "Informe PDF + ZIP cifrado", icon: FileText },
   { title: "Configuración", meta: "Agente local en :8765", icon: Settings },
 ];
 
@@ -381,7 +381,7 @@ export function DesignSystemShowcase() {
           <Subsection title="InputText">
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <label htmlFor="ds-nombre" className="block text-fx-body-sm font-medium text-fx-text">Nombre del denunciante</label>
+                <label htmlFor="ds-nombre" className="block text-fx-body-sm font-medium text-fx-text">Titular del dispositivo</label>
                 <InputText id="ds-nombre" placeholder="Ej.: Juana Pérez" autoComplete="off" />
               </div>
               <div className="space-y-1.5">
@@ -405,8 +405,8 @@ export function DesignSystemShowcase() {
                 <p id="ds-invalid-msg" className="text-xs text-fx-danger">El IMEI tiene que tener 15 dígitos.</p>
               </div>
               <div className="space-y-1.5">
-                <label htmlFor="ds-disabled" className="block text-fx-body-sm font-medium text-fx-text-disabled">Fiscalía (deshabilitado)</label>
-                <InputText id="ds-disabled" defaultValue="Unidad Fiscal 3" disabled />
+                <label htmlFor="ds-disabled" className="block text-fx-body-sm font-medium text-fx-text-disabled">Tribunal (deshabilitado)</label>
+                <InputText id="ds-disabled" defaultValue="Tribunal de ejemplo" disabled />
               </div>
             </div>
           </Subsection>
@@ -474,7 +474,7 @@ export function DesignSystemShowcase() {
           intro="El Toaster global (sonner) usa el mismo esquema que el Toast de Prime. Los tooltips de base-ui pasan a superficie 3."
         >
           <div className="flex flex-wrap items-center gap-3">
-            <Button label="Éxito" severity="secondary" onClick={() => sonner.success("Captura guardada", { description: "Se agregó al expediente." })} />
+            <Button label="Éxito" severity="secondary" onClick={() => sonner.success("Captura guardada", { description: "Se agregó al caso." })} />
             <Button label="Info" severity="secondary" onClick={() => sonner.info("Hay una versión nueva", { description: "Recargá la página cuando termines." })} />
             <Button label="Advertencia" severity="secondary" onClick={() => sonner.warning("Sin dispositivo", { description: "Conectá el celular por USB." })} />
             <Button label="Error" severity="secondary" onClick={() => sonner.error("Falló la subida", { description: "El servidor no respondió." })} />

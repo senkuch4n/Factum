@@ -13,6 +13,21 @@ function getToken(): string | null {
   return localStorage.getItem("factum_token");
 }
 
+/**
+ * Error de la API. `missing` trae las claves de obligatorios faltantes
+ * (`{ error, missing }` del backend; ver `lib/pericial.ts`).
+ */
+export class ApiError extends Error {
+  status: number;
+  missing?: string[];
+  constructor(message: string, status: number, missing?: string[]) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.missing = missing;
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const res = await fetch(`${BACKEND_URL}${path}`, {
@@ -25,7 +40,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    const missing = Array.isArray(err?.missing) ? (err.missing as string[]) : undefined;
+    throw new ApiError(err?.error || `HTTP ${res.status}`, res.status, missing);
   }
   return res.json();
 }
@@ -34,6 +50,88 @@ export interface User {
   dni: string;
   name: string;
   sigla: string;
+}
+
+export type CaptureRoleValue = "imei_modelo" | "nombre_dispositivo";
+export type Tratamiento = "suscripto" | "suscripta";
+
+/** Copia del perfil del perito guardada en el caso (`perito`). */
+export interface PeritoSnapshot {
+  nombre: string;
+  matricula: string;
+  profesion: string;
+  caracter: string;
+  tratamiento: string;
+}
+
+/** Textos del paso "Informe" (`report_texts`). */
+export interface ReportTextsInput {
+  objeto_informe: string;
+  operaciones_realizadas: string;
+  aseguramiento_evidencia: string;
+  resultados: string;
+  valoracion_tecnica: string;
+  conclusiones: string;
+  notas_tecnicas: string;
+  reserva: string;
+}
+
+export interface ReportTexts extends ReportTextsInput {
+  updated_at?: string;
+}
+
+export interface CaptureRole {
+  filename: string;
+  role: CaptureRoleValue;
+}
+
+export interface FileSource {
+  filename: string;
+  source_path: string;
+}
+
+/** Perfil del perito (`GET`/`PUT /api/profile`). */
+export interface ExpertProfile {
+  dni: string;
+  nombre: string;
+  matricula: string;
+  profesion: string;
+  caracter: string;
+  tratamiento: string;
+  exists: boolean;
+  is_complete: boolean;
+  updated_at: string | null;
+}
+
+export interface ExpertProfileRequest {
+  nombre: string;
+  matricula: string;
+  profesion: string;
+  caracter: string;
+  tratamiento: Tratamiento;
+}
+
+/** Datos de la causa que viajan en `POST`/`PUT /api/cases` (sin `device`). */
+export interface CaseDataRequest {
+  nro_referencia: string;
+  nombre_denunciante: string;
+  dni_denunciante: string;
+  nombre_tribunal: string;
+  organismo_tribunal: string;
+  sala_tribunal: string;
+  integrantes_tribunal: string;
+  tipo_causa: string;
+  caratula: string;
+  parte_denunciante: string;
+  parte_denunciada: string;
+  objeto_causa: string;
+  ambito_causa: string;
+  fecha_intervencion: string;
+  nombre_proponente: string;
+  profesion_proponente: string;
+  matricula_proponente: string;
+  tipo_dispositivo: string;
+  linea_dispositivo: string;
 }
 
 export interface Case {
@@ -51,6 +149,30 @@ export interface Case {
   zip_password?: string;
   zip_filename?: string;
   pdf_filename?: string;
+  file_sources?: FileSource[];
+  /** 0 = caso previo al informe pericial; 1 = caso pericial. */
+  schema_version: number;
+  perito: PeritoSnapshot | null;
+  nombre_tribunal: string;
+  organismo_tribunal: string;
+  sala_tribunal: string;
+  integrantes_tribunal: string;
+  tipo_causa: string;
+  caratula: string;
+  parte_denunciante: string;
+  parte_denunciada: string;
+  objeto_causa: string;
+  ambito_causa: string;
+  fecha_intervencion: string;
+  nombre_proponente: string;
+  profesion_proponente: string;
+  matricula_proponente: string;
+  tipo_dispositivo: string;
+  linea_dispositivo: string;
+  /** `null` en el listado (el backend lo proyecta afuera); viene en `getCase`. */
+  report_texts: ReportTexts | null;
+  capture_roles: CaptureRole[];
+  report_hash: string | null;
 }
 
 /** Config pública del backend (`GET /api/config/public`, sin auth). */
@@ -68,6 +190,8 @@ export interface DeviceInput {
   imei: string;
   platform?: "android" | "ios";
   os_version?: string;
+  /** `device.name` del agente (referencia para la captura "Nombre del dispositivo"). */
+  name?: string;
 }
 
 export const api = {
@@ -89,18 +213,44 @@ export const api = {
     return data.user;
   },
 
-  async createCase(data: {
-    nro_referencia: string;
-    nombre_denunciante: string;
-    dni_denunciante: string;
-    observaciones: string;
-    device: DeviceInput;
-  }): Promise<Case> {
+  async createCase(data: CaseDataRequest & { device: DeviceInput }): Promise<Case> {
     return request<Case>("/api/cases", { method: "POST", body: JSON.stringify(data) });
   },
 
-  async getCase(id: string): Promise<{ case: Case; files: unknown[] }> {
+  /** Edita los datos de la causa (borrador o error). `imei` no vacío actualiza `device.imei`. */
+  async updateCase(id: string, data: CaseDataRequest & { imei?: string }): Promise<Case> {
+    return request<Case>(`/api/cases/${id}`, { method: "PUT", body: JSON.stringify(data) });
+  },
+
+  async getCase(id: string): Promise<{ cas: Case; files: unknown[] }> {
     return request(`/api/cases/${id}`);
+  },
+
+  async getProfile(): Promise<ExpertProfile> {
+    return request<ExpertProfile>("/api/profile");
+  },
+
+  async saveProfile(data: ExpertProfileRequest): Promise<ExpertProfile> {
+    return request<ExpertProfile>("/api/profile", { method: "PUT", body: JSON.stringify(data) });
+  },
+
+  async getReportTextDefaults(caseId: string): Promise<ReportTextsInput> {
+    return request<ReportTextsInput>(`/api/cases/${caseId}/report-texts/defaults`);
+  },
+
+  async saveReportTexts(caseId: string, data: ReportTextsInput): Promise<ReportTexts> {
+    return request<ReportTexts>(`/api/cases/${caseId}/report-texts`, { method: "PUT", body: JSON.stringify(data) });
+  },
+
+  /** Upsert por `filename`; `role: null` borra la marca. Devuelve el estado completo. */
+  async saveCaptureRoles(
+    caseId: string,
+    roles: { filename: string; role: CaptureRoleValue | null }[],
+  ): Promise<{ capture_roles: CaptureRole[] }> {
+    return request(`/api/cases/${caseId}/capture-roles`, {
+      method: "PUT",
+      body: JSON.stringify({ capture_roles: roles }),
+    });
   },
 
   /**
@@ -138,6 +288,7 @@ export const api = {
   async generateCase(caseId: string): Promise<{
     case: Case;
     zip_hash: string;
+    report_hash: string;
     password: string;
     files: { zip: string; pdf: string };
   }> {

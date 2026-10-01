@@ -3,9 +3,16 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, AlertCircle, Plus, Play, ChevronRight, ArrowLeft, Smartphone, X, HelpCircle, Sun, Moon } from "lucide-react";
-import { api, type DeviceInput } from "@/lib/api";
+import { api, ApiError, type DeviceInput } from "@/lib/api";
 import { agent } from "@/lib/agent";
-import type { Device, AgentEvent, Case, CaseFormData } from "@/types";
+import type { Device, AgentEvent, Case, CaseFormData, ProfileFormData } from "@/types";
+import {
+  CASE_MESSAGES, EMPTY_CASE_FORM, PROFILE_REQUIRED_KEYS, PROFILE_MESSAGES,
+  caseToForm, formToCaseRequest, isPhoneLike, prefillFromLastCase, profileErrorKey,
+  todayIso, validateCaseForm, validateProfile,
+} from "@/lib/pericial";
+import { useExpertProfile, profileToForm, sameProfile } from "@/hooks/useExpertProfile";
+import { ReportStep } from "@/components/ReportStep";
 import { useAuth } from "@/hooks/useAuth";
 import { useAgentConnection } from "@/hooks/useAgentConnection";
 import { useFileManager } from "@/hooks/useFileManager";
@@ -35,15 +42,24 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:808
 
 const STEPS = [
   { id: 1, label: "Dispositivo", sublabel: "Seleccionando dispositivo" },
-  { id: 2, label: "Expediente", sublabel: "Llenando datos" },
-  { id: 3, label: "Factum", sublabel: "Capturando" },
-  { id: 4, label: "Generar", sublabel: "Creando informe" },
-  { id: 5, label: "Listo", sublabel: "Resumiendo" },
+  { id: 2, label: "Causa", sublabel: "Datos de la causa" },
+  { id: 3, label: "Captura", sublabel: "Capturando" },
+  { id: 4, label: "Informe", sublabel: "Redactando" },
+  { id: 5, label: "Generar", sublabel: "Creando informe" },
+  { id: 6, label: "Listo", sublabel: "Resumiendo" },
 ];
 
-const EMPTY_FORM: CaseFormData = {
-  NroReferencia: "", NombreDenunciante: "", DNIDenunciante: "", Observaciones: "", imeiOverride: "",
-};
+const DEFAULT_TIPO_DISPOSITIVO = "Teléfono celular";
+
+/** Formulario de una causa nueva: precarga del último caso pericial + defaults (§8.2). */
+function newCaseForm(historyCases: Case[]): CaseFormData {
+  return {
+    ...EMPTY_CASE_FORM,
+    ...prefillFromLastCase(historyCases),
+    tipo_dispositivo: DEFAULT_TIPO_DISPOSITIVO,
+    fecha_intervencion: todayIso(),
+  };
+}
 
 export default function Dashboard() {
   const { isDark, toggle: toggleTheme } = useTheme();
@@ -56,10 +72,14 @@ export default function Dashboard() {
 
   // ── Device + case ────────────────────────────────────────────────
   const [selDevice, setSelDevice] = useState<Device | null>(null);
-  const [caseForm, setCaseForm] = useState<CaseFormData>(EMPTY_FORM);
+  const [caseForm, setCaseForm] = useState<CaseFormData>(EMPTY_CASE_FORM);
   const [caseErrors, setCaseErr] = useState<Record<string, string>>({});
+  const [focusErrorsTick, setFocusErrorsTick] = useState(0);
   const [currentCase, setCase] = useState<Case | null>(null);
-  const [result, setResult] = useState<{ zip: string; pdf: string; password: string; hash: string } | null>(null);
+  const [result, setResult] = useState<{ zip: string; pdf: string; password: string; hash: string; reportHash: string } | null>(null);
+  // Campo a enfocar al llegar a un paso (enlaces del checklist de "Generar").
+  const [focusFieldId, setFocusFieldId] = useState<string | null>(null);
+  const [generateMissing, setGenerateMissing] = useState<string[]>([]);
   const [isResuming, setIsResuming] = useState(false);
   const [resumePending, setResumePending] = useState<Case | null>(null);
   const [resumeConnected, setResumeConnected] = useState(false);
@@ -80,10 +100,16 @@ export default function Dashboard() {
   // ── Domain hooks ─────────────────────────────────────────────────
   const { user, historyCases, historyLoading, loadHistory, handleLogout } = useAuth();
 
+  // ── Perfil del perito (tarjeta del paso 2) ───────────────────────
+  const { profile, loading: profileLoading, save: saveProfile, reload: reloadProfile } = useExpertProfile();
+  const [profileForm, setProfileForm] = useState<ProfileFormData>(() => profileToForm(null));
+  useEffect(() => { setProfileForm(profileToForm(profile)); }, [profile]);
+  const isLegacyCase = !!currentCase && (currentCase.schema_version ?? 0) === 0;
+
   const {
     files, loading: fileLoading, videoVariants, pendingVariantFiles, pendingBlobs,
     addFile, addVideoVariant, markPendingVariant,
-    removeFile, handlePhotoBlob, handleUploadAndContinue, clearFiles,
+    removeFile, setCaptureRole, handlePhotoBlob, handleUploadAndContinue, clearFiles,
   } = useFileManager();
 
   const {
@@ -165,40 +191,88 @@ export default function Dashboard() {
     setDir(n > step ? 1 : -1);
     setStep(n); setStatus(""); setGlobal("");
     if (n !== 3) setDeviceOffline(false);
-  }, [step, setDeviceOffline]);
+    // Volver al paso 2 con el caso ya creado = modo edición con los datos guardados.
+    if (n === 2 && currentCase) {
+      setCaseErr({});
+      setCaseForm(f => ({ ...caseToForm(currentCase), imeiOverride: f.imeiOverride }));
+    }
+  }, [step, setDeviceOffline, currentCase]);
 
-  // ── Actions ──────────────────────────────────────────────────────
-  function validateCaseForm() {
-    const err: Record<string, string> = {};
-    if (!caseForm.NroReferencia.trim()) err.NroReferencia = "Ingresá el número de expediente";
-    if (!caseForm.NombreDenunciante.trim()) err.NombreDenunciante = "Ingresá el nombre del denunciante";
-    if (!caseForm.DNIDenunciante.trim()) err.DNIDenunciante = "Ingresá el DNI del denunciante";
-    setCaseErr(err);
-    return Object.keys(err).length === 0;
+  /** Va al paso `n` y enfoca `fieldId` cuando el paso monta (checklist de "Generar"). */
+  function goToField(n: number, fieldId: string) {
+    setFocusFieldId(fieldId);
+    go(n);
   }
 
-  async function handleCreateCase() {
-    if (!validateCaseForm() || !selDevice) return;
+  // ── Actions ──────────────────────────────────────────────────────
+  /** Errores del `missing` del servidor, con los mensajes del paso 2. */
+  function missingToErrors(missing: string[]): Record<string, string> {
+    const err: Record<string, string> = {};
+    missing.forEach(k => {
+      if (k === "perfil" || k === "perito") {
+        const pe = validateProfile(profileForm);
+        if (Object.keys(pe).length) Object.assign(err, pe);
+        else err[profileErrorKey("nombre")] = "Revisá tus datos de perito";
+      } else if ((PROFILE_REQUIRED_KEYS as readonly string[]).includes(k)) {
+        err[profileErrorKey(k as typeof PROFILE_REQUIRED_KEYS[number])] = PROFILE_MESSAGES[k as typeof PROFILE_REQUIRED_KEYS[number]];
+      } else if (k in CASE_MESSAGES) {
+        err[k] = CASE_MESSAGES[k as keyof typeof CASE_MESSAGES];
+      }
+    });
+    return err;
+  }
+
+  /** Paso 2: perfil (si cambió o está incompleto) → crear (POST) o editar (PUT) el caso. */
+  async function handleSaveCase() {
+    if (!selDevice) return;
+    const imeiManual = selDevice.imei === "INGRESAR_MANUALMENTE";
+    const localErr = { ...validateProfile(profileForm), ...validateCaseForm(caseForm, { imeiManual }) };
+    setCaseErr(localErr);
+    if (Object.keys(localErr).length > 0) { setFocusErrorsTick(t => t + 1); return; }
+
     setLoad("case", true); setGlobal("");
     try {
-      const cas = await api.createCase({
-        nro_referencia: caseForm.NroReferencia,
-        nombre_denunciante: caseForm.NombreDenunciante,
-        dni_denunciante: caseForm.DNIDenunciante,
-        observaciones: caseForm.Observaciones,
-        device: {
-          serial: selDevice.serial, manufacturer: selDevice.manufacturer,
-          model: selDevice.model, android_version: selDevice.android_version,
-          imei: caseForm.imeiOverride.trim() || selDevice.imei,
-          platform: selDevice.platform ?? "android",
-          os_version: selDevice.platform === "ios"
-            ? (selDevice.ios_version ?? String(selDevice.android_version))
-            : `Android ${selDevice.android_version}`,
-        } as DeviceInput,
-      });
-      setCase(cas); go(3);
-    } catch (e) { setGlobal(e instanceof Error ? e.message : "Error al crear el caso"); }
+      if (!profile?.is_complete || !sameProfile(profileForm, profileToForm(profile))) {
+        await saveProfile(profileForm);
+      }
+      const data = formToCaseRequest(caseForm);
+      const cas = currentCase
+        ? await api.updateCase(currentCase.id, { ...data, imei: imeiManual ? caseForm.imeiOverride.trim() : undefined })
+        : await api.createCase({
+            ...data,
+            device: {
+              serial: selDevice.serial, manufacturer: selDevice.manufacturer,
+              model: selDevice.model, android_version: selDevice.android_version,
+              imei: caseForm.imeiOverride.trim() || selDevice.imei,
+              platform: selDevice.platform ?? "android",
+              os_version: selDevice.platform === "ios"
+                ? (selDevice.ios_version ?? String(selDevice.android_version))
+                : `Android ${selDevice.android_version}`,
+              name: selDevice.name ?? "",
+            } as DeviceInput,
+          });
+      setCase(cas);
+      // Con el IMEI ya guardado en el caso, el equipo deja de pedirlo a mano.
+      if (imeiManual && cas.device?.imei && cas.device.imei !== "INGRESAR_MANUALMENTE") {
+        setSelDevice(d => (d ? { ...d, imei: cas.device.imei } : d));
+      }
+      go(3);
+    } catch (e) {
+      if (e instanceof ApiError && e.missing?.length) {
+        const err = missingToErrors(e.missing);
+        setCaseErr(err);
+        setFocusErrorsTick(t => t + 1);
+        if (Object.keys(err).length === 0) setGlobal(e.message);
+      } else {
+        setGlobal(e instanceof Error ? e.message : "Error al guardar el caso");
+      }
+    }
     finally { setLoad("case", false); }
+  }
+
+  /** Respuesta de `PUT capture-roles`: estado completo de las marcas del caso. */
+  function handleCaptureRolesSaved(roles: Case["capture_roles"]) {
+    setCase(c => (c ? { ...c, capture_roles: roles } : c));
   }
 
   async function handleScreenshot() {
@@ -230,11 +304,16 @@ export default function Dashboard() {
   async function handleGenerate() {
     if (!currentCase) return;
     setLoad("generate", true); setGlobal("");
+    setGenerateMissing([]);
     try {
       const res = await api.generateCase(currentCase.id);
-      setResult({ zip: res.files.zip, pdf: res.files.pdf, password: res.password, hash: res.zip_hash });
-      go(5);
-    } catch (e) { setGlobal(e instanceof Error ? e.message : "Error al generar el caso"); }
+      setResult({ zip: res.files.zip, pdf: res.files.pdf, password: res.password, hash: res.zip_hash, reportHash: res.report_hash });
+      setCase(res.case);
+      go(6);
+    } catch (e) {
+      if (e instanceof ApiError && e.missing?.length) setGenerateMissing(e.missing);
+      setGlobal(e instanceof Error ? e.message : "Error al generar el caso");
+    }
     finally { setLoad("generate", false); }
   }
 
@@ -242,33 +321,60 @@ export default function Dashboard() {
     clearFiles(); resetRecording(); resetShotSession();
     setStep(1); setDir(1);
     setSelDevice(null); setCase(null); setResult(null);
-    setCaseForm(EMPTY_FORM); setStatus(""); setGlobal("");
-    setIsResuming(false);
+    setCaseForm(EMPTY_CASE_FORM); setCaseErr({}); setStatus(""); setGlobal("");
+    setIsResuming(false); setFocusFieldId(null); setGenerateMissing([]);
     if (!opts.keepMode) { loadHistory(); setMode("history"); }
   }
 
-  // Salir del wizard: en pasos con evidencia en curso (2–4) pedimos confirmación,
+  // Salir del wizard: en pasos con evidencia en curso (2–5) pedimos confirmación,
   // porque los archivos capturados no se guardan en el servidor.
   const [exitConfirm, setExitConfirm] = useState(false);
   function attemptExitWizard() {
-    if (step >= 2 && step <= 4) setExitConfirm(true);
+    if (step >= 2 && step <= 5) setExitConfirm(true);
     else resetWizard();
   }
 
-  function startWizard() { resetWizard({ keepMode: true }); setMode("wizard"); }
+  function startWizard() {
+    resetWizard({ keepMode: true });
+    setCaseForm(newCaseForm(historyCases));
+    void reloadProfile();
+    setMode("wizard");
+  }
+
+  /** Paso 1 → 2. En un caso nuevo, la línea sale del agente solo si parece un número (iOS). */
+  function handleSelectDevice(d: Device) {
+    setSelDevice(d);
+    if (!currentCase && d.platform === "ios" && isPhoneLike(d.operator)) {
+      setCaseForm(f => (f.linea_dispositivo ? f : { ...f, linea_dispositivo: d.operator.trim() }));
+    }
+    go(2);
+  }
 
   function proceedResume(cas: Case) {
     clearFiles(); resetRecording(); resetShotSession();
-    setCase(cas); setResult(null);
+    setCase(cas); setResult(null); setCaseErr({}); setFocusFieldId(null); setGenerateMissing([]);
     setSelDevice({
       serial: cas.device.serial, state: "device",
       manufacturer: cas.device.manufacturer, model: cas.device.model,
       android_version: cas.device.android_version, imei: cas.device.imei,
-      name: cas.device.model, operator: "",
+      name: cas.device.name || cas.device.model, operator: "",
       platform: (cas.device.platform as "android" | "ios") ?? "android",
       ios_version: undefined,
     });
-    setDir(1); setStep(3); setStatus(""); setGlobal("");
+    const legacy = (cas.schema_version ?? 0) === 0;
+    if (legacy) {
+      // Borrador previo al informe pericial: se completa la causa antes de seguir (§8.9).
+      setCaseForm({
+        ...newCaseForm(historyCases),
+        nro_referencia: cas.nro_referencia ?? "",
+        nombre_denunciante: cas.nombre_denunciante ?? "",
+        dni_denunciante: cas.dni_denunciante ?? "",
+      });
+      void reloadProfile();
+    } else {
+      setCaseForm(caseToForm(cas));
+    }
+    setDir(1); setStep(legacy ? 2 : 3); setStatus(""); setGlobal("");
     setIsResuming(true); setMode("wizard");
     setResumePending(null); setResumeConnected(false);
   }
@@ -553,7 +659,7 @@ export default function Dashboard() {
                     <StepIndicator
                       steps={STEPS}
                       current={step}
-                      minJumpable={currentCase ? 3 : 1}
+                      minJumpable={result ? 6 : currentCase ? 2 : 1}
                       onSelect={go}
                     />
                   </div>
@@ -631,7 +737,7 @@ export default function Dashboard() {
                               devices={devices}
                               agentOnline={agentOnline}
                               loading={loadingDev}
-                              onSelect={d => { setSelDevice(d); go(2); }}
+                              onSelect={handleSelectDevice}
                               onRefresh={refreshDevices}
                               onOpenGuide={() => setGuideOpen(true)}
                             />
@@ -642,11 +748,21 @@ export default function Dashboard() {
                               device={selDevice}
                               form={caseForm}
                               errors={caseErrors}
-                              loading={loading.case}
+                              loading={!!loading.case}
+                              mode={currentCase ? "edit" : "create"}
+                              isLegacy={isLegacyCase}
+                              profile={profile}
+                              profileLoading={profileLoading}
+                              profileForm={profileForm}
+                              focusErrorsTick={focusErrorsTick}
+                              focusFieldId={focusFieldId}
+                              onFocusConsumed={() => setFocusFieldId(null)}
                               onChange={f => setCaseForm(f)}
+                              onProfileChange={setProfileForm}
                               onClearError={key => setCaseErr(er => ({ ...er, [key]: "" }))}
                               onBack={() => go(1)}
-                              onSubmit={handleCreateCase}
+                              onCancel={() => go(3)}
+                              onSubmit={handleSaveCase}
                             />
                           )}
 
@@ -669,12 +785,18 @@ export default function Dashboard() {
                                 handleSelectIosMode(m, selDevice, setGlobal);
                               }}
                               onCancelIosMode={() => setIosModePicker(false)}
-                              onPhotoFuncionario={(blob, fn) => { handlePhotoBlob(blob, fn); api.reportAgentEvent("webcam", currentCase?.id); }}
-                              onPhotoDenunciante={(blob, fn) => { handlePhotoBlob(blob, fn); api.reportAgentEvent("webcam", currentCase?.id); }}
-                              denuncianteNombre={currentCase?.nombre_denunciante ?? caseForm.NombreDenunciante}
-                              denuncianteDni={currentCase?.dni_denunciante ?? caseForm.DNIDenunciante}
+                              onPhotoPerito={(blob, fn) => { handlePhotoBlob(blob, fn); api.reportAgentEvent("webcam", currentCase?.id); }}
+                              onPhotoTitular={(blob, fn) => { handlePhotoBlob(blob, fn); api.reportAgentEvent("webcam", currentCase?.id); }}
+                              titularNombre={currentCase?.nombre_denunciante ?? caseForm.nombre_denunciante}
+                              titularDni={currentCase?.dni_denunciante ?? caseForm.dni_denunciante}
+                              captureRoles={currentCase?.capture_roles ?? []}
+                              onSetCaptureRole={(name, role) => setCaptureRole(name, role, {
+                                caseId: currentCase?.id,
+                                onSaved: handleCaptureRolesSaved,
+                                onError: setGlobal,
+                              })}
                               onUploadAndContinue={() =>
-                                handleUploadAndContinue(currentCase!, () => go(4), setGlobal, setStatus)
+                                handleUploadAndContinue(currentCase!, () => go(4), setGlobal, setStatus, handleCaptureRolesSaved)
                               }
                               loading={loading}
                               deviceOffline={deviceOffline}
@@ -704,22 +826,36 @@ export default function Dashboard() {
                           )}
 
                           {step === 4 && currentCase && (
+                            <ReportStep
+                              caseId={currentCase.id}
+                              focusFieldId={focusFieldId}
+                              onFocusConsumed={() => setFocusFieldId(null)}
+                              onSaved={texts => setCase(c => (c ? { ...c, report_texts: texts } : c))}
+                              onBack={() => go(3)}
+                              onContinue={() => go(5)}
+                            />
+                          )}
+
+                          {step === 5 && currentCase && (
                             <GenerateStep
                               currentCase={currentCase}
                               files={files}
                               loading={!!loading.generate}
-                              onBack={() => go(3)}
+                              serverMissing={generateMissing}
+                              onBack={() => go(4)}
                               onGenerate={handleGenerate}
+                              onGoToField={goToField}
                             />
                           )}
 
-                          {step === 5 && result && currentCase && (
+                          {step === 6 && result && currentCase && (
                             <ResultStep
                               caseNumber={currentCase.nro_referencia}
                               zipFile={result.zip}
                               pdfFile={result.pdf}
                               password={result.password}
                               hash={result.hash}
+                              reportHash={result.reportHash}
                               caseId={currentCase.id}
                               backendURL={BACKEND_URL}
                               onNewCase={() => resetWizard()}

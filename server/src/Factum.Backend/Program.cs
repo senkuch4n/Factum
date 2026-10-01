@@ -7,6 +7,7 @@ using Factum.Backend.Models;
 using Factum.Backend.Services.Auth;
 using Factum.Backend.Services.Branding;
 using Factum.Backend.Services.Cases;
+using Factum.Backend.Services.Profile;
 using Factum.Backend.Services.Reports;
 using Factum.Backend.Services.Support;
 using Microsoft.AspNetCore.Authentication;
@@ -53,6 +54,7 @@ builder.Services.Configure<FaroIntegrationOptions>(builder.Configuration.GetSect
 builder.Services.Configure<Factum.Backend.Controllers.AuditOptions>(builder.Configuration.GetSection("Audit"));
 builder.Services.Configure<Factum.Backend.Services.Updates.TatanaUpdatesOptions>(builder.Configuration.GetSection("TatanaUpdates"));
 builder.Services.Configure<BrandingOptions>(builder.Configuration.GetSection("Branding"));
+builder.Services.Configure<ReportOptions>(builder.Configuration.GetSection("Report"));
 
 // ── Serialización ─────────────────────────────────────────────────────────────
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -92,6 +94,8 @@ builder.Services.AddSingleton<ICaseRepository, CaseRepository>();
 builder.Services.AddSingleton<IAgentEventRepository, AgentEventRepository>();
 builder.Services.AddSingleton<IStorageService, StorageService>();
 builder.Services.AddSingleton<IBrandingService, BrandingService>();
+builder.Services.AddSingleton<IReportSettings, ReportSettings>();
+builder.Services.AddSingleton<IExpertProfileRepository, ExpertProfileRepository>();
 
 // ── Auth provider (dev o MPF según config) ────────────────────────────────────
 var authMode = builder.Configuration["Auth:Mode"] ?? "dev";
@@ -107,6 +111,7 @@ builder.Services.AddSingleton<IAuthService, AuthService>();
 
 // ── Servicios de negocio ──────────────────────────────────────────────────────
 builder.Services.AddSingleton<IReportService, ReportService>();
+builder.Services.AddScoped<IExpertProfileService, ExpertProfileService>();
 builder.Services.AddScoped<ICaseService, CaseService>();
 builder.Services.AddHttpClient<ISupportService, SupportService>();
 builder.Services.AddHttpClient<Factum.Backend.Services.Updates.ITatanaUpdatesService,
@@ -137,6 +142,8 @@ var app = builder.Build();
 // Branding se carga una sola vez; resolverlo acá hace que sus warnings (logo inválido,
 // textos truncados) salgan en el log de arranque y no en el primer request.
 app.Services.GetRequiredService<IBrandingService>();
+// Ídem la config del informe (zona horaria, domicilio, textos por defecto).
+app.Services.GetRequiredService<IReportSettings>();
 
 app.UseForwardedHeaders();
 app.UseCors();
