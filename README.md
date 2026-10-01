@@ -3,7 +3,7 @@
 Sistema de adquisición forense de evidencia digital para dispositivos móviles.
 Permite a un perito u operador crear un expediente, conectar un celular
 (Android o iOS) por USB, capturar evidencia (fotos, video de pantalla,
-capturas) y generar un informe forense (DOCX) + un paquete ZIP cifrado con
+capturas) y generar un informe forense (DOCX) + un paquete ZIP cifrado (AES-256) con
 hash, todo sin que la evidencia original salga del dispositivo del usuario
 hacia un servidor de terceros. El informe sale con la identidad de la
 organización que lo emite (ver
@@ -48,7 +48,7 @@ El proyecto tiene 4 partes que corren por separado:
   opcional de soporte está habilitada).
 - **`server/src/Factum.Backend`** — API en ASP.NET Core (.NET 10) +
   MongoDB. Autenticación JWT, gestión de casos/expedientes, generación de
-  informes (DOCX + ZIP cifrado), y el cliente HTTP de la integración
+  informes (DOCX + ZIP cifrado AES-256), y el cliente HTTP de la integración
   opcional de soporte (Faro).
 - **`server/src/Factum.Agent`** ("Tatana") — Un segundo servicio ASP.NET
   Core que **corre en la PC del oficial**, no en el servidor. Se comunica con
@@ -347,6 +347,7 @@ es propio del estudio va en la sección `Report` del backend:
 | `Report:TimeZone` | Zona IANA de la fecha y hora de la inspección (default `America/Argentina/Buenos_Aires`). Si no existe en el sistema, se loguea un warning y se usa UTC-03:00 fijo. |
 | `Report:DomicilioConstituido` | Domicilio constituido del perito, para la presentación ("…, con domicilio constituido en …"). Máx. 300 caracteres. Vacío = la frase se omite. |
 | `Report:DefaultTexts:OperacionesRealizadas` / `AseguramientoEvidencia` / `NotasTecnicas` / `Reserva` | Textos por defecto propios del estudio para el paso Informe. Vacío = el texto neutro versionado en `Services/Reports/ReportDefaultTexts.cs`. Admiten los tokens `{fechaInspeccion}`, `{horaInspeccion}`, `{tipoDispositivo}`, `{marcaModeloDispositivo}`, `{imeiDispositivo}`, `{sistemaOperativo}`, `{zonaHoraria}`, `{elSuscripto}` y `{cantidadCapturas}`/`{cantidadGrabaciones}`/`{cantidadArchivosExtraidos}`/`{cantidadOtros}`. |
+| `Report:EncryptZip` | Cifra el ZIP de evidencia con AES-256 (formato WinZip AE-2) y una contraseña aleatoria por caso (default `true`; variable de entorno `Report__EncryptZip`). Con `false` el ZIP sale sin cifrar y sin contraseña, el backend loguea un warning al arrancar y `GET /api/config/public` devuelve `encrypt_zip: false` para que el wizard no prometa cifrado. El texto por defecto de aseguramiento de la evidencia cambia según este valor; si se define `Report:DefaultTexts:AseguramientoEvidencia`, ese texto **gana en los dos modos** y el estudio es responsable de que hable (o no) del cifrado. |
 
 Como con `Branding`, **el domicilio real no va al repo**: va en
 `appsettings.Local.json` (ignorado por git) o en `Report__DomicilioConstituido`.
@@ -362,10 +363,23 @@ La config se lee una sola vez al arrancar. Ejemplo (valores ficticios):
 ```
 
 **Hashes:** el ZIP de evidencia se cierra antes de generar el informe y no se
-vuelve a abrir, así que el hash del ZIP que figura en la tabla del informe es
-el del ZIP que se descarga. El DOCX va aparte (no dentro del ZIP) y su SHA-256
-se guarda en el caso (`report_hash`); el informe no puede contener su propio
-hash.
+vuelve a escribir, así que el hash del ZIP que figura en la tabla del informe es
+el del ZIP que se descarga: el del archivo **cifrado** final, que se puede
+verificar (`shasum -a 256`) sin la contraseña. Antes de borrar los archivos
+sueltos, el backend reabre el ZIP en solo lectura con la contraseña y compara el
+SHA-256 de cada entrada con el del original; si algo no coincide, la generación
+falla, los sueltos se conservan y el caso se puede reintentar. AES-ZIP usa sal
+aleatoria por entrada, así que el mismo contenido da otro hash del ZIP en cada
+generación (no es reproducible; un caso generado no se regenera). El DOCX va
+aparte (no dentro del ZIP) y su SHA-256 se guarda en el caso (`report_hash`); el
+informe no puede contener su propio hash.
+
+**Contraseña del ZIP:** no figura en el informe ni en las respuestas del caso
+(`zip_password` no se serializa). Se devuelve una vez en
+`POST /api/cases/{id}/generate` (`password`, `null` si no se cifró) y después
+solo al dueño del caso por `GET /api/cases/{id}/zip-password`
+(`{ "password": "…" }`, `Cache-Control: no-store`; 403 para un caso ajeno, 404
+si el caso no tiene un ZIP cifrado).
 
 **Regenerar la plantilla v4** (por ejemplo, si cambia la plantilla de origen):
 ver `ops/plantilla/README.md`.
@@ -474,4 +488,5 @@ el arranque del wizard reportan al backend quién (DNI), desde qué PC
   correr en la PC del oficial, con acceso físico al USB — por diseño no
   forman parte de `docker-compose.yml`.
 - La evidencia capturada (fotos/video) no se sube a ningún servidor externo
-  fuera de este sistema; el ZIP final queda cifrado con contraseña.
+  fuera de este sistema; el ZIP final queda cifrado con AES-256 y su
+  contraseña se entrega por separado.

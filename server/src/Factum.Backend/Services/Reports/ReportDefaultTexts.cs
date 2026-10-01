@@ -18,8 +18,13 @@ public static class ReportDefaultTexts
         "- Otros archivos incorporados (fotografías y adjuntos): {cantidadOtros}.\n" +
         "Las operaciones se limitaron a la visualización, captura y copia de la información accesible desde la interfaz del dispositivo, sin modificar intencionalmente su contenido. A cada archivo obtenido se le calculó su valor hash mediante el algoritmo SHA-256.";
 
-    public const string AseguramientoEvidencia =
+    // Texto histórico, sin cambios: se usa con Report:EncryptZip=false.
+    public const string AseguramientoEvidenciaSinCifrar =
         "Cada archivo obtenido durante la inspección fue identificado con un nombre único y se le calculó su valor hash mediante el algoritmo SHA-256. Los archivos se agruparon en un contenedor ZIP, cuyo valor hash SHA-256 se calculó una vez cerrado el contenedor. Los valores obtenidos se detallan en la tabla siguiente y permiten verificar, en cualquier momento posterior, que la evidencia no fue alterada.";
+
+    // Report:EncryptZip=true (default). Ver Refactorizaciones/zip-cifrado-real.md §5.6.
+    public const string AseguramientoEvidenciaCifrado =
+        "Cada archivo obtenido durante la inspección fue identificado con un nombre único y se le calculó su valor hash mediante el algoritmo SHA-256. Los archivos se agruparon en un contenedor ZIP cifrado con el algoritmo AES-256 (formato WinZip AE-2) y protegido con una contraseña generada aleatoriamente para este caso, que no figura en el presente informe y se entrega por un canal separado. Antes de eliminar las copias de trabajo, se verificó que el contenedor cifrado se abre con esa contraseña y que cada archivo contenido conserva su valor hash original. El valor hash SHA-256 del contenedor se calculó sobre el archivo cifrado, una vez cerrado, por lo que puede verificarse sin necesidad de la contraseña. El contenedor se abre con herramientas de compresión de uso habitual como 7-Zip, WinRAR, Keka o The Unarchiver; algunos exploradores de archivos integrados en el sistema operativo no admiten este tipo de cifrado. Los valores obtenidos se detallan en la tabla siguiente y permiten verificar, en cualquier momento posterior, que la evidencia no fue alterada.";
 
     public const string NotasTecnicas =
         "Los valores hash se expresan en notación hexadecimal y fueron calculados con el algoritmo SHA-256. Cualquier modificación de un archivo, por mínima que sea, produce un valor hash distinto.\n" +

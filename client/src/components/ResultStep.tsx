@@ -1,8 +1,9 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
-import { Archive, FileText, Key, Hash, RotateCcw, ShieldCheck, CheckCircle2, Sparkles } from "lucide-react";
+import { Archive, FileText, Key, Hash, RotateCcw, ShieldCheck, CheckCircle2, Sparkles, Lock } from "lucide-react";
 import { api } from "@/lib/api";
+import { CopyButton } from "@/components/ui/CopyButton";
 import { DottedGlowBackground } from "@/components/ui/dotted-glow-background";
 import { useTheme } from "@/lib/theme";
 
@@ -10,7 +11,10 @@ interface Props {
   caseNumber: string;
   zipFile: string;
   pdfFile: string;
-  password: string;
+  /** Contraseña del ZIP; `null` si el ZIP se generó sin cifrar. Vive solo en memoria. */
+  password: string | null;
+  /** `true` solo si el ZIP salió cifrado (`case.zip_encrypted === true`). */
+  encrypted: boolean;
   /** SHA-256 del ZIP de evidencia (el que figura en el informe). */
   hash: string;
   /** SHA-256 del DOCX generado. */
@@ -20,10 +24,18 @@ interface Props {
   onNewCase: () => void;
 }
 
-export function ResultStep({ caseNumber, zipFile, pdfFile, password, hash, reportHash, caseId, backendURL, onNewCase }: Props) {
+export function ResultStep({ caseNumber, zipFile, pdfFile, password, encrypted, hash, reportHash, caseId, backendURL, onNewCase }: Props) {
   const downloadURL = (file: string) => api.downloadURL(caseId, file);
   const prefersReducedMotion = useReducedMotion();
   const { isDark } = useTheme();
+  // Solo se muestra si el ZIP salió cifrado y vino la contraseña.
+  const zipPassword = encrypted && password ? password : null;
+  const checks = [
+    "Hash SHA-256 por archivo",
+    "Hash del ZIP verificable",
+    ...(encrypted ? ["ZIP cifrado con AES-256"] : []),
+    "Informe pericial generado",
+  ];
 
   return (
     <div className="relative overflow-hidden">
@@ -90,16 +102,29 @@ export function ResultStep({ caseNumber, zipFile, pdfFile, password, hash, repor
           <ShieldCheck className="w-3 h-3" aria-hidden="true" /> Datos que te van a ser útiles
         </p>
 
-        <div className="flex items-start gap-3">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.25)" }}>
-            <Key className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+        {zipPassword && (
+          <div className="flex items-start gap-3">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.25)" }}>
+              <Key className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <p className="section-label">Contraseña del ZIP</p>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <p
+                  translate="no"
+                  className="font-mono text-base font-bold select-all break-all"
+                  style={{ color: "var(--text-primary)" }}
+                >
+                  {zipPassword}
+                </p>
+                <CopyButton text={zipPassword} label="Copiar contraseña del ZIP" />
+              </div>
+              <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+                Sin esta contraseña la evidencia no se puede abrir. Entregala por un canal distinto al del ZIP (no en el mismo correo ni en el mismo pendrive).
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="section-label">Contraseña del ZIP</p>
-            <p className="font-mono text-base font-bold mt-1 select-all" style={{ color: "var(--text-primary)" }}>{password}</p>
-            <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>Guardala por seguridad</p>
-          </div>
-        </div>
+        )}
 
         <div className="flex items-start gap-3">
           <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(45,212,191,0.12)", border: "1px solid rgba(45,212,191,0.25)" }}>
@@ -127,7 +152,7 @@ export function ResultStep({ caseNumber, zipFile, pdfFile, password, hash, repor
 
         {/* Checks */}
         <div className="grid grid-cols-2 gap-2 pt-1">
-          {["Hash SHA-256 por archivo", "Hash del ZIP verificable", "Informe pericial generado"].map(t => (
+          {checks.map(t => (
             <div key={t} className="flex items-center gap-2 text-[11px]" style={{ color: "var(--text-secondary)" }}>
               <CheckCircle2 className="w-3 h-3 text-emerald-400 flex-shrink-0" aria-hidden="true" /> {t}
             </div>
@@ -146,6 +171,7 @@ export function ResultStep({ caseNumber, zipFile, pdfFile, password, hash, repor
           href={downloadURL(zipFile)}
           className="btn btn-primary flex-col h-20 gap-2 rounded-lg text-sm"
           whileTap={{ scale: 0.97 }}
+          aria-describedby={encrypted ? "result-zip-compat" : undefined}
         >
           <Archive className="w-6 h-6" aria-hidden="true" />
           <div>
@@ -165,6 +191,19 @@ export function ResultStep({ caseNumber, zipFile, pdfFile, password, hash, repor
             <div className="text-[11px] opacity-70 font-normal">Informe pericial (.docx)</div>
           </div>
         </motion.a>
+
+        {encrypted && (
+          <p
+            id="result-zip-compat"
+            className="col-span-2 flex items-start gap-2 text-left text-[11px] leading-relaxed"
+            style={{ color: "var(--text-muted)" }}
+          >
+            <Lock className="mt-0.5 h-3 w-3 flex-shrink-0" aria-hidden="true" />
+            <span>
+              Cifrado AES-256. Se abre con 7-Zip o WinRAR (Windows) y con Keka o The Unarchiver (macOS). El Explorador de Windows y la Utilidad de Archivo de macOS no lo abren.
+            </span>
+          </p>
+        )}
       </motion.div>
 
       <motion.button

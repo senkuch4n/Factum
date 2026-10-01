@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -17,12 +16,14 @@ namespace Factum.Backend.Services.Reports;
 
 /// <summary>
 /// Resultado de la generación. <c>PdfPath</c>/<c>PdfFilename</c> conservan el nombre histórico
-/// pero apuntan al DOCX. <c>ZipHash</c> es el SHA-256 del ZIP que se descarga (el DOCX ya no va
-/// adentro) y <c>ReportHash</c> el del DOCX.
+/// pero apuntan al DOCX. <c>ZipHash</c> es el SHA-256 del ZIP (cifrado, si corresponde) que se
+/// descarga (el DOCX ya no va adentro) y <c>ReportHash</c> el del DOCX. <c>Password</c> es null
+/// si el ZIP no se cifró (<c>Report:EncryptZip=false</c>).
 /// </summary>
 public sealed record ReportResult(
     string ZipPath, string ZipFilename, string ZipHash,
-    string Password, string PdfPath, string PdfFilename, string ReportHash);
+    string? Password, bool ZipEncrypted, string? ZipEncryption,
+    string PdfPath, string PdfFilename, string ReportHash);
 
 public interface IReportService
 {
@@ -79,23 +80,54 @@ public sealed class ReportService(IBrandingService branding, IReportSettings set
             .OrderBy(f => f.Name, StringComparer.Ordinal)
             .ToList();
 
-        // 3. SHA-256 de cada archivo.
-        var password = GeneratePassword();
+        // 3. Contraseña (solo si se cifra) y SHA-256 de cada archivo, calculados ANTES de zipear:
+        // son los de la tabla del informe y contra los que se verifica el ZIP en el paso 6.
+        var password = settings.EncryptZip ? GeneratePassword() : null;
         var hashes = await BuildHashesAsync(evidence, caseDir);
-
-        // 4. ZIP solo con la evidencia. Se cierra acá y NO se vuelve a abrir: el hash que
-        // figura en el informe es el del ZIP que se descarga.
         var evidencePaths = evidence.Select(f => Path.Combine(caseDir, f.Name)).Where(File.Exists).ToList();
-        await CreateZipAsync(zipPath, evidencePaths, ct);
-        var zipHash = await Sha256Async(zipPath);
+        var expected = evidencePaths
+            .Select(Path.GetFileName)
+            .ToDictionary(n => n!, n => hashes[n!], StringComparer.Ordinal);
 
-        // 5. DOCX con el hash del ZIP en la tabla. 6. Hash del DOCX ya cerrado (el informe no
-        // puede contener su propio hash: lo muestran ResultStep y CaseCard).
-        await GenerateDocxAsync(cas, evidence, hashes, docxPath, caseDir, zipFilename, zipHash,
-            branding.Current, ct);
-        var reportHash = await Sha256Async(docxPath);
+        string zipHash, reportHash;
+        try
+        {
+            // 4. ZIP solo con la evidencia, cifrado AES-256 si hay contraseña (§5.3).
+            await EvidenceZip.WriteAsync(zipPath, evidencePaths, password, ct);
 
-        // 7. Los archivos sueltos se borran: quedan dentro del ZIP.
+            // 5. Hash del ZIP final (cifrado), ya cerrado: es el que figura en el informe y se
+            // puede verificar sin la contraseña. AES-ZIP usa sal e IV aleatorios por entrada, así
+            // que el mismo contenido da otro hash en cada generación; no importa porque un caso
+            // Completed no se regenera (409).
+            zipHash = await Sha256Async(zipPath);
+
+            // 6. Verificación (D6): se reabre en solo lectura con la contraseña y se compara el
+            // SHA-256 de cada entrada con el del original. Al ser solo lectura, zipHash no cambia.
+            await EvidenceZip.VerifyAsync(zipPath, expected, password, ct);
+
+            // 7. DOCX con el hash del ZIP en la tabla. 8. Hash del DOCX ya cerrado (el informe no
+            // puede contener su propio hash: lo muestran ResultStep y CaseCard).
+            await GenerateDocxAsync(cas, evidence, hashes, docxPath, caseDir, zipFilename, zipHash,
+                branding.Current, ct);
+            reportHash = await Sha256Async(docxPath);
+        }
+        catch
+        {
+            // Solo los dos artefactos de ESTE intento. Los archivos sueltos de la evidencia no se
+            // tocan: con el caso en Error, el perito puede reintentar.
+            foreach (var artifact in new[] { zipPath, docxPath })
+            {
+                try { if (File.Exists(artifact)) File.Delete(artifact); }
+                catch (Exception cleanupEx)
+                {
+                    logger.LogWarning(cleanupEx, "No se pudo borrar {File} tras un error de generación",
+                        Path.GetFileName(artifact));
+                }
+            }
+            throw;
+        }
+
+        // 9. Recién con el ZIP verificado se borran los archivos sueltos: quedan dentro del ZIP.
         foreach (var f in evidence)
         {
             var fp = Path.Combine(caseDir, f.Name);
@@ -103,6 +135,8 @@ public sealed class ReportService(IBrandingService branding, IReportSettings set
         }
 
         return new ReportResult(zipPath, zipFilename, zipHash, password,
+            ZipEncrypted: password is not null,
+            ZipEncryption: password is null ? null : EvidenceZip.EncryptionAes256Ae2,
             docxPath, Path.GetFileName(docxPath), reportHash);
     }
 
@@ -1072,25 +1106,6 @@ public sealed class ReportService(IBrandingService branding, IReportSettings set
         var sep = OperatingSystem.IsWindows() ? ';' : ':';
         var paths = Environment.GetEnvironmentVariable("PATH")?.Split(sep) ?? [];
         return paths.Any(dir => File.Exists(Path.Combine(dir, exe)));
-    }
-
-    // ── ZIP ───────────────────────────────────────────────────────────────────
-
-    private static async Task CreateZipAsync(string zipPath, IEnumerable<string> filePaths,
-        CancellationToken ct)
-    {
-        await using var fs = File.Create(zipPath);
-        using var archive = new ZipArchive(fs, ZipArchiveMode.Create, leaveOpen: false);
-
-        foreach (var filePath in filePaths.Where(File.Exists))
-        {
-            ct.ThrowIfCancellationRequested();
-            var entry = archive.CreateEntry(Path.GetFileName(filePath), CompressionLevel.Optimal);
-            entry.LastWriteTime = DateTimeOffset.UtcNow;
-            await using var entryStream = entry.Open();
-            await using var fileStream = File.OpenRead(filePath);
-            await fileStream.CopyToAsync(entryStream, ct);
-        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

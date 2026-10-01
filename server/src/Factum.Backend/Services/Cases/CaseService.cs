@@ -27,6 +27,9 @@ public interface ICaseService
         CancellationToken ct = default);
     Task<Result<GenerateResponse>> GenerateAsync(string id, string officerDni,
         CancellationToken ct = default);
+    /// <summary>Contraseña del ZIP cifrado de un caso propio (GET …/zip-password).</summary>
+    Task<Result<ZipPasswordResponse>> GetZipPasswordAsync(string id, string officerDni,
+        CancellationToken ct = default);
     Task<Result<(string Path, string ContentType, string FileName)>> DownloadAsync(
         string id, string filename, string officerDni, CancellationToken ct = default);
 }
@@ -351,8 +354,9 @@ public sealed class CaseService : ICaseService
             var result = await _reports.GenerateAsync(cas, files, caseDir, ct);
             var now = DateTime.UtcNow;
 
-            await _repo.UpdateGeneratedAsync(id, now, result.Password, result.ZipHash,
-                result.ZipFilename, result.PdfFilename, result.ReportHash, ct);
+            await _repo.UpdateGeneratedAsync(id, now, result.Password, result.ZipEncrypted,
+                result.ZipEncryption, result.ZipHash, result.ZipFilename, result.PdfFilename,
+                result.ReportHash, ct);
 
             cas = (await _repo.FindByIdAsync(id, ct))!;
             return Result.Ok(new GenerateResponse(
@@ -365,6 +369,23 @@ public sealed class CaseService : ICaseService
             await _repo.UpdateStatusAsync(id, CaseStatus.Error, ct);
             return Result.Fail<GenerateResponse>($"Error generando informe: {ex.Message}");
         }
+    }
+
+    public const string NoEncryptedZipMessage = "Este caso no tiene un ZIP cifrado";
+
+    // Único lugar (además de la respuesta de generate) por donde sale la contraseña. Caso ajeno
+    // → 403 como el resto de los endpoints del caso (P1-A). Casos viejos (D8) o generados con
+    // EncryptZip=false → 404. No se loguea nada.
+    public async Task<Result<ZipPasswordResponse>> GetZipPasswordAsync(string id, string officerDni,
+        CancellationToken ct = default)
+    {
+        var (cas, error) = await LoadOwnedAsync<ZipPasswordResponse>(id, officerDni, ct);
+        if (cas is null) return error!;
+
+        if (cas.Status != CaseStatus.Completed || !cas.ZipEncrypted || string.IsNullOrEmpty(cas.ZipPassword))
+            return Result.NotFound<ZipPasswordResponse>(NoEncryptedZipMessage);
+
+        return Result.Ok(new ZipPasswordResponse(cas.ZipPassword));
     }
 
     public async Task<Result<(string Path, string ContentType, string FileName)>> DownloadAsync(

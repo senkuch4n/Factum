@@ -1,22 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronDown, FileText, Archive, Key, Hash,
-  Smartphone, Calendar, Clock, FolderOpen, Shield, Play,
+  Smartphone, Calendar, Clock, FolderOpen, Shield, Play, Eye, Loader2, AlertCircle, Info,
 } from "lucide-react";
 import type { Case } from "@/lib/api";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { formatDate, formatTime } from "@/lib/format";
 import { StatusBadge } from "./StatusBadge";
+import { CopyButton } from "@/components/ui/CopyButton";
 
 export function CaseCard({ cas, index, onResume }: { cas: Case; index: number; onResume: (c: Case) => void }) {
   const [open, setOpen] = useState(false);
   const dlURL = (filename: string) => api.downloadURL(cas.id, filename);
   const isDone = cas.status === "completed";
   const isDraft = cas.status === "draft";
+  // Solo `=== true` es "cifrado" (casos viejos no traen el campo).
+  const isEncrypted = cas.zip_encrypted === true;
 
   return (
     <motion.div
@@ -118,15 +121,7 @@ export function CaseCard({ cas, index, onResume }: { cas: Case; index: number; o
                   <p className="section-label flex items-center gap-1.5">
                     <Shield className="w-3 h-3" aria-hidden="true" /> Paquete del informe
                   </p>
-                  {cas.zip_password && (
-                    <div className="flex items-start gap-2.5">
-                      <Key className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
-                      <div>
-                        <p className="section-label">Contraseña ZIP</p>
-                        <p className="font-mono text-sm font-bold mt-1 select-all" style={{ color: "var(--text-primary)" }}>{cas.zip_password}</p>
-                      </div>
-                    </div>
-                  )}
+                  {isEncrypted && <ZipPasswordRow caseId={cas.id} />}
                   {cas.zip_hash && (
                     <div className="flex items-start gap-2.5">
                       <Hash className="w-3.5 h-3.5 text-teal-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
@@ -156,7 +151,7 @@ export function CaseCard({ cas, index, onResume }: { cas: Case; index: number; o
                         className="btn btn-primary flex-col h-16 gap-1 text-xs rounded-md"
                         whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
                       >
-                        <Archive className="w-5 h-5" aria-hidden="true" /><span>ZIP cifrado</span>
+                        <Archive className="w-5 h-5" aria-hidden="true" /><span>{isEncrypted ? "ZIP cifrado" : "ZIP de evidencia"}</span>
                       </motion.a>
                     )}
                     {cas.pdf_filename && (
@@ -169,6 +164,11 @@ export function CaseCard({ cas, index, onResume }: { cas: Case; index: number; o
                       </motion.a>
                     )}
                   </div>
+                  {!isEncrypted && cas.zip_filename && (
+                    <p className="flex items-center gap-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>
+                      <Info className="w-3 h-3 flex-shrink-0" aria-hidden="true" /> Este ZIP se generó sin cifrar
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -176,5 +176,95 @@ export function CaseCard({ cas, index, onResume }: { cas: Case; index: number; o
         )}
       </AnimatePresence>
     </motion.div>
+  );
+}
+
+type PasswordState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "error" }
+  | { kind: "shown"; password: string };
+
+/**
+ * Fila "Contraseña ZIP" del historial: la contraseña ya no viene en el `Case`,
+ * se pide bajo demanda a `GET /api/cases/{id}/zip-password`. Vive solo en el
+ * estado de este componente (que se desmonta al cerrar el card): nada de
+ * `localStorage` ni de logs.
+ */
+function ZipPasswordRow({ caseId }: { caseId: string }) {
+  const [state, setState] = useState<PasswordState>({ kind: "idle" });
+  const valueRef = useRef<HTMLParagraphElement>(null);
+  const active = useRef(true);
+
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
+
+  // El botón desaparece al mostrar la contraseña: el foco pasa al valor para
+  // no perderlo (y el lector de pantalla lo lee).
+  useEffect(() => {
+    if (state.kind === "shown") valueRef.current?.focus();
+  }, [state.kind]);
+
+  async function reveal() {
+    if (state.kind === "loading") return;
+    setState({ kind: "loading" });
+    try {
+      const { password } = await api.getZipPassword(caseId);
+      if (active.current) setState({ kind: "shown", password });
+    } catch {
+      // Sin loguear el error: no aporta y no hace falta exponer nada.
+      if (active.current) setState({ kind: "error" });
+    }
+  }
+
+  const errorId = `zip-password-error-${caseId}`;
+
+  return (
+    <div className="flex items-start gap-2.5">
+      <Key className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className="section-label">Contraseña ZIP</p>
+        {state.kind === "shown" ? (
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <p
+              translate="no"
+              ref={valueRef}
+              tabIndex={-1}
+              className="font-mono text-sm font-bold select-all break-all rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-lg)]"
+              style={{ color: "var(--text-primary)" }}
+            >
+              {state.password}
+            </p>
+            <CopyButton text={state.password} label="Copiar contraseña del ZIP" />
+          </div>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={reveal}
+              // `aria-disabled` (no `disabled`) para que el foco no se pierda
+              // mientras carga; `reveal` ignora los clics en ese estado.
+              aria-disabled={state.kind === "loading"}
+              aria-busy={state.kind === "loading"}
+              aria-describedby={state.kind === "error" ? errorId : undefined}
+              className={cn("btn-secondary btn-sm mt-1.5 min-h-[32px]", state.kind === "loading" && "cursor-wait opacity-60")}
+            >
+              {state.kind === "loading"
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+                : <Eye className="w-3.5 h-3.5" aria-hidden="true" />}
+              {state.kind === "loading" ? "Obteniendo contraseña…" : "Mostrar contraseña"}
+            </button>
+            {state.kind === "error" && (
+              <p id={errorId} role="alert" className="mt-1.5 flex items-center gap-1.5 text-[11px]" style={{ color: "var(--red)" }}>
+                <AlertCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+                No se pudo obtener la contraseña. Probá de nuevo.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </div>
   );
 }

@@ -5,10 +5,11 @@ import { motion } from "framer-motion";
 import {
   Loader2, Sparkles, RotateCcw, ShieldCheck, Shield, User,
   FileText, Video, ImageIcon, Paperclip, Check, Lock, Fingerprint, FolderClosed,
-  AlertTriangle, ArrowRight,
+  AlertTriangle, ArrowRight, Archive,
 } from "lucide-react";
 import type { Case, CapturedFile } from "@/types";
 import { agentFileURL } from "@/lib/agent";
+import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { describeMissing, getMissingRequirements, type MissingRequirement } from "@/lib/pericial";
 
 interface Props {
@@ -129,6 +130,8 @@ function EvidenceGroup({
 }
 
 export function GenerateStep({ currentCase, files, loading, serverMissing = [], onBack, onGenerate, onGoToField }: Props) {
+  // Solo se promete cifrado si el backend lo tiene activo (`encrypt_zip`).
+  const { encryptZip } = usePublicConfig();
   const missing: MissingRequirement[] = [...getMissingRequirements(currentCase)];
   serverMissing.forEach(k => {
     const m = describeMissing(k);
@@ -158,7 +161,9 @@ export function GenerateStep({ currentCase, files, loading, serverMissing = [], 
   ].filter(f => f.count > 0);
 
   const guarantees = [
-    { icon: Lock, text: "ZIP cifrado con AES-256 y contraseña única" },
+    encryptZip
+      ? { icon: Lock, text: "ZIP cifrado con AES-256 y contraseña única" }
+      : { icon: Archive, text: "ZIP de evidencia con hash SHA-256 verificable" },
     { icon: Fingerprint, text: "Hash SHA-256 calculado por cada archivo" },
     { icon: FileText, text: "Informe pericial en Word con la tabla de valores hash" },
   ];

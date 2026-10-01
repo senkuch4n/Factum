@@ -49,3 +49,10 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — `architect` done -> Refactorizaciones/rediseno-dashboard-historial.md; DP1–DP3 A (autónomo). Lanzado `architect` para rediseno-dashboard-wizard.
 - 2026-10-01 — `implementer-frontend` (login) done -> progress/impl_frontend_rediseno-pagina-inicio.md. F14 (borrado de 2 archivos sin consumidores) denegado por permisos → NO se rodea; diferido a autorización del usuario / rediseno-cierre-legacy. HU → en_revision, lanzado `reviewer`.
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-pagina-inicio.md. verify OK. Login → aprobada, commit. zip-cifrado-real → implementando en feat/zip-cifrado-real.
+- 2026-10-01 — `implementer-frontend` (zip) done -> progress/impl_frontend_zip-cifrado-real.md. Esperando backend.
+- 2026-10-01 — USUARIO PIDIÓ PARAR. Detenidos: implementer-backend de zip-cifrado-real (a mitad, en ReportService; frontend ya done) y architect de rediseno-dashboard-wizard (a mitad). Nada commiteado de zip. Para retomar: revisar diff de server/ en feat/zip-cifrado-real y relanzar backend; relanzar SDD del wizard.
+- 2026-10-01 — Nueva sesión. Usuario re-activa MODO AUTÓNOMO (/goal: todas las HU hasta vaciar backlog). Relanzados `implementer-backend` (zip-cifrado-real, retomando diff parcial) y `architect` (rediseno-dashboard-wizard, desde cero).
+- 2026-10-01 — Adelantando SDD de rediseno-dashboard-captura con `architect` (queda validada en backlog).
+- 2026-10-01 — `implementer-backend` (zip) done -> progress/impl_backend_zip-cifrado-real.md (build OK, 10 tests OK). HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_zip-cifrado-real.md. zip → aprobada, history.md.
+- 2026-10-01 — Commit de zip-cifrado-real en feat/zip-cifrado-real. Siguiente: rediseno-dashboard-historial (SDD lista) en feat/rediseno-dashboard-historial.

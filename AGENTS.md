@@ -12,7 +12,7 @@ agente de escritorio en `AGENTE_TATANA.md`.
 | Parte | Carpeta | Tecnología |
 |---|---|---|
 | Frontend web | `client/` | Next.js 16 (App Router) + React 19 + Tailwind + Framer Motion. **Leer `client/AGENTS.md` antes de tocar código ahí**: tiene cambios de API respecto al Next.js "de memoria" de cualquier modelo. |
-| Backend API | `server/src/Factum.Backend` | ASP.NET Core (.NET 10) + MongoDB.Driver. JWT, casos/expedientes, informes (PDF + ZIP cifrado), integración opcional de soporte (Faro). |
+| Backend API | `server/src/Factum.Backend` | ASP.NET Core (.NET 10) + MongoDB.Driver. JWT, casos/expedientes, informes (DOCX + ZIP cifrado AES-256), integración opcional de soporte (Faro). |
 | Agente local "Tatana" | `server/src/Factum.Agent` | ASP.NET Core (.NET 10). Corre en la PC del oficial, habla con el celular por USB (ADB / pymobiledevice3) y expone API + WebSocket en `localhost:8765`. No está en `docker-compose.yml`. |
 | UI del agente | `agent-ui/` | Electron + electron-vite + React 19. |
 | Base de datos | — | MongoDB 7 (Docker en desarrollo). |

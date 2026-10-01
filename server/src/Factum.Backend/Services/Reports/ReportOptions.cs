@@ -13,6 +13,13 @@ public sealed class ReportOptions
     /// <summary>Domicilio constituido del perito. Vacío = la frase se omite.</summary>
     public string DomicilioConstituido { get; set; } = "";
 
+    /// <summary>
+    /// Cifra el ZIP de evidencia con AES-256 (WinZip AE-2) y la contraseña generada para el caso.
+    /// Default <c>true</c>. Con <c>false</c> el ZIP sale sin cifrar y sin contraseña (se loguea un
+    /// warning al arrancar). Variable de entorno: <c>Report__EncryptZip</c>.
+    /// </summary>
+    public bool EncryptZip { get; set; } = true;
+
     /// <summary>Reemplazo por estudio de los textos por defecto. Vacío = default versionado.</summary>
     public ReportDefaultTextsOptions DefaultTexts { get; set; } = new();
 }

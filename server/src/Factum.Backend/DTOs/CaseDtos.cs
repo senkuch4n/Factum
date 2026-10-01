@@ -95,10 +95,14 @@ public sealed record FileInfoDto(
     string? SourcePath = null
 );
 
+/// <summary>Respuesta de <c>GET /api/cases/{id}/zip-password</c>: <c>{ "password": "…" }</c>.</summary>
+public sealed record ZipPasswordResponse(string Password);
+
 public sealed record GenerateResponse(
     Case Case,
     string ZipHash,
-    string Password,
+    /// <summary>Contraseña del ZIP (única vez que viaja junto al caso); null si no se cifró.</summary>
+    string? Password,
     FilesDto Files,
     string ReportHash
 );

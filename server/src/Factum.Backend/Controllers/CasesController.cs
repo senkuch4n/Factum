@@ -117,6 +117,18 @@ public sealed class CasesController(ICaseService caseService) : ControllerBase
         return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
     }
 
+    // La contraseña sale solo de acá (y una vez en generate). No se cachea en ningún lado.
+    [HttpGet("{id}/zip-password")]
+    [ProducesResponseType<ZipPasswordResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ZipPassword(string id, CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store";
+        var result = await caseService.GetZipPasswordAsync(id, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
     [HttpGet("{id}/download/{filename}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]

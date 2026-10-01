@@ -79,7 +79,7 @@ export default function Dashboard() {
   const [caseErrors, setCaseErr] = useState<Record<string, string>>({});
   const [focusErrorsTick, setFocusErrorsTick] = useState(0);
   const [currentCase, setCase] = useState<Case | null>(null);
-  const [result, setResult] = useState<{ zip: string; pdf: string; password: string; hash: string; reportHash: string } | null>(null);
+  const [result, setResult] = useState<{ zip: string; pdf: string; password: string | null; encrypted: boolean; hash: string; reportHash: string } | null>(null);
   // Campo a enfocar al llegar a un paso (enlaces del checklist de "Generar").
   const [focusFieldId, setFocusFieldId] = useState<string | null>(null);
   const [generateMissing, setGenerateMissing] = useState<string[]>([]);
@@ -310,7 +310,7 @@ export default function Dashboard() {
     setGenerateMissing([]);
     try {
       const res = await api.generateCase(currentCase.id);
-      setResult({ zip: res.files.zip, pdf: res.files.pdf, password: res.password, hash: res.zip_hash, reportHash: res.report_hash });
+      setResult({ zip: res.files.zip, pdf: res.files.pdf, password: res.password, encrypted: res.case.zip_encrypted === true, hash: res.zip_hash, reportHash: res.report_hash });
       setCase(res.case);
       go(6);
     } catch (e) {
@@ -861,6 +861,7 @@ export default function Dashboard() {
                               zipFile={result.zip}
                               pdfFile={result.pdf}
                               password={result.password}
+                              encrypted={result.encrypted}
                               hash={result.hash}
                               reportHash={result.reportHash}
                               caseId={currentCase.id}

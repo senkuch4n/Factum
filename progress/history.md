@@ -43,3 +43,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementer-frontend opus, reviewer sonnet. 0 rechazos.
 - **Rama:** `feat/rediseno-pagina-inicio` (encadenada sobre `feat/auth-e-integraciones-sin-mpf`).
 - **Pendiente:** F14 — borrar `ThemeToggle.tsx` y `ui/webcam-pixel-grid.tsx` (sin consumidores; borrado denegado por permisos, requiere autorización del usuario o va en `rediseno-cierre-legacy`); orden de merge del pt de inputtext (`!pl-10`) a corregir en el cierre.
+
+## zip-cifrado-real — APROBADA (2026-10-01)
+
+- **Qué:** el ZIP de evidencia ahora se cifra de verdad (AES-256 vía `EvidenceZip`), con verificación posterior (detecta ZipCrypto/ZIP en claro, clave incorrecta, hash alterado, entradas faltantes/extra); flags `zip_encrypted`/`zip_encryption` en el caso, `zip_password` fuera de los DTOs (`[JsonIgnore]`) y servida solo por `GET /api/cases/{id}/zip-password`; `encrypt_zip` en la config pública; frontend con `CopyButton` y estados cifrado/plano. Proyecto de tests nuevo `server/tests/Factum.Backend.Tests` (10 tests).
+- **Decisiones:** D1–D11 y P1 A / P2 A en modo autónomo.
+- **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos. Backend retomado tras pausa del usuario.
+- **Rama:** `feat/zip-cifrado-real` (encadenada sobre `feat/rediseno-pagina-inicio`).
+- **Pendiente:** pruebas manuales M1–M9 de la SDD (e2e con caso real, M5 texto de aseguramiento cifrado, M7 Zip64 > 4 GB, M9 403 en caso ajeno); `ToDictionary` asume nombres únicos en el directorio del caso.

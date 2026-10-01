@@ -59,7 +59,20 @@ public sealed class Case
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? GeneratedAt { get; set; }
 
+    /// <summary>
+    /// Contraseña del ZIP cifrado (en claro en Mongo, D3-B); null si el ZIP no se cifró.
+    /// [JsonIgnore]: no sale en ningún JSON de Case; se recupera solo por
+    /// GET /api/cases/{id}/zip-password.
+    /// </summary>
+    [JsonIgnore]
     public string? ZipPassword { get; set; }
+    /// <summary>
+    /// true si el ZIP de este caso se escribió cifrado. Los casos previos a
+    /// zip-cifrado-real no tienen el campo y deserializan false ("sin cifrar").
+    /// </summary>
+    public bool ZipEncrypted { get; set; }
+    /// <summary>Algoritmo del cifrado ("aes256-ae2") o null si no se cifró.</summary>
+    public string? ZipEncryption { get; set; }
     public string? ZipHash { get; set; }
     public string? ZipFilename { get; set; }
     public string? PdfFilename { get; set; }

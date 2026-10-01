@@ -155,7 +155,14 @@ export interface Case {
   created_at: string;
   generated_at?: string;
   zip_hash?: string;
-  zip_password?: string;
+  /**
+   * `true` solo si el ZIP de evidencia se generó cifrado (AES-256). Los casos
+   * viejos o generados con el cifrado apagado lo traen en `false` (o no lo
+   * traen). La contraseña ya no viaja en el `Case`: ver `getZipPassword`.
+   */
+  zip_encrypted?: boolean;
+  /** Algoritmo del cifrado (`"aes256-ae2"`) o `null`. Informativo: la UI decide con `zip_encrypted`. */
+  zip_encryption?: string | null;
   zip_filename?: string;
   pdf_filename?: string;
   file_sources?: FileSource[];
@@ -191,6 +198,8 @@ export interface PublicConfig {
   organization_logo_url: string | null;
   /** `true` solo si el backend tiene la integración de soporte habilitada. */
   support_enabled: boolean;
+  /** `true` si el backend genera el ZIP de evidencia cifrado con AES-256 (`Report:EncryptZip`). */
+  encrypt_zip: boolean;
 }
 
 /** Modo de autenticación del backend (`GET /api/auth/mode`). */
@@ -303,10 +312,20 @@ export const api = {
     case: Case;
     zip_hash: string;
     report_hash: string;
-    password: string;
+    /** Contraseña del ZIP (una sola vez); `null` si el ZIP se generó sin cifrar. */
+    password: string | null;
     files: { zip: string; pdf: string };
   }> {
     return request(`/api/cases/${caseId}/generate`, { method: "POST" });
+  },
+
+  /**
+   * Contraseña del ZIP cifrado de un caso propio, bajo pedido (el backend
+   * responde con `Cache-Control: no-store`). 404 si el caso no tiene un ZIP
+   * cifrado. No guardarla fuera del estado local del componente que la pidió.
+   */
+  async getZipPassword(caseId: string): Promise<{ password: string }> {
+    return request<{ password: string }>(`/api/cases/${caseId}/zip-password`);
   },
 
   downloadURL(caseId: string, filename: string): string {

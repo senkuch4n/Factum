@@ -9,12 +9,15 @@ export interface PublicClientConfig {
   organizationLogoSrc: string | null;
   /** `true` solo si el backend tiene la integración de soporte habilitada. */
   supportEnabled: boolean;
+  /** `true` si el backend cifra el ZIP de evidencia con AES-256. */
+  encryptZip: boolean;
 }
 
 const EMPTY: PublicClientConfig = {
   organizationName: null,
   organizationLogoSrc: null,
   supportEnabled: false,
+  encryptZip: false,
 };
 
 /* Caché a nivel de módulo: un solo fetch por carga de la app, compartido por
@@ -36,6 +39,8 @@ function loadPublicConfig(): Promise<PublicClientConfig> {
         organizationLogoSrc: logoPath ? api.brandingLogoURL(logoPath) : null,
         // Un backend viejo sin el campo (o cualquier valor no booleano) = apagado.
         supportEnabled: cfg.support_enabled === true,
+        // Idem: sin el campo, la UI no promete cifrado (texto neutro).
+        encryptZip: cfg.encrypt_zip === true,
       };
     })
     .catch(() => EMPTY)
@@ -48,7 +53,7 @@ function loadPublicConfig(): Promise<PublicClientConfig> {
 
 /**
  * Config pública del backend (`GET /api/config/public`): nombre, logo de la
- * organización emisora y flags públicos (`supportEnabled`).
+ * organización emisora y flags públicos (`supportEnabled`, `encryptZip`).
  * Arranca vacía (igual que en el render del servidor, así no hay desajuste de
  * hidratación) y se completa cuando llega la respuesta.
  */

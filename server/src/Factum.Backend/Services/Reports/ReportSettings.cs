@@ -10,6 +10,8 @@ public interface IReportSettings
     string ZoneLabel { get; }
     /// <summary>Domicilio constituido normalizado; "" si no está configurado.</summary>
     string DomicilioConstituido { get; }
+    /// <summary><c>Report:EncryptZip</c>: si el ZIP de evidencia se cifra con AES-256.</summary>
+    bool EncryptZip { get; }
     string DefaultOperacionesRealizadas { get; }
     string DefaultAseguramientoEvidencia { get; }
     string DefaultNotasTecnicas { get; }
@@ -29,6 +31,7 @@ public sealed class ReportSettings : IReportSettings
     public TimeZoneInfo Zone { get; }
     public string ZoneLabel { get; }
     public string DomicilioConstituido { get; }
+    public bool EncryptZip { get; }
     public string DefaultOperacionesRealizadas { get; }
     public string DefaultAseguramientoEvidencia { get; }
     public string DefaultNotasTecnicas { get; }
@@ -72,9 +75,17 @@ public sealed class ReportSettings : IReportSettings
         }
         DomicilioConstituido = dom;
 
+        EncryptZip = o.EncryptZip;
+        if (!EncryptZip)
+            logger.LogWarning("Report: EncryptZip=false; los ZIP de evidencia se generan SIN cifrar");
+
+        // El override de AseguramientoEvidencia gana en los dos modos (DT5): si el estudio lo
+        // define, es responsable de que hable (o no) del cifrado.
         var d = o.DefaultTexts ?? new ReportDefaultTextsOptions();
         DefaultOperacionesRealizadas = Pick(d.OperacionesRealizadas, ReportDefaultTexts.OperacionesRealizadas);
-        DefaultAseguramientoEvidencia = Pick(d.AseguramientoEvidencia, ReportDefaultTexts.AseguramientoEvidencia);
+        DefaultAseguramientoEvidencia = Pick(d.AseguramientoEvidencia, EncryptZip
+            ? ReportDefaultTexts.AseguramientoEvidenciaCifrado
+            : ReportDefaultTexts.AseguramientoEvidenciaSinCifrar);
         DefaultNotasTecnicas = Pick(d.NotasTecnicas, ReportDefaultTexts.NotasTecnicas);
         DefaultReserva = Pick(d.Reserva, ReportDefaultTexts.Reserva);
     }

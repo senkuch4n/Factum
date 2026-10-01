@@ -16,7 +16,8 @@ public interface ICaseRepository
     Task<Case?> FindByIdAsync(string id, CancellationToken ct = default);
     Task InsertAsync(Case cas, CancellationToken ct = default);
     Task UpdateStatusAsync(string id, CaseStatus status, CancellationToken ct = default);
-    Task UpdateGeneratedAsync(string id, DateTime generatedAt, string zipPassword,
+    Task UpdateGeneratedAsync(string id, DateTime generatedAt, string? zipPassword,
+        bool zipEncrypted, string? zipEncryption,
         string zipHash, string zipFilename, string pdfFilename, string reportHash,
         CancellationToken ct = default);
     Task AddFileSourceAsync(string id, string filename, string sourcePath, CancellationToken ct = default);
@@ -68,11 +69,14 @@ public sealed class CaseRepository : ICaseRepository
     }
 
     // El listado no trae ReportTexts (hasta 8 × 20 000 caracteres por caso): viaja
-    // report_texts: null y el paso Informe lo lee de GET /api/cases/{id}.
+    // report_texts: null y el paso Informe lo lee de GET /api/cases/{id}. Tampoco trae
+    // ZipPassword (defensa en profundidad: además tiene [JsonIgnore]).
     public Task<List<Case>> ListByOfficerAsync(string officerDni, CancellationToken ct = default) =>
         _col.Find(c => c.Officer.Dni == officerDni)
             .SortByDescending(c => c.CreatedAt)
-            .Project<Case>(Builders<Case>.Projection.Exclude(c => c.ReportTexts))
+            .Project<Case>(Builders<Case>.Projection
+                .Exclude(c => c.ReportTexts)
+                .Exclude(c => c.ZipPassword))
             .ToListAsync(ct);
 
     public async Task<Case?> FindByIdAsync(string id, CancellationToken ct = default) =>
@@ -87,7 +91,8 @@ public sealed class CaseRepository : ICaseRepository
             Builders<Case>.Update.Set(c => c.Status, status),
             cancellationToken: ct);
 
-    public Task UpdateGeneratedAsync(string id, DateTime generatedAt, string zipPassword,
+    public Task UpdateGeneratedAsync(string id, DateTime generatedAt, string? zipPassword,
+        bool zipEncrypted, string? zipEncryption,
         string zipHash, string zipFilename, string pdfFilename, string reportHash,
         CancellationToken ct = default) =>
         _col.UpdateOneAsync(
@@ -96,6 +101,8 @@ public sealed class CaseRepository : ICaseRepository
                 .Set(c => c.Status, CaseStatus.Completed)
                 .Set(c => c.GeneratedAt, generatedAt)
                 .Set(c => c.ZipPassword, zipPassword)
+                .Set(c => c.ZipEncrypted, zipEncrypted)
+                .Set(c => c.ZipEncryption, zipEncryption)
                 .Set(c => c.ZipHash, zipHash)
                 .Set(c => c.ZipFilename, zipFilename)
                 .Set(c => c.PdfFilename, pdfFilename)

@@ -124,7 +124,7 @@ const SHADOWS = [
 
 const DEMO_CARDS = [
   { title: "Samsung Galaxy A54", meta: "Android 14 · 32 capturas", icon: Smartphone },
-  { title: "Causa 1234/26", meta: "Informe PDF + ZIP cifrado", icon: FileText },
+  { title: "Causa 1234/26", meta: "Informe Word + ZIP de evidencia", icon: FileText },
   { title: "Configuración", meta: "Agente local en :8765", icon: Settings },
 ];
 
@@ -482,7 +482,7 @@ export function DesignSystemShowcase() {
               <Button
                 label="Toast éxito"
                 text
-                onClick={() => toastRef.current?.show({ severity: "success", summary: "Informe generado", detail: "El PDF y el ZIP cifrado quedaron guardados." })}
+                onClick={() => toastRef.current?.show({ severity: "success", summary: "Informe generado", detail: "El informe y el ZIP de evidencia quedaron guardados." })}
               />
               <Button
                 label="Toast info"
