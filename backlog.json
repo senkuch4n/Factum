@@ -288,6 +288,50 @@
         "fase": "cerrada"
       },
       "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 4. Precondición: partes 1-3 y rediseno-pagina-inicio aprobadas. Sumar: borrar client/src/components/ThemeToggle.tsx y ui/webcam-pixel-grid.tsx (F14 diferido de rediseno-pagina-inicio). Los borrados pueden requerir autorización explícita del usuario. SDD lista 2026-10-01: Refactorizaciones/rediseno-cierre-legacy.md; DP1–DP8 A (autónomo). Implementando en feat/rediseno-cierre-legacy (desde captura). Reviewer APROBADA 2026-10-01 (0 rechazos; hubo que pedirle que escribiera el archivo)."
+    },
+    {
+      "id": "grabacion-camara-duplicada",
+      "titulo": "La grabación con cámara externa aparece dos veces en la bandeja de capturas del paso 3",
+      "estado": "aprobada",
+      "creada": "2026-10-01T00:00:00-03:00",
+      "actualizada": "2026-10-01",
+      "intentos_revision": 0,
+      "toca": {
+        "backend": false,
+        "frontend": true,
+        "agent_ui": false
+      },
+      "asignacion": {
+        "backend_model": "opus",
+        "frontend_model": "opus",
+        "reviewer_model": "sonnet",
+        "skill": null,
+        "rama": "feat/grabacion-camara-duplicada",
+        "fase": "cerrada"
+      },
+      "notas": "Bug preexistente detectado por implementer/reviewer de rediseno-dashboard-captura (2026-10-01): la grabación de cámara externa aparece en dos chips en la bandeja (el LocalFile y el adjunto que agrega page.tsx). Alta por pedido del usuario. Validada por el usuario 2026-10-01: D1–D4 A (una sola fuente de verdad = files; incluye adjuntos de PC; contador único para adjuntos; videos de PC solo en Adjuntos). Rama feat/grabacion-camara-duplicada desde feat/rediseno-cierre-legacy. SDD lista: D4 → B por el usuario (chip muestra nombre original, generado secundario); resto recomendadas. Reviewer APROBADA 2026-10-01 (0 rechazos)."
+    },
+    {
+      "id": "formulario-caso-catalogos",
+      "titulo": "Formulario del caso: catálogos editables (tribunal/destinatario, partes, profesiones, tipos de dispositivo), integrantes como lista y fix de desborde en Fecha de intervención",
+      "estado": "no_afinada",
+      "creada": "2026-10-01T00:00:00-03:00",
+      "actualizada": "2026-10-01",
+      "intentos_revision": 0,
+      "toca": {
+        "backend": true,
+        "frontend": true,
+        "agent_ui": false
+      },
+      "asignacion": {
+        "backend_model": "opus",
+        "frontend_model": "opus",
+        "reviewer_model": "sonnet",
+        "skill": null,
+        "rama": "feat/formulario-caso-catalogos",
+        "fase": "afinado"
+      },
+      "notas": "Pedido del usuario 2026-10-01 (correcciones al formulario del paso 2): (1) tribunal muy variable (tribunal, fiscalía, persona…) → editable/agregable/borrable; (2) integrantes como array en vez de 'integrante 1/2'; (3) bug: Fecha de intervención se desborda; (4) partes agregables/editables/eliminables y que se guarden para reutilizar entre inspecciones; (5) idem profesiones; (6) idem tipos de dispositivo. Afinado ADELANTADO mientras grabacion-camara-duplicada se implementa."
     }
   ]
 }

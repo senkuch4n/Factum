@@ -86,15 +86,20 @@ export function EvidenceTrayTile({
   );
 }
 
-/** Chip de adjunto: click en el nombre lo lleva al escenario; borrar al lado. */
+/**
+ * Chip de adjunto: click en el nombre lo lleva al escenario; borrar al lado. Un
+ * adjunto de la PC muestra su nombre original y, debajo, el generado (el que se
+ * sube y figura en el informe).
+ */
 export function AttachmentChip({
   item, active, sizeMB, onSelect, onRemove,
 }: { item: GItem; active: boolean; sizeMB: string | null; onSelect: () => void; onRemove: () => void }) {
   const meta = kindMeta(item.kind);
+  const label = item.originalName ?? item.name;
   return (
     <li
       className={cn(
-        "inline-flex items-center gap-2 rounded-fx-md border bg-fx-surface-2 py-1.5 pl-2.5 pr-1.5 text-xs",
+        "inline-flex min-w-0 max-w-full items-center gap-2 rounded-fx-md border bg-fx-surface-2 py-1.5 pl-2.5 pr-1.5 text-xs",
         "transition-colors duration-fx-fast ease-fx",
         active ? "border-fx-accent" : "border-fx-border",
       )}
@@ -103,18 +108,23 @@ export function AttachmentChip({
         type="button"
         onClick={onSelect}
         aria-pressed={active}
-        aria-label={`Ver ${item.name}`}
-        title={item.name}
-        className={cn("flex min-w-0 items-center gap-2 rounded-fx-sm", FOCUS_RING)}
+        aria-label={item.originalName ? `Ver ${item.originalName}, se sube como ${item.name}` : `Ver ${item.name}`}
+        title={item.originalName ? `${item.originalName} (se sube como ${item.name})` : item.name}
+        className={cn("flex min-w-0 items-center gap-2 rounded-fx-sm text-left", FOCUS_RING)}
       >
         <meta.Icon className="h-3.5 w-3.5 shrink-0 text-fx-text-3" aria-hidden="true" />
-        <span translate="no" className="max-w-[150px] truncate font-medium text-fx-text-2">{item.name}</span>
-        {sizeMB != null && <span className="shrink-0 tabular-nums text-fx-text-3">{sizeMB} MB</span>}
+        <span translate="no" className="min-w-0 max-w-[150px]">
+          <span className="block truncate font-medium text-fx-text-2">{label}</span>
+          {item.originalName && (
+            <span className="block truncate font-mono text-[11px] text-fx-text-3">{item.name}</span>
+          )}
+        </span>
+        {sizeMB != null && <span className="shrink-0 tabular-nums text-fx-text-3">{sizeMB}&nbsp;MB</span>}
       </button>
       <button
         type="button"
         onClick={onRemove}
-        aria-label={`Eliminar ${item.name}`}
+        aria-label={`Eliminar ${label}`}
         className={cn(
           "flex h-7 w-7 shrink-0 items-center justify-center rounded-fx-sm text-fx-danger",
           "transition-colors duration-fx-fast ease-fx hover:bg-fx-danger-soft",

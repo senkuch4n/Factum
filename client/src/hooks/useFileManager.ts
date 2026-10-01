@@ -1,10 +1,22 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { agent } from "@/lib/agent";
 import { api } from "@/lib/api";
 import { isRoleEligible } from "@/lib/pericial";
 import type { Case, CapturedFile, CaptureRole, CaptureRoleValue, VideoVariant } from "@/types";
+
+/**
+ * Datos de vista de un archivo generado en el navegador (cámara externa, webcam
+ * o adjunto de la PC). Indexado por el nombre con el que se sube; `files` sigue
+ * siendo la única lista de lo que se sube.
+ */
+export interface LocalBlobInfo {
+  url: string;           // URL.createObjectURL(blob), creada en el handler (nunca en render)
+  size: number;          // blob.size, en bytes
+  type: string;          // blob.type (MIME, puede venir vacío)
+  originalName?: string; // nombre original del File de la PC; undefined para cámara/webcam
+}
 
 export function useFileManager() {
   const [files, setFiles]                   = useState<CapturedFile[]>([]);
@@ -12,6 +24,23 @@ export function useFileManager() {
   const [videoVariants, setVideoVariants]   = useState<Record<string, VideoVariant[]>>({});
   const [pendingVariantFiles, setPending]   = useState<Set<string>>(new Set());
   const pendingBlobs                        = useRef<Map<string, Blob>>(new Map());
+  const [localBlobs, setLocalBlobsState]    = useState<Record<string, LocalBlobInfo>>({});
+  // Espejo de `localBlobs` para revocar las URLs al desmontar (el cleanup no ve el estado).
+  const localBlobsRef                       = useRef<Record<string, LocalBlobInfo>>({});
+
+  // Los efectos (revocar) quedan fuera del updater: se calcula sobre el ref y se
+  // publica el resultado, así StrictMode no los duplica.
+  const setLocalBlobs = useCallback((update: (prev: Record<string, LocalBlobInfo>) => Record<string, LocalBlobInfo>) => {
+    const next = update(localBlobsRef.current);
+    localBlobsRef.current = next;
+    setLocalBlobsState(next);
+  }, []);
+
+  // Al salir de /dashboard se liberan todas las blob URLs que queden vivas.
+  useEffect(() => () => {
+    Object.values(localBlobsRef.current).forEach(b => URL.revokeObjectURL(b.url));
+    localBlobsRef.current = {};
+  }, []);
 
   const setLoad = useCallback((key: string, val: boolean) => {
     setLoading(l => ({ ...l, [key]: val }));
@@ -45,10 +74,24 @@ export function useFileManager() {
     agent.deleteFile(filename).catch(() => {});
     pendingBlobs.current.delete(filename);
     setFiles(prev => prev.filter(f => f.name !== filename));
+    const gone = localBlobsRef.current[filename];
+    if (gone) {
+      URL.revokeObjectURL(gone.url);
+      setLocalBlobs(prev => {
+        const rest = { ...prev };
+        delete rest[filename];
+        return rest;
+      });
+    }
   }
 
   function handlePhotoBlob(blob: Blob, filename: string) {
     pendingBlobs.current.set(filename, blob);
+    const url = URL.createObjectURL(blob);
+    const originalName = blob instanceof File && blob.name !== filename ? blob.name : undefined;
+    const old = localBlobsRef.current[filename];
+    if (old) URL.revokeObjectURL(old.url); // defensivo: con nombres únicos no debería pasar
+    setLocalBlobs(prev => ({ ...prev, [filename]: { url, size: blob.size, type: blob.type, originalName } }));
     addFile(filename);
   }
 
@@ -111,13 +154,15 @@ export function useFileManager() {
 
   function clearFiles() {
     pendingBlobs.current.clear();
+    Object.values(localBlobsRef.current).forEach(b => URL.revokeObjectURL(b.url));
+    setLocalBlobs(() => ({}));
     setFiles([]);
     setVideoVariants({});
     setPending(new Set());
   }
 
   return {
-    files, loading, videoVariants, pendingVariantFiles: pendingVariantFiles, pendingBlobs,
+    files, loading, videoVariants, pendingVariantFiles: pendingVariantFiles, pendingBlobs, localBlobs,
     setLoad, addFile, addVideoVariant, markPendingVariant,
     removeFile, setCaptureRole, handlePhotoBlob, handleUploadAndContinue, clearFiles,
   };

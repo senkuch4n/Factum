@@ -115,7 +115,7 @@ export default function Dashboard() {
   const isLegacyCase = !!currentCase && (currentCase.schema_version ?? 0) === 0;
 
   const {
-    files, loading: fileLoading, videoVariants, pendingVariantFiles, pendingBlobs,
+    files, loading: fileLoading, videoVariants, pendingVariantFiles, pendingBlobs, localBlobs,
     addFile, addVideoVariant, markPendingVariant,
     removeFile, setCaptureRole, handlePhotoBlob, handleUploadAndContinue, clearFiles,
   } = useFileManager();
@@ -776,6 +776,7 @@ export default function Dashboard() {
                               onDismissDisconnect={() => setDiscoRec(false)}
                               onRemoveFile={removeFile}
                               onAttachLocalFile={(blob, filename) => handlePhotoBlob(blob, filename)}
+                              localBlobs={localBlobs}
                               onDeviceFilesAdded={files => files.forEach(f => addFile(f.filename, f.sourcePath))}
                               videoVariants={videoVariants}
                               pendingVariantFiles={pendingVariantFiles}

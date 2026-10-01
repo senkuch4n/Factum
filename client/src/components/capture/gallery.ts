@@ -7,7 +7,6 @@ import type { CaptureRoleValue } from "@/lib/api";
 import { agentFileURL } from "@/lib/agent";
 
 export interface CapturedFile { name: string; uploaded: boolean; sourcePath?: string; captureRole?: CaptureRoleValue; }
-export interface LocalFile { file: File; url: string; filename: string; kind: "image" | "video" | "audio"; }
 
 export function isVideo(name: string) { return /\.(mp4|mkv|mov)$/i.test(name); }
 export function fileType(name: string): "funcionario" | "denunciante" | "screenshot" | "video" | "other" {
@@ -17,10 +16,32 @@ export function fileType(name: string): "funcionario" | "denunciante" | "screens
   if (isVideo(name))                 return "video";
   return "other";
 }
-export function localFileKind(file: File): "image" | "video" | "audio" {
-  if (file.type.startsWith("image/")) return "image";
-  if (file.type.startsWith("video/")) return "video";
-  return "audio";
+/**
+ * Tipo de ítem de un archivo generado en el navegador (cámara externa o adjunto
+ * de la PC). Manda el MIME; si viene vacío, la extensión. Lo que no se reconoce
+ * queda como "Archivo" (no como "Audio"). Nunca devuelve "video": un video
+ * local no tiene variantes del agente y va a "Adjuntos", no a `VideoCard`.
+ */
+export function localKindOf(type: string, name: string): "local-image" | "local-video" | "local-audio" | "other" {
+  if (type.startsWith("image/")) return "local-image";
+  if (type.startsWith("video/")) return "local-video";
+  if (type.startsWith("audio/")) return "local-audio";
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  if (/^(jpe?g|png|gif|webp|heic|bmp)$/.test(ext))             return "local-image";
+  if (/^(mp4|mov|mkv|webm|avi|m4v)$/.test(ext))                return "local-video";
+  if (/^(mp3|m4a|wav|ogg|opus|aac|amr|flac)$/.test(ext))       return "local-audio";
+  return "other";
+}
+
+/**
+ * Nombre `adjunto_<fecha>_<hora>_<n>.<ext>` con el menor `n ≥ 1` libre en
+ * `taken`. Mismo formato de siempre; solo evita que dos tandas en el mismo
+ * segundo repitan nombre (y pisen el blob de la primera).
+ */
+export function nextAdjuntoName(date: string, time: string, ext: string, taken: ReadonlySet<string>): string {
+  let n = 1;
+  while (taken.has(`adjunto_${date}_${time}_${n}.${ext}`)) n++;
+  return `adjunto_${date}_${time}_${n}.${ext}`;
 }
 
 /* Ítem unificado de la galería: funde screenshots/videos/otros (que vienen del
@@ -33,7 +54,10 @@ export interface GItem {
   url?: string;
   sourcePath?: string;
   remoteFile?: CapturedFile;
-  localIdx?: number;
+  /** Tamaño en bytes (solo archivos generados en el navegador). */
+  sizeBytes?: number;
+  /** Nombre original del archivo de la PC; `name` es el generado, que es el que se sube. */
+  originalName?: string;
 }
 
 /** Etiqueta e ícono por tipo de ítem. Sin color por tipo (DP5 A): el ícono ya diferencia. */

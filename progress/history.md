@@ -87,3 +87,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 ## rediseno-dashboard (paraguas) — APROBADA (2026-10-01)
 
 - Cerrada al aprobarse sus 4 hijas: historial, wizard, captura y cierre-legacy.
+
+## grabacion-camara-duplicada — APROBADA (2026-10-01)
+
+- **Qué:** la bandeja del paso 3 tiene una sola fuente de verdad (`files` de `useFileManager`); se elimina `localFiles` de `CaptureStep` y la vista sale de `localBlobs` (blob URLs revocadas al borrar/desmontar). Cada grabación de cámara externa, adjunto de PC y foto de webcam aparece una vez y sobrevive a ir al paso 2 y volver; borrar siempre saca el archivo de la subida. Contador único para `adjunto_<fecha>_<hora>_<n>` (sin pérdida silenciosa por colisión). Videos de PC solo en "Adjuntos".
+- **Decisiones:** HU D1–D4 A (usuario); SDD D4 → B por el usuario (chip muestra el nombre original, `adjunto_…` secundario y en el title); resto recomendadas.
+- **Modelos:** afinador/architect (sesión), implementer-frontend opus, reviewer sonnet. 0 rechazos.
+- **Rama:** `feat/grabacion-camara-duplicada` (encadenada sobre `feat/rediseno-cierre-legacy`).
+- **Pendiente:** prueba manual (grabar con cámara externa, adjuntar varios archivos de una vez, ir al paso 2 y volver, borrar y confirmar que no se sube).

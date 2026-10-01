@@ -28,9 +28,10 @@ import { StepHeader } from "./wizard/StepHeader";
 import { StepActions } from "./wizard/StepActions";
 import { MEDIA_SURFACE } from "./capture/media";
 import {
-  fileType, localFileKind, kindMeta,
-  type CapturedFile, type LocalFile, type GKind, type GItem,
+  fileType, localKindOf, nextAdjuntoName, kindMeta,
+  type CapturedFile, type GKind, type GItem,
 } from "./capture/gallery";
+import type { LocalBlobInfo } from "@/hooks/useFileManager";
 import { StageEmpty, StageScreen } from "./capture/StageScreen";
 import { AttachmentChip, EvidenceTrayTile } from "./capture/EvidenceTray";
 import { CaptureRoleMenu } from "./capture/CaptureRoleMenu";
@@ -66,6 +67,8 @@ interface Props {
   onRetryRecording?: () => void;
   onDismissDisconnect?: () => void;
   onAttachLocalFile?: (blob: Blob, filename: string) => void;
+  /** Vista (blob URL, tamaño, tipo) de los archivos generados en el navegador, por nombre. */
+  localBlobs?: Record<string, LocalBlobInfo>;
   // Archivos traídos del explorador de archivos del dispositivo — ya existen en agent-data/
   // (no son blobs del navegador), se integran igual que un screenshot/recording. Cada uno
   // trae su ruta de origen en el dispositivo, para que quede registrada en el informe.
@@ -101,6 +104,7 @@ export function CaptureStep({
   onRetryRecording,
   onDismissDisconnect,
   onAttachLocalFile,
+  localBlobs = NO_LOCAL_BLOBS,
   onDeviceFilesAdded,
   videoVariants = {},
   pendingVariantFiles = new Set(),
@@ -114,12 +118,13 @@ export function CaptureStep({
   const [webcamTarget, setWebcam]   = useState<"funcionario" | "denunciante" | null>(null);
   const [cameraRecordOpen, setCameraRecordOpen] = useState(false);
   const [explorerOpen, setExplorerOpen] = useState(false);
-  const [blobURLs, setBlobURLs]     = useState<Record<string, string>>({});
-  const [localFiles, setLocalFiles] = useState<LocalFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [moreOpen, setMoreOpen]     = useState(false);
   const fileInputRef                = useRef<HTMLInputElement>(null);
+  // Nombres de adjunto ya generados en esta sesión del paso: cubre dos tandas en el
+  // mismo tick, antes de que `files` se actualice.
+  const usedNamesRef                = useRef<Set<string>>(new Set());
 
   // Última persona de la webcam: la etiqueta del diálogo no salta durante la
   // animación de salida (ajuste de estado durante el render, patrón de React).
@@ -132,16 +137,21 @@ export function CaptureStep({
   const hasFuncionario = !!fotoFunc;
   const hasDenunciante = !!fotoDen;
 
-  // ── Galería unificada, en orden de captura ──────────────────────
+  // ── Galería unificada, en orden de captura. Una sola fuente: `files` (lo que se
+  //    sube). Los archivos generados en el navegador toman su vista de `localBlobs`. ──
   const galleryItems: GItem[] = [];
   files.forEach(f => {
     const t = fileType(f.name);
     if (t === "funcionario" || t === "denunciante") return;
-    galleryItems.push({ kind: t as GKind, key: f.name, name: f.name, sourcePath: f.sourcePath, remoteFile: f });
-  });
-  localFiles.forEach((lf, idx) => {
-    const kind: GKind = lf.kind === "image" ? "local-image" : lf.kind === "video" ? "local-video" : "local-audio";
-    galleryItems.push({ kind, key: `local-${lf.filename}`, name: lf.file.name, url: lf.url, localIdx: idx });
+    const lb = localBlobs[f.name];
+    if (lb) {
+      galleryItems.push({
+        kind: localKindOf(lb.type, f.name), key: f.name, name: f.name,
+        url: lb.url, sizeBytes: lb.size, originalName: lb.originalName, remoteFile: f,
+      });
+    } else {
+      galleryItems.push({ kind: t as GKind, key: f.name, name: f.name, sourcePath: f.sourcePath, remoteFile: f });
+    }
   });
   const totalItems = galleryItems.length;
 
@@ -178,22 +188,19 @@ export function CaptureStep({
   }, [totalItems]);
 
   function removeItem(item: GItem) {
-    if (item.localIdx !== undefined) removeLocalFile(item.localIdx);
-    else onRemoveFile?.(item.name);
+    onRemoveFile?.(item.name);
   }
 
   function handleWebcamCapture(blob: Blob, _raw: string) {
     const d = new Date();
     const ts = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}_${String(d.getHours()).padStart(2,"0")}${String(d.getMinutes()).padStart(2,"0")}${String(d.getSeconds()).padStart(2,"0")}`;
     const filename = `foto_${webcamTarget}_${ts}.jpg`;
-    setBlobURLs(prev => ({ ...prev, [filename]: URL.createObjectURL(blob) }));
     if (webcamTarget === "funcionario") onPhotoPerito(blob, filename);
     else if (webcamTarget === "denunciante") onPhotoTitular(blob, filename);
     setWebcam(null);
   }
 
   function handleCameraRecording(blob: Blob, filename: string) {
-    setLocalFiles(prev => [...prev, { file: new File([blob], filename, { type: blob.type }), url: URL.createObjectURL(blob), filename, kind: "video" }]);
     onAttachLocalFile?.(blob, filename);
     setCameraRecordOpen(false);
   }
@@ -202,18 +209,13 @@ export function CaptureStep({
     const now  = new Date();
     const date = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}`;
     const time = `${String(now.getHours()).padStart(2,"0")}${String(now.getMinutes()).padStart(2,"0")}${String(now.getSeconds()).padStart(2,"0")}`;
-    Array.from(fileList).forEach((file, i) => {
+    const taken = new Set([...files.map(f => f.name), ...usedNamesRef.current]);
+    Array.from(fileList).forEach(file => {
       const ext      = file.name.split(".").pop() ?? "bin";
-      const filename = `adjunto_${date}_${time}_${i+1}.${ext}`;
-      setLocalFiles(prev => [...prev, { file, url: URL.createObjectURL(file), filename, kind: localFileKind(file) }]);
+      const filename = nextAdjuntoName(date, time, ext, taken);
+      taken.add(filename);
+      usedNamesRef.current.add(filename);
       onAttachLocalFile?.(file, filename);
-    });
-  }
-
-  function removeLocalFile(idx: number) {
-    setLocalFiles(prev => {
-      URL.revokeObjectURL(prev[idx].url);
-      return prev.filter((_, i) => i !== idx);
     });
   }
 
@@ -272,7 +274,7 @@ export function CaptureStep({
           <li>
             <IdentityCard label="Perito" role="Quien realiza la inspección" icon={Shield}
               done={hasFuncionario}
-              blobURL={fotoFunc ? blobURLs[fotoFunc.name] : undefined}
+              blobURL={fotoFunc ? localBlobs[fotoFunc.name]?.url : undefined}
               agentFilename={fotoFunc?.name}
               onCapture={() => setWebcam("funcionario")}
               loading={!!loading.photo} />
@@ -282,7 +284,7 @@ export function CaptureStep({
               name={titularNombre || undefined}
               dni={titularDni || undefined}
               done={hasDenunciante}
-              blobURL={fotoDen ? blobURLs[fotoDen.name] : undefined}
+              blobURL={fotoDen ? localBlobs[fotoDen.name]?.url : undefined}
               agentFilename={fotoDen?.name}
               onCapture={() => setWebcam("denunciante")}
               loading={!!loading.photo} />
@@ -564,8 +566,8 @@ export function CaptureStep({
                   </h4>
                   <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
                     {attachItems.map(item => {
-                      const sizeMB = item.localIdx != null && localFiles[item.localIdx]
-                        ? (localFiles[item.localIdx].file.size / (1024 * 1024)).toFixed(1)
+                      const sizeMB = item.sizeBytes != null
+                        ? (item.sizeBytes / (1024 * 1024)).toFixed(1)
                         : null;
                       return (
                         <AttachmentChip
@@ -705,15 +707,24 @@ export function CaptureStep({
                           onChange={role => onSetCaptureRole(selected.name, role)}
                         />
                       )}
-                      <span translate="no" className="min-w-0 flex-1 basis-32 truncate font-mono text-xs text-fx-text-2" title={selected.name}>
-                        {selected.name}
+                      <span
+                        translate="no"
+                        className="min-w-0 flex-1 basis-32 truncate font-mono text-xs text-fx-text-2"
+                        title={selected.originalName ? `${selected.originalName} (se sube como ${selected.name})` : selected.name}
+                      >
+                        {/* Adjunto de la PC (D4 B): el nombre original manda; el generado, que es
+                            el que se sube y figura en el informe, va debajo. */}
+                        {selected.originalName ?? selected.name}
+                        {selected.originalName && (
+                          <span className="block truncate text-[11px] text-fx-text-3">Se sube como {selected.name}</span>
+                        )}
                         {selected.sourcePath && (
                           <span className="block truncate text-[11px] text-fx-text-3">{selected.sourcePath}</span>
                         )}
                       </span>
                       <Button type="button" text severity="danger" size="small"
                         icon={<Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
-                        aria-label={`Eliminar ${selected.name}`}
+                        aria-label={`Eliminar ${selected.originalName ?? selected.name}`}
                         onClick={() => removeItem(selected)} />
                     </div>
                   );
@@ -739,6 +750,9 @@ export function CaptureStep({
     </>
   );
 }
+
+/* Default estable de `localBlobs` (un `{}` literal en el destructuring sería nuevo en cada render). */
+const NO_LOCAL_BLOBS: Record<string, LocalBlobInfo> = {};
 
 /* Subtítulo de bloque del paso (misma convención que la parte 2). */
 const LABEL = "m-0 flex items-center gap-1.5 text-fx-label uppercase text-fx-text-2";

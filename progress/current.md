@@ -70,3 +70,10 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — `architect` done -> Refactorizaciones/rediseno-cierre-legacy.md; DP1–DP8 A (autónomo). Rama feat/rediseno-cierre-legacy desde captura; cierre-legacy → implementando, lanzado `implementer-frontend`.
 - 2026-10-01 — `implementer-frontend` (cierre-legacy) done -> progress/impl_frontend_rediseno-cierre-legacy.md (sin denegaciones; DP7 sin fallback). HU → en_revision, lanzado `reviewer`.
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-cierre-legacy.md (relanzado para escribir el archivo). cierre-legacy y paraguas rediseno-dashboard → aprobadas, commit. BACKLOG VACÍO: todas las HU aprobadas. Sin push (5+5 ramas feat/* encadenadas pendientes de merge a develop).
+- 2026-10-01 — Usuario pide HU para el bug de grabación de cámara externa duplicada en la bandeja. Alta `grabacion-camara-duplicada` → afinando, lanzado `afinador`.
+- 2026-10-01 — `afinador` done -> docs/hu-grabacion-camara-duplicada.md (4 dudas). HU → afinada_pendiente_validacion, esperando al usuario.
+- 2026-10-01 — Usuario valida D1–D4 A. Rama feat/grabacion-camara-duplicada desde cierre-legacy. HU → en_arquitectura, lanzado `architect`.
+- 2026-10-01 — `architect` done -> Refactorizaciones/grabacion-camara-duplicada.md (D1–D7). Usuario elige D4 B (nombre original en el chip). arquitectura_lista → implementando, lanzado `implementer-frontend`.
+- 2026-10-01 — Usuario pide 6 correcciones al formulario del paso 2. Alta `formulario-caso-catalogos` (no_afinada en backlog; afinado adelantado), lanzado `afinador`.
+- 2026-10-01 — `implementer-frontend` (grabación) done -> progress/impl_frontend_grabacion-camara-duplicada.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_grabacion-camara-duplicada.md. HU → aprobada, commit (sin el Mock:true local del agente).
