@@ -53,6 +53,13 @@ export interface Case {
   pdf_filename?: string;
 }
 
+/** Config pública del backend (`GET /api/config/public`, sin auth). */
+export interface PublicConfig {
+  organization_name: string | null;
+  /** Ruta relativa a la raíz del backend (empieza con `/`), con `?v=` para la caché. */
+  organization_logo_url: string | null;
+}
+
 export interface DeviceInput {
   serial: string;
   manufacturer: string;
@@ -143,12 +150,22 @@ export const api = {
     return `${BACKEND_URL}/api/cases/${caseId}/download/${filename}${params}`;
   },
 
+  /** Identidad de la organización emisora. Es anónimo: el login lo usa antes de autenticarse. */
+  async getPublicConfig(): Promise<PublicConfig> {
+    return request<PublicConfig>("/api/config/public");
+  },
+
+  /** URL absoluta del logo de la organización a partir de `organization_logo_url`. */
+  brandingLogoURL(path: string): string {
+    return `${BACKEND_URL}${path}`;
+  },
+
   async getMode(): Promise<"dev" | "mpf"> {
     const data = await request<{ mode: "dev" | "mpf" }>("/api/auth/mode");
     return data.mode;
   },
 
-  /** Reporta un problema de Factum como token de soporte del GFD (vía Faro). */
+  /** Reporta un problema de Factum como token de soporte (vía Faro). */
   async reportarProblema(data: {
     categoria: "hardware" | "software" | "otro";
     descripcion: string;
@@ -171,7 +188,7 @@ export const api = {
     });
   },
 
-  /** Enlace para abrir Faro ya logueado (SSO) — misma identidad de MPF, sin loguearse de nuevo ahí. */
+  /** Enlace para abrir Faro ya logueado (SSO) — misma identidad (DNI), sin loguearse de nuevo ahí. */
   async obtenerLinkFaro(): Promise<{ url: string }> {
     return request("/api/support/faro-sso");
   },

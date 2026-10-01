@@ -110,7 +110,7 @@ export function SoporteModal({ open, user, onClose }: Props) {
     }
   }
 
-  // Abre Faro ya logueado con la misma identidad de MPF — el oficial no
+  // Abre Faro ya logueado con la misma identidad (DNI) — el oficial no
   // vuelve a poner su contraseña ahí.
   async function handleAbrirFaro() {
     if (openingFaro) return;
@@ -167,7 +167,7 @@ export function SoporteModal({ open, user, onClose }: Props) {
                     Token #{tokenNumero} registrado
                   </p>
                   <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-                    El equipo del GFD lo va a atender pronto. Podés seguir el estado en &quot;Mis reportes&quot;.
+                    El equipo de soporte lo va a atender pronto. Podés seguir el estado en &quot;Mis reportes&quot;.
                   </p>
                 </div>
                 <button

@@ -20,4 +20,12 @@
     <Content Include="Templates\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Identidad real del cliente (fuera del repo): no se copia a bin/ ni a publish/. -->
+  <ItemGroup>
+    <Content Remove="appsettings.Local.json" />
+    <None Remove="appsettings.Local.json" />
+    <Content Remove="branding\**" />
+    <None Remove="branding\**" />
+  </ItemGroup>
+
 </Project>

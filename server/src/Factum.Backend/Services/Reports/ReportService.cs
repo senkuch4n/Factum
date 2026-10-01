@@ -1,11 +1,14 @@
+using System.Globalization;
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using Factum.Backend.DTOs;
 using Factum.Backend.Infrastructure;
 using Factum.Backend.Models;
+using Factum.Backend.Services.Branding;
 using DWP = DocumentFormat.OpenXml.Drawing.Wordprocessing;
 using DRAW = DocumentFormat.OpenXml.Drawing;
 using PIC = DocumentFormat.OpenXml.Drawing.Pictures;
@@ -22,7 +25,8 @@ public interface IReportService
         CancellationToken ct = default);
 }
 
-public sealed class ReportService : IReportService
+public sealed class ReportService(IBrandingService branding, ILogger<ReportService> logger)
+    : IReportService
 {
     private static readonly string TemplatesDir =
         Path.Combine(AppContext.BaseDirectory, "Templates");
@@ -67,7 +71,8 @@ public sealed class ReportService : IReportService
         // (no se convierte a PDF) — decisión explícita: la fidelidad de LibreOffice
         // convirtiendo esta plantilla nunca terminó de ser confiable, así que se prefiere el
         // documento Word tal cual queda armado.
-        await GenerateDocxAsync(cas, files, hashes, docxPath, zipFilename, timestamp, password, ct);
+        await GenerateDocxAsync(cas, files, hashes, docxPath, zipFilename, timestamp, password,
+            branding.Current, ct);
 
         // Fase 3: agregar DOCX al ZIP de evidencias
         await AppendToZipAsync(zipPath, [docxPath], ct);
@@ -84,9 +89,9 @@ public sealed class ReportService : IReportService
 
     // ── DOCX ─────────────────────────────────────────────────────────────────
 
-    private static Task GenerateDocxAsync(Case cas, List<FileInfoDto> files,
+    private Task GenerateDocxAsync(Case cas, List<FileInfoDto> files,
         Dictionary<string, string> hashes, string outputPath, string zipFilename,
-        DateTime timestamp, string password, CancellationToken ct)
+        DateTime timestamp, string password, BrandingSnapshot brand, CancellationToken ct)
     {
         var caseDir = Path.GetDirectoryName(outputPath)!;
         return Task.Run(() =>
@@ -98,7 +103,20 @@ public sealed class ReportService : IReportService
             File.Copy(templatePath, outputPath, overwrite: true);
 
             using var doc = WordprocessingDocument.Open(outputPath, isEditable: true);
-            var body = doc.MainDocumentPart!.Document.Body!;
+            var mainPart = doc.MainDocumentPart!;
+            var body = mainPart.Document.Body!;
+
+            // Contador único de docPr id para todos los dibujos que agrega este servicio (logo
+            // de la organización, fotos, capturas, sello del pie). Arranca en un offset alto
+            // para no pisar los ids que ya usan los dibujos de la plantilla — deben ser únicos
+            // en todo el documento (header+footer+body juntos). Con IDs repetidos, algunas
+            // conversiones (LibreOffice incluido) descartan uno de los dibujos en conflicto.
+            uint drawId = 100_000;
+
+            // Partes donde pueden vivir placeholders: el cuerpo y TODOS los headers/footers.
+            var parts = new List<(OpenXmlPart Part, OpenXmlElement Root)> { (mainPart, body) };
+            parts.AddRange(mainPart.HeaderParts.Select(h => ((OpenXmlPart)h, (OpenXmlElement)h.Header)));
+            parts.AddRange(mainPart.FooterParts.Select(f => ((OpenXmlPart)f, (OpenXmlElement)f.Footer)));
 
             // Pass 0: la plantilla (exportada de Google Docs) NO tiene un salto de página real
             // entre el panel de fotos (fijo, posicionado con floats "relativeFrom=page") y la
@@ -112,21 +130,30 @@ public sealed class ReportService : IReportService
             // tabla de contenido.
             // NormalizePageFlow(body, files);
 
-            // Pass 1: reemplaza texto (excluye placeholders de imagen y {ARCHIVOS}) — incluye
-            // el Header/Footer (se repiten en todas las páginas, {NROREF}/{FECHA_HORA}/
-            // {DEPENDENCIA} viven ahí en la plantilla nueva).
-            var replacements = BuildTextReplacements(cas, files, hashes, timestamp, password, zipFilename);
-            ReplaceTextInBody(body, replacements);
-            foreach (var headerPart in doc.MainDocumentPart.HeaderParts)
-                ReplaceTextInBody(headerPart.Header, replacements);
-            foreach (var footerPart in doc.MainDocumentPart.FooterParts)
-                ReplaceTextInBody(footerPart.Footer, replacements);
+            // Pass 1a: {LOGO_ORGANIZACION[:WxH]} → logo de la organización (o párrafo vacío).
+            foreach (var (part, root) in parts)
+                ReplaceOrganizationLogo(part, root, brand.Logo, ref drawId);
+
+            // Pass 1b: reemplaza texto (excluye placeholders de imagen y {ARCHIVOS}) en el
+            // cuerpo y en los headers/footers que la plantilla tenga. {CONTACTO} va primero,
+            // en un paso propio, porque necesita saltos de línea (<w:br/>) dentro del run y
+            // ReplaceTextInBody junta todo en un solo <w:t>.
+            var replacements = BuildTextReplacements(cas, files, hashes, timestamp, password, zipFilename, brand);
+            foreach (var (_, root) in parts)
+            {
+                ReplaceMultilinePlaceholder(root, "{CONTACTO}", brand.ContactLines, replacements);
+                ReplaceTextInBody(root, replacements);
+            }
 
             // Pass 2: {ARCHIVOS} → lista de párrafos Archivo + Hash
             ReplaceArchivosWithList(body, files, hashes);
 
             // Pass 3: placeholders de imagen → imágenes embebidas
-            EmbedImages(doc, body, files, caseDir);
+            EmbedImages(mainPart, body, files, caseDir, ref drawId);
+
+            // Pass 4: atribución obligatoria "Realizado con Factum" en el pie de todas las
+            // páginas — se inyecta por código para que ninguna plantilla la pueda sacar.
+            AddFactumAttributionFooter(mainPart, body, ref drawId);
 
             doc.Save();
         }, ct);
@@ -259,7 +286,7 @@ public sealed class ReportService : IReportService
 
     private static Dictionary<string, string> BuildTextReplacements(Case cas,
         List<FileInfoDto> files, Dictionary<string, string> hashes,
-        DateTime timestamp, string password, string zipFilename)
+        DateTime timestamp, string password, string zipFilename, BrandingSnapshot brand)
     {
         var fileList = string.Join("\n", files.Select(f => $"• {f.Name}  ({f.Size / 1024} KB)"));
         var fecha = timestamp.ToString("dd/MM/yyyy");
@@ -289,6 +316,10 @@ public sealed class ReportService : IReportService
             // {ARCHIVOS} se maneja en ReplaceArchivosWithTable (tabla con hash), no aquí.
             ["{ARCHIVO_GENERADO}"] = zipFilename,
             ["{CLAVE}"] = password,
+            // Identidad de la organización emisora (Branding). Vacío si no está configurada.
+            ["{ORGANIZACION}"] = brand.OrganizationName ?? string.Empty,
+            ["{CONTACTO_EN_LINEA}"] = string.Join(" · ", brand.ContactLines),
+            // {CONTACTO} (multilínea) lo resuelve ReplaceMultilinePlaceholder antes, no acá.
         };
     }
 
@@ -363,8 +394,8 @@ public sealed class ReportService : IReportService
 
     // Reemplazo a nivel de párrafo para manejar placeholders partidos en múltiples runs.
     // Recibe un OpenXmlElement genérico (no solo Body) para poder procesar también el
-    // contenido de Header/Footer — {NROREF}/{FECHA_HORA}/{DEPENDENCIA} viven ahí, no en el
-    // cuerpo, desde que el encabezado/pie se repiten en todas las páginas.
+    // contenido de Header/Footer, si la plantilla los tiene (la v3 no trae ninguno; una
+    // plantilla puede poner ahí {NROREF}, {FECHA_HORA}, {DEPENDENCIA}, {ORGANIZACION}…).
     private static void ReplaceTextInBody(OpenXmlElement body, Dictionary<string, string> replacements)
     {
         foreach (var para in body.Descendants<Paragraph>())
@@ -395,16 +426,11 @@ public sealed class ReportService : IReportService
 
     // Busca párrafos con los placeholders de imagen (que no se tocaron en ReplaceTextInBody)
     // y los reemplaza con las imágenes reales.
-    private static void EmbedImages(WordprocessingDocument doc, Body body,
-        List<FileInfoDto> files, string caseDir)
+    // drawId: contador compartido de docPr id (ver GenerateDocxAsync) — tiene que ser único
+    // en todo el documento, no solo dentro de este método.
+    private static void EmbedImages(MainDocumentPart mainPart, Body body,
+        List<FileInfoDto> files, string caseDir, ref uint drawId)
     {
-        // Arranca en un offset alto para no pisar los ids (docPr/relativeHeight) que ya usan el
-        // fondo y las cajas de texto del header/footer/portada — deben ser únicos en todo el
-        // documento (header+footer+body juntos), no solo dentro de este método. Con IDs
-        // repetidos, algunas conversiones (LibreOffice incluido) descartan uno de los dibujos
-        // en conflicto — se vio como el header/footer "desapareciendo" en la página 2.
-        uint drawId = 100_000;
-
         var fotoFunc = files.FirstOrDefault(f => f.Name.Contains("foto_funcionario"));
         var fotoDen = files.FirstOrDefault(f => f.Name.Contains("foto_denunciante"));
         var shots = files
@@ -413,7 +439,7 @@ public sealed class ReportService : IReportService
             .Where(IsUsableImage)
             .ToList();
 
-        // Tamaño de los paneles de foto de la plantilla (ver server/tools/ReportTemplateBuilder).
+        // Tamaño de los paneles de foto de la plantilla v3.
         const long PhotoMaxW = 1_238_700;
         const long PhotoMaxH = 1_332_537;
 
@@ -429,16 +455,16 @@ public sealed class ReportService : IReportService
         // y tumbar la generación entera — ver IsUsableImage.
         var fotoFuncCandidate = fotoFunc != null ? Path.Combine(caseDir, fotoFunc.Name) : null;
         var fotoFuncPath = fotoFuncCandidate != null && IsUsableImage(fotoFuncCandidate) ? fotoFuncCandidate : placeholderPhoto;
-        ReplacePlaceholderWithImage(doc, body, "{FOTO_FUNCIONARIO}",
+        ReplacePlaceholderWithImage(mainPart, body, "{FOTO_FUNCIONARIO}",
             fotoFuncPath, PhotoMaxW, PhotoMaxH, ref drawId, cover: true);
 
         var fotoDenCandidate = fotoDen != null ? Path.Combine(caseDir, fotoDen.Name) : null;
         var fotoDenPath = fotoDenCandidate != null && IsUsableImage(fotoDenCandidate) ? fotoDenCandidate : placeholderPhoto;
-        ReplacePlaceholderWithImage(doc, body, "{FOTO_DENUNCIANTE}",
+        ReplacePlaceholderWithImage(mainPart, body, "{FOTO_DENUNCIANTE}",
             fotoDenPath, PhotoMaxW, PhotoMaxH, ref drawId, cover: true);
 
         if (shots.Count > 0)
-            ReplacePlaceholderWithScreenshots(doc, body, "{CAPTURAS}", shots,
+            ReplacePlaceholderWithScreenshots(mainPart, body, "{CAPTURAS}", shots,
                 5_040_000, 4_320_000, ref drawId);
     }
 
@@ -457,15 +483,19 @@ public sealed class ReportService : IReportService
     private static bool IsUsableImage(string path) =>
         File.Exists(path) && new FileInfo(path).Length > 0;
 
-    private static void ReplacePlaceholderWithImage(WordprocessingDocument doc, Body body,
+    // owner: la parte dueña del contenido (MainDocumentPart, HeaderPart o FooterPart) — la
+    // imagen se agrega como ImagePart de ESA parte, porque la relación r:embed se resuelve
+    // contra las relaciones de la parte que contiene el dibujo.
+    private static void ReplacePlaceholderWithImage(OpenXmlPart owner, OpenXmlElement root,
         string placeholder, string imagePath, long maxW, long maxH, ref uint drawId, bool cover = false)
     {
         if (!IsUsableImage(imagePath)) return;
-        var targets = FindAllParagraphsWithPlaceholder(body, placeholder);
+        var targets = FindAllParagraphsWithPlaceholder(root, placeholder);
+        var source = ImageSource.FromFile(imagePath);
 
         foreach (var target in targets)
         {
-            var imgPara = BuildImageParagraph(doc, imagePath, maxW, maxH, ref drawId, cover);
+            var imgPara = BuildImageParagraph(owner, source, maxW, maxH, ref drawId, cover);
             target.Parent!.InsertBefore(imgPara, target);
             target.Remove();
         }
@@ -473,7 +503,7 @@ public sealed class ReportService : IReportService
 
     // Encuentra TODAS las apariciones de {CAPTURAS} y las reemplaza con todos los screenshots
     // (ver comentario de ReplacePlaceholderWithImage sobre por qué hay que cubrir cada aparición).
-    private static void ReplacePlaceholderWithScreenshots(WordprocessingDocument doc, Body body,
+    private static void ReplacePlaceholderWithScreenshots(MainDocumentPart mainPart, Body body,
         string placeholder, List<string> imagePaths, long maxW, long maxH, ref uint drawId)
     {
         var targets = FindAllParagraphsWithPlaceholder(body, placeholder);
@@ -483,7 +513,7 @@ public sealed class ReportService : IReportService
             foreach (var path in imagePaths)
             {
                 if (!File.Exists(path)) continue;
-                body.AppendChild(BuildImageParagraph(doc, path, maxW, maxH, ref drawId, cover: false));
+                body.AppendChild(BuildImageParagraph(mainPart, ImageSource.FromFile(path), maxW, maxH, ref drawId, cover: false));
             }
             return;
         }
@@ -493,7 +523,7 @@ public sealed class ReportService : IReportService
             foreach (var path in imagePaths)
             {
                 if (!File.Exists(path)) continue;
-                var imgPara = BuildImageParagraph(doc, path, maxW, maxH, ref drawId, cover: false);
+                var imgPara = BuildImageParagraph(mainPart, ImageSource.FromFile(path), maxW, maxH, ref drawId, cover: false);
                 target.Parent!.InsertBefore(imgPara, target);
             }
             target.Remove();
@@ -503,10 +533,10 @@ public sealed class ReportService : IReportService
     // Reconstruye el texto completo de cada párrafo concatenando todos los runs (Word parte los
     // runs) y devuelve TODAS las apariciones del placeholder en el documento — no solo la
     // primera. Ver comentario de ReplacePlaceholderWithImage.
-    private static List<Paragraph> FindAllParagraphsWithPlaceholder(Body body, string placeholder)
+    private static List<Paragraph> FindAllParagraphsWithPlaceholder(OpenXmlElement root, string placeholder)
     {
         var result = new List<Paragraph>();
-        foreach (var para in body.Descendants<Paragraph>())
+        foreach (var para in root.Descendants<Paragraph>())
         {
             var fullText = string.Concat(
                 para.Elements<Run>().SelectMany(r => r.Elements<Text>()).Select(t => t.Text));
@@ -515,19 +545,50 @@ public sealed class ReportService : IReportService
         return result;
     }
 
-    private static Paragraph BuildImageParagraph(WordprocessingDocument doc,
-        string imagePath, long maxW, long maxH, ref uint drawId, bool cover = false)
+    // Imagen a embeber: desde un archivo (fotos, capturas) o desde bytes en memoria (logo de
+    // la organización, sello de Factum). Width/Height en píxeles, solo para la proporción.
+    private sealed record ImageSource(string Name, PartTypeInfo PartType, Func<Stream> Open,
+        int Width, int Height)
     {
-        var mainPart = doc.MainDocumentPart!;
-        var ext = Path.GetExtension(imagePath).ToLowerInvariant();
-        var partType = ext is ".jpg" or ".jpeg" ? ImagePartType.Jpeg : ImagePartType.Png;
+        public static ImageSource FromFile(string path)
+        {
+            var ext = Path.GetExtension(path).ToLowerInvariant();
+            var (w, h) = GetImageSize(path);
+            return new ImageSource(Path.GetFileName(path),
+                ext is ".jpg" or ".jpeg" ? ImagePartType.Jpeg : ImagePartType.Png,
+                () => File.OpenRead(path), w, h);
+        }
 
-        var imagePart = mainPart.AddImagePart(partType);
-        using (var fs = File.OpenRead(imagePath))
+        public static ImageSource FromBytes(string name, byte[] data, string contentType, int w, int h) =>
+            new(name, contentType == "image/jpeg" ? ImagePartType.Jpeg : ImagePartType.Png,
+                () => new MemoryStream(data, writable: false), w, h);
+    }
+
+    private static ImagePart AddImagePart(OpenXmlPart owner, PartTypeInfo type) => owner switch
+    {
+        MainDocumentPart m => m.AddImagePart(type),
+        HeaderPart h => h.AddImagePart(type),
+        FooterPart f => f.AddImagePart(type),
+        _ => throw new ArgumentException($"Parte no soportada para imágenes: {owner.GetType().Name}", nameof(owner)),
+    };
+
+    // Agrega la imagen como ImagePart de la parte dueña y devuelve el r:id para el blip.
+    private static string EmbedImagePart(OpenXmlPart owner, ImageSource source)
+    {
+        var imagePart = AddImagePart(owner, source.PartType);
+        using (var fs = source.Open())
             imagePart.FeedData(fs);
+        return owner.GetIdOfPart(imagePart);
+    }
 
-        var relId = mainPart.GetIdOfPart(imagePart);
-        var (imgW, imgH) = GetImageSize(imagePath);
+    // paragraphProperties: si viene, reemplaza al pPr por defecto (centrado, 6 pt arriba y
+    // abajo) — lo usa {LOGO_ORGANIZACION} para conservar la alineación del párrafo original.
+    private static Paragraph BuildImageParagraph(OpenXmlPart owner,
+        ImageSource source, long maxW, long maxH, ref uint drawId, bool cover = false,
+        ParagraphProperties? paragraphProperties = null)
+    {
+        var relId = EmbedImagePart(owner, source);
+        var (imgW, imgH) = (source.Width, source.Height);
 
         long dispW, dispH;
         DRAW.SourceRectangle? srcRect = null;
@@ -559,10 +620,10 @@ public sealed class ReportService : IReportService
             else { dispH = maxH; dispW = (long)(maxH / ratio); }
         }
 
-        var drawing = BuildDrawing(relId, Path.GetFileName(imagePath), dispW, dispH, drawId++, srcRect);
+        var drawing = BuildDrawing(relId, source.Name, dispW, dispH, drawId++, srcRect);
 
         return new Paragraph(
-            new ParagraphProperties(
+            paragraphProperties ?? new ParagraphProperties(
                 new SpacingBetweenLines { Before = "120", After = "120" },
                 new Justification { Val = JustificationValues.Center }),
             new Run(drawing));
@@ -668,6 +729,275 @@ public sealed class ReportService : IReportService
         }
 
         return (800, 600);
+    }
+
+    // ── Identidad de la organización (Branding) ──────────────────────────────
+
+    // {LOGO_ORGANIZACION} o {LOGO_ORGANIZACION:<ancho>x<alto>} (cm, punto o coma decimal).
+    private static readonly Regex LogoPlaceholderRegex = new(
+        @"\{LOGO_ORGANIZACION(?::(\d+(?:[.,]\d+)?)x(\d+(?:[.,]\d+)?))?\}",
+        RegexOptions.CultureInvariant);
+
+    private const double DefaultLogoBoxWidthCm = 5.0;
+    private const double DefaultLogoBoxHeightCm = 1.5;
+    private const long EmuPerCm = 360_000;
+
+    // Reemplaza cada párrafo con {LOGO_ORGANIZACION[:WxH]} — en TODAS sus copias (mc:Choice y
+    // mc:Fallback, ver ReplacePlaceholderWithImage) — por el logo ajustado SIN recortar dentro
+    // de la caja, conservando las ParagraphProperties del párrafo original (alineación, y un
+    // eventual sectPr). Sin logo, se borra solo el texto del placeholder y el párrafo queda
+    // vacío para no romper el layout de la caja que lo contiene.
+    private static void ReplaceOrganizationLogo(OpenXmlPart owner, OpenXmlElement root,
+        BrandingLogo? logo, ref uint drawId)
+    {
+        foreach (var para in root.Descendants<Paragraph>().ToList())
+        {
+            var runs = para.Elements<Run>().ToList();
+            var fullText = string.Concat(runs.SelectMany(r => r.Elements<Text>()).Select(t => t.Text));
+            var match = LogoPlaceholderRegex.Match(fullText);
+            if (!match.Success) continue;
+
+            if (logo is null)
+            {
+                CollapseParagraphText(runs, LogoPlaceholderRegex.Replace(fullText, string.Empty));
+                continue;
+            }
+
+            var boxW = ParseCm(match.Groups[1], DefaultLogoBoxWidthCm);
+            var boxH = ParseCm(match.Groups[2], DefaultLogoBoxHeightCm);
+            var pPr = para.ParagraphProperties?.CloneNode(true) as ParagraphProperties
+                      ?? new ParagraphProperties();
+            var source = ImageSource.FromBytes($"logo-organizacion{logo.Extension}", logo.Data,
+                logo.ContentType, logo.Width, logo.Height);
+            var imgPara = BuildImageParagraph(owner, source,
+                (long)Math.Round(boxW * EmuPerCm), (long)Math.Round(boxH * EmuPerCm),
+                ref drawId, cover: false, paragraphProperties: pPr);
+            para.Parent!.InsertBefore(imgPara, para);
+            para.Remove();
+        }
+    }
+
+    private static double ParseCm(Group g, double fallback)
+    {
+        if (!g.Success) return fallback;
+        return double.TryParse(g.Value.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture,
+                   out var v) && v > 0 && v <= 100
+            ? v
+            : fallback;
+    }
+
+    // Placeholder de texto multilínea ({CONTACTO}): las líneas quedan en el MISMO run (con
+    // el formato del run original), separadas por <w:br/>. El resto de los placeholders de
+    // texto del párrafo se resuelven acá mismo, pieza por pieza, para que un "\n" dentro de
+    // otro valor (p. ej. las observaciones) no se convierta en salto de línea.
+    private static void ReplaceMultilinePlaceholder(OpenXmlElement root, string placeholder,
+        IReadOnlyList<string> lines, Dictionary<string, string> replacements)
+    {
+        foreach (var para in root.Descendants<Paragraph>().ToList())
+        {
+            var runs = para.Elements<Run>().ToList();
+            if (runs.Count == 0) continue;
+
+            var fullText = string.Concat(runs.SelectMany(r => r.Elements<Text>()).Select(t => t.Text));
+            if (!fullText.Contains(placeholder)) continue;
+
+            var pieces = fullText.Split(placeholder);
+            var firstRun = runs[0];
+            foreach (var t in firstRun.Elements<Text>().ToList()) t.Remove();
+
+            for (var i = 0; i < pieces.Length; i++)
+            {
+                var piece = pieces[i];
+                foreach (var (ph, val) in replacements)
+                    piece = piece.Replace(ph, val);
+                if (piece.Length > 0)
+                    firstRun.AppendChild(new Text(piece) { Space = SpaceProcessingModeValues.Preserve });
+
+                if (i == pieces.Length - 1) break;
+                for (var l = 0; l < lines.Count; l++)
+                {
+                    if (l > 0) firstRun.AppendChild(new Break());
+                    firstRun.AppendChild(new Text(lines[l]) { Space = SpaceProcessingModeValues.Preserve });
+                }
+            }
+
+            foreach (var r in runs.Skip(1).ToList()) r.Remove();
+        }
+    }
+
+    // Deja newText en el primer run del párrafo y borra el resto de los runs (misma
+    // estrategia que ReplaceTextInBody, para placeholders partidos en varios runs).
+    private static void CollapseParagraphText(List<Run> runs, string newText)
+    {
+        if (runs.Count == 0) return;
+        var firstRun = runs[0];
+        var firstText = firstRun.GetFirstChild<Text>() ?? firstRun.AppendChild(new Text());
+        firstText.Text = newText;
+        firstText.Space = SpaceProcessingModeValues.Preserve;
+        foreach (var t in firstRun.Elements<Text>().Skip(1).ToList()) t.Remove();
+        foreach (var r in runs.Skip(1).ToList()) r.Remove();
+    }
+
+    // ── Atribución "Realizado con Factum" (pie de todas las páginas) ─────────
+
+    private const string AttributionText = "Realizado con Factum";
+    private const long SelloSizeEmu = 144_000; // 0.4 cm
+
+    // Agrega al pie de TODAS las páginas un párrafo centrado con el Sello de Factum (0.4 cm)
+    // + "Realizado con Factum" (Arial 8 pt, gris). Se inyecta por código para que ninguna
+    // plantilla (incluidas las de clientes) la pueda omitir. Por cada sección:
+    //  - footer Default (y First si la sección tiene titlePg, y Even si settings tiene
+    //    evenAndOddHeaders): si existe, se le agrega el párrafo al final (una sola vez por
+    //    parte, aunque varias secciones la compartan);
+    //  - si falta, se hereda el de la sección anterior (como hace Word) y, si tampoco hay,
+    //    se apunta a UN FooterPart nuevo creado acá, insertando la FooterReference en el
+    //    orden del esquema (junto a las demás header/footerReference, antes del resto).
+    // Si el Sello no está o no es un PNG válido, va solo el texto. Nunca hace fallar el informe.
+    private void AddFactumAttributionFooter(MainDocumentPart mainPart, Body body, ref uint drawId)
+    {
+        var sello = LoadSello();
+
+        var evenAndOdd = mainPart.DocumentSettingsPart?.Settings?.GetFirstChild<EvenAndOddHeaders>()
+            is { } eo && (eo.Val is null || eo.Val.Value);
+
+        var sections = body.Descendants<SectionProperties>().ToList();
+        if (sections.Count == 0)
+        {
+            var sectPr = new SectionProperties();
+            body.AppendChild(sectPr);
+            sections.Add(sectPr);
+        }
+
+        var targets = new List<FooterPart>();
+        FooterPart? created = null;
+        string? createdId = null;
+        var inherited = new Dictionary<string, string>(); // tipo → r:id vigente
+
+        foreach (var sectPr in sections)
+        {
+            var types = new List<HeaderFooterValues> { HeaderFooterValues.Default };
+            if (sectPr.GetFirstChild<TitlePage>() is { } tp && (tp.Val is null || tp.Val.Value))
+                types.Add(HeaderFooterValues.First);
+            if (evenAndOdd)
+                types.Add(HeaderFooterValues.Even);
+
+            foreach (var type in types)
+            {
+                var key = type.ToString();
+                var existing = sectPr.Elements<FooterReference>().FirstOrDefault(fr =>
+                    (fr.Type?.Value ?? HeaderFooterValues.Default) == type && !string.IsNullOrEmpty(fr.Id?.Value));
+
+                string id;
+                if (existing is not null)
+                {
+                    id = existing.Id!.Value!;
+                }
+                else
+                {
+                    if (!inherited.TryGetValue(key, out id!))
+                    {
+                        if (created is null)
+                        {
+                            created = mainPart.AddNewPart<FooterPart>();
+                            created.Footer = NewFooter();
+                            createdId = mainPart.GetIdOfPart(created);
+                        }
+                        id = createdId!;
+                    }
+                    InsertFooterReference(sectPr, new FooterReference { Type = type, Id = id });
+                }
+                inherited[key] = id;
+
+                if (TryGetFooterPart(mainPart, id) is { } fp && !targets.Contains(fp))
+                    targets.Add(fp);
+            }
+        }
+
+        foreach (var footerPart in targets)
+        {
+            footerPart.Footer ??= NewFooter();
+            footerPart.Footer.AppendChild(BuildAttributionParagraph(footerPart, sello, ref drawId));
+            footerPart.Footer.Save();
+        }
+    }
+
+    private BrandingLogo? LoadSello()
+    {
+        var path = Path.Combine(TemplatesDir, "factum-sello.png");
+        try
+        {
+            if (!File.Exists(path))
+            {
+                logger.LogWarning("Informe: falta {Path}; la atribución va solo con texto", path);
+                return null;
+            }
+            var data = File.ReadAllBytes(path);
+            if (!ImageProbe.TryDetect(data, out var contentType, out var w, out var h))
+            {
+                logger.LogWarning("Informe: {Path} no es una imagen válida; la atribución va solo con texto", path);
+                return null;
+            }
+            return new BrandingLogo(data, contentType, contentType == "image/jpeg" ? ".jpg" : ".png", w, h, "");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(ex, "Informe: no se pudo leer {Path}; la atribución va solo con texto", path);
+            return null;
+        }
+    }
+
+    private static FooterPart? TryGetFooterPart(MainDocumentPart mainPart, string id)
+    {
+        try { return mainPart.GetPartById(id) as FooterPart; }
+        catch (ArgumentOutOfRangeException) { return null; }
+    }
+
+    private static Footer NewFooter()
+    {
+        var footer = new Footer();
+        footer.AddNamespaceDeclaration("w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+        footer.AddNamespaceDeclaration("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
+        footer.AddNamespaceDeclaration("wp", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
+        footer.AddNamespaceDeclaration("a", "http://schemas.openxmlformats.org/drawingml/2006/main");
+        footer.AddNamespaceDeclaration("pic", "http://schemas.openxmlformats.org/drawingml/2006/picture");
+        return footer;
+    }
+
+    // Las header/footerReference van al principio del sectPr (EG_HdrFtrReferences), antes
+    // de footnotePr, type, pgSz, pgMar, etc.
+    private static void InsertFooterReference(SectionProperties sectPr, FooterReference reference)
+    {
+        var lastRef = sectPr.Elements().LastOrDefault(e => e is HeaderReference or FooterReference);
+        if (lastRef is not null) lastRef.InsertAfterSelf(reference);
+        else sectPr.PrependChild(reference);
+    }
+
+    private static Paragraph BuildAttributionParagraph(FooterPart owner, BrandingLogo? sello, ref uint drawId)
+    {
+        var para = new Paragraph(new ParagraphProperties(
+            new SpacingBetweenLines { Before = "0", After = "0" },
+            new Justification { Val = JustificationValues.Center }));
+
+        if (sello is not null)
+        {
+            var relId = EmbedImagePart(owner, ImageSource.FromBytes("factum-sello.png", sello.Data,
+                sello.ContentType, sello.Width, sello.Height));
+            // position -3 (medios puntos) baja el Sello 1.5 pt para centrarlo con el texto de 8 pt.
+            para.AppendChild(new Run(
+                new RunProperties(new Position { Val = "-3" }),
+                BuildDrawing(relId, "factum-sello.png", SelloSizeEmu, SelloSizeEmu, drawId++)));
+        }
+
+        para.AppendChild(new Run(
+            new RunProperties(
+                new RunFonts { Ascii = "Arial", HighAnsi = "Arial", ComplexScript = "Arial" },
+                new Color { Val = "5C656E" },
+                new FontSize { Val = "16" },
+                new FontSizeComplexScript { Val = "16" }),
+            new Text(sello is not null ? " " + AttributionText : AttributionText)
+            { Space = SpaceProcessingModeValues.Preserve }));
+
+        return para;
     }
 
     // ── PDF: conversión del DOCX con LibreOffice ─────────────────────────────

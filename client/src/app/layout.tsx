@@ -16,12 +16,18 @@ const plexMono = IBM_Plex_Mono({
   display: "swap",
 });
 
+/* Íconos explícitos (no la convención app/icon.*): los genera
+   ops/brand/build-brand.mjs en public/. No debe existir app/favicon.ico. */
 export const metadata: Metadata = {
-  title: "Factum - Gabinete Forense Digital",
-  description: "Ministerio Público Fiscal · Inspecciones de dispositivos moviles",
+  title: "Factum",
+  description: "Adquisición forense de evidencia digital en dispositivos móviles",
   icons: {
-    icon: "/logo-app.ico",
-
+    icon: [
+      { url: "/logo-app.ico", sizes: "any" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icon-512.png", type: "image/png", sizes: "512x512" },
+    ],
+    apple: [{ url: "/apple-icon.png", sizes: "180x180" }],
   },
 };
 

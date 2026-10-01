@@ -1,4 +1,4 @@
-export type { User, Case, DeviceInput } from "@/lib/api";
+export type { User, Case, DeviceInput, PublicConfig } from "@/lib/api";
 export type { Device, AgentEvent, AgentFile, VideoVariant } from "@/lib/agent";
 
 export interface CapturedFile {

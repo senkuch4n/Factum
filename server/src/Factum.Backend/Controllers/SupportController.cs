@@ -40,7 +40,7 @@ public sealed class SupportController(ISupportService supportService) : Controll
     }
 
     // Genera la URL para que el oficial abra Faro ya logueado, sin volver a
-    // ingresar credenciales ahí (misma identidad de MPF que en Factum).
+    // ingresar credenciales ahí (la misma identidad (DNI) que en Factum).
     [HttpGet("faro-sso")]
     [ProducesResponseType<FaroSsoLinkResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

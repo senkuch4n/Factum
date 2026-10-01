@@ -271,7 +271,7 @@ export function CaseFormStep({ device, form, errors, loading, onChange, onClearE
                 key: "NroReferencia",
                 label: "Número de expediente",
                 icon: FileText,
-                placeholder: "Ej: MPF-001-2025",
+                placeholder: "Ej: EXP-001-2025",
                 value: form.NroReferencia,
                 error: errors.NroReferencia,
                 inputMode: "text" as const,

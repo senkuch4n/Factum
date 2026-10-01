@@ -13,7 +13,7 @@
   "build": {
     "appId": "com.factum.tatana",
     "productName": "Tatana",
-    "copyright": "Ministerio Público Fiscal — Salta",
+    "copyright": "© Factum",
     "directories": {
       "output": "dist"
     },
@@ -24,6 +24,13 @@
       {
         "from": "resources/agent",
         "to": "agent",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/tray",
+        "to": "tray",
         "filter": [
           "**/*"
         ]

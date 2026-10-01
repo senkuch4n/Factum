@@ -4,6 +4,7 @@ import { useId, useMemo, useRef, useState } from "react";
 import { Menu } from "primereact/menu";
 import type { MenuItem } from "primereact/menuitem";
 import { LogOut } from "lucide-react";
+import { usePublicConfig } from "@/hooks/usePublicConfig";
 
 interface Props {
   user: { name: string; sigla: string; dni: string } | null;
@@ -20,9 +21,36 @@ export function UserMenu({ user, onLogout }: Props) {
   const menuRef = useRef<Menu>(null);
   const [open, setOpen] = useState(false);
   const menuId = `user-menu-${useId().replace(/:/g, "")}`;
+  const { organizationName, organizationLogoSrc } = usePublicConfig();
+  const [orgLogoFailed, setOrgLogoFailed] = useState(false);
 
   const items = useMemo<MenuItem[]>(() => {
     if (!user) return [];
+    const showOrgLogo = !!organizationLogoSrc && !orgLogoFailed;
+    /* Organización emisora (Branding del backend): solo si hay nombre o logo. */
+    const orgItem: MenuItem[] = organizationName || showOrgLogo
+      ? [{
+          disabled: true,
+          className: "fx-menu-static",
+          template: () => (
+            <div className="flex min-w-0 items-center gap-2 border-t border-fx-border px-3.5 py-2.5">
+              {showOrgLogo && (
+                <img
+                  src={organizationLogoSrc}
+                  alt={organizationName ? "" : "Logo de la organización"}
+                  className="h-4 w-auto max-w-[96px] shrink-0 object-contain"
+                  onError={() => setOrgLogoFailed(true)}
+                />
+              )}
+              {organizationName && (
+                <p translate="no" className="min-w-0 truncate text-[11px] font-medium uppercase tracking-wide text-fx-text-3" title={organizationName}>
+                  {organizationName}
+                </p>
+              )}
+            </div>
+          ),
+        }]
+      : [];
     return [
       {
         disabled: true,
@@ -36,18 +64,7 @@ export function UserMenu({ user, onLogout }: Props) {
           </div>
         ),
       },
-      {
-        disabled: true,
-        className: "fx-menu-static",
-        template: () => (
-          <div className="flex items-center gap-2 border-t border-fx-border px-3.5 py-2.5">
-            <img src="/mpfs.png" alt="MPF" className="h-4 w-auto shrink-0 opacity-70" />
-            <p className="text-[11px] font-medium uppercase tracking-wide text-fx-text-3">
-              Min. Público Fiscal · Salta
-            </p>
-          </div>
-        ),
-      },
+      ...orgItem,
       { separator: true },
       {
         label: "Cerrar sesión",
@@ -56,7 +73,7 @@ export function UserMenu({ user, onLogout }: Props) {
         command: () => onLogout(),
       },
     ];
-  }, [user, onLogout]);
+  }, [user, onLogout, organizationName, organizationLogoSrc, orgLogoFailed]);
 
   if (!user) return null;
 

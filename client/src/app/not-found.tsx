@@ -4,8 +4,8 @@ import { FX_BUTTON_PRIMARY } from "@/lib/prime/pt/shared";
 export default function NotFound() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-8 bg-fx-bg px-6 text-center text-fx-text">
-      <img src="/logo-theme-dark.svg" alt="Factum" className="hidden h-7 w-auto dark:block" />
-      <img src="/logo-theme-white.svg" alt="Factum" className="block h-7 w-auto dark:hidden" />
+      <img src="/logo-theme-dark.svg" alt="Factum" width={289} height={64} className="hidden h-7 w-auto dark:block" />
+      <img src="/logo-theme-white.svg" alt="Factum" width={289} height={64} className="block h-7 w-auto dark:hidden" />
 
       <div className="space-y-3">
         <p className="text-fx-display tabular-nums text-fx-text">404</p>

@@ -6,8 +6,8 @@ import { api } from "@/lib/api";
 import { APP_VERSION } from "@/lib/version";
 
 /**
- * Línea de estado global: versión + atribución institucional, y un badge
- * "Dev" cuando el backend corre en modo desarrollo. Píldora opaca fija abajo
+ * Línea de estado global: versión + badge "Dev" cuando el backend corre en
+ * modo desarrollo. Píldora opaca fija abajo
  * a la izquierda (el fondo propio garantiza contraste sobre cualquier
  * contenido); `pointer-events-none` para no tapar el dock, el wizard ni los
  * toasts. No es un landmark <footer>: ese queda para SiteFooter.
@@ -26,7 +26,6 @@ export function SystemStatusLine() {
     >
       <span className="tabular-nums">
         <span className="hidden sm:inline">Factum </span>v{APP_VERSION}
-        <span className="hidden sm:inline"> · MPF Salta – GIF</span>
       </span>
       {devMode && (
         <span className="inline-flex items-center gap-1 rounded-fx-pill border border-fx-warning bg-fx-warning-soft px-1.5 font-semibold uppercase tracking-wide text-fx-warning">

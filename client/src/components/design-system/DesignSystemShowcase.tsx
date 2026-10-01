@@ -11,11 +11,12 @@ import { toast as sonner } from "sonner";
 import { ChevronRight, Download, FileText, MoreHorizontal, Plus, Settings, Smartphone, Trash2 } from "lucide-react";
 import { AppNavbar } from "@/components/shell/AppNavbar";
 import { SiteFooter } from "@/components/shell/SiteFooter";
+import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { Tip } from "@/components/ui/tooltip";
 
 /* ── Datos de ejemplo (ficticios) ──────────────────────────────────── */
 
-const DEMO_USER = { name: "Oficial de Prueba", sigla: "GFD", dni: "00.000.000" };
+const DEMO_USER = { name: "Oficial de Prueba", sigla: "DEMO", dni: "00.000.000" };
 
 const SECTIONS = [
   { id: "paleta", label: "Paleta" },
@@ -156,6 +157,7 @@ export function DesignSystemShowcase() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [refValue, setRefValue] = useState("12/26");
+  const { organizationName, organizationLogoSrc } = usePublicConfig();
 
   const refInvalid = refValue.trim() === "";
 
@@ -533,6 +535,7 @@ export function DesignSystemShowcase() {
 
       {/* 8. Footer */}
       <SiteFooter
+        organization={{ name: organizationName, logoSrc: organizationLogoSrc }}
         extraColumns={[
           {
             title: "Recursos (ejemplo)",

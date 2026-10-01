@@ -1,0 +1,7 @@
+# Config e identidad locales del cliente: se montan como volumen, no se hornean en la imagen.
+appsettings.Local.json
+branding/
+# Artefactos de build y datos de desarrollo
+bin/
+obj/
+dev-data/

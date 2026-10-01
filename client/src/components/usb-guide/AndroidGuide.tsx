@@ -14,7 +14,7 @@ function handleGlowMove(e: React.MouseEvent<HTMLElement>) {
   e.currentTarget.style.setProperty("--gy", `${e.clientY - r.top}px`);
 }
 
-/* Ficha oficial (páginas del PDF "Guía rápida — Depuración por USB" del GIF).
+/* Ficha oficial (páginas del PDF "Guía rápida — Depuración por USB").
    Se muestra tal cual para las marcas que están en el documento; "Otra marca"
    no tiene ficha y usa la lista de pasos. */
 const SHEETS: Record<string, string> = {
@@ -114,7 +114,7 @@ export function AndroidGuide({ onDone }: { onDone: () => void }) {
 
       {sheet ? (
         <div>
-          <p className="section-label mb-2.5">Guía rápida del GIF — Depuración por USB</p>
+          <p className="section-label mb-2.5">Guía rápida — Depuración por USB</p>
           <div className="overflow-hidden rounded-xl bg-white" style={{ border: "1px solid var(--border)" }}>
             <Lens zoomFactor={2.4} lensSize={220}>
               <img src={sheet} alt={`Guía de depuración por USB para ${brand.name}`} className="block w-full" />

@@ -18,14 +18,16 @@ interface AppNavbarProps {
   brandHref?: string;
 }
 
+/* Logo "Sello": horizontal (marca + "Factum" en trazos) desde sm; en móvil,
+   solo la marca. Las imágenes son decorativas: el nombre accesible lo pone
+   el contenedor. width/height = proporción del SVG, para reservar el lugar. */
 function Brand() {
   return (
     <>
-      <img src="/logo-theme-dark.svg" alt="" aria-hidden="true" className="hidden h-6 w-auto dark:block" />
-      <img src="/logo-theme-white.svg" alt="" aria-hidden="true" className="block h-6 w-auto dark:hidden" />
-      <span translate="no" className="hidden text-fx-body-sm font-extrabold uppercase tracking-wider text-fx-text sm:inline">
-        Factum
-      </span>
+      <img src="/logo-theme-dark.svg" alt="" aria-hidden="true" width={289} height={64} className="hidden h-6 w-auto sm:dark:block" />
+      <img src="/logo-theme-white.svg" alt="" aria-hidden="true" width={289} height={64} className="hidden h-6 w-auto sm:block sm:dark:hidden" />
+      <img src="/logo-mark-dark.svg" alt="" aria-hidden="true" width={64} height={64} className="hidden h-6 w-6 dark:block sm:dark:hidden" />
+      <img src="/logo-mark-white.svg" alt="" aria-hidden="true" width={64} height={64} className="block h-6 w-6 dark:hidden sm:hidden" />
     </>
   );
 }

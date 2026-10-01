@@ -10,12 +10,16 @@ import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "@/lib/theme";
 import WebcamPixelGrid from "@/components/ui/webcam-pixel-grid";
+import { usePublicConfig } from "@/hooks/usePublicConfig";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 
 export default function LoginPage() {
   const router = useRouter();
   const { isDark } = useTheme();
+  const { organizationName, organizationLogoSrc } = usePublicConfig();
+  const [orgLogoFailed, setOrgLogoFailed] = useState(false);
+  const showOrgLogo = !!organizationLogoSrc && !orgLogoFailed;
 
   const [form, setForm]         = useState({ dni: "", username: "", password: "" });
   const [showPass, setShowPass] = useState(false);
@@ -139,17 +143,40 @@ export default function LoginPage() {
         <div className="absolute inset-0 pointer-events-none" style={{ background: panelFade }} />
         <div className="absolute inset-0 pointer-events-none hidden lg:block" style={{ background: panelEdge }} />
 
-        {/* Institución — esquina superior */}
-        <motion.div
-          className="absolute top-6 left-6 lg:top-8 lg:left-8 flex items-center gap-3"
-          initial={{ opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: EASE }}
-        >
-          <img src="/mpfs.png" alt="Ministerio Público Fiscal" className="h-6 w-auto" style={{ opacity: 0.85 }} />
-          <span className="w-px h-3.5 bg-white/20" aria-hidden="true" />
-          <img src="/GFD_logo.png" alt="Gabinete Forense Digital" className="h-4 w-auto" style={{ opacity: 0.85 }} />
-        </motion.div>
+        {/* Organización emisora (Branding del backend) — esquina superior.
+            Solo si hay nombre o logo; fondo propio para contrastar sobre la
+            imagen de la cámara en cualquier tema. */}
+        {(organizationName || showOrgLogo) && (
+          <motion.div
+            className="absolute top-6 left-6 right-6 lg:top-8 lg:left-8 lg:right-8 flex"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, ease: EASE }}
+          >
+            <div
+              className="flex min-w-0 max-w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 backdrop-blur-sm"
+              style={{
+                background: isDark ? "rgba(0,0,0,0.5)" : "rgba(255,255,255,0.82)",
+                color: isDark ? "rgba(255,255,255,0.92)" : "var(--text-primary)",
+              }}
+            >
+              {showOrgLogo && (
+                <img
+                  src={organizationLogoSrc}
+                  /* Con el nombre al lado, el logo es decorativo (no se lee dos veces). */
+                  alt={organizationName ? "" : "Logo de la organización"}
+                  className="h-6 w-auto max-w-[160px] shrink-0 object-contain"
+                  onError={() => setOrgLogoFailed(true)}
+                />
+              )}
+              {organizationName && (
+                <span translate="no" className="min-w-0 truncate text-[13px] font-semibold" title={organizationName}>
+                  {organizationName}
+                </span>
+              )}
+            </div>
+          </motion.div>
+        )}
 
         {/* Marca + estado — esquina inferior */}
         <div className="absolute bottom-7 left-6 right-6 lg:bottom-10 lg:left-10 lg:right-10">
@@ -161,13 +188,12 @@ export default function LoginPage() {
           >
             <img
               src={isDark ? "/logo-theme-dark.svg" : "/logo-theme-white.svg"}
-              alt=""
+              alt="Factum"
+              width={289}
+              height={64}
               className="h-7 lg:h-8 w-auto"
-              style={{ filter: isDark ? "drop-shadow(0 0 20px rgba(0,204,255,0.25))" : "drop-shadow(0 2px 8px rgba(0,0,0,0.15))" }}
+              style={{ filter: isDark ? "drop-shadow(0 0 20px rgba(127,211,78,0.22))" : "drop-shadow(0 2px 8px rgba(0,0,0,0.15))" }}
             />
-            <span className="hero-title text-2xl lg:text-[28px]" style={{ color: "#ffffff" }}>
-              Factum
-            </span>
           </motion.div>
           <motion.p
             className="text-[13px] font-medium max-w-xs leading-snug"
@@ -230,7 +256,7 @@ export default function LoginPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.35, delay: 0.15, ease: EASE }}
             >
-              Ingresá con tus credenciales del Ministerio Público Fiscal.
+              Ingresá con tus credenciales.
             </motion.p>
 
             {/* Estado del agente Tatana */}

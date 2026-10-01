@@ -20,9 +20,9 @@ public sealed class FaroIntegrationOptions
 }
 
 // Le pasa al backend de Faro (sistema-gestion-de-tokens) los problemas que
-// reportan los oficiales desde Factum, para que se abra un token de
-// soporte del GFD sin que el oficial necesite loguearse ahí. Factum y Faro
-// comparten la identidad de MPF — el Dni es la llave real, Faro resuelve (o
+// reportan los oficiales desde Factum, para que se abra un token en la
+// mesa de soporte sin que el oficial necesite loguearse ahí. Factum y Faro
+// comparten la misma identidad (DNI) — el Dni es la llave real, Faro resuelve (o
 // provisiona) el mismo Usuario que vería si entrara directo a Faro.
 public sealed class SupportService : ISupportService
 {

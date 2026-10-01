@@ -5,15 +5,41 @@ using Factum.Backend.Infrastructure;
 using Microsoft.Extensions.Options;
 using Factum.Backend.Models;
 using Factum.Backend.Services.Auth;
+using Factum.Backend.Services.Branding;
 using Factum.Backend.Services.Cases;
 using Factum.Backend.Services.Reports;
 using Factum.Backend.Services.Support;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Configuration.Json;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// ── Config local fuera del repo (appsettings.Local.json, ignorado por git) ────
+// Se inserta justo DESPUÉS del último appsettings*.json (appsettings.{Environment}.json),
+// así pisa a la config versionada pero las variables de entorno y la línea de comandos
+// (que vienen después en la lista de fuentes) siguen ganando. Ahí vive la identidad real
+// del cliente (Branding:*); ver README, "Identidad de la organización (Branding)".
+{
+    var sources = builder.Configuration.Sources;
+    var lastAppSettings = -1;
+    for (var i = 0; i < sources.Count; i++)
+    {
+        if (sources[i] is JsonConfigurationSource { Path: { } path } &&
+            path.StartsWith("appsettings", StringComparison.OrdinalIgnoreCase))
+            lastAppSettings = i;
+    }
+    var localSource = new JsonConfigurationSource
+    {
+        Path = "appsettings.Local.json",
+        Optional = true,
+        ReloadOnChange = false,
+        FileProvider = builder.Environment.ContentRootFileProvider,
+    };
+    sources.Insert(lastAppSettings >= 0 ? lastAppSettings + 1 : sources.Count, localSource);
+}
 
 var port = int.Parse(Environment.GetEnvironmentVariable("PORT") ?? "8080");
 builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(port));
@@ -26,6 +52,7 @@ builder.Services.Configure<MpfOptions>(builder.Configuration.GetSection("Auth"))
 builder.Services.Configure<FaroIntegrationOptions>(builder.Configuration.GetSection("FaroIntegration"));
 builder.Services.Configure<Factum.Backend.Controllers.AuditOptions>(builder.Configuration.GetSection("Audit"));
 builder.Services.Configure<Factum.Backend.Services.Updates.TatanaUpdatesOptions>(builder.Configuration.GetSection("TatanaUpdates"));
+builder.Services.Configure<BrandingOptions>(builder.Configuration.GetSection("Branding"));
 
 // ── Serialización ─────────────────────────────────────────────────────────────
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -64,6 +91,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 builder.Services.AddSingleton<ICaseRepository, CaseRepository>();
 builder.Services.AddSingleton<IAgentEventRepository, AgentEventRepository>();
 builder.Services.AddSingleton<IStorageService, StorageService>();
+builder.Services.AddSingleton<IBrandingService, BrandingService>();
 
 // ── Auth provider (dev o MPF según config) ────────────────────────────────────
 var authMode = builder.Configuration["Auth:Mode"] ?? "dev";
@@ -105,6 +133,10 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 var app = builder.Build();
+
+// Branding se carga una sola vez; resolverlo acá hace que sus warnings (logo inválido,
+// textos truncados) salgan en el log de arranque y no en el primer request.
+app.Services.GetRequiredService<IBrandingService>();
 
 app.UseForwardedHeaders();
 app.UseCors();

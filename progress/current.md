@@ -12,3 +12,17 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — `implementer-frontend` done -> progress/impl_frontend_rediseno-base-primereact.md. HU → en_revision, lanzado `reviewer` (sonnet).
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-base-primereact.md (tuvo que relanzarse para escribir el archivo). HU → aprobada, resumen en history.md. Pendiente: prueba manual del usuario y commit.
 - 2026-10-01 — Usuario probó /design-system y pidió commit. Commit en feat/rediseno-base-primereact. Próximo pedido: cambiar el logo.
+- 2026-10-01 — Commit 008351b de rediseno-base-primereact. Usuario pide logo nuevo (canvas de 4 propuestas publicado) y sacar MPF/GFD del producto comercial → alta HU `marca-comercial-sin-mpf-gfd` (afinando), lanzado `afinador`.
+- 2026-10-01 — Usuario elige logo A · Sello; confirma GFD. Dato pasado al `afinador` en curso.
+- 2026-10-01 — `afinador` terminó docs/hu-marca-comercial-sin-mpf-gfd.md (10 dudas, logo A incorporado). HU → afinada_pendiente_validacion.
+- 2026-10-01 — Usuario valida D1–D10 (recomendadas); Faro es suyo; sin razón social. HU partida: alta `auth-e-integraciones-sin-mpf` (no_afinada). `marca-comercial-sin-mpf-gfd` → en_arquitectura en rama feat/marca-comercial-sin-mpf-gfd (encadenada sobre feat/rediseno-base-primereact). Lanzado `architect`.
+- 2026-10-01 — Usuario: Factum se instala en un estudio jurídico; informes con identidad del estudio + leyenda 'Realizado con Factum'. D4 → C. Va a pasar un informe de referencia. Avisado al `architect` en curso.
+- 2026-10-01 — Usuario pasó datos del estudio (2 profesionales, domicilio, 2 celulares) — NO se versionan; se cargan en config local. Branding suma ContactLines (avisado al `architect`). Esperando informes de referencia.
+- 2026-10-01 — Usuario dejó 3 informes de referencia en docs/ (2 DOCX pericia de parte con datos reales de una causa + 1 PDF de Policía de Salta como referencia de layout). Excluidos de git vía .git/info/exclude (local). Detectado: el emisor real es un perito de parte, no el estudio → consulta al usuario.
+- 2026-10-01 — `architect` done -> Refactorizaciones/marca-comercial-sin-mpf-gfd.md (5 DP). Usuario: emisor = estudio jurídico; HU aparte `informe-pericial-de-parte` (alta no_afinada, absorbe DP1 plantilla v4 y DP5 terminología). Pendiente: DP2–DP4.
+- 2026-10-01 — DP2 sí / DP3 pie+logo sin versión / DP4 variante clara. O1–O3 hechos (AGENTS.md). verify OK → arquitectura_lista → implementando. Lanzados `implementer-backend` y `implementer-frontend` (opus) en paralelo.
+- 2026-10-01 — `implementer-backend` done -> progress/impl_backend_marca-comercial-sin-mpf-gfd.md; B9 (borrado de assets/plantillas viejas en Templates/) pendiente: permiso denegado al subagente → consultado al usuario. Frontend sigue.
+- 2026-10-01 — Usuario autorizó B9: orquestador hizo git rm de assets/plantillas viejas MPF/GFD (build backend 0 errores).
+- 2026-10-01 — `implementer-frontend` done -> progress/impl_frontend_marca-comercial-sin-mpf-gfd.md; pendiente factum-sello.png en server/Templates (escritura rechazada por permisos) → consultado al usuario.
+- 2026-10-01 — factum-sello.png generado (autorizado). HU → en_revision, lanzado `reviewer` (sonnet).
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_marca-comercial-sin-mpf-gfd.md. verify OK. HU → aprobada, resumen en history.md. Pendiente: prueba manual y commit.

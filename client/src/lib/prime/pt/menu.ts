@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 /**
  * Menu (popup o inline). El ítem activo por teclado lo marca Prime con
  * `data-p-focused="true"` en el <li>; el hover usa la misma superficie.
- * Los ítems `disabled` con template (identidad/institución del UserMenu)
+ * Los ítems `disabled` con template (identidad/organización del UserMenu)
  * llevan `className: "fx-menu-static"` y no se atenúan ni se resaltan.
  */
 export const menu: MenuPassThroughOptions = {

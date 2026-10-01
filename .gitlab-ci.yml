@@ -45,7 +45,7 @@ build-agent-linux:
 
 # ── Job 2: Empaqueta el instalador Windows (.exe NSIS) con Electron ─────────────
 # TATANA_UPDATES_URL: variable de CI/CD (Settings > CI/CD > Variables) con la
-# URL pública del backend de Factum, ej: https://factum.mpf.gob.ar —
+# URL pública del backend de Factum, ej: https://factum.example.com —
 # ahí es donde electron-updater va a chequear actualizaciones (nunca contra
 # GitLab directo, la PC del fiscal puede no tener salida a internet). Si no
 # está seteada, cae al default de package.json (localhost, solo para dev).
