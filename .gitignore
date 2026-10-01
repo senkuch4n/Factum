@@ -30,3 +30,6 @@ agent-ui/resources/agent/
 
 # OS
 .DS_Store
+
+# Claude Code: config local de cada usuario (no va al repo)
+.claude/settings.local.json

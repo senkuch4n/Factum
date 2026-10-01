@@ -1,0 +1,46 @@
+{
+  "project": "factum",
+  "descripcion": "Backlog de HU del arnés RDD/SDD. Estado en disco — no vive en el chat. Solo lo edita el orquestador.",
+  "reglas": {
+    "one_active_at_a_time": true,
+    "estados_activos": [
+      "afinando",
+      "en_arquitectura",
+      "implementando",
+      "en_revision"
+    ],
+    "valid_status": [
+      "no_afinada",
+      "afinando",
+      "afinada_pendiente_validacion",
+      "validada",
+      "en_arquitectura",
+      "arquitectura_lista",
+      "implementando",
+      "en_revision",
+      "aprobada",
+      "rechazada_reintentando",
+      "bloqueada"
+    ],
+    "max_intentos_revision": 2
+  },
+  "plantilla_hu": {
+    "id": "slug-de-la-hu",
+    "titulo": "Qué cambia, en una línea",
+    "estado": "no_afinada",
+    "creada": "ISO-8601",
+    "actualizada": "YYYY-MM-DD",
+    "intentos_revision": 0,
+    "toca": { "backend": false, "frontend": false, "agent_ui": false },
+    "asignacion": {
+      "backend_model": "opus",
+      "frontend_model": "opus",
+      "reviewer_model": "sonnet",
+      "skill": null,
+      "rama": "feat/<slug>",
+      "fase": "afinado"
+    },
+    "notas": ""
+  },
+  "features": []
+}
