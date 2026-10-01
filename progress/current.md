@@ -45,3 +45,7 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — `implementer-backend` (auth) done -> progress/impl_backend_auth-e-integraciones-sin-mpf.md. HU → en_revision, lanzado `reviewer`.
 - 2026-10-01 — `afinador` done -> docs/hu-rediseno-dashboard.md (11 dudas) → validada (autónomo). D1 C: paraguas + 4 hijas (historial, wizard, captura, cierre-legacy) en backlog, validadas. Lanzado `architect` para historial.
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_auth-e-integraciones-sin-mpf.md. verify OK. auth → aprobada, commit. rediseno-pagina-inicio → implementando en feat/rediseno-pagina-inicio.
+- 2026-10-01 — `architect` done -> Refactorizaciones/zip-cifrado-real.md; P1 A, P2 A (autónomo). Queda validada hasta su turno.
+- 2026-10-01 — `architect` done -> Refactorizaciones/rediseno-dashboard-historial.md; DP1–DP3 A (autónomo). Lanzado `architect` para rediseno-dashboard-wizard.
+- 2026-10-01 — `implementer-frontend` (login) done -> progress/impl_frontend_rediseno-pagina-inicio.md. F14 (borrado de 2 archivos sin consumidores) denegado por permisos → NO se rodea; diferido a autorización del usuario / rediseno-cierre-legacy. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-pagina-inicio.md. verify OK. Login → aprobada, commit. zip-cifrado-real → implementando en feat/zip-cifrado-real.

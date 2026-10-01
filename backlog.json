@@ -138,7 +138,7 @@
     {
       "id": "zip-cifrado-real",
       "titulo": "Cifrado real del ZIP de evidencia (hoy la clave no protege nada)",
-      "estado": "validada",
+      "estado": "implementando",
       "creada": "2026-10-01T00:00:00-03:00",
       "actualizada": "2026-10-01",
       "intentos_revision": 0,
@@ -153,14 +153,14 @@
         "reviewer_model": "sonnet",
         "skill": null,
         "rama": "feat/zip-cifrado-real",
-        "fase": "arquitectura_adelantada"
+        "fase": "implementacion"
       },
-      "notas": "Hallazgo del afinador en informe-pericial-de-parte (2026-10-01): el ZIP de evidencia no está cifrado aunque la doc dice 'ZIP cifrado'. Abierta por pedido del usuario. Depende de D10 de informe-pericial-de-parte (DOCX fuera del ZIP). Afinada y validada (autónomo, recomendadas D1–D11) 2026-10-01."
+      "notas": "Hallazgo del afinador en informe-pericial-de-parte (2026-10-01): el ZIP de evidencia no está cifrado aunque la doc dice 'ZIP cifrado'. Abierta por pedido del usuario. Depende de D10 de informe-pericial-de-parte (DOCX fuera del ZIP). Afinada y validada (autónomo, recomendadas D1–D11) 2026-10-01. SDD lista; P1 A, P2 A (autónomo). Espera turno (después de rediseno-pagina-inicio)."
     },
     {
       "id": "rediseno-pagina-inicio",
       "titulo": "Rediseño de la página / con el nuevo sistema de diseño",
-      "estado": "implementando",
+      "estado": "aprobada",
       "creada": "2026-10-01T00:00:00-03:00",
       "actualizada": "2026-10-01",
       "intentos_revision": 0,
@@ -175,9 +175,9 @@
         "reviewer_model": "sonnet",
         "skill": null,
         "rama": "feat/rediseno-pagina-inicio",
-        "fase": "implementacion"
+        "fase": "cerrada"
       },
-      "notas": "Depende de rediseno-base-primereact. Afinada y validada (modo autónomo, recomendadas D1–D9) 2026-10-01; SDD adelantada. SDD lista (0 decisiones pendientes): Refactorizaciones/rediseno-pagina-inicio.md; espera turno de implementación (después de informe-pericial y auth)."
+      "notas": "Depende de rediseno-base-primereact. Afinada y validada (modo autónomo, recomendadas D1–D9) 2026-10-01; SDD adelantada. SDD lista (0 decisiones pendientes): Refactorizaciones/rediseno-pagina-inicio.md; espera turno de implementación (después de informe-pericial y auth). F14 (borrar ThemeToggle.tsx y ui/webcam-pixel-grid.tsx) diferido: permiso de borrado denegado al implementer; queda pendiente de autorización del usuario o para rediseno-cierre-legacy."
     },
     {
       "id": "rediseno-dashboard",
@@ -221,7 +221,7 @@
         "rama": "feat/rediseno-dashboard-historial",
         "fase": "pendiente"
       },
-      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 1."
+      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 1. SDD lista; DP1–DP3 A (autónomo)."
     },
     {
       "id": "rediseno-dashboard-wizard",
@@ -287,7 +287,7 @@
         "rama": "feat/rediseno-cierre-legacy",
         "fase": "pendiente"
       },
-      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 4. Precondición: partes 1-3 y rediseno-pagina-inicio aprobadas."
+      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 4. Precondición: partes 1-3 y rediseno-pagina-inicio aprobadas. Sumar: borrar client/src/components/ThemeToggle.tsx y ui/webcam-pixel-grid.tsx (F14 diferido de rediseno-pagina-inicio). Los borrados pueden requerir autorización explícita del usuario."
     }
   ]
 }

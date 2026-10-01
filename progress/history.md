@@ -35,3 +35,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos.
 - **Rama:** `feat/auth-e-integraciones-sin-mpf` (encadenada sobre `feat/informe-pericial-de-parte`).
 - **Pendiente:** **rotar la `ServiceKey` de Faro** (sigue en el historial de git; acción del usuario); prueba manual 11.4 (login contra proveedor real/falso, soporte encendido/apagado).
+
+## rediseno-pagina-inicio — APROBADA (2026-10-01)
+
+- **Qué:** login (`/`) rediseñado con PrimeReact (pt `password`, `inputtext`, `button`), hero con la marca y la organización configurada, validación de DNI en cliente, mensajes de error legibles, redirección si ya hay sesión, animación de entrada con `prefers-reduced-motion`; sin navbar/footer del shell; independiente del literal del modo de auth.
+- **Decisiones:** D1–D9 recomendadas (modo autónomo).
+- **Modelos:** afinador/architect (sesión), implementer-frontend opus, reviewer sonnet. 0 rechazos.
+- **Rama:** `feat/rediseno-pagina-inicio` (encadenada sobre `feat/auth-e-integraciones-sin-mpf`).
+- **Pendiente:** F14 — borrar `ThemeToggle.tsx` y `ui/webcam-pixel-grid.tsx` (sin consumidores; borrado denegado por permisos, requiere autorización del usuario o va en `rediseno-cierre-legacy`); orden de merge del pt de inputtext (`!pl-10`) a corregir en el cierre.

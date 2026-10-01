@@ -16,15 +16,20 @@ function getToken(): string | null {
 /**
  * Error de la API. `missing` trae las claves de obligatorios faltantes
  * (`{ error, missing }` del backend; ver `lib/pericial.ts`).
+ * `serverMessage` es el `error` del body tal cual vino (o `null` si el body
+ * no era JSON o no traía un `error` de texto); lo usa el login para no
+ * mostrar textos genéricos como "HTTP 500".
  */
 export class ApiError extends Error {
   status: number;
   missing?: string[];
-  constructor(message: string, status: number, missing?: string[]) {
+  serverMessage: string | null;
+  constructor(message: string, status: number, missing?: string[], serverMessage: string | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.missing = missing;
+    this.serverMessage = serverMessage;
   }
 }
 
@@ -39,9 +44,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     },
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    const missing = Array.isArray(err?.missing) ? (err.missing as string[]) : undefined;
-    throw new ApiError(err?.error || `HTTP ${res.status}`, res.status, missing);
+    const body = await res.json().catch(() => null);
+    const serverMessage = typeof body?.error === "string" && body.error.trim() ? (body.error as string) : null;
+    const missing = Array.isArray(body?.missing) ? (body.missing as string[]) : undefined;
+    // `message` igual que antes: el `error` del body, o el statusText si el body
+    // no era JSON, o "HTTP <status>" como último recurso.
+    const fallback = body === null ? res.statusText : body?.error;
+    throw new ApiError(serverMessage ?? (fallback || `HTTP ${res.status}`), res.status, missing, serverMessage);
   }
   return res.json();
 }

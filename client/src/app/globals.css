@@ -199,6 +199,17 @@
   to   { opacity: 1; transform: rotate(0) scale(1); }
 }
 
+/* Entrada única del panel de acceso del login y fundido del mensaje de error
+   (siempre detrás de motion-safe:, ver components/login/). */
+@keyframes fx-rise-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes fx-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
 /* ═══════════════════════════════════════════════════════════════
    LIGHT THEME  (default) — superficies neutras, un solo acento
    (teal de marca) usado con moderación. Impronta Vercel: blanco/

@@ -3,6 +3,8 @@ import { button } from "./button";
 import { dialog } from "./dialog";
 import { inputtext } from "./inputtext";
 import { menu } from "./menu";
+import { message } from "./message";
+import { password } from "./password";
 import { toast } from "./toast";
 
 /**
@@ -18,4 +20,6 @@ export const fxPassThrough: PrimeReactPTOptions = {
   dialog,
   menu,
   toast,
+  password,
+  message,
 };

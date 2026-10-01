@@ -7,12 +7,14 @@ import { Dialog } from "primereact/dialog";
 import { Menu } from "primereact/menu";
 import type { MenuItem } from "primereact/menuitem";
 import { Toast } from "primereact/toast";
+import { Message } from "primereact/message";
 import { toast as sonner } from "sonner";
-import { ChevronRight, Download, FileText, MoreHorizontal, Plus, Settings, Smartphone, Trash2 } from "lucide-react";
+import { ChevronRight, Download, FileText, Hash, MoreHorizontal, Plus, Settings, Smartphone, Trash2 } from "lucide-react";
 import { AppNavbar } from "@/components/shell/AppNavbar";
 import { SiteFooter } from "@/components/shell/SiteFooter";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { Tip } from "@/components/ui/tooltip";
+import { FxPassword } from "@/components/form/FxPassword";
 
 /* ── Datos de ejemplo (ficticios) ──────────────────────────────────── */
 
@@ -157,6 +159,8 @@ export function DesignSystemShowcase() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [refValue, setRefValue] = useState("12/26");
+  const [passValue, setPassValue] = useState("");
+  const [passInvalidValue, setPassInvalidValue] = useState("");
   const { organizationName, organizationLogoSrc } = usePublicConfig();
 
   const refInvalid = refValue.trim() === "";
@@ -407,6 +411,59 @@ export function DesignSystemShowcase() {
               <div className="space-y-1.5">
                 <label htmlFor="ds-disabled" className="block text-fx-body-sm font-medium text-fx-text-disabled">Tribunal (deshabilitado)</label>
                 <InputText id="ds-disabled" defaultValue="Tribunal de ejemplo" disabled />
+              </div>
+            </div>
+          </Subsection>
+
+          <Subsection title="Password (FxPassword)">
+            <p className="max-w-2xl text-fx-body-sm text-fx-text-2">
+              Siempre a través de <code>FxPassword</code>: el control de mostrar/ocultar es un botón con
+              nombre en español (&laquo;Mostrar contraseña&raquo; / &laquo;Ocultar contraseña&raquo;) que conserva el foco.
+            </p>
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <label htmlFor="ds-pass" className="block text-fx-body-sm font-medium text-fx-text">Contraseña</label>
+                <FxPassword inputId="ds-pass" autoComplete="off" value={passValue} onChange={(e) => setPassValue(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="ds-pass-invalid" className="block text-fx-body-sm font-medium text-fx-text">Contraseña (inválida)</label>
+                <FxPassword
+                  inputId="ds-pass-invalid"
+                  autoComplete="off"
+                  value={passInvalidValue}
+                  onChange={(e) => setPassInvalidValue(e.target.value)}
+                  invalid
+                  aria-invalid
+                  aria-describedby="ds-pass-invalid-msg"
+                 
+                />
+                <p id="ds-pass-invalid-msg" className="text-xs text-fx-danger">Ingresá tu contraseña.</p>
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="ds-pass-disabled" className="block text-fx-body-sm font-medium text-fx-text-disabled">Contraseña (deshabilitada)</label>
+                <FxPassword inputId="ds-pass-disabled" autoComplete="off" value="secreto" readOnly disabled />
+              </div>
+            </div>
+          </Subsection>
+
+          <Subsection title="Message">
+            <div className="grid max-w-2xl grid-cols-1 gap-3">
+              <Message role="note" severity="error" text="DNI, usuario o contraseña incorrectos." />
+              <Message role="note" severity="warn" text="Tatana sin conexión: abrí el agente para adquirir." />
+              <Message role="note" severity="success" text="Informe generado y firmado." />
+              <Message role="note" severity="info" text="La sesión vence a las 8 horas de inactividad." />
+            </div>
+          </Subsection>
+
+          <Subsection title="Campo con ícono (patrón del login)">
+            <div className="max-w-sm space-y-1.5">
+              <label htmlFor="ds-dni" className="block text-fx-body-sm font-semibold text-fx-text-2">DNI</label>
+              <div className="group relative">
+                <Hash
+                  className="pointer-events-none absolute left-3.5 top-1/2 z-[1] h-4 w-4 -translate-y-1/2 text-fx-text-3 transition-colors duration-fx-fast ease-fx group-focus-within:text-fx-accent-text"
+                  aria-hidden="true"
+                />
+                <InputText id="ds-dni" inputMode="numeric" autoComplete="off" placeholder="12345678" className="h-12 !pl-10" />
               </div>
             </div>
           </Subsection>
