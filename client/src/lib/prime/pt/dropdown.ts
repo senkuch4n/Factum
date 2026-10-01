@@ -21,7 +21,10 @@ export const dropdown: DropdownPT = {
     className: cn(
       "relative inline-flex w-full items-stretch cursor-pointer select-none rounded-fx-md border",
       "transition-[border-color] duration-fx-fast ease-fx",
-      "has-[input:focus-visible]:outline has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-fx-focus",
+      // `outline-none` (TW3: 2px solid transparent) da el estilo del contorno en reposo:
+      // tailwind-merge 3 descarta `has-[…]:outline` frente a `has-[…]:outline-2` y sin
+      // estilo el anillo de foco no se veía (hallazgo de la parte 3).
+      "outline-none has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-fx-focus",
       props.disabled
         ? "bg-fx-surface-1 border-fx-border text-fx-text-disabled cursor-not-allowed"
         : cn(

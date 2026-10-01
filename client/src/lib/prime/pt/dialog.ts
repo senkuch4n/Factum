@@ -79,3 +79,19 @@ export const dialog: DialogPassThroughOptions = {
           },
         },
 };
+
+/**
+ * Variante "media" (cámara, webcam, visor). Se pasa como `pt` de instancia
+ * (la usa `components/overlay/FxMediaDialog`): con ptOptions
+ * { mergeProps: true, classNameMergeFunction: cn } (AppProviders) se fusiona
+ * con el pt global y tailwind-merge resuelve los conflictos. Son objetos, no
+ * funciones: una función de instancia se encadena con la global y su retorno
+ * se pierde.
+ */
+export const DIALOG_MEDIA_PT: DialogPassThroughOptions = {
+  root:        { className: "w-[min(40rem,100%)] bg-fx-bg border-fx-border" },
+  header:      { className: "px-4 pt-3 pb-3 border-b border-fx-border" },
+  headerTitle: { className: "text-fx-body-sm font-semibold" },
+  content:     { className: "p-0 text-fx-text" },
+  footer:      { className: "px-4 pt-3 pb-3 border-t border-fx-border bg-fx-surface-1 justify-between items-center" },
+};

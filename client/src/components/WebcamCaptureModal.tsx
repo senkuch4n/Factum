@@ -1,13 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { X, Check, RotateCcw, AlertTriangle, RefreshCw, Monitor, Settings } from "lucide-react";
+import { Button } from "primereact/button";
+import { Check, RotateCcw, RefreshCw, Loader2 } from "lucide-react";
+import { FOCUS_RING } from "@/lib/prime/pt/shared";
+import { cn } from "@/lib/utils";
+import { MEDIA_ACTIONS, MediaErrorGuide } from "./capture/MediaErrorGuide";
+import { FxMediaDialog } from "./overlay/FxMediaDialog";
 
 type Phase = "live" | "captured" | "error";
 type ErrKind = "NotAllowed" | "NotFound" | "InUse" | "Other";
 
 interface Props {
+  open: boolean;
   label: string;
   icon: React.ElementType;
   onCapture: (blob: Blob, filename: string) => void;
@@ -53,7 +58,34 @@ const ERROR_GUIDES: Record<ErrKind, { title: string; steps: string[]; extra?: st
   },
 };
 
-export function WebcamCaptureModal({ label, icon: Icon, onCapture, onClose }: Props) {
+/** Esquinas del visor (decorativas). */
+const CORNERS = [
+  "top-3 left-3 rotate-0",
+  "top-3 right-3 rotate-90",
+  "bottom-3 left-3 -rotate-90",
+  "bottom-3 right-3 rotate-180",
+];
+
+/**
+ * Foto de identificación con la webcam. El componente público es solo el
+ * diálogo; el `Body` (stream, captura, previsualización) se monta al abrir y
+ * se desmonta al terminar la salida, así el cleanup apaga la cámara.
+ * Escape y la X cierran en todas las fases; la máscara no (DP4 A).
+ */
+export function WebcamCaptureModal({ open, label, icon: Icon, onCapture, onClose }: Props) {
+  return (
+    <FxMediaDialog
+      visible={open}
+      onHide={onClose}
+      title={label}
+      icon={<Icon className="h-4 w-4" aria-hidden="true" />}
+    >
+      <WebcamBody key={label} label={label} onCapture={onCapture} onClose={onClose} />
+    </FxMediaDialog>
+  );
+}
+
+function WebcamBody({ label, onCapture, onClose }: Omit<Props, "open" | "icon">) {
   const videoRef  = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -135,240 +167,80 @@ export function WebcamCaptureModal({ label, icon: Icon, onCapture, onClose }: Pr
   const guide = errKind ? ERROR_GUIDES[errKind] : null;
 
   return (
-    <div
-      className="webcam-overlay"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <motion.div
-        className="w-full max-w-lg rounded-lg overflow-hidden"
-        style={{ background: "#000", boxShadow: "0 32px 80px rgba(0,0,0,0.7)" }}
-        initial={{ opacity: 0, scale: 0.93, y: 20 }}
-        animate={{ opacity: 1, scale: 1,    y: 0  }}
-        exit={{   opacity: 0, scale: 0.93, y: 20  }}
-        transition={{ type: "spring", stiffness: 280, damping: 24 }}
-      >
-        {/* ── Close button (always visible, top-right) ── */}
-        <div className="absolute top-3 right-3 z-20">
-          <button
-            onClick={onClose}
-            aria-label="Cerrar"
-            className="w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-sm transition-colors"
-            style={{ background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.15)" }}
-          >
-            <X className="w-4 h-4 text-white" />
-          </button>
-        </div>
-
-        {/* ── Label chip (top-left) ── */}
-        <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full backdrop-blur-sm"
-          style={{ background: "rgba(0,0,0,0.5)", border: "1px solid rgba(255,255,255,0.12)" }}
-        >
-          <Icon className="w-3.5 h-3.5 text-white" aria-hidden="true" />
-          <span className="text-white text-xs font-semibold">{label}</span>
-        </div>
-
-        <AnimatePresence mode="wait">
-
-          {/* ─── LIVE ─── */}
-          {phase === "live" && (
-            <motion.div
-              key="live"
-              className="relative"
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            >
-              {/* Video */}
-              <video
-                ref={videoRef}
-                autoPlay playsInline muted
-                className="w-full block"
-                style={{ maxHeight: "70vh", objectFit: "cover", background: "#111" }}
-              />
-
-              {/* Grid overlay */}
-              <div className="absolute inset-0 pointer-events-none" style={{
-                backgroundImage: "linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px)",
-                backgroundSize: "33.3% 33.3%",
-              }} />
-
-              {/* Crosshair */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="w-8 h-px bg-white/20" />
-                <div className="absolute w-px h-8 bg-white/20" />
+    <>
+      {phase === "live" && (
+        <>
+          <div className="relative bg-fx-bg">
+            {/* contenido de imagen */}
+            <video ref={videoRef} autoPlay playsInline muted className="block max-h-[60vh] w-full object-cover" />
+            {CORNERS.map(pos => (
+              <svg key={pos} width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"
+                className={cn("pointer-events-none absolute text-fx-text opacity-60", pos)}>
+                <path d="M0 12 L0 0 L12 0" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ))}
+            {!videoReady && (
+              <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-fx-overlay">
+                <Loader2 className="h-8 w-8 animate-spin text-fx-text" aria-hidden="true" />
+                <p className="m-0 text-xs text-fx-text">Iniciando cámara…</p>
               </div>
-
-              {/* Corner brackets */}
-              {[
-                "top-3 left-3",
-                "top-3 right-3",
-                "bottom-16 left-3",
-                "bottom-16 right-3",
-              ].map((pos, i) => (
-                <svg key={i} width="20" height="20" viewBox="0 0 20 20"
-                  className={`absolute ${pos} pointer-events-none`}
-                  style={{
-                    transform: `rotate(${[0, 90, 270, 180][i]}deg)`,
-                    opacity: 0.6,
-                  }}
-                >
-                  <path d="M0 12 L0 0 L12 0" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              ))}
-
-              {/* Loading */}
-              {!videoReady && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70">
-                  <div className="w-9 h-9 rounded-full border-2 border-white/15 border-t-white animate-spin" />
-                  <p className="text-white/60 text-xs">Iniciando cámara...</p>
-                </div>
+            )}
+          </div>
+          <div className={MEDIA_ACTIONS}>
+            <div className="flex-1">
+              <Button type="button" text severity="secondary" label="Cancelar" onClick={onClose} className="min-h-11" />
+            </div>
+            <button
+              type="button"
+              onClick={capture}
+              disabled={!videoReady}
+              aria-label="Tomar foto"
+              className={cn(
+                "relative flex h-16 w-16 items-center justify-center rounded-full border-[3px] border-fx-accent",
+                "transition-transform duration-fx-fast ease-fx motion-safe:enabled:active:scale-95",
+                "disabled:cursor-not-allowed disabled:opacity-40",
+                FOCUS_RING,
               )}
-
-              {/* ── Controls bar overlaid at bottom ── */}
-              <div
-                className="absolute bottom-0 inset-x-0 flex items-center justify-between px-6 py-5"
-                style={{ background: "linear-gradient(to top, rgba(0,0,0,0.75) 0%, transparent 100%)" }}
-              >
-                {/* Cancel */}
-                <button
-                  onClick={onClose}
-                  className="text-white/70 text-sm font-medium hover:text-white transition-colors py-2 px-3"
-                >
-                  Cancelar
-                </button>
-
-                {/* Shutter */}
-                <motion.button
-                  onClick={capture}
-                  disabled={!videoReady}
-                  whileTap={{ scale: 0.88 }}
-                  whileHover={{ scale: 1.06 }}
-                  className="relative"
-                  style={{ opacity: videoReady ? 1 : 0.4, cursor: videoReady ? "pointer" : "not-allowed" }}
-                >
-                  {/* Outer ring */}
-                  <div className="w-16 h-16 rounded-full flex items-center justify-center"
-                    style={{ border: "3px solid rgba(255,255,255,0.8)" }}
-                  >
-                    {/* Inner white circle */}
-                    <div className="w-12 h-12 rounded-full bg-white" />
-                  </div>
-                </motion.button>
-
-                {/* Spacer to balance layout */}
-                <div className="w-20" />
-              </div>
-            </motion.div>
-          )}
-
-          {/* ─── CAPTURED ─── */}
-          {phase === "captured" && capturedURL && (
-            <motion.div
-              key="captured"
-              className="relative"
-              initial={{ opacity: 0, scale: 1.04 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
             >
-              <img
-                src={capturedURL}
-                alt="Captura"
-                className="w-full block"
-                style={{ maxHeight: "70vh", objectFit: "cover" }}
-              />
+              <span className="h-12 w-12 rounded-full bg-fx-text" aria-hidden="true" />
+            </button>
+            {/* Espaciador: centra el obturador */}
+            <span className="flex-1" aria-hidden="true" />
+          </div>
+        </>
+      )}
 
-              {/* "Previsualización" chip */}
-              <div className="absolute top-14 left-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold backdrop-blur-sm"
-                style={{ background: "rgba(16,185,129,0.25)", border: "1px solid rgba(16,185,129,0.5)", color: "#6ee7b7" }}
-              >
-                <Check className="w-3 h-3" /> Previsualización
-              </div>
+      {phase === "captured" && capturedURL && (
+        <>
+          <div className="relative bg-fx-bg motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]">
+            {/* contenido de imagen */}
+            <img src={capturedURL} alt={`Previsualización: ${label}`} className="block max-h-[60vh] w-full object-cover" />
+            <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full border border-fx-success bg-fx-success-soft px-2.5 py-1 text-xs font-semibold text-fx-success">
+              <Check className="h-3 w-3" aria-hidden="true" /> Previsualización
+            </span>
+          </div>
+          <div className={MEDIA_ACTIONS}>
+            <Button type="button" severity="secondary" icon={<RotateCcw className="h-4 w-4" aria-hidden="true" />}
+              label="Repetir" onClick={retake} className="flex-1 min-h-11" />
+            <Button type="button" icon={<Check className="h-4 w-4" aria-hidden="true" />}
+              label="Usar esta foto" onClick={confirm} className="flex-1 min-h-11" />
+          </div>
+        </>
+      )}
 
-              {/* Action bar overlaid at bottom */}
-              <div
-                className="absolute bottom-0 inset-x-0 flex items-center justify-between gap-3 px-5 py-5"
-                style={{ background: "linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 80%, transparent 100%)" }}
-              >
-                <motion.button
-                  onClick={retake}
-                  whileTap={{ scale: 0.96 }}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-semibold text-white"
-                  style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)" }}
-                >
-                  <RotateCcw className="w-4 h-4" /> Repetir
-                </motion.button>
-                <motion.button
-                  onClick={confirm}
-                  whileTap={{ scale: 0.96 }}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-bold text-white"
-                  style={{ background: "var(--green)", boxShadow: "0 1px 2px rgba(0,0,0,0.12)" }}
-                >
-                  <Check className="w-4 h-4" /> Usar esta foto
-                </motion.button>
-              </div>
-            </motion.div>
-          )}
+      {phase === "error" && guide && (
+        <>
+          <MediaErrorGuide guide={guide} />
+          <div className={MEDIA_ACTIONS}>
+            <Button type="button" text severity="secondary" label="Omitir foto" onClick={onClose} className="min-h-11" />
+            <Button type="button" icon={<RefreshCw className="h-4 w-4" aria-hidden="true" />}
+              label="Intentar de nuevo" onClick={startStream} className="min-h-11" />
+          </div>
+        </>
+      )}
 
-          {/* ─── ERROR ─── */}
-          {phase === "error" && guide && (
-            <motion.div
-              key="error"
-              className="p-5 space-y-4"
-              style={{ background: "var(--bg-surface)", minHeight: 240 }}
-              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            >
-              {/* Spacer for close button */}
-              <div className="h-6" />
-
-              <div className="flex items-start gap-3 p-3.5 rounded-md border border-red-500/20 bg-red-500/[0.07]">
-                <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-                <p className="font-semibold text-red-500 dark:text-red-300 text-sm">{guide.title}</p>
-              </div>
-
-              <div>
-                <p className="section-label mb-2.5 flex items-center gap-1.5">
-                  <Settings className="w-3 h-3" /> Cómo solucionarlo
-                </p>
-                <ol className="space-y-2">
-                  {guide.steps.map((step, i) => (
-                    <motion.li
-                      key={i}
-                      className="flex gap-3 text-sm"
-                      style={{ color: "var(--text-secondary)" }}
-                      initial={{ opacity: 0, x: -8 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.07 }}
-                    >
-                      <span
-                        className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5"
-                        style={{ background: "rgba(13,148,136,0.12)", color: "var(--blue)", border: "1px solid rgba(13,148,136,0.2)" }}
-                      >
-                        {i + 1}
-                      </span>
-                      {step}
-                    </motion.li>
-                  ))}
-                </ol>
-
-                {guide.extra && (
-                  <div className="mt-3 p-3 rounded-md text-xs flex gap-2" style={{ background: "var(--bg-elevated)", color: "var(--text-muted)" }}>
-                    <Monitor className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-teal-500" />
-                    {guide.extra}
-                  </div>
-                )}
-              </div>
-
-              <button className="btn-primary w-full" onClick={startStream}>
-                <RefreshCw className="w-4 h-4" /> Intentar de nuevo
-              </button>
-
-              <button className="btn-ghost w-full text-sm" onClick={onClose}>
-                Omitir foto
-              </button>
-            </motion.div>
-          )}
-
-        </AnimatePresence>
-
-        {/* Hidden canvas */}
-        <canvas ref={canvasRef} className="hidden" />
-      </motion.div>
-    </div>
+      {/* Canvas oculto para sacar el cuadro */}
+      <canvas ref={canvasRef} className="hidden" />
+    </>
   );
 }

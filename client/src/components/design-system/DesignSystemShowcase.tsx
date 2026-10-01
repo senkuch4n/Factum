@@ -17,9 +17,10 @@ import { Paginator } from "primereact/paginator";
 import { InputTextarea } from "primereact/inputtextarea";
 import { Dropdown } from "primereact/dropdown";
 import { ProgressBar } from "primereact/progressbar";
+import { Checkbox } from "primereact/checkbox";
 import { toast as sonner } from "sonner";
 import {
-  AlertCircle, CalendarRange, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, CircleDashed, Clock,
+  AlertCircle, CalendarRange, Camera, Check, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, CircleDashed, Clock,
   Download, FileText, Hash, HelpCircle, LayoutGrid, List, Loader2, MoreHorizontal, Plus, Settings, Smartphone, Table, Trash2,
 } from "lucide-react";
 import { AppNavbar } from "@/components/shell/AppNavbar";
@@ -34,6 +35,8 @@ import { useFxToast } from "@/components/shell/FxToastProvider";
 import { StepIndicator, StepIndicatorCompact } from "@/components/StepIndicator";
 import { PhoneFrame, PhoneShell } from "@/components/PhoneFrame";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { FxMediaDialog } from "@/components/overlay/FxMediaDialog";
+import { MEDIA_ACTIONS } from "@/components/capture/MediaErrorGuide";
 
 /* ── Datos de ejemplo (ficticios) ──────────────────────────────────── */
 
@@ -229,6 +232,11 @@ export function DesignSystemShowcase() {
   const [demoInvalidOpt, setDemoInvalidOpt] = useState<string | null>(null);
   const [demoStep, setDemoStep] = useState(3);
   const [demoPhoneLoading, setDemoPhoneLoading] = useState(false);
+
+  // Demos de la captura (T13 de rediseno-dashboard-captura).
+  const [demoChecked, setDemoChecked] = useState(true);
+  const [demoMic, setDemoMic] = useState(false);
+  const [demoMediaOpen, setDemoMediaOpen] = useState(false);
   const demoSorted = [...DEMO_ROWS].sort((a, b) =>
     a[demoSort.field] < b[demoSort.field] ? -demoSort.order : a[demoSort.field] > b[demoSort.field] ? demoSort.order : 0,
   );
@@ -825,6 +833,63 @@ export function DesignSystemShowcase() {
                 />
               </div>
             </div>
+          </Subsection>
+
+          <Subsection title="Checkbox">
+            <div className="flex flex-wrap items-start gap-8">
+              <span className="flex items-center gap-2">
+                <Checkbox inputId="ds-cb-off" checked={!demoChecked} onChange={(e) => setDemoChecked(!e.checked)}
+                  icon={<Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden="true" />} />
+                <label htmlFor="ds-cb-off" className="text-fx-body-sm text-fx-text">Normal</label>
+              </span>
+              <span className="flex items-center gap-2">
+                <Checkbox inputId="ds-cb-on" checked={demoChecked} onChange={(e) => setDemoChecked(!!e.checked)}
+                  icon={<Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden="true" />} />
+                <label htmlFor="ds-cb-on" className="text-fx-body-sm text-fx-text">Marcado</label>
+              </span>
+              <span className="flex items-center gap-2">
+                <Checkbox inputId="ds-cb-disabled" checked={false} disabled
+                  icon={<Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden="true" />} />
+                <label htmlFor="ds-cb-disabled" className="text-fx-body-sm text-fx-text-3">Deshabilitado</label>
+              </span>
+              <div className="flex max-w-xs items-start gap-2.5">
+                <Checkbox inputId="ds-cb-mic" checked={demoMic} onChange={(e) => setDemoMic(!!e.checked)}
+                  aria-describedby="ds-cb-mic-hint" className="mt-0.5"
+                  icon={<Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden="true" />} />
+                <div>
+                  <label htmlFor="ds-cb-mic" className="cursor-pointer text-fx-body-sm text-fx-text">Mezclar micrófono de la PC</label>
+                  <p id="ds-cb-mic-hint" className="m-0 mt-0.5 text-xs text-fx-text-3">Si el audio no se graba solo (ej. notas de voz de WhatsApp)</p>
+                </div>
+              </div>
+            </div>
+          </Subsection>
+
+          <Subsection title="Diálogo de medios (FxMediaDialog)">
+            <Button severity="secondary" label="Abrir diálogo de cámara" aria-haspopup="dialog" onClick={() => setDemoMediaOpen(true)} />
+            <FxMediaDialog
+              visible={demoMediaOpen}
+              onHide={() => setDemoMediaOpen(false)}
+              title="Foto del perito"
+              icon={<Camera className="h-4 w-4" aria-hidden="true" />}
+            >
+              <div className="flex aspect-video items-center justify-center bg-fx-bg text-xs text-fx-text-3">
+                Vista de cámara (relleno)
+              </div>
+              <div className={MEDIA_ACTIONS}>
+                <div className="flex-1">
+                  <Button text severity="secondary" label="Cancelar" onClick={() => setDemoMediaOpen(false)} className="min-h-11" />
+                </div>
+                <button
+                  type="button"
+                  disabled
+                  aria-label="Tomar foto"
+                  className="relative flex h-16 w-16 items-center justify-center rounded-full border-[3px] border-fx-accent disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <span className="h-12 w-12 rounded-full bg-fx-text" aria-hidden="true" />
+                </button>
+                <span className="flex-1" aria-hidden="true" />
+              </div>
+            </FxMediaDialog>
           </Subsection>
 
           <Subsection title="CopyButton">

@@ -1,13 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { Play, Loader2, Trash2 } from "lucide-react";
+import { Button } from "primereact/button";
+import { SelectButton } from "primereact/selectbutton";
+import { Loader2, Play, Trash2 } from "lucide-react";
 import type { VideoVariant } from "@/lib/agent";
 import { agentFileURL } from "@/lib/agent";
-import { cn } from "@/lib/utils";
+import { MEDIA_SURFACE } from "./capture/media";
 
 interface CapturedFile { name: string; uploaded: boolean; sourcePath?: string; }
 
+/** Reproductor de una grabación del agente con sus versiones (original + variantes). */
 export function VideoCard({
   file, variants, isPending, onRemove,
 }: {
@@ -26,55 +29,51 @@ export function VideoCard({
   const showTabs = allTabs.length > 1 || isPending;
 
   return (
-    <div
-      className="rounded-xl overflow-hidden"
-      style={{ border: "1px solid var(--border)", background: "#000" }}
-    >
-      <video
-        key={current.url}
-        src={current.url}
-        controls
-        playsInline
-        className="w-full max-h-[400px] object-contain"
-        preload="metadata"
-      />
-      <div className="px-3 pt-2 pb-2 space-y-1.5" style={{ background: "var(--bg-elevated)" }}>
+    <div className="overflow-hidden rounded-fx-lg border border-fx-border">
+      <div className={MEDIA_SURFACE}>
+        {/* contenido de imagen */}
+        <video
+          key={current.url}
+          src={current.url}
+          controls
+          playsInline
+          className="block max-h-[400px] w-full object-contain"
+          preload="metadata"
+        />
+      </div>
+      <div className="space-y-2 bg-fx-surface-2 px-3 py-2.5">
         {showTabs && (
-          <div className="flex items-center gap-1 flex-wrap">
-            {allTabs.map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "px-2 py-0.5 rounded text-[9px] font-semibold transition-colors border",
-                  activeTab === tab.id
-                    ? "border-teal-500/40 text-teal-400"
-                    : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]",
-                )}
-                style={activeTab === tab.id ? { background: "rgba(45,212,191,0.12)" } : {}}
-              >
-                {tab.label}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <SelectButton
+              value={activeTab}
+              onChange={e => e.value && setActiveTab(e.value)}
+              allowEmpty={false}
+              options={allTabs}
+              optionLabel="label"
+              optionValue="id"
+              pt={{ root: { "aria-label": "Versión del video" } }}
+            />
             {isPending && (
-              <span className="flex items-center gap-1 px-1 text-[9px]" style={{ color: "var(--text-muted)" }}>
-                <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                procesando...
+              <span role="status" className="inline-flex items-center gap-1 text-xs text-fx-text-3">
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> procesando…
               </span>
             )}
           </div>
         )}
         <div className="flex items-center gap-2">
-          <Play className="w-3 h-3 flex-shrink-0" style={{ color: "var(--text-muted)" }} />
-          <span className="text-[10px] font-mono truncate flex-1" style={{ color: "var(--text-muted)" }}>
+          <Play className="h-3.5 w-3.5 shrink-0 text-fx-text-3" aria-hidden="true" />
+          <span translate="no" className="flex-1 truncate font-mono text-xs text-fx-text-2" title={file.name}>
             {file.name}
           </span>
-          <button
-            className="flex-shrink-0 w-6 h-6 rounded flex items-center justify-center hover:bg-red-500/10 transition-colors"
+          <Button
+            type="button"
+            text
+            severity="danger"
+            size="small"
+            icon={<Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
+            aria-label={`Eliminar ${file.name}`}
             onClick={onRemove}
-          >
-            <Trash2 className="w-3.5 h-3.5 text-red-400" />
-          </button>
+          />
         </div>
       </div>
     </div>

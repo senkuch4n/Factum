@@ -64,3 +64,6 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — Rama feat/rediseno-dashboard-wizard desde historial. wizard → implementando; lanzado `implementer-frontend` (opus).
 - 2026-10-01 — `implementer-frontend` (wizard) done -> progress/impl_frontend_rediseno-dashboard-wizard.md. HU → en_revision, lanzado `reviewer`.
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-dashboard-wizard.md. wizard → aprobada, commit. Rama feat/rediseno-dashboard-captura; captura → implementando, lanzado `implementer-frontend`.
+- 2026-10-01 — `implementer-frontend` (captura) done -> progress/impl_frontend_rediseno-dashboard-captura.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — Adelantando SDD de rediseno-cierre-legacy con `architect` (base: partes 1–3 en el árbol). Queda validada en backlog.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-dashboard-captura.md. captura → aprobada, commit. Esperando SDD de cierre-legacy.

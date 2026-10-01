@@ -1,6 +1,7 @@
 import type { PrimeReactPTOptions } from "primereact/api";
 import { button } from "./button";
 import { calendar } from "./calendar";
+import { checkbox } from "./checkbox";
 import { column } from "./column";
 import { datatable } from "./datatable";
 import { dialog } from "./dialog";
@@ -42,4 +43,5 @@ export const fxPassThrough: PrimeReactPTOptions = {
   inputtextarea,
   dropdown,
   progressbar,
+  checkbox,
 };

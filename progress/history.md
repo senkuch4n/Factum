@@ -67,3 +67,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** architect (sesión), implementer-frontend opus, reviewer sonnet. 0 rechazos.
 - **Rama:** `feat/rediseno-dashboard-wizard` (encadenada sobre `feat/rediseno-dashboard-historial`).
 - **Pendiente:** prueba manual con Tatana real, `sticky` del paso 3 dentro de `fx-card`, contraste con DevTools, "Restaurar texto por defecto" con backend real.
+
+## rediseno-dashboard-captura — APROBADA (2026-10-01)
+
+- **Qué:** parte 3 del rediseño de /dashboard: paso 3 de captura (estado del equipo, captura/grabación, AirPlay, mezcla de micrófono, bandeja de capturas y adjuntos, zona de soltar archivos, marcas de identificación, escenario con `PhoneShell`) y sus modales (visor, webcam, cámara externa, explorador de archivos del celular, modo de grabación iOS) sobre `overlay/FxMediaDialog` y `components/capture/` (incluye `MediaErrorGuide`). Nuevo pt checkbox. Sin cambios de contrato con Tatana ni en `Props` de CaptureStep.
+- **Decisiones:** DP1–DP6 A (autónomo).
+- **Modelos:** architect (sesión), implementer-frontend opus, reviewer sonnet. 0 rechazos.
+- **Rama:** `feat/rediseno-dashboard-captura` (encadenada sobre `feat/rediseno-dashboard-wizard`).
+- **Pendiente:** prueba manual con Android/iOS real, AirPlay, guía on_device, luz de la webcam, Dropdown con varios dispositivos, foco del checklist paso 5 → `#capture-roles-status`; bug preexistente: grabación de cámara externa aparece en dos chips (tarea aparte); grep de `…:outline` bajo `cn()` antes de borrar clases legacy (parte 4).
