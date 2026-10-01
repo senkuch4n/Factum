@@ -1,11 +1,11 @@
 "use client";
 
 // Adaptado de Aceternity UI — https://ui.aceternity.com/components/lens
-// Lupa que sigue al cursor: renderiza el contenido dos veces (una normal, otra
-// escalada dentro de una máscara circular). Pensado para imágenes estáticas
-// (la ficha del PDF), no para contenido pesado.
+// Lupa que sigue al cursor para las fichas de la guía USB: renderiza el
+// contenido dos veces (una normal, otra escalada dentro de una máscara
+// circular). Solo con mouse; la alternativa de teclado y táctil es el link
+// "Abrir en pestaña nueva" de la ficha.
 import { useState } from "react";
-import { motion } from "framer-motion";
 
 export function Lens({
   children,
@@ -36,11 +36,9 @@ export function Lens({
 
       {hovering && (
         <>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.15, ease: "easeOut" }}
-            className="pointer-events-none absolute inset-0 z-40 overflow-hidden"
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 z-40 overflow-hidden motion-safe:animate-[fx-fade-in_var(--fx-dur-fast)_var(--fx-ease-out)_both]"
             style={{
               maskImage: `radial-gradient(circle ${r}px at ${pos.x}px ${pos.y}px, black 100%, transparent 100%)`,
               WebkitMaskImage: `radial-gradient(circle ${r}px at ${pos.x}px ${pos.y}px, black 100%, transparent 100%)`,
@@ -52,10 +50,11 @@ export function Lens({
             >
               {children}
             </div>
-          </motion.div>
+          </div>
 
           <span
-            className="pointer-events-none absolute z-50 rounded-full shadow-lg ring-2 ring-white/70"
+            aria-hidden="true"
+            className="pointer-events-none absolute z-50 rounded-full ring-2 ring-fx-border-strong shadow-fx-2"
             style={{ width: lensSize, height: lensSize, left: pos.x - r, top: pos.y - r }}
           />
         </>

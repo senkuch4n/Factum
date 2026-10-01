@@ -14,7 +14,7 @@ interface AppNavbarProps {
   user?: { name: string; sigla: string; dni: string } | null;
   /** Si hay `user` y `onLogout`, se renderiza UserMenu al final. */
   onLogout?: () => void;
-  /** Default false: el dashboard ya tiene el cambio de tema en el FloatingDock. */
+  /** Default false: cada página decide si muestra el cambio de tema (el dashboard y el showcase lo muestran). */
   showThemeToggle?: boolean;
   /** Si viene, la marca es un <Link>; si no, es estática. */
   brandHref?: string;

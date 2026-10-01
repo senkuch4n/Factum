@@ -1,19 +1,20 @@
 "use client";
 
 /**
- * Alert dialog de confirmación — adaptado de scrollxui (docs/components/alert-dialog).
- *
- * El original arrastra `@radix-ui/react-alert-dialog` + `@scrollxui/button`, con
- * un botón de acción que hace `rotateX/rotateY/translateZ` en 3D al hover y un
- * "shake" al click afuera — nada de eso pega con factum. Acá se reconstruye a
- * mano siguiendo el patrón de los modales que ya existen (GuideModal/SoporteModal):
- * fixed centrado, backdrop, entrada spring, Escape = cancelar. Diferencias propias
- * de un alert-dialog: `role="alertdialog"`, foco inicial en "Cancelar", y el click
- * en el backdrop NO cierra (evita descartes accidentales).
+ * Diálogo de confirmación sobre el `Dialog` de PrimeReact (pt `dialog`).
+ * Misma API que la versión anterior (la usan `dashboard/page.tsx` y
+ * `ReportStep`). Propio de un alert-dialog:
+ * - `role="alertdialog"`, `aria-modal`, `aria-labelledby` (Prime) y
+ *   `aria-describedby` a la descripción;
+ * - foco inicial en "cancelar";
+ * - Escape cancela, el click afuera NO cierra (evita descartes accidentales);
+ * - al cerrar, Prime devuelve el foco al disparador.
+ * El orden `onConfirm()` → `onOpenChange(false)` se mantiene.
  */
 
-import { useEffect, useRef } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { useId } from "react";
+import { Dialog } from "primereact/dialog";
+import { Button } from "primereact/button";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +26,7 @@ interface Props {
   description?: React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
-  /** rojo para acciones destructivas (default), teal para confirmaciones neutras */
+  /** rojo para acciones destructivas (default), neutro para confirmaciones */
   tone?: "destructive" | "neutral";
 }
 
@@ -39,88 +40,58 @@ export function ConfirmDialog({
   cancelLabel = "Cancelar",
   tone = "destructive",
 }: Props) {
-  const cancelRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    cancelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onOpenChange(false); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onOpenChange]);
-
+  const uid = useId();
+  const cancelId = `${uid}-cancel`;
+  const descId = `${uid}-desc`;
   const destructive = tone === "destructive";
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          className="fixed inset-0 z-[70] flex items-center justify-center p-4"
-          style={{ background: "rgba(0,0,0,0.7)", overscrollBehavior: "contain" }}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-        >
-          <motion.div
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="confirm-title"
-            aria-describedby={description ? "confirm-desc" : undefined}
-            className="w-full max-w-sm overflow-hidden rounded-lg"
-            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", boxShadow: "0 24px 64px rgba(0,0,0,0.35)" }}
-            initial={{ opacity: 0, scale: 0.94, y: 16 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: 8 }}
-            transition={{ type: "spring", stiffness: 380, damping: 30 }}
+    <Dialog
+      visible={open}
+      onHide={() => onOpenChange(false)}
+      modal
+      closable
+      showCloseIcon={false}
+      closeOnEscape
+      dismissableMask={false}
+      draggable={false}
+      resizable={false}
+      onShow={() => document.getElementById(cancelId)?.focus()}
+      // Ancho por pt (no por className): el pt del componente se fusiona después
+      // del global, así tailwind-merge se queda con este ancho.
+      pt={{
+        root: {
+          role: "alertdialog",
+          "aria-describedby": description ? descId : undefined,
+          className: "w-[min(26rem,100%)]",
+        },
+      }}
+      header={
+        <span className="flex items-center gap-3">
+          <span
+            className={cn(
+              "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-fx-md",
+              destructive ? "bg-fx-danger-soft text-fx-danger" : "bg-fx-info-soft text-fx-info",
+            )}
           >
-            <div className="flex items-start gap-3 p-5">
-              <div
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-                style={{
-                  background: destructive ? "rgba(220,38,38,0.12)" : "rgba(45,212,191,0.12)",
-                  border: `1px solid ${destructive ? "rgba(220,38,38,0.25)" : "var(--border-accent)"}`,
-                }}
-              >
-                <AlertTriangle
-                  className="h-4 w-4"
-                  style={{ color: destructive ? "#dc2626" : "var(--blue-lg)" }}
-                  aria-hidden="true"
-                />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p id="confirm-title" className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-                  {title}
-                </p>
-                {description && (
-                  <p id="confirm-desc" className="mt-1 text-[13px] leading-snug" style={{ color: "var(--text-muted)" }}>
-                    {description}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 border-t px-5 py-3" style={{ borderColor: "var(--border)" }}>
-              <button
-                ref={cancelRef}
-                type="button"
-                onClick={() => onOpenChange(false)}
-                className="btn-secondary btn-sm rounded-lg"
-              >
-                {cancelLabel}
-              </button>
-              <button
-                type="button"
-                onClick={() => { onConfirm(); onOpenChange(false); }}
-                className={cn("btn-sm rounded-lg font-medium text-white")}
-                style={{ background: destructive ? "#dc2626" : "var(--blue-lg)" }}
-              >
-                {confirmLabel}
-              </button>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+            <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+          </span>
+          {title}
+        </span>
+      }
+      footer={
+        <>
+          <Button id={cancelId} severity="secondary" label={cancelLabel} onClick={() => onOpenChange(false)} />
+          <Button
+            severity={destructive ? "danger" : undefined}
+            label={confirmLabel}
+            onClick={() => { onConfirm(); onOpenChange(false); }}
+          />
+        </>
+      }
+    >
+      {description && <p id={descId} className="m-0 text-fx-body-sm text-fx-text-2">{description}</p>}
+    </Dialog>
   );
 }
 

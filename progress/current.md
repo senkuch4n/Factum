@@ -56,3 +56,8 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — `implementer-backend` (zip) done -> progress/impl_backend_zip-cifrado-real.md (build OK, 10 tests OK). HU → en_revision, lanzado `reviewer`.
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_zip-cifrado-real.md. zip → aprobada, history.md.
 - 2026-10-01 — Commit de zip-cifrado-real en feat/zip-cifrado-real. Siguiente: rediseno-dashboard-historial (SDD lista) en feat/rediseno-dashboard-historial.
+- 2026-10-01 — Rama feat/rediseno-dashboard-historial desde feat/zip-cifrado-real. historial → arquitectura_lista → implementando; lanzado `implementer-frontend` (opus).
+- 2026-10-01 — `architect` done -> Refactorizaciones/rediseno-dashboard-wizard.md; DP1–DP6 A (autónomo). Queda validada hasta su turno. Avisó que la SDD de historial leía zip_password (eliminado por zip): corregida la SDD y avisado al implementer-frontend en curso.
+- 2026-10-01 — `architect` done -> Refactorizaciones/rediseno-dashboard-captura.md; DP1–DP6 A (autónomo). Queda validada hasta su turno. SDD de cierre-legacy se escribe recién con las partes 1–3 implementadas (inventario de código muerto depende de ellas).
+- 2026-10-01 — `implementer-frontend` (historial) done -> progress/impl_frontend_rediseno-dashboard-historial.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-dashboard-historial.md. historial → aprobada, history.md, commit. Siguiente: rediseno-dashboard-wizard en feat/rediseno-dashboard-wizard.

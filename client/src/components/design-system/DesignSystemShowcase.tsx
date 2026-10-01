@@ -8,13 +8,27 @@ import { Menu } from "primereact/menu";
 import type { MenuItem } from "primereact/menuitem";
 import { Toast } from "primereact/toast";
 import { Message } from "primereact/message";
+import { Tag } from "primereact/tag";
+import { SelectButton } from "primereact/selectbutton";
+import { Calendar } from "primereact/calendar";
+import { DataTable } from "primereact/datatable";
+import { Column } from "primereact/column";
+import { Paginator } from "primereact/paginator";
+import { InputTextarea } from "primereact/inputtextarea";
 import { toast as sonner } from "sonner";
-import { ChevronRight, Download, FileText, Hash, MoreHorizontal, Plus, Settings, Smartphone, Trash2 } from "lucide-react";
+import {
+  AlertCircle, CalendarRange, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, CircleDashed, Clock,
+  Download, FileText, Hash, HelpCircle, LayoutGrid, List, Loader2, MoreHorizontal, Plus, Settings, Smartphone, Table, Trash2,
+} from "lucide-react";
 import { AppNavbar } from "@/components/shell/AppNavbar";
 import { SiteFooter } from "@/components/shell/SiteFooter";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { Tip } from "@/components/ui/tooltip";
 import { FxPassword } from "@/components/form/FxPassword";
+import { FxTip } from "@/components/overlay/FxTip";
+import { FxBanner } from "@/components/feedback/FxBanner";
+import { ConfirmDialog } from "@/components/ui/alert-dialog";
+import { useFxToast } from "@/components/shell/FxToastProvider";
 
 /* ── Datos de ejemplo (ficticios) ──────────────────────────────────── */
 
@@ -128,6 +142,24 @@ const DEMO_CARDS = [
   { title: "Configuración", meta: "Agente local en :8765", icon: Settings },
 ];
 
+/* ── Datos ficticios de las demos del historial (sin API) ───────────── */
+
+type DemoView = "list" | "table" | "grid";
+
+const DEMO_VIEWS = [
+  { value: "list" as DemoView, label: "Lista", Icon: List },
+  { value: "table" as DemoView, label: "Tabla", Icon: Table },
+  { value: "grid" as DemoView, label: "Cuadrícula", Icon: LayoutGrid },
+];
+
+interface DemoRow { id: string; causa: string; caratula: string; fecha: string; estado: string }
+
+const DEMO_ROWS: DemoRow[] = [
+  { id: "1", causa: "12/26", caratula: "Pérez c/ Gómez s/ daños", fecha: "2026-09-12", estado: "Completado" },
+  { id: "2", causa: "07/26", caratula: "Ruiz s/ amenazas", fecha: "2026-08-03", estado: "Borrador" },
+  { id: "3", causa: "31/25", caratula: "Ledesma c/ Sosa s/ estafa", fecha: "2026-09-27", estado: "Error" },
+];
+
 /* ── Piezas de layout ─────────────────────────────────────────────── */
 
 function Section({ id, title, intro, children }: { id: string; title: string; intro?: string; children: React.ReactNode }) {
@@ -164,6 +196,17 @@ export function DesignSystemShowcase() {
   const { organizationName, organizationLogoSrc } = usePublicConfig();
 
   const refInvalid = refValue.trim() === "";
+
+  // Demos del historial (T15 de rediseno-dashboard-historial).
+  const fxToast = useFxToast();
+  const [demoView, setDemoView] = useState<DemoView>("list");
+  const [demoRange, setDemoRange] = useState<(Date | null)[] | null>(null);
+  const [demoSort, setDemoSort] = useState<{ field: keyof DemoRow; order: 1 | -1 }>({ field: "fecha", order: -1 });
+  const [demoFirst, setDemoFirst] = useState(0);
+  const [confirmTone, setConfirmTone] = useState<"destructive" | "neutral" | null>(null);
+  const demoSorted = [...DEMO_ROWS].sort((a, b) =>
+    a[demoSort.field] < b[demoSort.field] ? -demoSort.order : a[demoSort.field] > b[demoSort.field] ? demoSort.order : 0,
+  );
 
   const demoMenu: MenuItem[] = [
     { label: "Descargar informe", icon: <Download className="h-4 w-4" aria-hidden="true" /> },
@@ -521,6 +564,157 @@ export function DesignSystemShowcase() {
                 <InputText id="ds-dialog-motivo" placeholder="Tab y Shift+Tab quedan dentro del diálogo" />
               </div>
             </Dialog>
+          </Subsection>
+
+          <Subsection title="Tag">
+            <div className="flex flex-wrap items-center gap-2">
+              <Tag severity="success" value="Completado" icon={<CheckCircle2 className="h-3 w-3" aria-hidden="true" />} />
+              <Tag severity="info" value="Generando…" icon={<Loader2 className="h-3 w-3" aria-hidden="true" />} />
+              <Tag severity="warning" value="En espera" icon={<Clock className="h-3 w-3" aria-hidden="true" />} />
+              <Tag severity="danger" value="Error" icon={<AlertCircle className="h-3 w-3" aria-hidden="true" />} />
+              <Tag severity="secondary" value="Borrador" icon={<CircleDashed className="h-3 w-3" aria-hidden="true" />} />
+            </div>
+          </Subsection>
+
+          <Subsection title="SelectButton">
+            <SelectButton
+              value={demoView}
+              onChange={(e) => e.value && setDemoView(e.value as DemoView)}
+              allowEmpty={false}
+              options={DEMO_VIEWS}
+              optionLabel="label"
+              optionValue="value"
+              itemTemplate={(o: (typeof DEMO_VIEWS)[number]) => (
+                <>
+                  <o.Icon className="h-4 w-4" aria-hidden="true" />
+                  <span className="sr-only sm:not-sr-only">{o.label}</span>
+                </>
+              )}
+              pt={{ root: { "aria-label": "Vista de ejemplo" } }}
+            />
+          </Subsection>
+
+          <Subsection title="Calendar (rango)">
+            <div className="max-w-xs">
+              <label htmlFor="ds-range" className="sr-only">Rango de fechas de ejemplo</label>
+              <Calendar
+                inputId="ds-range"
+                selectionMode="range"
+                value={demoRange}
+                onChange={(e) => setDemoRange(e.value ?? null)}
+                readOnlyInput
+                showIcon
+                icon={<CalendarRange className="h-4 w-4" aria-hidden="true" />}
+                showButtonBar
+                hideOnRangeSelection
+                dateFormat="dd/mm/yy"
+                placeholder="Desde – hasta"
+              />
+            </div>
+          </Subsection>
+
+          <Subsection title="DataTable + Paginator">
+            <div className="fx-card overflow-hidden">
+              <DataTable
+                value={demoSorted}
+                dataKey="id"
+                lazy
+                rowHover
+                sortField={demoSort.field}
+                sortOrder={demoSort.order}
+                onSort={(e) => setDemoSort({ field: e.sortField as keyof DemoRow, order: e.sortOrder === 1 ? 1 : -1 })}
+                removableSort={false}
+                sortIcon={(opts: { sorted?: boolean; sortOrder?: number | null }) =>
+                  opts.sorted
+                    ? opts.sortOrder === 1
+                      ? <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+                      : <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                    : <ChevronsUpDown className="h-3.5 w-3.5" aria-hidden="true" />
+                }
+                tableStyle={{ minWidth: "32rem" }}
+                pt={{ table: { "aria-label": "Inspecciones de ejemplo" } }}
+              >
+                <Column field="causa" sortField="causa" sortable header="N° de causa" />
+                <Column field="caratula" sortField="caratula" sortable header="Carátula" />
+                <Column field="fecha" sortField="fecha" sortable header="Fecha" />
+                <Column field="estado" header="Estado" />
+              </DataTable>
+            </div>
+            <Paginator
+              first={demoFirst}
+              rows={8}
+              totalRecords={40}
+              onPageChange={(e) => setDemoFirst(e.first)}
+              template="PrevPageLink PageLinks NextPageLink"
+              pageLinkSize={5}
+            />
+          </Subsection>
+
+          <Subsection title="InputTextarea">
+            <div className="grid max-w-3xl grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <label htmlFor="ds-ta" className="block text-fx-body-sm font-medium text-fx-text">Descripción</label>
+                <InputTextarea id="ds-ta" rows={3} placeholder="Contanos qué pasó…" />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="ds-ta-invalid" className="block text-fx-body-sm font-medium text-fx-text">Descripción (inválida)</label>
+                <InputTextarea id="ds-ta-invalid" rows={3} invalid aria-invalid aria-describedby="ds-ta-invalid-msg" defaultValue="Corto" />
+                <p id="ds-ta-invalid-msg" className="text-xs text-fx-danger">Escribí al menos 10 caracteres.</p>
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="ds-ta-disabled" className="block text-fx-body-sm font-medium text-fx-text-disabled">Descripción (deshabilitada)</label>
+                <InputTextarea id="ds-ta-disabled" rows={3} disabled defaultValue="No editable" />
+              </div>
+            </div>
+          </Subsection>
+
+          <Subsection title="Tooltip (FxTip)">
+            <FxTip label="Guía de uso" side="bottom">
+              <button
+                type="button"
+                aria-label="Guía de uso (ejemplo)"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-fx-md text-fx-text-2 transition-colors duration-fx-fast ease-fx hover:bg-fx-surface-3 hover:text-fx-text fx-focus-ring"
+              >
+                <HelpCircle className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </FxTip>
+          </Subsection>
+
+          <Subsection title="ConfirmDialog">
+            <div className="flex flex-wrap gap-3">
+              <Button label="Confirmación destructiva" severity="secondary" onClick={() => setConfirmTone("destructive")} />
+              <Button label="Confirmación neutra" severity="secondary" onClick={() => setConfirmTone("neutral")} />
+            </div>
+            <ConfirmDialog
+              open={confirmTone !== null}
+              onOpenChange={(o) => { if (!o) setConfirmTone(null); }}
+              onConfirm={() => fxToast.info("Confirmado", "Acción de ejemplo, no hace nada.")}
+              tone={confirmTone ?? "destructive"}
+              title={confirmTone === "neutral" ? "¿Restaurar el texto por defecto?" : "¿Salir de la inspección?"}
+              description={confirmTone === "neutral"
+                ? "Se reemplaza lo que escribiste por el texto sugerido."
+                : "Los archivos capturados no se guardan en el servidor. Si salís ahora, se pierden."}
+              confirmLabel={confirmTone === "neutral" ? "Restaurar" : "Salir sin guardar"}
+              cancelLabel="Seguir acá"
+            />
+          </Subsection>
+
+          <Subsection title="FxBanner">
+            <div className="grid max-w-2xl grid-cols-1 gap-3">
+              <FxBanner role="note" tone="error" onClose={() => {}}>No se pudo cargar el historial.</FxBanner>
+              <FxBanner role="note" tone="warn">Tatana sin conexión: abrí el agente para adquirir.</FxBanner>
+              <FxBanner role="note" tone="success">Informe generado y firmado.</FxBanner>
+              <FxBanner role="note" tone="info">Preparando la inspección…</FxBanner>
+            </div>
+          </Subsection>
+
+          <Subsection title="Toast global (useFxToast)">
+            <div className="flex flex-wrap gap-3">
+              <Button label="Éxito" text onClick={() => fxToast.success("Perfil de perito guardado", "Se usa en los casos que crees o edites desde ahora.")} />
+              <Button label="Info" text onClick={() => fxToast.info("Agente conectado", "Tatana responde en localhost:8765.")} />
+              <Button label="Advertencia" text onClick={() => fxToast.warn("Batería baja", "El celular tiene menos del 15 % de carga.")} />
+              <Button label="Error" text severity="danger" onClick={() => fxToast.error("No se pudo capturar", "Revisá el cable USB y volvé a intentar.")} />
+            </div>
           </Subsection>
         </Section>
 

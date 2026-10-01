@@ -1,10 +1,22 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { FolderOpen, Clock, CheckCircle2, Activity } from "lucide-react";
-import { EASE } from "@/constants/animations";
+import { Activity, CheckCircle2, Clock, FolderOpen, type LucideIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { Case } from "@/types";
 
+interface Stat {
+  label: string;
+  value: number;
+  Icon: LucideIcon;
+  iconClass: string;
+  stripe: string;
+  pct?: number;
+}
+
+/**
+ * Estadísticas del historial. Sin `aria-live` propio: el conteo de
+ * `CaseHistory` ya anuncia los cambios.
+ */
 export function DashboardStats({ cases }: { cases: Case[] }) {
   const now = new Date();
   const thisMonth = cases.filter(c => {
@@ -15,36 +27,29 @@ export function DashboardStats({ cases }: { cases: Case[] }) {
   const pending   = cases.filter(c => c.status !== "completed");
   const completedPct = cases.length > 0 ? Math.round((completed.length / cases.length) * 100) : 0;
 
-  const stats = [
-    { label: "Total",       value: cases.length,      icon: FolderOpen,    accent: "var(--border-md)" },
-    { label: "Este mes",    value: thisMonth.length,  icon: Clock,         accent: "var(--border-md)" },
-    { label: "Completadas", value: completed.length,  icon: CheckCircle2, accent: "#10b981" },
-    { label: "En proceso",  value: pending.length,     icon: Activity,     accent: "#f59e0b" },
+  const stats: Stat[] = [
+    { label: "Total",       value: cases.length,     Icon: FolderOpen,   iconClass: "text-fx-text-3",  stripe: "bg-fx-border-strong" },
+    { label: "Este mes",    value: thisMonth.length, Icon: Clock,        iconClass: "text-fx-text-3",  stripe: "bg-fx-border-strong" },
+    { label: "Completadas", value: completed.length, Icon: CheckCircle2, iconClass: "text-fx-success", stripe: "bg-fx-success", pct: cases.length > 0 ? completedPct : undefined },
+    { label: "En proceso",  value: pending.length,   Icon: Activity,     iconClass: "text-fx-warning", stripe: "bg-fx-warning" },
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3" aria-live="polite">
-      {stats.map(({ label, value, icon: Icon, accent }, i) => (
-        <motion.div
-          key={label}
-          className="stat-card relative overflow-hidden"
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: i * 0.05 + 0.1, duration: 0.28, ease: EASE }}
-        >
-          <span className="absolute top-0 left-0 right-0 h-[2px]" style={{ background: accent, opacity: 0.7 }} aria-hidden="true" />
-          <div className="flex items-center justify-between mb-2">
-            <p className="section-label">{label}</p>
-            <Icon className="w-3.5 h-3.5" style={{ color: "var(--text-muted)" }} aria-hidden="true" />
-          </div>
-          <div className="flex items-baseline gap-1.5">
-            <p className="hero-title text-3xl tabular-nums" style={{ color: "var(--text-primary)" }}>{value}</p>
-            {label === "Completadas" && cases.length > 0 && (
-              <span className="text-[11px] font-medium tabular-nums" style={{ color: "var(--text-muted)" }}>{completedPct}%</span>
-            )}
-          </div>
-        </motion.div>
+    <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {stats.map(({ label, value, Icon, iconClass, stripe, pct }) => (
+        <div key={label} className="fx-card relative overflow-hidden p-4">
+          <span className={cn("absolute inset-x-0 top-0 h-0.5", stripe)} aria-hidden="true" />
+          {/* dt directo dentro del grupo (div hijo de dl): el ícono va adentro, oculto. */}
+          <dt className="flex items-center justify-between gap-2 text-fx-label uppercase text-fx-text-2">
+            {label}
+            <Icon className={cn("h-4 w-4 shrink-0", iconClass)} aria-hidden="true" />
+          </dt>
+          <dd className="mt-2 flex items-baseline gap-1.5">
+            <span className="text-fx-h1 tabular-nums text-fx-text">{value}</span>
+            {pct !== undefined && <span className="text-xs text-fx-text-3 tabular-nums">{pct}%</span>}
+          </dd>
+        </div>
       ))}
-    </div>
+    </dl>
   );
 }

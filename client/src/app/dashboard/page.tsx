@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, AlertCircle, Plus, Play, ChevronRight, ArrowLeft, Smartphone, X, HelpCircle, Sun, Moon } from "lucide-react";
+import { Loader2, AlertCircle, Plus, Play, ChevronRight, ArrowLeft, Smartphone, X, HelpCircle, LifeBuoy } from "lucide-react";
+import { Button } from "primereact/button";
 import { api, ApiError, type DeviceInput } from "@/lib/api";
 import { agent } from "@/lib/agent";
 import type { Device, AgentEvent, Case, CaseFormData, ProfileFormData } from "@/types";
@@ -23,7 +24,6 @@ import { AgentChip } from "@/components/dashboard/AgentChip";
 import { DashboardStats } from "@/components/dashboard/DashboardStats";
 import { ResumeDeviceModal } from "@/components/dashboard/ResumeDeviceModal";
 import { SoporteModal } from "@/components/dashboard/SoporteModal";
-import { FaroIcon } from "@/components/FaroIcon";
 import { GenerateStep } from "@/components/dashboard/GenerateStep";
 import { StepIndicator } from "@/components/StepIndicator";
 import { GuideModal } from "@/components/GuideModal";
@@ -33,10 +33,9 @@ import { ResultStep } from "@/components/ResultStep";
 import { CaseHistory } from "@/components/CaseHistory";
 import { CaseFormStep } from "@/components/CaseFormStep";
 import { AppNavbar } from "@/components/shell/AppNavbar";
-import { FloatingDock } from "@/components/ui/floating-dock";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
-import { Tip } from "@/components/ui/tooltip";
-import { useTheme } from "@/lib/theme";
+import { FxTip } from "@/components/overlay/FxTip";
+import { FxBanner } from "@/components/feedback/FxBanner";
 import { EASE, slideDir } from "@/constants/animations";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
@@ -52,6 +51,10 @@ const STEPS = [
 
 const DEFAULT_TIPO_DISPOSITIVO = "Teléfono celular";
 
+/* Botón de ícono de la navbar: el mismo look que ThemeSwitch. */
+const NAV_ICON_BUTTON =
+  "inline-flex items-center justify-center w-8 h-8 shrink-0 rounded-fx-md text-fx-text-2 hover:text-fx-text hover:bg-fx-surface-3 transition-colors duration-fx-fast ease-fx fx-focus-ring";
+
 /** Formulario de una causa nueva: precarga del último caso pericial + defaults (§8.2). */
 function newCaseForm(historyCases: Case[]): CaseFormData {
   return {
@@ -63,8 +66,7 @@ function newCaseForm(historyCases: Case[]): CaseFormData {
 }
 
 export default function Dashboard() {
-  const { isDark, toggle: toggleTheme } = useTheme();
-  // Soporte opcional: sin la integración habilitada no hay dock, botón en la guía ni modal.
+  // Soporte opcional: sin la integración habilitada no hay botón en la navbar, en la guía ni modal.
   const { supportEnabled } = usePublicConfig();
 
   // ── Navigation ──────────────────────────────────────────────────
@@ -93,6 +95,9 @@ export default function Dashboard() {
   const [dashLoading, setDashLoad] = useState<Record<string, boolean>>({});
   function setLoad(key: string, val: boolean) { setDashLoad(l => ({ ...l, [key]: val })); }
   const [reportModal, setReportModal] = useState(false);
+  // Soporte abierto desde la guía: al cerrarlo, el foco vuelve al botón "Guía de uso".
+  const [supportFromGuide, setSupportFromGuide] = useState(false);
+  const guideBtnRef = useRef<HTMLButtonElement>(null);
 
   // ── Refs for WS event handler ────────────────────────────────────
   const selDeviceRef = useRef<Device | null>(null);
@@ -404,54 +409,31 @@ export default function Dashboard() {
 
   // ── Render ───────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-screen overflow-hidden" style={{ background: "var(--bg-base)" }}>
+    <div className="flex flex-col h-screen overflow-hidden bg-fx-bg text-fx-text">
 
-      <AnimatePresence>
-        {resumePending && (
-          <ResumeDeviceModal
-            cas={resumePending}
-            deviceConnected={resumeConnected}
-            onConfirm={() => proceedResume(resumePending)}
-            onCancel={() => { setResumePending(null); setResumeConnected(false); }}
-          />
-        )}
-        {guideOpen && (
-          <GuideModal
-            onClose={() => setGuideOpen(false)}
-            onSupport={supportEnabled ? () => { setGuideOpen(false); setReportModal(true); } : undefined}
-          />
-        )}
-      </AnimatePresence>
+      <ResumeDeviceModal
+        cas={resumePending}
+        deviceConnected={resumeConnected}
+        onConfirm={() => { if (resumePending) proceedResume(resumePending); }}
+        onCancel={() => { setResumePending(null); setResumeConnected(false); }}
+      />
+      <GuideModal
+        visible={guideOpen}
+        onClose={() => setGuideOpen(false)}
+        onSupport={supportEnabled ? () => { setGuideOpen(false); setSupportFromGuide(true); setReportModal(true); } : undefined}
+      />
 
       {supportEnabled && (
-        <SoporteModal open={reportModal} user={user} onClose={() => setReportModal(false)} />
+        <SoporteModal
+          open={reportModal}
+          user={user}
+          onClose={() => {
+            setReportModal(false);
+            // El disparador ("Contactar soporte" de la guía) ya no existe: el foco va a "Guía de uso".
+            if (supportFromGuide) { setSupportFromGuide(false); guideBtnRef.current?.focus(); }
+          }}
+        />
       )}
-
-      <FloatingDock
-        items={[
-          {
-            title: "Guía de uso",
-            icon: <HelpCircle className="h-full w-full" strokeWidth={1.75} />,
-            onClick: () => setGuideOpen(true),
-            active: guideOpen,
-          },
-          ...(supportEnabled
-            ? [{
-                title: "¿Bug o idea? Contanos",
-                icon: <FaroIcon className="h-full w-full" />,
-                onClick: () => setReportModal(true),
-                active: reportModal,
-              }]
-            : []),
-          {
-            title: isDark ? "Modo claro" : "Modo oscuro",
-            icon: isDark
-              ? <Sun className="h-full w-full text-amber-400" strokeWidth={1.75} />
-              : <Moon className="h-full w-full" strokeWidth={1.75} />,
-            onClick: toggleTheme,
-          },
-        ]}
-      />
 
       <ConfirmDialog
         open={exitConfirm}
@@ -466,18 +448,19 @@ export default function Dashboard() {
       <AppNavbar
         user={user}
         onLogout={handleLogout}
+        showThemeToggle
         center={
           <div className="flex items-center justify-center gap-1.5 min-w-0">
             {mode === "wizard" && (
-              <Tip label="Volver a Inspecciones">
+              <FxTip label="Volver a Inspecciones" side="bottom">
                 <button
                   onClick={attemptExitWizard}
                   aria-label="Volver a Inspecciones"
                   className="flex items-center justify-center w-7 h-7 -ml-1 mr-0.5 rounded-fx-md flex-shrink-0 text-fx-text-3 hover:text-fx-text hover:bg-fx-surface-3 transition-colors duration-fx-fast ease-fx fx-focus-ring"
                 >
-                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
-              </Tip>
+              </FxTip>
             )}
             <nav aria-label="Ruta" className="flex items-center gap-1.5 text-sm min-w-0">
               <span
@@ -501,146 +484,131 @@ export default function Dashboard() {
         actions={
           <>
             <AgentChip online={agentOnline} device={selDevice} recording={isRecording} />
-            <AnimatePresence>
-              {mode === "history" && (
-                <motion.button
+            {mode === "history" && (
+              <FxTip label="Nueva inspección" side="bottom">
+                <button
+                  type="button"
                   onClick={startWizard}
-                  className="inline-flex items-center justify-center w-8 h-8 flex-shrink-0 rounded-fx-md bg-fx-accent text-fx-on-accent hover:bg-fx-accent-hover transition-colors duration-fx-fast ease-fx fx-focus-ring"
-                  title="Nueva inspección"
                   aria-label="Nueva inspección"
-                  initial={{ opacity: 0, scale: 0.88 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.88 }}
-                  transition={{ duration: 0.15 }}
-                  whileTap={{ scale: 0.97 }}
+                  className="hidden sm:inline-flex items-center justify-center w-8 h-8 flex-shrink-0 rounded-fx-md bg-fx-accent text-fx-on-accent hover:bg-fx-accent-hover transition-colors duration-fx-fast ease-fx fx-focus-ring motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]"
                 >
-                  <Plus className="w-4 h-4" />
-                </motion.button>
-              )}
-            </AnimatePresence>
-            {/* "¿Bug o idea?", tema y guía viven en el FloatingDock inferior. */}
+                  <Plus className="w-4 h-4" aria-hidden="true" />
+                </button>
+              </FxTip>
+            )}
+            <FxTip label="Guía de uso" side="bottom">
+              <button
+                ref={guideBtnRef}
+                type="button"
+                onClick={() => setGuideOpen(true)}
+                aria-label="Guía de uso"
+                aria-haspopup="dialog"
+                aria-expanded={guideOpen}
+                className={NAV_ICON_BUTTON}
+              >
+                <HelpCircle className="w-4 h-4" aria-hidden="true" />
+              </button>
+            </FxTip>
+            {supportEnabled && (
+              <FxTip label="Soporte" side="bottom">
+                <button
+                  type="button"
+                  onClick={() => { setSupportFromGuide(false); setReportModal(true); }}
+                  aria-label="Soporte"
+                  aria-haspopup="dialog"
+                  aria-expanded={reportModal}
+                  className={NAV_ICON_BUTTON}
+                >
+                  <LifeBuoy className="w-4 h-4" aria-hidden="true" />
+                </button>
+              </FxTip>
+            )}
           </>
         }
       />
 
-      {/* pb-28: reserva el alto del FloatingDock fijo para que no tape las últimas tarjetas */}
-      <div className="flex-1 overflow-y-auto pb-28">
+      {/* pb-14: reserva la píldora fija de SystemStatusLine para que no tape las últimas tarjetas */}
+      <div className="flex-1 overflow-y-auto pb-14">
 
-        <AnimatePresence mode="wait">
-          {mode === "history" && (
-            <motion.div
-              key="history"
-              className="p-6"
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              transition={{ duration: 0.18 }}
-            >
-              <div className="max-w-5xl mx-auto space-y-8">
-                {user && (
-                  <motion.div
-                    className="mb-1 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4"
-                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3, ease: EASE }}
-                  >
-                    <div>
-                      <h1 className="hero-title text-3xl sm:text-4xl" style={{ color: "var(--text-primary)" }}>
-                        {greeting}, <span style={{ color: "var(--blue-lg)" }}>{user.name}</span>
-                      </h1>
-                      <p className="text-sm mt-2 capitalize" style={{ color: "var(--text-muted)" }}>
-                        {formattedDate}
-                      </p>
-                    </div>
-                    <motion.button
-                      onClick={startWizard}
-                      className="btn-primary flex-shrink-0"
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                    >
-                      <Plus className="w-4 h-4" aria-hidden="true" /> Nueva inspección
-                    </motion.button>
-                  </motion.div>
-                )}
+        {mode === "history" && (
+          <div className="p-4 sm:p-6 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]">
+            <div className="max-w-5xl mx-auto space-y-8">
+              {user && (
+                <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 motion-safe:animate-[fx-rise-in_var(--fx-dur-slow)_var(--fx-ease-out)_both]">
+                  <div className="min-w-0">
+                    <h1 className="text-fx-display text-fx-text break-words text-balance">
+                      {greeting}, <span className="text-fx-accent-text">{user.name}</span>
+                    </h1>
+                    <p className="mt-2 text-fx-body text-fx-text-2 first-letter:uppercase">{formattedDate}</p>
+                  </div>
+                  <Button
+                    size="large"
+                    icon={<Plus className="h-5 w-5" aria-hidden="true" />}
+                    label="Nueva inspección"
+                    onClick={startWizard}
+                    className="w-full sm:w-auto min-h-11 shrink-0"
+                  />
+                </div>
+              )}
 
-                <AnimatePresence>
-                  {globalError && (
-                    <motion.div
-                      className="flex items-start gap-3 rounded-md px-4 py-3 text-sm border border-red-500/20 bg-red-500/[0.07] text-red-600 dark:text-red-400"
-                      initial={{ opacity: 0, y: -10, height: 0 }} animate={{ opacity: 1, y: 0, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                      role="alert"
-                    >
-                      <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
-                      <span className="flex-1">{globalError}</span>
-                      <button onClick={() => setGlobal("")} aria-label="Cerrar"><X className="w-3.5 h-3.5" aria-hidden="true" /></button>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+              {globalError && (
+                <FxBanner tone="error" onClose={() => setGlobal("")}>{globalError}</FxBanner>
+              )}
 
-                {historyCases.length > 0 && <DashboardStats cases={historyCases} />}
+              {historyCases.length > 0 && <DashboardStats cases={historyCases} />}
 
-                {draftCases.length > 0 && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.28, delay: 0.15, ease: EASE }}
-                  >
-                    <p className="section-label mb-2.5 flex items-center gap-1.5">
-                      <Play className="w-3 h-3" style={{ color: "var(--blue-lg)" }} aria-hidden="true" />
-                      Pendientes de retomar
-                    </p>
-                    <div className="flex gap-2.5 overflow-x-auto pb-1 -mx-1 px-1">
-                      {draftCases.map((cas, i) => (
-                        <motion.button
-                          key={cas.id}
+              {draftCases.length > 0 && (
+                <section aria-labelledby="drafts-title">
+                  <h2 id="drafts-title" className="flex items-center gap-1.5 text-fx-label uppercase text-fx-text-2">
+                    <Play className="w-3.5 h-3.5" aria-hidden="true" />
+                    Pendientes de retomar
+                  </h2>
+                  <ul className="flex gap-3 overflow-x-auto px-1 py-2 -mx-1 mt-1">
+                    {draftCases.map((cas) => (
+                      <li key={cas.id} className="shrink-0">
+                        <button
+                          type="button"
                           onClick={() => handleResume(cas)}
-                          className="flex items-center gap-3 flex-shrink-0 rounded-lg px-3.5 py-2.5 text-left transition-colors"
-                          style={{ background: "rgba(13,148,136,0.06)", border: "1px solid var(--border-accent)" }}
-                          initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }}
-                          transition={{ duration: 0.25, delay: 0.18 + i * 0.04 }}
-                          whileHover={{ borderColor: "var(--blue-lg)" }}
-                          whileTap={{ scale: 0.98 }}
                           aria-label={`Retomar inspección ${cas.nro_referencia} — ${cas.device.manufacturer} ${cas.device.model}`}
+                          className="fx-card fx-card-interactive flex items-center gap-3 min-h-11 w-60 px-3.5 py-3 text-left"
                         >
-                          <div
-                            className="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0"
-                            style={{ background: "rgba(13,148,136,0.12)" }}
-                          >
-                            <Play className="w-3.5 h-3.5" style={{ color: "var(--blue-lg)" }} aria-hidden="true" />
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold truncate" style={{ color: "var(--text-primary)" }}>{cas.nro_referencia}</p>
-                            <p className="text-[11px] truncate flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
-                              <Smartphone className="w-2.5 h-2.5 flex-shrink-0" aria-hidden="true" />
-                              {cas.device.manufacturer} {cas.device.model}
-                            </p>
-                          </div>
-                        </motion.button>
-                      ))}
-                    </div>
-                  </motion.div>
-                )}
+                          <span className="w-9 h-9 rounded-fx-md bg-fx-accent-soft text-fx-accent-text flex items-center justify-center shrink-0">
+                            <Play className="w-4 h-4" aria-hidden="true" />
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block text-fx-body-sm font-semibold text-fx-text truncate">{cas.nro_referencia}</span>
+                            <span className="flex items-center gap-1 text-xs text-fx-text-3 truncate">
+                              <Smartphone className="w-3 h-3 shrink-0" aria-hidden="true" />
+                              <span className="truncate">{cas.device.manufacturer} {cas.device.model}</span>
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
 
-                <AnimatePresence>
-                  {statusMsg && (
-                    <motion.div
-                      className="flex items-center gap-2.5 rounded-md px-4 py-2.5 text-sm border border-teal-500/20 bg-teal-500/[0.07] text-teal-600 dark:text-teal-300"
-                      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                      role="status"
-                      aria-live="polite"
-                    >
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />{statusMsg}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+              {statusMsg && (
+                <FxBanner
+                  tone="info"
+                  role="status"
+                  icon={<Loader2 className="h-4 w-4 shrink-0 mt-0.5 motion-safe:animate-spin" aria-hidden="true" />}
+                >
+                  {statusMsg}
+                </FxBanner>
+              )}
 
-                <CaseHistory
-                  cases={historyCases}
-                  loading={historyLoading}
-                  onNewCase={startWizard}
-                  onRefresh={loadHistory}
-                  onResume={handleResume}
-                />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              <CaseHistory
+                cases={historyCases}
+                loading={historyLoading}
+                onNewCase={startWizard}
+                onRefresh={loadHistory}
+                onResume={handleResume}
+              />
+            </div>
+          </div>
+        )}
 
         <AnimatePresence mode="wait">
           {mode === "wizard" && (

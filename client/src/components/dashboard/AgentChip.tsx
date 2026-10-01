@@ -1,7 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { WifiOff } from "lucide-react";
+import { Wifi, WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Device } from "@/types";
 
@@ -11,6 +10,13 @@ interface Props {
   recording: boolean;
 }
 
+const PILL = "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium select-none";
+
+/**
+ * Estado del agente Tatana en la navbar (desde `sm`). Conectado usa el tono
+ * de éxito y no disponible el de advertencia, siempre con ícono + texto; si
+ * hay una grabación en curso, se suma la píldora "REC".
+ */
 export function AgentChip({ online, device, recording }: Props) {
   const deviceLabel = device
     ? `${device.manufacturer} ${device.model} · ${
@@ -18,44 +24,31 @@ export function AgentChip({ online, device, recording }: Props) {
           ? `iOS ${device.ios_version ?? device.android_version}`
           : `Android ${device.android_version}`
       }`
-    : "sin dispositivo";
+    : "Tatana activo · esperando dispositivo";
 
   return (
-    <motion.div
-      className={cn(
-        "hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full text-xs border font-medium select-none",
-        online
-          ? "border-emerald-500/20 bg-emerald-500/[0.06]"
-          : "border-amber-500/20 bg-amber-500/[0.06]",
-      )}
-      initial={{ opacity: 0, y: -6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.2, duration: 0.25 }}
+    <div
+      className="hidden sm:flex items-center gap-1.5 min-w-0 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]"
       role="status"
       aria-live="polite"
     >
-      <span aria-hidden="true" className={cn(
-        "w-1.5 h-1.5 rounded-full flex-shrink-0",
-        online ? "bg-emerald-400 animate-pulse" : "bg-amber-400",
-      )} />
       {online ? (
-        <span className="text-emerald-600 dark:text-emerald-400 truncate max-w-[280px]">
-          {device ? deviceLabel : "Tatana activo · esperando dispositivo"}
+        <span className={cn(PILL, "min-w-0 bg-fx-success-soft border-fx-success text-fx-success")}>
+          <Wifi className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span className="truncate max-w-[280px]">{deviceLabel}</span>
         </span>
       ) : (
-        <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
-          <WifiOff className="w-3 h-3" aria-hidden="true" /> Tatana no disponible
+        <span className={cn(PILL, "bg-fx-warning-soft border-fx-warning text-fx-warning")}>
+          <WifiOff className="h-3 w-3 shrink-0" aria-hidden="true" />
+          Tatana no disponible
         </span>
       )}
       {recording && (
-        <>
-          <span aria-hidden="true" className="w-px h-3 flex-shrink-0 opacity-20" style={{ background: "currentColor" }} />
-          <span className="flex items-center gap-1 font-bold text-red-500 dark:text-red-400">
-            <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-            REC
-          </span>
-        </>
+        <span className={cn(PILL, "bg-fx-danger-soft border-fx-danger text-fx-danger font-bold")}>
+          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-fx-danger motion-safe:animate-pulse" />
+          REC
+        </span>
       )}
-    </motion.div>
+    </div>
   );
 }

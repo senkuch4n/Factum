@@ -1,27 +1,18 @@
 "use client";
 
-import { CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Tag } from "primereact/tag";
+import { AlertCircle, CheckCircle2, CircleDashed, Loader2 } from "lucide-react";
+import { caseStatusOf, type CaseStatusKey } from "@/lib/case-status";
 
-const STATUS_CLASS: Record<string, string> = {
-  draft:      "badge-gray",
-  generating: "badge-blue",
-  completed:  "badge-green",
-  error:      "badge-red",
+const ICON: Record<CaseStatusKey, React.ReactNode> = {
+  draft: <CircleDashed className="h-3 w-3" aria-hidden="true" />,
+  generating: <Loader2 className="h-3 w-3 motion-safe:animate-spin" aria-hidden="true" />,
+  completed: <CheckCircle2 className="h-3 w-3" aria-hidden="true" />,
+  error: <AlertCircle className="h-3 w-3" aria-hidden="true" />,
 };
 
-const STATUS_LABEL: Record<string, string> = {
-  draft: "Borrador", generating: "Generando…", completed: "Completado", error: "Error",
-};
-
+/** Estado del caso: `Tag` de Prime, siempre ícono + texto. */
 export function StatusBadge({ status }: { status: string }) {
-  return (
-    <span className={cn("badge", STATUS_CLASS[status] ?? "badge-gray")}>
-      {status === "completed"  && <CheckCircle2 className="w-3 h-3" aria-hidden="true" />}
-      {status === "error"      && <AlertCircle  className="w-3 h-3" aria-hidden="true" />}
-      {status === "generating" && <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />}
-      {status === "draft"      && <div className="w-1.5 h-1.5 rounded-full bg-current" aria-hidden="true" />}
-      {STATUS_LABEL[status] ?? status}
-    </span>
-  );
+  const st = caseStatusOf(status);
+  return <Tag severity={st.severity} value={st.label} icon={ICON[st.key]} />;
 }

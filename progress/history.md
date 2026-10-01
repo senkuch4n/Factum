@@ -51,3 +51,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos. Backend retomado tras pausa del usuario.
 - **Rama:** `feat/zip-cifrado-real` (encadenada sobre `feat/rediseno-pagina-inicio`).
 - **Pendiente:** pruebas manuales M1–M9 de la SDD (e2e con caso real, M5 texto de aseguramiento cifrado, M7 Zip64 > 4 GB, M9 403 en caso ajeno); `ToDictionary` asume nombres únicos en el directorio del caso.
+
+## rediseno-dashboard-historial — APROBADA (2026-10-01)
+
+- **Qué:** parte 1 del rediseño de /dashboard: modo historial (CaseHistory con DataTable/Paginator/Calendar de Prime, CaseCard/CaseGridCard, StatusBadge con Tag, DashboardStats) y piezas globales (AppNavbar, toasts `FxToastProvider`, `feedback/` y `overlay/` con banners, tips, drawer y ConfirmDialog, GuideModal/USBGuide, SoporteModal, ExpertProfileDialog, AgentChip). Nuevos pt: calendar, column, datatable, inputtextarea, paginator, selectbutton, tag, tooltip. Borrados componentes `ui/` sin consumidores (cycling-placeholder-input, data-table, date-range-calendar, floating-dock, pagination).
+- **Decisiones:** D1–D11 de la paraguas y DP1–DP3 A (autónomo). CaseCard respeta el contrato de zip-cifrado-real (sin `zip_password`).
+- **Modelos:** architect (sesión), implementer-frontend opus, reviewer sonnet. 0 rechazos.
+- **Rama:** `feat/rediseno-dashboard-historial` (encadenada sobre `feat/zip-cifrado-real`).
+- **Pendiente:** prueba manual (chip online/REC con equipo real, contraste con DevTools, regresión del wizard 1–6); token `rounded-fx-pill` para la parte 4; typos preexistentes ("inspecciónes", orden lexicográfico de N° de causa).

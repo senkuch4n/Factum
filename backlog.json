@@ -204,7 +204,7 @@
     {
       "id": "rediseno-dashboard-historial",
       "titulo": "Rediseño /dashboard parte 1: modo historial y piezas globales del dashboard",
-      "estado": "validada",
+      "estado": "aprobada",
       "creada": "2026-10-01T00:00:00-03:00",
       "actualizada": "2026-10-01",
       "intentos_revision": 0,
@@ -219,9 +219,9 @@
         "reviewer_model": "sonnet",
         "skill": null,
         "rama": "feat/rediseno-dashboard-historial",
-        "fase": "pendiente"
+        "fase": "cerrada"
       },
-      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 1. SDD lista; DP1–DP3 A (autónomo)."
+      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 1. SDD lista; DP1–DP3 A (autónomo). 2026-10-01: arquitectura_lista -> implementando en feat/rediseno-dashboard-historial (desde feat/zip-cifrado-real). Reviewer APROBADA 2026-10-01 (0 rechazos)."
     },
     {
       "id": "rediseno-dashboard-wizard",
@@ -243,7 +243,7 @@
         "rama": "feat/rediseno-dashboard-wizard",
         "fase": "pendiente"
       },
-      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 2. architect detenido a mitad por pedido del usuario; relanzar la SDD (puede haber quedado un borrador parcial en Refactorizaciones/)."
+      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 2. SDD lista 2026-10-01: Refactorizaciones/rediseno-dashboard-wizard.md; DP1–DP6 A (autónomo)."
     },
     {
       "id": "rediseno-dashboard-captura",
@@ -265,7 +265,7 @@
         "rama": "feat/rediseno-dashboard-captura",
         "fase": "pendiente"
       },
-      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 3."
+      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 3. SDD lista 2026-10-01: Refactorizaciones/rediseno-dashboard-captura.md; DP1–DP6 A (autónomo)."
     },
     {
       "id": "rediseno-cierre-legacy",

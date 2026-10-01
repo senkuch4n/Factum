@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Dialog } from "primereact/dialog";
 import { Button } from "primereact/button";
 import { AlertCircle, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { useFxToast } from "@/components/shell/FxToastProvider";
 import { ApiError } from "@/lib/api";
 import { PROFILE_REQUIRED_KEYS, profileErrorKey, profileFieldId, validateProfile } from "@/lib/pericial";
 import { profileToForm, useExpertProfile } from "@/hooks/useExpertProfile";
@@ -23,6 +23,7 @@ export function ExpertProfileDialog({ visible, onHide }: { visible: boolean; onH
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const toast = useFxToast();
 
   // Cada apertura trae el perfil vigente.
   useEffect(() => {
@@ -43,7 +44,7 @@ export function ExpertProfileDialog({ visible, onHide }: { visible: boolean; onH
     setSaving(true); setSaveError("");
     try {
       await save(form);
-      toast.success("Perfil de perito guardado", { description: "Se usa en los casos que crees o edites desde ahora." });
+      toast.success("Perfil de perito guardado", "Se usa en los casos que crees o edites desde ahora.");
       onHide();
     } catch (e) {
       if (e instanceof ApiError && e.missing?.length) {

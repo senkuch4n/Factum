@@ -32,3 +32,15 @@ export const FX_BUTTON_PRIMARY = [
   "transition-[background-color,border-color,color,transform] duration-fx-fast ease-fx motion-safe:active:translate-y-px",
   FOCUS_RING,
 ].join(" ");
+
+/**
+ * Look del Button `severity="secondary"` para un <a> (p. ej. la descarga del
+ * Word en el historial): mismo borde, superficie y hover que pt/button.ts.
+ */
+export const FX_BUTTON_SECONDARY = [
+  "inline-flex items-center justify-center gap-2 select-none whitespace-nowrap no-underline",
+  "border rounded-fx-md font-bold px-5 py-2.5 text-fx-body-sm",
+  "bg-fx-surface-2 border-fx-border-strong text-fx-text hover:bg-fx-surface-3",
+  "transition-colors duration-fx-fast ease-fx",
+  FOCUS_RING,
+].join(" ");

@@ -1,11 +1,19 @@
 import type { PrimeReactPTOptions } from "primereact/api";
 import { button } from "./button";
+import { calendar } from "./calendar";
+import { column } from "./column";
+import { datatable } from "./datatable";
 import { dialog } from "./dialog";
 import { inputtext } from "./inputtext";
+import { inputtextarea } from "./inputtextarea";
 import { menu } from "./menu";
 import { message } from "./message";
+import { paginator } from "./paginator";
 import { password } from "./password";
+import { selectbutton } from "./selectbutton";
+import { tag } from "./tag";
 import { toast } from "./toast";
+import { tooltip } from "./tooltip";
 
 /**
  * Preset pass-through de Factum para PrimeReact 10 en modo `unstyled`.
@@ -22,4 +30,12 @@ export const fxPassThrough: PrimeReactPTOptions = {
   toast,
   password,
   message,
+  tag,
+  selectbutton,
+  paginator,
+  datatable,
+  column,
+  calendar,
+  tooltip,
+  inputtextarea,
 };
