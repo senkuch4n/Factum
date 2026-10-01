@@ -1,0 +1,212 @@
+import {
+  Plug,
+  ShieldCheck,
+  LockOpen,
+  Terminal,
+  Shield,
+  RefreshCw,
+  CircleCheck,
+  FolderOpen,
+  Settings,
+  Smartphone,
+  Layers,
+  Hammer,
+  Wrench,
+  Cable,
+} from "lucide-react";
+import type { Brand, IOSStep, AndroidStep, Step } from "./types";
+
+export const IOS_STEPS: IOSStep[] = [
+  {
+    type: "step",
+    icon: "/apple.svg",
+    title: "Instalá Apple Devices en esta PC",
+    detail: "Si es la primera vez que conectás un iPhone a esta PC, necesitás instalar el driver oficial de Apple. Abrí Microsoft Store, buscá \"Apple Devices\" e instalalo. No requiere cuenta de Apple.",
+    tip: "Solo hace falta hacerlo una vez por PC. Si ya está instalado, pasá al siguiente paso.",
+    mockup: { header: "Microsoft Store", rows: [
+      { text: "Apple Devices", value: "Instalar", highlight: true },
+      { text: "Apple Inc." },
+      { text: "Driver oficial para iPhone/iPad" },
+    ]},
+  },
+  {
+    type: "step",
+    icon: Plug,
+    title: "Conectá el cable USB con el iPhone desbloqueado",
+    detail: "Desbloqueá el iPhone con Face ID o código. Con la pantalla encendida en la pantalla de inicio, enchufá el cable Lightning o USB-C. Usá el cable original — los cables de carga rápida genéricos no transmiten datos.",
+    tip: "Si el iPhone se bloquea antes de conectar el cable, el popup de confianza no aparecerá. Siempre conectá con la pantalla encendida.",
+  },
+  {
+    type: "dialog",
+    icon: ShieldCheck,
+    title: "Tocá \"Confiar\" en el iPhone",
+    detail: "En la pantalla del iPhone aparecerá el popup \"¿Confiar en esta computadora?\". Tocá Confiar e ingresá el código PIN del iPhone para confirmar.",
+    tip: "Si el popup no aparece: desconectá, desbloqueá el iPhone y volvé a conectar. El popup aparece solo cuando la pantalla está activa.",
+    dialog: {
+      title: "¿Confiar en esta computadora?",
+      message: "La confianza en esta computadora te permite ver toda la información y acceder a los datos de este iPhone y a la red local.",
+      confirm: "Confiar",
+    },
+  },
+  {
+    type: "step",
+    icon: LockOpen,
+    title: "Desactivá el código de pantalla",
+    detail: "Para que Factum pueda capturar la pantalla durante toda la inspección sin interrupciones, el iPhone no puede quedar bloqueado. Andá a Ajustes → Face ID y código → Desactivar código e ingresá el código actual para confirmarlo.",
+    tip: "También podés ir a Ajustes → Pantalla y brillo → Bloqueo automático → Nunca, si preferís mantener el código activo.",
+    mockup: { header: "Face ID y código", section: "CÓDIGO", rows: [
+      { text: "Activar código" },
+      { text: "Cambiar código" },
+      { text: "Desactivar código", value: "TAP", highlight: true },
+      { text: "Requerir código", value: "Inmediatamente" },
+    ]},
+  },
+  {
+    type: "terminal",
+    icon: Terminal,
+    title: "Ejecutá el comando de activación en la Mac",
+    detail: "Abrí la Terminal en la Mac del gabinete y ejecutá el siguiente comando con el iPhone conectado por USB. Esto habilita el Modo Desarrollador sin necesidad de Xcode.",
+    command: "/usr/bin/python3 -m pymobiledevice3 amfi enable-developer-mode",
+    tip: "El comando tarda 5-10 segundos. Si dice 'Device is not connected': desconectá, desbloqueá el iPhone y volvé a conectar el cable.",
+  },
+  {
+    type: "step",
+    icon: Shield,
+    title: "Confirmá el Modo Desarrollador en el iPhone",
+    detail: "El comando anterior activó el servicio en segundo plano. Ahora andá a Ajustes → Privacidad y seguridad → Modo Desarrollador y activá el toggle. El iPhone pedirá reiniciarse.",
+    tip: "Si la opción Modo Desarrollador no aparece todavía, esperá 5 segundos y volvé a entrar al menú.",
+    mockup: { header: "Privacidad y seguridad", rows: [
+      { text: "Seguimiento" }, { text: "Localización" }, { text: "Contactos" },
+      { text: "Modo Desarrollador", value: "OFF", highlight: true },
+    ]},
+  },
+  {
+    type: "step",
+    icon: RefreshCw,
+    title: "El iPhone se reinicia solo",
+    detail: "Después de activar el Modo Desarrollador, el iPhone se reinicia. Al volver a encenderse, aparecerá un aviso de seguridad sobre el Modo Desarrollador. Tocá Encender.",
+    mockup: { header: "Modo Desarrollador", section: "AVISO DE SEGURIDAD", rows: [
+      { text: "Encender", highlight: true },
+      { text: "Cancelar" },
+    ]},
+  },
+  {
+    type: "step",
+    icon: Plug,
+    title: "Volvé a conectar el cable USB",
+    detail: "Tras el reinicio, desconectá y volvé a conectar el cable USB con el iPhone desbloqueado. Recordá que desactivaste el código — la pantalla no se bloqueará sola.",
+    tip: "Si el iPhone pide confirmar confianza nuevamente, tocá Confiar e ingresá el PIN (si lo dejaste activo).",
+  },
+  {
+    type: "step",
+    icon: CircleCheck,
+    title: "¡iPhone listo para peritar!",
+    detail: "El sistema detectará el iPhone automáticamente. Las capturas de pantalla funcionarán siempre que el iPhone esté desbloqueado y conectado. Al finalizar la inspección, podés reactivar el código.",
+    tip: "La primera conexión puede tardar 10-20 segundos mientras el sistema establece el túnel de servicios.",
+  },
+];
+
+export const MTP_STEP: AndroidStep = {
+  type: "mtp",
+  icon: FolderOpen,
+  title: "Seleccioná transferencia de archivos (MTP)",
+  detail: "En el celular, deslizá la barra de notificaciones hacia abajo y tocá la notificación \"USB - Cargando\". Seleccioná la opción \"Transferencia de archivos\" o \"MTP\". Esto permite que el sistema acceda a los archivos del dispositivo.",
+  tip: "Si no aparece la notificación USB, desconectá y volvé a conectar el cable.",
+};
+
+export const TRUST_STEP: AndroidStep = {
+  type: "trust",
+  icon: ShieldCheck,
+  title: "Permitir depuración USB desde esta PC",
+  detail: "En la pantalla del celular aparecerá el popup \"¿Permitir depuración USB desde esta computadora?\". Tocá \"Siempre permitir desde esta computadora\" y luego \"Permitir\".",
+  tip: "Si el popup no aparece, desconectá y volvé a conectar el cable. Puede tardar unos segundos en aparecer.",
+};
+
+export const BRANDS: Brand[] = [
+  {
+    id: "samsung", name: "Samsung", emoji: "/samsung-logo.svg", note: "Android 8+ · One UI",
+    steps: [
+      { icon: Settings, title: 'Abrí "Ajustes"', detail: "Tocá el ícono del engranaje en tu pantalla principal o deslizá la barra de notificaciones hacia abajo y tocá el engranaje en la esquina superior derecha.", mockup: { header: "Ajustes", rows: [{ text: "Conexiones" }, { text: "Sonidos y vibración" }, { text: "Notificaciones" }, { text: "Pantalla" }, { text: "Fondo de pantalla y estilo" }, { text: "Acerca del teléfono" }] } },
+      { icon: Smartphone, title: 'Entrá a "Acerca del teléfono"', detail: "Está al final del menú de Ajustes. Contiene toda la información técnica del dispositivo.", tip: "Acá también podés ver el modelo exacto, la versión de Android y el número IMEI.", mockup: { header: "Acerca del teléfono", rows: [{ text: "Estado" }, { text: "Información legal" }, { text: "Información de software", highlight: true }, { text: "Número IMEI" }, { text: "Número de modelo" }] } },
+      { icon: Layers, title: 'Tocá "Información de software"', detail: "Este paso es exclusivo de Samsung. Aquí encontrarás el número de versión de One UI, la versión de Android y el número de compilación.", tip: "Solo Samsung tiene este sub-menú. En otras marcas vas directo al número de compilación.", mockup: { header: "Información de software", rows: [{ text: "Versión de One UI", value: "6.0" }, { text: "Versión de Android", value: "14" }, { text: "Versión del kernel", value: "5.15.144" }, { text: "Número de compilación", highlight: true }] } },
+      { icon: Hammer, title: 'Tocá 7 veces "Número de compilación"', detail: "Tocá el número de compilación 7 veces seguidas. Verás un contador: \"Faltan X pasos para ser desarrollador\". Si el teléfono tiene PIN, pedirá que lo ingreses.", mockup: { header: "Información de software", section: "TOCA 7 VECES", rows: [{ text: "Número de compilación", value: "4 restantes", highlight: true }] } },
+      { icon: CircleCheck, title: "¡Modo desarrollador activado!", detail: "Verás el mensaje \"Ahora eres un desarrollador\". Volvé al menú principal de Ajustes. A partir de ahora el menú \"Opciones de desarrollador\" está disponible.", tip: "Si salís de Ajustes y volvés a entrar, el menú ya aparecerá." },
+      { icon: Wrench, title: 'Buscá "Opciones de desarrollador"', detail: "Volvé al menú principal de Ajustes. En Samsung, las opciones de desarrollador aparecen al final, antes de \"Acerca del teléfono\".", mockup: { header: "Ajustes", rows: [{ text: "Administración general" }, { text: "Accesibilidad" }, { text: "Opciones de desarrollador", highlight: true }, { text: "Acerca del teléfono" }] } },
+      { icon: Plug, title: 'Activá "Depuración USB"', detail: "Dentro de Opciones de desarrollador, buscá \"Depuración USB\" y poné el switch en verde. Aparecerá un aviso de seguridad: tocá \"Aceptar\".", tip: "La depuración USB permite que esta PC capture la pantalla del celular.", mockup: { header: "Opciones de desarrollador", section: "DEPURACIÓN", rows: [{ text: "Depuración USB", value: "●", highlight: true }, { text: "Depuración USB WiFi" }, { text: "Instalar vía USB" }] } },
+      { icon: Cable, title: "Conectá el cable USB", detail: "Enchufá el cable entre el celular y esta PC." },
+      TRUST_STEP as unknown as Step,
+      MTP_STEP as unknown as Step,
+    ] as Step[],
+  },
+  {
+    id: "motorola", name: "Motorola", emoji: "/motorola-logo.svg", note: "Android 8+ · My UX / Android puro",
+    steps: [
+      { icon: Settings, title: 'Abrí "Ajustes"', detail: "El ícono del engranaje en tu pantalla o en la lista de aplicaciones." },
+      { icon: Smartphone, title: 'Entrá a "Acerca del teléfono"', detail: "Está al final del menú de Ajustes.", mockup: { header: "Ajustes", rows: [{ text: "Batería" }, { text: "Almacenamiento" }, { text: "Sistema" }, { text: "Acerca del teléfono", highlight: true }] } },
+      { icon: Hammer, title: 'Tocá 7 veces "Número de compilación"', detail: "En Motorola el número de compilación está directamente en la pantalla \"Acerca del teléfono\", sin pasos intermedios.", mockup: { header: "Acerca del teléfono", rows: [{ text: "Nombre del dispositivo", value: "moto g84" }, { text: "Versión de Android", value: "14" }, { text: "Número de compilación", highlight: true }] } },
+      { icon: CircleCheck, title: "¡Modo desarrollador activado!", detail: "Volvé al menú principal de Ajustes." },
+      { icon: Wrench, title: '"Sistema" → "Opciones de desarrollador"', detail: "En Motorola, las opciones de desarrollador están dentro del menú \"Sistema\".", mockup: { header: "Sistema", rows: [{ text: "Idioma y entrada" }, { text: "Fecha y hora" }, { text: "Copia de seguridad" }, { text: "Opciones de desarrollador", highlight: true }, { text: "Restablecer" }] } },
+      { icon: Plug, title: 'Activá "Depuración USB"', detail: "Switch en verde, confirmá el aviso de seguridad.", mockup: { header: "Opciones de desarrollador", section: "DEPURACIÓN", rows: [{ text: "Depuración USB", value: "●", highlight: true }] } },
+      { icon: Cable, title: "Conectá el cable USB", detail: "Enchufá el cable entre el celular y esta PC." },
+      TRUST_STEP as unknown as Step,
+      MTP_STEP as unknown as Step,
+    ] as Step[],
+  },
+  {
+    id: "xiaomi", name: "Xiaomi / Redmi", emoji: "/xiaomi-logo.svg", note: "MIUI 10+ / HyperOS",
+    steps: [
+      { icon: Settings, title: 'Abrí "Ajustes" (Configuración)', detail: "En Xiaomi puede llamarse \"Configuración\". El ícono es un engranaje." },
+      { icon: Smartphone, title: 'Entrá a "Acerca del teléfono"', detail: "Al final del menú de Ajustes.", mockup: { header: "Ajustes", rows: [{ text: "Contraseña y seguridad" }, { text: "Privacidad" }, { text: "Ajustes adicionales" }, { text: "Acerca del teléfono", highlight: true }] } },
+      { icon: Hammer, title: '¡Ojo! Tocá 7 veces "Versión de MIUI" (o "HyperOS")', detail: "En Xiaomi se toca \"Versión de MIUI\" o \"HyperOS\" — NO \"Número de compilación\" como en otras marcas.", tip: "Esta es la diferencia más importante de Xiaomi respecto a otras marcas.", mockup: { header: "Acerca del teléfono", rows: [{ text: "Modelo", value: "Redmi Note 13" }, { text: "Versión de Android", value: "14" }, { text: "Versión de MIUI", value: "14.0.7", highlight: true }] } },
+      { icon: CircleCheck, title: "¡Modo desarrollador activado!", detail: "Volvé al menú principal de Ajustes." },
+      { icon: Wrench, title: '"Ajustes adicionales" → "Opciones de desarrollador"', detail: "En Xiaomi/MIUI, las opciones de desarrollador están dentro de \"Ajustes adicionales\".", mockup: { header: "Ajustes adicionales", rows: [{ text: "Idioma y entrada" }, { text: "Región" }, { text: "Opciones de desarrollador", highlight: true }] } },
+      { icon: Plug, title: 'Activá "Depuración USB"', detail: "Switch en verde. En algunos Xiaomi puede pedirte ingresar tu cuenta Mi para confirmar." },
+      { icon: Cable, title: "Conectá el cable USB", detail: "Enchufá el cable entre el celular y esta PC." },
+      TRUST_STEP as unknown as Step,
+      MTP_STEP as unknown as Step,
+    ] as Step[],
+  },
+  {
+    id: "huawei", name: "Huawei / Honor", emoji: "/huawei.svg", note: "EMUI 9+ / MagicUI",
+    steps: [
+      { icon: Settings, title: 'Abrí "Ajustes"', detail: "El ícono del engranaje." },
+      { icon: Smartphone, title: 'Entrá a "Acerca del teléfono"', detail: "Al final de Ajustes.", mockup: { header: "Ajustes", rows: [{ text: "Batería" }, { text: "Aplicaciones" }, { text: "Sistema" }, { text: "Acerca del teléfono", highlight: true }] } },
+      { icon: Hammer, title: 'Tocá 7 veces "Número de compilación"', detail: "El celular te avisa el conteo. Puede pedirte el PIN de la pantalla de bloqueo.", mockup: { header: "Acerca del teléfono", rows: [{ text: "Modelo", value: "P30 Pro" }, { text: "Versión de EMUI", value: "10.1" }, { text: "Número de compilación", highlight: true }] } },
+      { icon: CircleCheck, title: "¡Modo desarrollador activado!", detail: "Volvé al menú de Ajustes." },
+      { icon: Wrench, title: '"Sistema" → "Opciones de desarrollador"', detail: "En Huawei, las opciones de desarrollador están dentro de \"Sistema\"." },
+      { icon: Plug, title: 'Activá "Depuración USB"', detail: "Switch en verde, confirmá el aviso." },
+      { icon: Cable, title: "Conectá el cable USB", detail: "Enchufá el cable entre el celular y esta PC." },
+      TRUST_STEP as unknown as Step,
+      MTP_STEP as unknown as Step,
+    ] as Step[],
+  },
+  {
+    id: "lg", name: "LG", emoji: "/lg-logo.svg", note: "LG UX · Android 8+",
+    steps: [
+      { icon: Settings, title: 'Abrí "Ajustes"', detail: "El ícono del engranaje en la pantalla principal o en la lista de aplicaciones." },
+      { icon: Layers, title: 'Tocá la pestaña "General"', detail: "LG organiza Ajustes en pestañas arriba (Red, Sonido, Pantalla, General). Tocá \"General\".", tip: "En LG UX modernos las pestañas pueden estar como una sola lista; buscá la sección \"General\" hacia abajo.", mockup: { header: "Ajustes", section: "PESTAÑAS", rows: [{ text: "Red" }, { text: "Sonido" }, { text: "Pantalla" }, { text: "General", highlight: true }] } },
+      { icon: Smartphone, title: '"Acerca del teléfono" → "Información de software"', detail: "Dentro de General, entrá a \"Acerca del teléfono\" y después a \"Información de software\".", mockup: { header: "Acerca del teléfono", rows: [{ text: "Nombre del dispositivo" }, { text: "Información de red" }, { text: "Información de software", highlight: true }, { text: "Información legal" }] } },
+      { icon: Hammer, title: 'Tocá 7 veces "Número de compilación"', detail: "Tocá el número de compilación 7 veces seguidas. Verás un contador \"Faltan X pasos para ser desarrollador\". Si el teléfono tiene PIN o patrón, lo va a pedir.", mockup: { header: "Información de software", section: "TOCA 7 VECES", rows: [{ text: "Versión de Android", value: "13" }, { text: "Número de compilación", value: "3 restantes", highlight: true }] } },
+      { icon: CircleCheck, title: "¡Modo desarrollador activado!", detail: "Aparece el mensaje \"Ya eres desarrollador\". Volvé a la pestaña \"General\".", tip: "Si salís de Ajustes y volvés a entrar, el menú de desarrollador ya aparece." },
+      { icon: Wrench, title: '"General" → "Opciones para desarrolladores"', detail: "En la pestaña General, buscá \"Opciones para desarrolladores\". En algunos modelos LG está dentro de \"Opciones avanzadas\".", mockup: { header: "General", rows: [{ text: "Idioma y teclado" }, { text: "Fecha y hora" }, { text: "Opciones avanzadas" }, { text: "Opciones para desarrolladores", highlight: true }] } },
+      { icon: Plug, title: 'Activá "Depuración USB"', detail: "Dentro de Opciones para desarrolladores, en el apartado \"Depuración\", buscá \"Depuración USB\" y poné el switch en verde. Confirmá el aviso de seguridad.", tip: "La depuración USB es lo que permite que esta PC capture la pantalla del celular.", mockup: { header: "Opciones para desarrolladores", section: "DEPURACIÓN", rows: [{ text: "Depuración USB", value: "●", highlight: true }, { text: "Revocar autorizaciones de depuración USB" }, { text: "Verificar apps por USB" }] } },
+      { icon: Cable, title: "Conectá el cable USB", detail: "Enchufá el cable entre el celular y esta PC." },
+      TRUST_STEP as unknown as Step,
+      MTP_STEP as unknown as Step,
+    ] as Step[],
+  },
+  {
+    id: "generic", name: "Otra marca", emoji: "/android.svg", note: "Android puro o marcas no listadas",
+    steps: [
+      { icon: Settings, title: 'Abrí "Ajustes"', detail: "El ícono del engranaje en tu pantalla principal o en la lista de aplicaciones." },
+      { icon: Smartphone, title: 'Buscá "Acerca del teléfono"', detail: "Generalmente al final de Ajustes. Puede llamarse \"Información del teléfono\", \"Acerca del dispositivo\" o \"Acerca del sistema\"." },
+      { icon: Hammer, title: 'Tocá 7 veces "Número de compilación"', detail: "Puede estar dentro de \"Información de software\" o \"Versión del sistema\".", tip: "Si no encontrás el número de compilación, usá la búsqueda de Ajustes: escribí \"compilación\"." },
+      { icon: CircleCheck, title: "¡Modo desarrollador activado!", detail: "Apareció el mensaje de confirmación. Volvé a Ajustes." },
+      { icon: Wrench, title: 'Buscá "Opciones de desarrollador"', detail: "Puede estar en el menú principal de Ajustes, dentro de \"Sistema\" o dentro de \"General\". Usá la búsqueda si no lo encontrás." },
+      { icon: Plug, title: 'Activá "Depuración USB"', detail: "Switch en verde y aceptá el aviso de seguridad." },
+      { icon: Cable, title: "Conectá el cable USB", detail: "Enchufá el cable entre el celular y esta PC." },
+      TRUST_STEP as unknown as Step,
+      MTP_STEP as unknown as Step,
+    ] as Step[],
+  },
+];

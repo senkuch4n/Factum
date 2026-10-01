@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' http://localhost:*" />
+    <title>Factum — Agente Tatana</title>
+  </head>
+  <body>
+    <script>
+      window.__errors = [];
+      window.onerror = function(msg, src, line, col, err) {
+        window.__errors.push({ msg, src, line });
+        var d = document.getElementById('root');
+        if (d) {
+          d.style.cssText = 'padding:24px;font-family:monospace;color:#dc2626;background:#fff;white-space:pre-wrap;font-size:12px';
+          d.textContent = '[Error de carga]\n' + msg + '\n' + (src||'') + ':' + (line||'');
+        }
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        var d = document.getElementById('root');
+        if (d && d.children.length === 0) {
+          d.style.cssText = 'padding:24px;font-family:monospace;color:#dc2626;background:#fff;white-space:pre-wrap;font-size:12px';
+          d.textContent = '[Promise sin manejar]\n' + (e.reason || e);
+        }
+      });
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

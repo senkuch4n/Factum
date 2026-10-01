@@ -1,0 +1,32 @@
+node_modules/
+**/node_modules/
+
+**/agent-data
+
+# Next.js build output y caché
+**/.next/
+
+# Electron build output
+agent-ui/dist/
+agent-ui/out/
+
+# Bundled .NET agent binary (artefacto de build, no va en git)
+agent-ui/resources/agent/
+
+# .NET build output
+**/bin/
+**/obj/
+
+# TypeScript incremental build cache
+**/tsconfig.tsbuildinfo
+
+# Datos locales de desarrollo (Storage:DataDirectory, dev-data del backend)
+**/dev-data/
+
+# Entornos y secretos locales
+.env
+.env.local
+*.env.local
+
+# OS
+.DS_Store

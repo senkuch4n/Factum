@@ -1,0 +1,188 @@
+stages:
+  - build-agent
+  - build-installer
+  - release
+
+# ── Job 1: Compila el agente .NET para Windows (win-x64, single file) ──────────
+build-agent-win:
+  stage: build-agent
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  script:
+    - dotnet publish server/src/Factum.Agent/Factum.Agent.csproj
+        -c Release
+        -r win-x64
+        --self-contained true
+        -o agent-win-output
+  artifacts:
+    paths:
+      - agent-win-output/
+    expire_in: 1 day
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v.*/
+
+# ── Job 1b: Compila el agente .NET para Linux (linux-x64, self-contained) ──────
+# Sin instalador ni portable con herramientas embebidas (a diferencia de Windows):
+# en Linux se asume que el fiscal/tester instala adb, ffmpeg, uxplay y qvh vía
+# apt/go install — son paquetes estándar en esa plataforma, no hace falta bundlear.
+build-agent-linux:
+  stage: build-agent
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  script:
+    - dotnet publish server/src/Factum.Agent/Factum.Agent.csproj
+        -c Release
+        -r linux-x64
+        --self-contained true
+        -o agent-linux-output
+    - chmod +x agent-linux-output/Factum.Agent
+    - tar -czf "Tatana-Agent-$CI_COMMIT_TAG-Linux.tar.gz" -C agent-linux-output .
+  artifacts:
+    name: "Tatana-Agent-$CI_COMMIT_TAG-Linux"
+    paths:
+      - Tatana-Agent-*-Linux.tar.gz
+    expire_in: 90 days
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v.*/
+
+# ── Job 2: Empaqueta el instalador Windows (.exe NSIS) con Electron ─────────────
+# TATANA_UPDATES_URL: variable de CI/CD (Settings > CI/CD > Variables) con la
+# URL pública del backend de Factum, ej: https://factum.mpf.gob.ar —
+# ahí es donde electron-updater va a chequear actualizaciones (nunca contra
+# GitLab directo, la PC del fiscal puede no tener salida a internet). Si no
+# está seteada, cae al default de package.json (localhost, solo para dev).
+build-installer-win:
+  stage: build-installer
+  image: electronuserland/builder:wine
+  needs:
+    - job: build-agent-win
+      artifacts: true
+  script:
+    - mkdir -p agent-ui/resources/agent
+    - cp agent-win-output/Factum.Agent.exe agent-ui/resources/agent/
+    - cd agent-ui
+    - npm ci
+    - npx electron-vite build
+    - "npx electron-builder --win --x64 --publish never -c.publish.url=${TATANA_UPDATES_URL:-http://localhost:8080/tatana/updates/}"
+  artifacts:
+    name: "Tatana-$CI_COMMIT_TAG-Windows"
+    paths:
+      - agent-ui/dist/Tatana*.exe
+      - agent-ui/dist/Tatana*.exe.blockmap
+      - agent-ui/dist/latest.yml
+    expire_in: 90 days
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v.*/
+
+# ── Job 2b: Arma el ZIP portátil (sin instalador, sin admin) ────────────────────
+# adb (platform-tools), pymobiledevice3, ffmpeg y uxplay quedan copiados dentro
+# del ZIP — AdbService/IosService los resuelven por ruta relativa al exe
+# (tools/) antes que por PATH, así que no hace falta instalar nada en la PC
+# del fiscal.
+#
+# uxplay.exe NO tiene build oficial para Windows (FDH2/UxPlay solo documenta
+# compilarlo a mano vía MSYS2 + GStreamer). Se compila UNA sola vez siguiendo
+# packaging/windows-uxplay-build.md y se sube ese artefacto (uxplay.exe + sus
+# DLLs de runtime) a una URL estable propia (ej. GitLab Generic Package
+# Registry), seteada acá como variable de CI/CD $UXPLAY_WIN_ARTIFACT_URL — este
+# job NO recompila GStreamer en cada pipeline (sería lentísimo y frágil). Si la
+# variable no está configurada, el build portátil sigue funcionando igual pero
+# sin captura AirPlay en Windows (los otros métodos de screenshot no dependen
+# de esto).
+build-portable-win:
+  stage: build-installer
+  image: python:3.12-slim
+  needs:
+    - job: build-agent-win
+      artifacts: true
+  script:
+    - apt-get update && apt-get install -y --no-install-recommends curl unzip zip
+    # ── adb (Android platform-tools, build oficial de Google para Windows) ──
+    # El alias "platform-tools-latest-windows.zip" ya no existe (404) — Google
+    # lo reemplazó por nombres versionados (platform-tools_rX.Y.Z-win.zip), así
+    # que se resuelve el más nuevo desde el manifest del repositorio.
+    - mkdir -p agent-win-output/tools
+    - curl -sSL -o /tmp/repo.xml https://dl.google.com/android/repository/repository2-3.xml
+    - "PT_FILE=$(grep -o 'platform-tools_r[0-9.]*-win\\.zip' /tmp/repo.xml | sort -V | tail -1)"
+    - curl -sSL -o /tmp/platform-tools.zip "https://dl.google.com/android/repository/$PT_FILE"
+    - unzip -q /tmp/platform-tools.zip -d /tmp/pt
+    - mv /tmp/pt/platform-tools agent-win-output/tools/platform-tools
+    # ── Python embebido (python.org) + pymobiledevice3, sin ejecutar nada
+    #    Windows acá: se resuelven ruedas (wheels) win_amd64 con pip cross-platform.
+    - curl -sSL -o /tmp/python-embed.zip https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip
+    - mkdir -p agent-win-output/tools/python-embed
+    - unzip -q /tmp/python-embed.zip -d agent-win-output/tools/python-embed
+    # Habilitar site-packages en el embebido (comentado por defecto)
+    - sed -i 's/^#import site/import site/' agent-win-output/tools/python-embed/python311._pth
+    - "pip install --no-cache-dir --target agent-win-output/tools/python-embed --platform win_amd64 --implementation cp --python-version 311 --only-binary=:all: pymobiledevice3"
+    # ── ffmpeg (build estático oficial de BtbN, sin dependencias externas) ──
+    - mkdir -p agent-win-output/tools/ffmpeg
+    - curl -sSL -o /tmp/ffmpeg-win64.zip https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip
+    - unzip -q /tmp/ffmpeg-win64.zip -d /tmp/ffmpeg-win64
+    - find /tmp/ffmpeg-win64 -iname "ffmpeg.exe" -exec cp {} agent-win-output/tools/ffmpeg/ffmpeg.exe \;
+    # ── uxplay (build propio vía MSYS2 — ver packaging/windows-uxplay-build.md) ──
+    - mkdir -p agent-win-output/tools/uxplay
+    - |
+      if [ -n "$UXPLAY_WIN_ARTIFACT_URL" ]; then
+        curl -sSL -o /tmp/uxplay-win.zip "$UXPLAY_WIN_ARTIFACT_URL"
+        unzip -q /tmp/uxplay-win.zip -d agent-win-output/tools/uxplay
+      else
+        echo "AVISO: \$UXPLAY_WIN_ARTIFACT_URL no está configurada — el portátil de Windows quedará sin captura AirPlay. Ver packaging/windows-uxplay-build.md"
+      fi
+    # ── Scripts de lanzamiento/instalación/auto-update ──
+    - cp packaging/portable/*.bat packaging/portable/*.ps1 packaging/portable/*.ini agent-win-output/
+    - echo "${CI_COMMIT_TAG#v}" > agent-win-output/version.txt
+    - cd agent-win-output && zip -rq "../Tatana-Portable-$CI_COMMIT_TAG-Windows.zip" . && cd ..
+  artifacts:
+    name: "Tatana-Portable-$CI_COMMIT_TAG-Windows"
+    paths:
+      - Tatana-Portable-*-Windows.zip
+    expire_in: 90 days
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v.*/
+
+# ── Job 3: Crea el Release en GitLab con el instalador como asset ───────────────
+create-release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - job: build-installer-win
+      artifacts: true
+    - job: build-portable-win
+      artifacts: true
+    - job: build-agent-linux
+      artifacts: true
+  script:
+    - echo "Creando release $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "Tatana Agent $CI_COMMIT_TAG"
+    description: |
+      ## Tatana Agent — formas de correrlo
+
+      - **Instalador Windows** (`Tatana Setup ....exe`): requiere poder ejecutar
+        instaladores en la PC. Se actualiza solo.
+      - **Portátil Windows** (`Tatana-Portable-....zip`): sin instalador, sin
+        permisos de administrador. Descomprimí el ZIP en cualquier carpeta y
+        corré `install-portable.bat` (o `launch-tatana.bat` para probarlo sin
+        instalarlo). Trae adb y pymobiledevice3 ya copiados adentro (ffmpeg
+        también; uxplay solo si `UXPLAY_WIN_ARTIFACT_URL` estaba configurada
+        en este build — si no, AirPlay no va a estar disponible en Windows).
+      - **Linux** (`Tatana-Agent-....tar.gz`): binario self-contained, sin
+        instalador ni herramientas embebidas. Descomprimí y corré
+        `./Factum.Agent`. Necesita `adb`, `ffmpeg`, `uxplay` y `pymobiledevice3`
+        instalados en el sistema (vía `apt`/`pip`) — y opcionalmente `qvh`
+        (`go install github.com/danielpaulus/quicktime_video_hack@latest`,
+        renombrar el binario resultante a `qvh`) para el fallback de screenshot
+        por USB sin Developer Mode.
+    assets:
+      links:
+        - name: "Tatana-Windows-Setup.exe"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/agent-ui/dist/Tatana%20Setup%201.0.0.exe?job=build-installer-win"
+          link_type: package
+        - name: "Tatana-Portable-Windows.zip"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/Tatana-Portable-$CI_COMMIT_TAG-Windows.zip?job=build-portable-win"
+          link_type: package
+        - name: "Tatana-Agent-Linux.tar.gz"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/Tatana-Agent-$CI_COMMIT_TAG-Linux.tar.gz?job=build-agent-linux"
+          link_type: package
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v.*/
