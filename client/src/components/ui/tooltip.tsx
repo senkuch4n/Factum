@@ -44,16 +44,12 @@ export function Tip({ label, children, side = "top", sideOffset = 6, disabled }:
         <BaseTooltip.Positioner side={side} sideOffset={sideOffset} className="z-[60]">
           <BaseTooltip.Popup
             className={cn(
-              "max-w-[220px] rounded-md px-2 py-1 text-xs font-medium shadow-md",
-              "origin-[var(--transform-origin)] transition-[opacity,transform] duration-150",
+              "max-w-[220px] px-2 py-1 text-xs font-medium",
+              "bg-fx-surface-3 text-fx-text border border-fx-border-strong rounded-fx-sm shadow-fx-2",
+              "origin-[var(--transform-origin)] transition-[opacity,transform] duration-150 motion-reduce:transition-none",
               "data-[starting-style]:opacity-0 data-[starting-style]:scale-95",
               "data-[ending-style]:opacity-0 data-[ending-style]:scale-95",
             )}
-            style={{
-              background: "var(--text-primary)",
-              color: "var(--bg-base)",
-              border: "1px solid var(--border-md)",
-            }}
           >
             {label}
           </BaseTooltip.Popup>

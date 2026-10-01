@@ -24,7 +24,7 @@ import { CaptureStep } from "@/components/CaptureStep";
 import { ResultStep } from "@/components/ResultStep";
 import { CaseHistory } from "@/components/CaseHistory";
 import { CaseFormStep } from "@/components/CaseFormStep";
-import { UserMenu } from "@/components/UserMenu";
+import { AppNavbar } from "@/components/shell/AppNavbar";
 import { FloatingDock } from "@/components/ui/floating-dock";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Tip } from "@/components/ui/tooltip";
@@ -350,106 +350,65 @@ export default function Dashboard() {
         cancelLabel="Seguir acá"
       />
 
-      {/* ── Top bar (reemplaza la sidebar fija: un único nav item no justifica un riel
-          permanente de 224px). Referencia: navbar de vaulk.com — barra oscura recortada en
-          diagonal, angosta y centrada, con espacio de sobra (fondo de página visible) a los
-          dos costados en cualquier pantalla — no max-w-[1440px] (que en un monitor de
-          1440-1536px, lo más común, no se nota), sino max-w-6xl (misma medida que el
-          contenido del wizard, así los bordes quedan alineados). El corte vive en una capa
-          de fondo aparte (absolute, detrás del contenido) para no clipear el dropdown de
-          UserMenu, que sí necesita desbordar la barra. "dark" fuerza los tokens --dark en
-          todo lo que cuelga de acá, sin tocar AgentChip/UserMenu/ThemeToggle.
-
-          Layout de 3 zonas (grid, no flex-1 empujando desde la izquierda): con el contenido
-          real (logo + breadcrumb + estado + acciones) el bar de 1400px queda con ~500px
-          libres — con un solo flex-1 pegado a la izquierda, ese sobrante se convertía en un
-          vacío sin propósito a la mitad de la barra en vez de la negative space "considerada"
-          de la referencia. Centrando el breadcrumb en su propia columna, ese espacio pasa a
-          tener función (como el título centrado de una title bar) en vez de ser un accidente. ── */}
-      <header className="h-14 shrink-0 ">
-        <div className="dark relative h-full max-w-[1400px] px-10 mx-auto">
-        <div
-          className="absolute inset-0 z-0"
-          style={{
-            background: "var(--bg-surface)",
-            clipPath: "polygon(0% 0%,5% 100%,95% 100%,100% 0%)",
-          }}
-        />
-        <div className="relative z-10 h-full grid grid-cols-[auto_1fr_auto] items-center gap-3 pl-4 pr-4">
-
-        {/* ── Zona izquierda: marca ── */}
-        <div className="flex items-center gap-2.5 min-w-0">
-          <img src="/logo-theme-dark.svg" alt="Factum" className="h-6 w-auto hidden dark:block" />
-          <img src="/logo-theme-white.svg" alt="Factum" className="h-6 w-auto block dark:hidden" />
-          <span className="text-sm font-bold uppercase tracking-wider hidden sm:inline" style={{ color: "var(--text-primary)" }}>Factum</span>
-        </div>
-
-        {/* ── Zona central: contexto de navegación, centrado en la barra ── */}
-        <div className="flex items-center justify-center gap-1.5 min-w-0">
-          {mode === "wizard" && (
-            <Tip label="Volver a Inspecciones">
-              <button
-                onClick={attemptExitWizard}
-                aria-label="Volver a Inspecciones"
-                className="flex items-center justify-center w-7 h-7 -ml-1 mr-0.5 rounded-md transition-colors flex-shrink-0"
-                style={{ color: "var(--text-muted)" }}
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-              </button>
-            </Tip>
-          )}
-          <nav className="flex items-center gap-1.5 text-sm min-w-0">
-            <span
-              aria-hidden="true"
-              className="inline-block w-[5px] h-[5px] flex-shrink-0"
-              style={{ background: mode === "history" ? "var(--blue-lg)" : "var(--text-muted)" }}
-            />
-            <span
-              className="truncate font-medium"
-              style={{ color: mode === "history" ? "var(--text-primary)" : "var(--text-muted)" }}
-            >
-              Inspecciones
-            </span>
+      <AppNavbar
+        user={user}
+        onLogout={handleLogout}
+        center={
+          <div className="flex items-center justify-center gap-1.5 min-w-0">
             {mode === "wizard" && (
-              <>
-                <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "var(--text-muted)" }} />
-                <span className="font-medium truncate" style={{ color: "var(--text-primary)" }}>
-                  {STEPS[step - 1]?.label}
-                </span>
-              </>
+              <Tip label="Volver a Inspecciones">
+                <button
+                  onClick={attemptExitWizard}
+                  aria-label="Volver a Inspecciones"
+                  className="flex items-center justify-center w-7 h-7 -ml-1 mr-0.5 rounded-fx-md flex-shrink-0 text-fx-text-3 hover:text-fx-text hover:bg-fx-surface-3 transition-colors duration-fx-fast ease-fx fx-focus-ring"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                </button>
+              </Tip>
             )}
-          </nav>
-        </div>
-
-        {/* ── Zona derecha: estado + acciones ── */}
-        <div className="flex items-center gap-2 min-w-0 justify-self-end">
-          <AgentChip online={agentOnline} device={selDevice} recording={isRecording} />
-
-          <AnimatePresence>
-            {mode === "history" && (
-              <motion.button
-                onClick={startWizard}
-                className="btn-primary btn-icon"
-                style={{ clipPath: "polygon(9px 0, 100% 0, 100% 100%, 0 100%)", paddingLeft: 4 }}
-                title="Nueva inspección"
-                aria-label="Nueva inspección"
-                initial={{ opacity: 0, scale: 0.88 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.88 }}
-                transition={{ duration: 0.15 }}
-                whileTap={{ scale: 0.97 }}
-              >
-                <Plus className="w-4 h-4" />
-              </motion.button>
-            )}
-          </AnimatePresence>
-          {/* "¿Bug o idea?", tema y guía viven ahora en el FloatingDock inferior. */}
-          <span aria-hidden="true" className="w-px h-5 flex-shrink-0" style={{ background: "var(--border)" }} />
-          <UserMenu user={user} onLogout={handleLogout} />
-        </div>
-        </div>
-        </div>
-      </header>
+            <nav aria-label="Ruta" className="flex items-center gap-1.5 text-sm min-w-0">
+              <span
+                aria-hidden="true"
+                className={`inline-block w-[5px] h-[5px] flex-shrink-0 ${mode === "history" ? "bg-fx-accent" : "bg-fx-text-3"}`}
+              />
+              <span className={`truncate font-medium ${mode === "history" ? "text-fx-text" : "text-fx-text-3"}`}>
+                Inspecciones
+              </span>
+              {mode === "wizard" && (
+                <>
+                  <ChevronRight aria-hidden="true" className="w-3.5 h-3.5 flex-shrink-0 text-fx-text-3" />
+                  <span className="font-medium truncate text-fx-text">
+                    {STEPS[step - 1]?.label}
+                  </span>
+                </>
+              )}
+            </nav>
+          </div>
+        }
+        actions={
+          <>
+            <AgentChip online={agentOnline} device={selDevice} recording={isRecording} />
+            <AnimatePresence>
+              {mode === "history" && (
+                <motion.button
+                  onClick={startWizard}
+                  className="inline-flex items-center justify-center w-8 h-8 flex-shrink-0 rounded-fx-md bg-fx-accent text-fx-on-accent hover:bg-fx-accent-hover transition-colors duration-fx-fast ease-fx fx-focus-ring"
+                  title="Nueva inspección"
+                  aria-label="Nueva inspección"
+                  initial={{ opacity: 0, scale: 0.88 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.88 }}
+                  transition={{ duration: 0.15 }}
+                  whileTap={{ scale: 0.97 }}
+                >
+                  <Plus className="w-4 h-4" />
+                </motion.button>
+              )}
+            </AnimatePresence>
+            {/* "¿Bug o idea?", tema y guía viven en el FloatingDock inferior. */}
+          </>
+        }
+      />
 
       {/* pb-28: reserva el alto del FloatingDock fijo para que no tape las últimas tarjetas */}
       <div className="flex-1 overflow-y-auto pb-28">

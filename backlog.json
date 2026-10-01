@@ -31,7 +31,11 @@
     "creada": "ISO-8601",
     "actualizada": "YYYY-MM-DD",
     "intentos_revision": 0,
-    "toca": { "backend": false, "frontend": false, "agent_ui": false },
+    "toca": {
+      "backend": false,
+      "frontend": false,
+      "agent_ui": false
+    },
     "asignacion": {
       "backend_model": "opus",
       "frontend_model": "opus",
@@ -42,5 +46,72 @@
     },
     "notas": ""
   },
-  "features": []
+  "features": [
+    {
+      "id": "rediseno-base-primereact",
+      "titulo": "Sistema de diseño comercial: PrimeReact + tema inspirado en xbox.com/es-AR (tokens, layout, navbar, footer, not-found)",
+      "estado": "aprobada",
+      "creada": "2026-10-01T00:00:00-03:00",
+      "actualizada": "2026-10-01",
+      "intentos_revision": 0,
+      "toca": {
+        "backend": false,
+        "frontend": true,
+        "agent_ui": false
+      },
+      "asignacion": {
+        "backend_model": "opus",
+        "frontend_model": "opus",
+        "reviewer_model": "sonnet",
+        "skill": null,
+        "rama": "feat/rediseno-base-primereact",
+        "fase": "cerrada"
+      },
+      "notas": "Solo client/. Referencia visual: https://www.xbox.com/es-AR/. Base de la serie de rediseño página por página. Validada 2026-10-01: todas las recomendadas; contenido del footer pendiente. DP1: primereact 10.9.9 MIT unstyled + pt Tailwind (usuario 2026-10-01)."
+    },
+    {
+      "id": "rediseno-pagina-inicio",
+      "titulo": "Rediseño de la página / con el nuevo sistema de diseño",
+      "estado": "no_afinada",
+      "creada": "2026-10-01T00:00:00-03:00",
+      "actualizada": "2026-10-01",
+      "intentos_revision": 0,
+      "toca": {
+        "backend": false,
+        "frontend": true,
+        "agent_ui": false
+      },
+      "asignacion": {
+        "backend_model": "opus",
+        "frontend_model": "opus",
+        "reviewer_model": "sonnet",
+        "skill": null,
+        "rama": "feat/rediseno-pagina-inicio",
+        "fase": "pendiente"
+      },
+      "notas": "Depende de rediseno-base-primereact."
+    },
+    {
+      "id": "rediseno-dashboard",
+      "titulo": "Rediseño de /dashboard (y sus componentes) con el nuevo sistema de diseño",
+      "estado": "no_afinada",
+      "creada": "2026-10-01T00:00:00-03:00",
+      "actualizada": "2026-10-01",
+      "intentos_revision": 0,
+      "toca": {
+        "backend": false,
+        "frontend": true,
+        "agent_ui": false
+      },
+      "asignacion": {
+        "backend_model": "opus",
+        "frontend_model": "opus",
+        "reviewer_model": "sonnet",
+        "skill": null,
+        "rama": "feat/rediseno-dashboard",
+        "fase": "pendiente"
+      },
+      "notas": "Depende de rediseno-base-primereact."
+    }
+  ]
 }

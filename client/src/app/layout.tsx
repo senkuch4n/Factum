@@ -1,14 +1,20 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { Geist, Inter } from "next/font/google";
+import { Inter, IBM_Plex_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
-import { ThemeProvider } from "@/components/ThemeProvider";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { SystemFooter } from "@/components/SystemFooter";
-import { Toaster } from "sonner";
+import { AppProviders } from "@/components/shell/AppProviders";
 
-const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+/* Fuentes del sistema de diseño: se cargan solo acá, con next/font (sin
+   @import a Google Fonts). Inter es variable (todos los pesos); IBM Plex Mono
+   no lo es, por eso lleva `weight`. --font-sans mantiene el nombre que ya
+   leen el body legacy y el bloque .theme de shadcn. */
+const inter = Inter({ subsets: ["latin"], variable: "--font-sans", display: "swap" });
+const plexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Factum - Gabinete Forense Digital",
@@ -24,34 +30,25 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-/* Prevents FOUC by applying theme class before React hydrates */
+/* Anti-FOUC: arranca en oscuro salvo que el usuario haya elegido claro
+   (localStorage['ev-theme'] === 'light'). Si localStorage no está disponible
+   (modo privado, política), queda en oscuro. */
 const themeScript = `
   (function(){
-    var t = localStorage.getItem('ev-theme');
-    var d = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    if (t === 'dark' || (!t && d)) document.documentElement.classList.add('dark');
+    var light = false;
+    try { light = localStorage.getItem('ev-theme') === 'light'; } catch (e) {}
+    if (!light) document.documentElement.classList.add('dark');
   })();
 `;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="es" className={cn("font-sans", geist.variable, inter.variable)} suppressHydrationWarning>
+    <html lang="es" className={cn("font-sans", inter.variable, plexMono.variable)} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body>
-        <ThemeProvider>
-          <TooltipProvider>{children}</TooltipProvider>
-          <SystemFooter />
-        </ThemeProvider>
-        <Toaster
-          position="bottom-right"
-          toastOptions={{
-            classNames: {
-              toast: "font-sans text-sm",
-            },
-          }}
-        />
+        <AppProviders>{children}</AppProviders>
       </body>
     </html>
   );

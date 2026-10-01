@@ -1,8 +1,203 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+/* ═══════════════════════════════════════════════════════════════
+   ORDEN DE PRECEDENCIA (rediseno-base-primereact, T3) — de menor a mayor:
+
+   1. @layer primereact (capa nativa). PrimeReact corre en modo `unstyled`,
+      así que no inyecta CSS de componentes; si alguna vez lo hiciera,
+      perdería contra todo lo de abajo por ser capa nativa.
+   2. CSS sin capa nativa (Tailwind 3.4 compila sus @layer a CSS plano),
+      en el orden de este archivo:
+        a. Tailwind base (preflight) + el bloque shadcn `@layer base` del final.
+        b. Tokens --fx-* (solo custom properties; no compiten con nada).
+        c. Tailwind components + clases .fx-* (dentro de @layer components,
+           así una utilidad de Tailwind puede pisarlas).
+        d. Tailwind utilities (incluye las clases que genera el pass-through
+           de PrimeReact en src/lib/prime/pt).
+        e. Clases legacy (.card, .btn-*, .input, .badge-*…), después de
+           utilities como siempre. No se tocan.
+   3. <style> que inyecta Prime en runtime (.p-hidden-accessible,
+      .p-overflow-hidden): nombres que no chocan con nada.
+
+   Reglas: los tokens nuevos llevan siempre el prefijo --fx- y no reusan
+   ningún nombre legacy ni de shadcn (no se toca --border). El pt y las
+   .fx-* usan border-fx-border / bg-fx-bg, nunca border-border ni
+   bg-background. Las fuentes se cargan solo con next/font (layout.tsx).
+═══════════════════════════════════════════════════════════════ */
 
 @tailwind base;
+
+/* ═══════════════════════════════════════════════════════════════
+   FX TOKENS — fuente de verdad del sistema de diseño nuevo.
+   :root = claro, .dark = oscuro (modo de arranque). Contrastes WCAG
+   verificados en Refactorizaciones/rediseno-base-primereact.md (T4).
+═══════════════════════════════════════════════════════════════ */
+:root {
+  /* Color — modo claro */
+  --fx-bg:                #f6f7f8;
+  --fx-surface-1:         #ffffff;
+  --fx-surface-2:         #eef0f2;
+  --fx-surface-3:         #e3e6e9;
+  --fx-nav-bg:            #ffffff;
+  --fx-overlay:           rgba(14,16,19,0.48);
+  --fx-border:            #d9dde1;
+  --fx-border-strong:     #7a838c;
+  --fx-text:              #0e1013;
+  --fx-text-2:            #3d444c;
+  --fx-text-3:            #5c656e;
+  --fx-text-disabled:     #9aa1a8;
+  --fx-accent:            #2f6f12;
+  --fx-accent-hover:      #265c0e;
+  --fx-accent-active:     #1f4d0b;
+  --fx-on-accent:         #ffffff;
+  --fx-accent-text:       #2d6a10;
+  --fx-accent-soft:       #e8f3df;
+  --fx-focus:             #2f6f12;
+  --fx-success:           #0b6b4f;
+  --fx-success-soft:      #e3f4ed;
+  --fx-warning:           #8a5a00;
+  --fx-warning-soft:      #fbf0da;
+  --fx-danger:            #b3262a;
+  --fx-danger-fill:       #b3262a;
+  --fx-danger-fill-hover: #962024;
+  --fx-on-danger:         #ffffff;
+  --fx-danger-soft:       #fbe6e6;
+  --fx-info:              #1f62b8;
+  --fx-info-soft:         #e4eefa;
+
+  /* Tipografía (las variables --font-* las define next/font en <html>) */
+  --fx-font-sans: var(--font-sans), system-ui, sans-serif;
+  --fx-font-mono: var(--font-mono), ui-monospace, monospace;
+
+  /* Radios */
+  --fx-radius-sm:   4px;
+  --fx-radius-md:   8px;
+  --fx-radius-lg:   12px;
+  --fx-radius-xl:   16px;
+  --fx-radius-pill: 9999px;
+
+  /* Elevación — claro */
+  --fx-shadow-1: 0 1px 2px rgba(14,16,19,.08);
+  --fx-shadow-2: 0 8px 24px rgba(14,16,19,.12);
+  --fx-shadow-3: 0 16px 40px rgba(14,16,19,.16);
+
+  /* Movimiento */
+  --fx-ease-out:  cubic-bezier(.2,.8,.2,1);
+  --fx-dur-fast:  120ms;
+  --fx-dur-base:  200ms;
+  --fx-dur-slow:  320ms;
+  --fx-lift:      -4px;
+
+  /* Z-index (debajo de los modales legacy z-50/60 y de los overlays Prime ≥ 1000) */
+  --fx-z-statusline: 30;
+  --fx-z-nav:        40;
+}
+
+.dark {
+  /* Color — modo oscuro */
+  --fx-bg:                #0b0c0e;
+  --fx-surface-1:         #141619;
+  --fx-surface-2:         #1c1f23;
+  --fx-surface-3:         #262a2f;
+  --fx-nav-bg:            #101215;
+  --fx-overlay:           rgba(0,0,0,0.64);
+  --fx-border:            #2c3036;
+  --fx-border-strong:     #6b737d;
+  --fx-text:              #f3f5f7;
+  --fx-text-2:            #c0c6cd;
+  --fx-text-3:            #949ca6;
+  --fx-text-disabled:     #5d646c;
+  --fx-accent:            #7fd34e;
+  --fx-accent-hover:      #95e066;
+  --fx-accent-active:     #6cc23b;
+  --fx-on-accent:         #0b0c0e;
+  --fx-accent-text:       #8fdc5e;
+  --fx-accent-soft:       #18260f;
+  --fx-focus:             #a6ea7c;
+  --fx-success:           #3ecf9e;
+  --fx-success-soft:      #10251e;
+  --fx-warning:           #f2b13c;
+  --fx-warning-soft:      #2a2011;
+  --fx-danger:            #ff6b6b;
+  --fx-danger-fill:       #c8363b;
+  --fx-danger-fill-hover: #b02e33;
+  --fx-on-danger:         #ffffff;
+  --fx-danger-soft:       #2c1415;
+  --fx-info:              #63b3ff;
+  --fx-info-soft:         #0f1f30;
+
+  /* Elevación — oscuro */
+  --fx-shadow-1: 0 1px 2px rgba(0,0,0,.5);
+  --fx-shadow-2: 0 8px 24px rgba(0,0,0,.45);
+  --fx-shadow-3: 0 16px 40px rgba(0,0,0,.55);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --fx-lift: 0px; }
+}
+
 @tailwind components;
+
+/* ═══════════════════════════════════════════════════════════════
+   FX COMPONENTS — clases utilitarias del sistema nuevo (T7).
+   Todas con prefijo fx-: no pisan ninguna clase legacy.
+═══════════════════════════════════════════════════════════════ */
+@layer components {
+  .fx-focus-ring:focus-visible,
+  .fx-card-interactive:focus-visible {
+    outline: 2px solid var(--fx-focus);
+    outline-offset: 2px;
+  }
+
+  .fx-card {
+    background: var(--fx-surface-1);
+    border: 1px solid var(--fx-border);
+    border-radius: var(--fx-radius-lg);
+    box-shadow: var(--fx-shadow-1);
+  }
+
+  .fx-card-interactive {
+    cursor: pointer;
+    transition:
+      transform var(--fx-dur-base) var(--fx-ease-out),
+      box-shadow var(--fx-dur-base) var(--fx-ease-out),
+      border-color var(--fx-dur-base) var(--fx-ease-out);
+  }
+  /* El hover se limita a punteros reales: en touch, un :hover "pegado"
+     dejaría la tarjeta levantada después del tap. */
+  @media (hover: hover) and (pointer: fine) {
+    .fx-card-interactive:hover {
+      transform: translateY(var(--fx-lift));
+      box-shadow: var(--fx-shadow-3);
+      border-color: var(--fx-accent);
+    }
+  }
+  .fx-card-interactive:focus-visible {
+    transform: translateY(var(--fx-lift));
+    box-shadow: var(--fx-shadow-3);
+    border-color: var(--fx-accent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .fx-card-interactive {
+      transition:
+        box-shadow var(--fx-dur-base) var(--fx-ease-out),
+        border-color var(--fx-dur-base) var(--fx-ease-out);
+    }
+  }
+
+  /* Ítems estáticos (identidad / institución) del Menu de Prime: están
+     `disabled` para que las flechas los salteen, pero no se ven atenuados. */
+  .fx-menu-static {
+    opacity: 1;
+    cursor: default;
+  }
+}
+
 @tailwind utilities;
+
+/* Entrada del ícono del ThemeSwitch (solo con motion-safe, ver ThemeSwitch.tsx). */
+@keyframes fx-icon-in {
+  from { opacity: 0; transform: rotate(-45deg) scale(0.85); }
+  to   { opacity: 1; transform: rotate(0) scale(1); }
+}
 
 /* ═══════════════════════════════════════════════════════════════
    LIGHT THEME  (default) — superficies neutras, un solo acento
@@ -129,7 +324,7 @@ body {
   transition: background-color 0.25s, color 0.25s;
 }
 
-.font-mono { font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace !important; }
+.font-mono { font-family: var(--font-mono), 'JetBrains Mono', ui-monospace, monospace !important; }
 
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
