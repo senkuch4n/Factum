@@ -85,7 +85,7 @@ const ACTUACION: FieldDef[] = [
   { key: "tipo_causa",           label: "Tipo de causa",               icon: Scale,     required: true, hint: "Ej.: disciplinaria, civil, penal" },
   { key: "integrantes_tribunal", label: "Integrantes",                 icon: Users,     hint: "Ej.: Dres. Nombre Apellido y Nombre Apellido", maxLength: MAX_LEN_LONG, wide: true },
   { key: "nro_referencia",       label: "Número de causa / expediente", icon: Hash,     required: true, placeholder: "Ej.: 1234/2026" },
-  { key: "fecha_intervencion",   label: "Fecha de intervención",       icon: Calendar,  required: true, type: "date" },
+  { key: "fecha_intervencion",   label: "Fecha de intervención",       icon: CalendarIcon, required: true, type: "date" },
   { key: "caratula",             label: "Carátula",                    icon: FileText,  required: true, placeholder: "Carátula completa de la causa…", maxLength: MAX_LEN_LONG, wide: true },
   { key: "objeto_causa",         label: "Objeto de la causa",          icon: FileText },
   { key: "ambito_causa",         label: "Ámbito",                      icon: MapPin },
