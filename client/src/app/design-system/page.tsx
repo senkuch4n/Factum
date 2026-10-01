@@ -8,8 +8,8 @@ export const metadata: Metadata = {
 };
 
 /**
- * Showcase del sistema de diseño (tokens --fx-*, tipografía, componentes
- * PrimeReact tematizados, sonner, convivencia legacy). Solo en desarrollo:
+ * Showcase del sistema de diseño (tokens --fx-*, tipografía, radios y
+ * componentes PrimeReact tematizados). Solo en desarrollo:
  * en `next build` se renderiza como 404.
  */
 export default function DesignSystemPage() {

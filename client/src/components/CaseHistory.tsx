@@ -23,9 +23,13 @@ import { StatusBadge } from "./StatusBadge";
 /** Carátula del caso; los casos previos al informe pericial muestran el titular. */
 const caratulaOf = (c: Case) => c.caratula || c.nombre_denunciante;
 
+/* Orden natural para las claves de texto: "2/26" antes que "10/26", y sin
+   distinguir mayúsculas ni tildes (`sensitivity: "base"`). */
+const TEXT_COLLATOR = new Intl.Collator("es", { numeric: true, sensitivity: "base" });
+
 const SORT_ACCESSORS: Record<string, (c: Case) => string | number> = {
-  causa:       (c) => c.nro_referencia.toLowerCase(),
-  caratula:    (c) => caratulaOf(c).toLowerCase(),
+  causa:       (c) => c.nro_referencia,
+  caratula:    (c) => caratulaOf(c),
   fecha:       (c) => new Date(c.created_at).getTime(),
   estado:      (c) => c.status,
 };
@@ -119,6 +123,7 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
     const f = tableSort.dir === "asc" ? 1 : -1;
     return [...filtered].sort((a, b) => {
       const va = acc(a), vb = acc(b);
+      if (typeof va === "string" && typeof vb === "string") return TEXT_COLLATOR.compare(va, vb) * f;
       return va < vb ? -f : va > vb ? f : 0;
     });
   }, [filtered, view, tableSort]);
@@ -166,7 +171,9 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
       ? `${filtered.length} de ${cases.length} resultado${filtered.length !== 1 ? "s" : ""}`
       : cases.length === 0
         ? "Aún no hay inspecciones"
-        : `${cases.length} inspección${cases.length !== 1 ? "es" : ""} registrada${cases.length !== 1 ? "s" : ""}`;
+        : cases.length === 1
+          ? "1 inspección registrada"
+          : `${cases.length} inspecciones registradas`;
 
   return (
     <section aria-labelledby="case-history-title" className="space-y-4">
@@ -205,7 +212,7 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Buscar por causa, carátula, partes, titular, DNI, equipo o IMEI…"
               autoComplete="off"
-              className="!pl-10 !pr-10 [&::-webkit-search-cancel-button]:appearance-none"
+              className="pl-10 pr-10 [&::-webkit-search-cancel-button]:appearance-none"
             />
             {query && (
               <button

@@ -10,7 +10,7 @@ import { api } from "@/lib/api";
 import { EMPTY_REPORT_TEXTS, MAX_LEN_TEXT, reportFieldId } from "@/lib/pericial";
 import type { ReportTexts, ReportTextsInput } from "@/types";
 import { FormField } from "./FormField";
-import { ConfirmDialog } from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/overlay/ConfirmDialog";
 import { FxBanner } from "@/components/feedback/FxBanner";
 import { StepHeader } from "@/components/wizard/StepHeader";
 import { StepActions } from "@/components/wizard/StepActions";

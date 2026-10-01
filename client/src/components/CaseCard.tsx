@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { formatDate, formatTime } from "@/lib/format";
 import { FX_BUTTON_PRIMARY, FX_BUTTON_SECONDARY } from "@/lib/prime/pt/shared";
 import { StatusBadge } from "./StatusBadge";
-import { CopyButton } from "@/components/ui/CopyButton";
+import { CopyButton } from "@/components/feedback/CopyButton";
 
 const FADE_IN = "motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]";
 

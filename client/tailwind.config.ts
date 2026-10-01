@@ -6,11 +6,6 @@ export default {
   theme: {
     extend: {
       colors: {
-        brand:      { DEFAULT: "#003366", light: "#0055a5" },
-        // shadcn/tailwind.css compatibility aliases → our CSS vars
-        border:     "var(--border)",
-        background: "var(--bg-base)",
-        foreground: "var(--text-primary)",
         // Sistema de diseño Factum (rediseno-base-primereact): todo cuelga de
         // los tokens --fx-* de globals.css. Son var() sin canales, así que no
         // aceptan el modificador de opacidad /xx: para eso están los *-soft.
@@ -47,6 +42,11 @@ export default {
           "info-soft":       "var(--fx-info-soft)",
         },
       },
+      // Color de `border` / `divide-*` sin color explícito: lo lee el preflight
+      // (`theme('borderColor.DEFAULT')`) y `divideColor` lo hereda.
+      borderColor: {
+        DEFAULT: "var(--fx-border)",
+      },
       fontFamily: {
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
         mono: ["var(--font-mono)", "ui-monospace", "monospace"],
@@ -77,25 +77,15 @@ export default {
         "fx-statusline": "30",
         "fx-nav": "40",
       },
-      // Escala de radios ceñida y nítida (impronta Vercel): esquinas
-      // definidas en vez de la curva orgánica anterior. rounded-full queda
-      // intacto para avatares/dots/indicadores circulares reales.
+      // Radios del sistema de diseño, sobre los tokens --fx-radius-*.
+      // `rounded-none` y `rounded-full` (círculos: avatares, puntos) salen del
+      // default de Tailwind; `rounded-fx-pill` es para píldoras y badges.
       borderRadius: {
-        none: "0",
-        sm: "5px",
-        DEFAULT: "6px",
-        md: "6px",
-        lg: "8px",
-        xl: "10px",
-        "2xl": "12px",
-        "3xl": "14px",
-        full: "9999px",
-        // Radios del sistema nuevo (no reemplazan la escala de arriba, que
-        // siguen usando las páginas no migradas).
         "fx-sm": "var(--fx-radius-sm)",
         "fx-md": "var(--fx-radius-md)",
         "fx-lg": "var(--fx-radius-lg)",
         "fx-xl": "var(--fx-radius-xl)",
+        "fx-pill": "var(--fx-radius-pill)",
       },
     },
   },

@@ -182,7 +182,7 @@
     {
       "id": "rediseno-dashboard",
       "titulo": "Rediseño de /dashboard (y sus componentes) con el nuevo sistema de diseño",
-      "estado": "validada",
+      "estado": "aprobada",
       "creada": "2026-10-01T00:00:00-03:00",
       "actualizada": "2026-10-01",
       "intentos_revision": 0,
@@ -197,9 +197,9 @@
         "reviewer_model": "sonnet",
         "skill": null,
         "rama": "feat/rediseno-dashboard",
-        "fase": "paraguas"
+        "fase": "cerrada"
       },
-      "notas": "Depende de rediseno-base-primereact. Afinada y validada (autónomo, recomendadas D1–D11) 2026-10-01. Paraguas: se parte en 4 HU hijas (D1 C); RDD común en docs/hu-rediseno-dashboard.md. Se cierra cuando las 4 hijas estén aprobadas."
+      "notas": "Depende de rediseno-base-primereact. Afinada y validada (autónomo, recomendadas D1–D11) 2026-10-01. Paraguas: se parte en 4 HU hijas (D1 C); RDD común en docs/hu-rediseno-dashboard.md. Se cierra cuando las 4 hijas estén aprobadas. Cerrada 2026-10-01: las 4 hijas aprobadas."
     },
     {
       "id": "rediseno-dashboard-historial",
@@ -270,7 +270,7 @@
     {
       "id": "rediseno-cierre-legacy",
       "titulo": "Cierre de la serie de rediseño: borrar shadcn, ui/ sin uso y tokens/clases legacy",
-      "estado": "validada",
+      "estado": "aprobada",
       "creada": "2026-10-01T00:00:00-03:00",
       "actualizada": "2026-10-01",
       "intentos_revision": 0,
@@ -285,9 +285,9 @@
         "reviewer_model": "sonnet",
         "skill": null,
         "rama": "feat/rediseno-cierre-legacy",
-        "fase": "pendiente"
+        "fase": "cerrada"
       },
-      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 4. Precondición: partes 1-3 y rediseno-pagina-inicio aprobadas. Sumar: borrar client/src/components/ThemeToggle.tsx y ui/webcam-pixel-grid.tsx (F14 diferido de rediseno-pagina-inicio). Los borrados pueden requerir autorización explícita del usuario."
+      "notas": "Hija de rediseno-dashboard (D1 C). RDD: docs/hu-rediseno-dashboard.md, sección 'Partición propuesta' Parte 4. Precondición: partes 1-3 y rediseno-pagina-inicio aprobadas. Sumar: borrar client/src/components/ThemeToggle.tsx y ui/webcam-pixel-grid.tsx (F14 diferido de rediseno-pagina-inicio). Los borrados pueden requerir autorización explícita del usuario. SDD lista 2026-10-01: Refactorizaciones/rediseno-cierre-legacy.md; DP1–DP8 A (autónomo). Implementando en feat/rediseno-cierre-legacy (desde captura). Reviewer APROBADA 2026-10-01 (0 rechazos; hubo que pedirle que escribiera el archivo)."
     }
   ]
 }

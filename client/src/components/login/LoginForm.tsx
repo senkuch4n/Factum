@@ -24,9 +24,9 @@ type FocusTarget = LoginField | "submit";
 const LABEL = "mb-1.5 block text-fx-body-sm font-semibold text-fx-text-2";
 const FIELD_ICON =
   "pointer-events-none absolute left-3.5 top-1/2 z-[1] h-4 w-4 -translate-y-1/2 text-fx-text-3 transition-colors duration-fx-fast ease-fx group-focus-within:text-fx-accent-text";
-/* `!pl-10`: Prime mergea el pt global de inputtext (px-3) después de las
-   clases del consumidor, así que un pl-10 común lo descarta tailwind-merge. */
-const INPUT = "h-12 !pl-10";
+/* `pl-10`: lugar para el ícono. Le gana al px-3 del pt global de inputtext
+   porque ese pt reaplica la clase del consumidor al final. */
+const INPUT = "h-12 pl-10";
 
 function FieldError({ id, message }: { id: string; message?: string }) {
   if (!message) return null;

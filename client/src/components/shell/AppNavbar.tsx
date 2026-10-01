@@ -15,7 +15,7 @@ interface AppNavbarProps {
   /** Si hay `user` y `onLogout`, se renderiza UserMenu al final. */
   onLogout?: () => void;
   /** Default false: cada página decide si muestra el cambio de tema (el dashboard y el showcase lo muestran). */
-  showThemeToggle?: boolean;
+  showThemeSwitch?: boolean;
   /** Si viene, la marca es un <Link>; si no, es estática. */
   brandHref?: string;
 }
@@ -47,7 +47,7 @@ export function AppNavbar({
   actions,
   user,
   onLogout,
-  showThemeToggle = false,
+  showThemeSwitch = false,
   brandHref,
 }: AppNavbarProps) {
   const showUserMenu = !!user && !!onLogout;
@@ -77,10 +77,10 @@ export function AppNavbar({
         {/* Derecha: acciones + tema + usuario */}
         <div className="flex min-w-0 items-center gap-2 justify-self-end">
           {actions}
-          {(showThemeToggle || showUserMenu) && (
+          {(showThemeSwitch || showUserMenu) && (
             <span aria-hidden="true" className="h-5 w-px shrink-0 bg-fx-border" />
           )}
-          {showThemeToggle && <ThemeSwitch />}
+          {showThemeSwitch && <ThemeSwitch />}
           {showUserMenu && <UserMenu user={user} onLogout={onLogout} onOpenProfile={() => setProfileOpen(true)} />}
         </div>
       </div>

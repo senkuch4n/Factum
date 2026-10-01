@@ -4,7 +4,7 @@ import { Button } from "primereact/button";
 import { Archive, FileText, Key, Hash, RotateCcw, ShieldCheck, CheckCircle2, Lock } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { CopyButton } from "@/components/ui/CopyButton";
+import { CopyButton } from "@/components/feedback/CopyButton";
 import { FX_BUTTON_PRIMARY, FX_BUTTON_SECONDARY } from "@/lib/prime/pt/shared";
 
 const FADE_IN = "motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]";

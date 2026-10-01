@@ -33,7 +33,7 @@ import { ResultStep } from "@/components/ResultStep";
 import { CaseHistory } from "@/components/CaseHistory";
 import { CaseFormStep } from "@/components/CaseFormStep";
 import { AppNavbar } from "@/components/shell/AppNavbar";
-import { ConfirmDialog } from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/overlay/ConfirmDialog";
 import { FxTip } from "@/components/overlay/FxTip";
 import { FxBanner } from "@/components/feedback/FxBanner";
 import { EASE, slideDir } from "@/constants/animations";
@@ -479,7 +479,7 @@ export default function Dashboard() {
       <AppNavbar
         user={user}
         onLogout={handleLogout}
-        showThemeToggle
+        showThemeSwitch
         center={
           <div className="flex items-center justify-center gap-1.5 min-w-0">
             {mode === "wizard" && (

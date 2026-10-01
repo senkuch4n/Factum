@@ -12,7 +12,7 @@ interface FxTipProps {
 }
 
 /**
- * Tooltip de Prime con la misma firma que el `Tip` de base-ui.
+ * Tooltip de Prime sobre un único hijo: `label`, `side` y `disabled`.
  *
  * - Aparece con hover y con foco de teclado (`event="both"`) y se descarta con
  *   Escape (WCAG 1.4.13).

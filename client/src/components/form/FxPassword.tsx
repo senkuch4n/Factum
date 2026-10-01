@@ -6,10 +6,9 @@ import type { IconOptions } from "primereact/utils";
 import { Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/* Lugar para el botón de 44 px a la derecha. Con `!` porque Prime mergea el
-   pt global de inputtext (px-3) DESPUÉS de las clases del consumidor y
-   tailwind-merge descartaría un pr-12 común. */
-const TOGGLE_ROOM = "!pr-12";
+/* Lugar para el botón de 44 px a la derecha. Le gana al px-3 del pt global
+   de inputtext porque ese pt reaplica la clase del consumidor al final. */
+const TOGGLE_ROOM = "pr-12";
 
 type ToggleHandler = React.MouseEventHandler<HTMLButtonElement>;
 

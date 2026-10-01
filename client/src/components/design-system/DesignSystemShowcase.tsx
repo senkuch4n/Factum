@@ -18,7 +18,6 @@ import { InputTextarea } from "primereact/inputtextarea";
 import { Dropdown } from "primereact/dropdown";
 import { ProgressBar } from "primereact/progressbar";
 import { Checkbox } from "primereact/checkbox";
-import { toast as sonner } from "sonner";
 import {
   AlertCircle, CalendarRange, Camera, Check, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, CircleDashed, Clock,
   Download, FileText, Hash, HelpCircle, LayoutGrid, List, Loader2, MoreHorizontal, Plus, Settings, Smartphone, Table, Trash2,
@@ -26,15 +25,14 @@ import {
 import { AppNavbar } from "@/components/shell/AppNavbar";
 import { SiteFooter } from "@/components/shell/SiteFooter";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
-import { Tip } from "@/components/ui/tooltip";
 import { FxPassword } from "@/components/form/FxPassword";
 import { FxTip } from "@/components/overlay/FxTip";
 import { FxBanner } from "@/components/feedback/FxBanner";
-import { ConfirmDialog } from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/overlay/ConfirmDialog";
 import { useFxToast } from "@/components/shell/FxToastProvider";
 import { StepIndicator, StepIndicatorCompact } from "@/components/StepIndicator";
 import { PhoneFrame, PhoneShell } from "@/components/PhoneFrame";
-import { CopyButton } from "@/components/ui/CopyButton";
+import { CopyButton } from "@/components/feedback/CopyButton";
 import { FxMediaDialog } from "@/components/overlay/FxMediaDialog";
 import { MEDIA_ACTIONS } from "@/components/capture/MediaErrorGuide";
 
@@ -47,8 +45,6 @@ const SECTIONS = [
   { id: "tipografia", label: "Tipografía" },
   { id: "forma", label: "Radios, sombras y tarjetas" },
   { id: "prime", label: "PrimeReact" },
-  { id: "sonner", label: "Notificaciones y tooltips" },
-  { id: "legacy", label: "Convivencia legacy" },
 ];
 
 interface Swatch {
@@ -262,10 +258,10 @@ export function DesignSystemShowcase() {
     <div className="min-h-screen bg-fx-bg text-fx-text">
       {/* 1. Navbar real */}
       <AppNavbar
-        showThemeToggle
+        showThemeSwitch
         brandHref="/design-system"
         user={DEMO_USER}
-        onLogout={() => sonner.info("Cierre de sesión de ejemplo", { description: "En el showcase no se cierra la sesión real." })}
+        onLogout={() => fxToast.info("Cierre de sesión de ejemplo", "En el showcase no se cierra la sesión real.")}
         center={
           <nav aria-label="Ruta" className="flex min-w-0 items-center gap-1.5 text-sm">
             <span className="truncate font-medium text-fx-text-3">Inspecciones</span>
@@ -274,7 +270,7 @@ export function DesignSystemShowcase() {
           </nav>
         }
         actions={
-          <Tip label="Acción de ejemplo">
+          <FxTip label="Acción de ejemplo">
             <button
               type="button"
               aria-label="Nueva inspección (ejemplo)"
@@ -282,7 +278,7 @@ export function DesignSystemShowcase() {
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
             </button>
-          </Tip>
+          </FxTip>
         }
       />
 
@@ -405,11 +401,11 @@ export function DesignSystemShowcase() {
                     role="button"
                     tabIndex={0}
                     aria-label={`${title}: ${meta}`}
-                    onClick={() => sonner(`Abriste "${title}"`)}
+                    onClick={() => fxToast.info(`Abriste "${title}"`)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        sonner(`Abriste "${title}"`);
+                        fxToast.info(`Abriste "${title}"`);
                       }
                     }}
                     className="fx-card fx-card-interactive flex items-center gap-4 p-5"
@@ -539,7 +535,7 @@ export function DesignSystemShowcase() {
                   className="pointer-events-none absolute left-3.5 top-1/2 z-[1] h-4 w-4 -translate-y-1/2 text-fx-text-3 transition-colors duration-fx-fast ease-fx group-focus-within:text-fx-accent-text"
                   aria-hidden="true"
                 />
-                <InputText id="ds-dni" inputMode="numeric" autoComplete="off" placeholder="12345678" className="h-12 !pl-10" />
+                <InputText id="ds-dni" inputMode="numeric" autoComplete="off" placeholder="12345678" className="h-12 pl-10" />
               </div>
             </div>
           </Subsection>
@@ -908,74 +904,9 @@ export function DesignSystemShowcase() {
             </div>
           </Subsection>
         </Section>
-
-        {/* 6. Sonner + tooltips */}
-        <Section
-          id="sonner"
-          title="Notificaciones y tooltips"
-          intro="El Toaster global (sonner) usa el mismo esquema que el Toast de Prime. Los tooltips de base-ui pasan a superficie 3."
-        >
-          <div className="flex flex-wrap items-center gap-3">
-            <Button label="Éxito" severity="secondary" onClick={() => sonner.success("Captura guardada", { description: "Se agregó al caso." })} />
-            <Button label="Info" severity="secondary" onClick={() => sonner.info("Hay una versión nueva", { description: "Recargá la página cuando termines." })} />
-            <Button label="Advertencia" severity="secondary" onClick={() => sonner.warning("Sin dispositivo", { description: "Conectá el celular por USB." })} />
-            <Button label="Error" severity="secondary" onClick={() => sonner.error("Falló la subida", { description: "El servidor no respondió." })} />
-            <Tip label="Tooltip de ejemplo">
-              <button
-                type="button"
-                className="rounded-fx-md border border-fx-border-strong bg-fx-surface-2 px-4 py-2 text-fx-body-sm text-fx-text transition-colors duration-fx-fast ease-fx hover:bg-fx-surface-3 fx-focus-ring"
-              >
-                Pasá el puntero o enfocá
-              </button>
-            </Tip>
-          </div>
-        </Section>
-
-        {/* 7. Convivencia legacy */}
-        <Section
-          id="legacy"
-          title="Convivencia legacy"
-          intro="Clases legacy (.btn-*, .card, .input, .badge-*) al lado de sus equivalentes Prime: ninguna pisa a la otra."
-        >
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-            <Subsection title="Legacy">
-              <div className="card space-y-4 p-5">
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" className="btn-primary">btn-primary</button>
-                  <button type="button" className="btn-secondary">btn-secondary</button>
-                </div>
-                <label htmlFor="ds-legacy-input" className="sr-only">Input legacy</label>
-                <input id="ds-legacy-input" className="input" placeholder=".input legacy" />
-                <div className="flex flex-wrap gap-2">
-                  <span className="badge badge-blue">badge-blue</span>
-                  <span className="badge badge-green">badge-green</span>
-                  <span className="badge badge-amber">badge-amber</span>
-                  <span className="badge badge-red">badge-red</span>
-                  <span className="badge badge-gray">badge-gray</span>
-                </div>
-              </div>
-            </Subsection>
-            <Subsection title="Sistema nuevo">
-              <div className="fx-card space-y-4 p-5">
-                <div className="flex flex-wrap gap-2">
-                  <Button label="Button" />
-                  <Button label="secondary" severity="secondary" />
-                </div>
-                <label htmlFor="ds-new-input" className="sr-only">InputText Prime</label>
-                <InputText id="ds-new-input" placeholder="InputText de Prime" />
-                <div className="flex flex-wrap gap-2">
-                  <span className="inline-flex items-center rounded-fx-pill border border-fx-border px-2 py-0.5 text-xs font-medium text-fx-success bg-fx-success-soft">success-soft</span>
-                  <span className="inline-flex items-center rounded-fx-pill border border-fx-border px-2 py-0.5 text-xs font-medium text-fx-warning bg-fx-warning-soft">warning-soft</span>
-                  <span className="inline-flex items-center rounded-fx-pill border border-fx-border px-2 py-0.5 text-xs font-medium text-fx-danger bg-fx-danger-soft">danger-soft</span>
-                  <span className="inline-flex items-center rounded-fx-pill border border-fx-border px-2 py-0.5 text-xs font-medium text-fx-info bg-fx-info-soft">info-soft</span>
-                </div>
-              </div>
-            </Subsection>
-          </div>
-        </Section>
       </main>
 
-      {/* 8. Footer */}
+      {/* 6. Footer */}
       <SiteFooter
         organization={{ name: organizationName, logoSrc: organizationLogoSrc }}
         extraColumns={[

@@ -5,7 +5,7 @@ import { Button } from "primereact/button";
 import { ChevronLeft, Check, Cable, ExternalLink, ZoomIn } from "lucide-react";
 import { BRANDS } from "./data";
 import { StepTip, GuideStepList, emphasize } from "./Mockups";
-import { Lens } from "@/components/ui/lens";
+import { Lens } from "@/components/usb-guide/Lens";
 
 /* Ficha oficial (páginas del PDF "Guía rápida — Depuración por USB").
    Se muestra tal cual para las marcas que están en el documento; "Otra marca"

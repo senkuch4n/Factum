@@ -6,8 +6,8 @@ import { AppProviders } from "@/components/shell/AppProviders";
 
 /* Fuentes del sistema de diseño: se cargan solo acá, con next/font (sin
    @import a Google Fonts). Inter es variable (todos los pesos); IBM Plex Mono
-   no lo es, por eso lleva `weight`. --font-sans mantiene el nombre que ya
-   leen el body legacy y el bloque .theme de shadcn. */
+   no lo es, por eso lleva `weight`. --font-sans lo leen `body` (vía
+   --fx-font-sans) y Tailwind `font-sans`. */
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans", display: "swap" });
 const plexMono = IBM_Plex_Mono({
   subsets: ["latin"],

@@ -36,7 +36,15 @@ export function inputRootClasses({ props, context }: InputRootParams): string {
  * InputText. Borde `--fx-border-strong` (límite de control, ≥ 3:1), foco
  * estándar + borde de acento, `invalid` (prop o aria-invalid) en peligro y
  * deshabilitado sobre superficie 1.
+ *
+ * Orden de merge: Prime arma `mergeProps({ className: props.className + … },
+ * ptm('root'))` con `classNameMergeFunction: cn`, así que el pt queda último y
+ * tailwind-merge descartaría un `pl-10` del consumidor frente al `px-3` de
+ * acá. Por eso el pt reaplica `props.className` al final: gana el consumidor
+ * sin `!`. Cubre también el InputText interno de Password (`inputClassName`).
+ * `inputRootClasses` no lo hace porque `calendar` la llama con los props del
+ * Calendar, cuyo `className` es el del wrapper.
  */
 export const inputtext: InputTextPassThroughOptions = {
-  root: ({ props, context }) => ({ className: inputRootClasses({ props, context }) }),
+  root: ({ props, context }) => ({ className: cn(inputRootClasses({ props, context }), props.className) }),
 };

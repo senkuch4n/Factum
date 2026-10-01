@@ -67,3 +67,6 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — `implementer-frontend` (captura) done -> progress/impl_frontend_rediseno-dashboard-captura.md. HU → en_revision, lanzado `reviewer`.
 - 2026-10-01 — Adelantando SDD de rediseno-cierre-legacy con `architect` (base: partes 1–3 en el árbol). Queda validada en backlog.
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-dashboard-captura.md. captura → aprobada, commit. Esperando SDD de cierre-legacy.
+- 2026-10-01 — `architect` done -> Refactorizaciones/rediseno-cierre-legacy.md; DP1–DP8 A (autónomo). Rama feat/rediseno-cierre-legacy desde captura; cierre-legacy → implementando, lanzado `implementer-frontend`.
+- 2026-10-01 — `implementer-frontend` (cierre-legacy) done -> progress/impl_frontend_rediseno-cierre-legacy.md (sin denegaciones; DP7 sin fallback). HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-cierre-legacy.md (relanzado para escribir el archivo). cierre-legacy y paraguas rediseno-dashboard → aprobadas, commit. BACKLOG VACÍO: todas las HU aprobadas. Sin push (5+5 ramas feat/* encadenadas pendientes de merge a develop).

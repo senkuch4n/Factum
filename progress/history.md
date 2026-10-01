@@ -75,3 +75,15 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** architect (sesión), implementer-frontend opus, reviewer sonnet. 0 rechazos.
 - **Rama:** `feat/rediseno-dashboard-captura` (encadenada sobre `feat/rediseno-dashboard-wizard`).
 - **Pendiente:** prueba manual con Android/iOS real, AirPlay, guía on_device, luz de la webcam, Dropdown con varios dispositivos, foco del checklist paso 5 → `#capture-roles-status`; bug preexistente: grabación de cámara externa aparece en dos chips (tarea aparte); grep de `…:outline` bajo `cn()` antes de borrar clases legacy (parte 4).
+
+## rediseno-cierre-legacy — APROBADA (2026-10-01)
+
+- **Qué:** cierre de la serie de rediseño: fuera shadcn (`components.json`, `@layer base`, variables legacy), carpeta `components/ui/` eliminada (ConfirmDialog → `overlay/`, CopyButton → `feedback/`, Lens → `usb-guide/`; resto borrado), `ThemeToggle`, `DevModeBanner`, `AppToaster`, clases y keyframes legacy de `globals.css`, escala de radios legacy; token `rounded-fx-pill`; `borderColor.DEFAULT = --fx-border`; pt inputtext/inputtextarea reaplican el `className` del consumidor (sin `!`); historial con "inspecciones" y orden con `Intl.Collator` numérico; dependencias npm sin uso desinstaladas.
+- **Decisiones:** DP1–DP8 A (autónomo); DP7 sin fallback (medido OK).
+- **Modelos:** architect (sesión), implementer-frontend opus, reviewer sonnet. 0 rechazos.
+- **Rama:** `feat/rediseno-cierre-legacy` (encadenada sobre `feat/rediseno-dashboard-captura`).
+- **Pendiente:** prueba manual del wizard con Tatana real (bordes sin color, diálogos, tooltips) en los dos temas.
+
+## rediseno-dashboard (paraguas) — APROBADA (2026-10-01)
+
+- Cerrada al aprobarse sus 4 hijas: historial, wizard, captura y cierre-legacy.
