@@ -152,3 +152,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementer-backend opus, reviewer sonnet. 0 rechazos.
 - **Rama:** `feat/instalacion-poca-ram` (desde `develop`).
 - **Pendiente:** prueba real en la PC del estudio (checklist de la guía §2.1).
+
+## subida-archivos-grandes — APROBADA (2026-10-02)
+
+- **Qué:** `POST /api/cases/{id}/files` acepta archivos hasta `Storage:MaxUploadBytes` (4 GB por defecto) solo en ese endpoint; escritura atómica (temporal en `.upload-tmp/` fuera del listado, verificación de bytes, move atómico, reemplazo atómico, limpieza de huérfanos al arrancar); chequeo de espacio con margen de 1 GB (con `statvfs` en Linux: `DriveInfo` sobreestimaba ×256 en el bind mount de Docker Desktop); `filename` con ruta o nombres inválidos → 400 (cierra un path traversal real); errores JSON `{ error }` 413/507/409/400; endpoint de prechequeo `upload-check`; `[DisableFormValueModelBinding]` en el POST. Frontend: subida por XHR con barra de progreso por archivo, contador, estado en cada tile, "Cancelar envío", mensajes claros y marcas/explorador deshabilitados durante el envío.
+- **Decisiones:** HU D1–D12 A (usuario); SDD DT1–DT17 recomendadas.
+- **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos. 406 tests backend.
+- **Rama:** `feat/subida-archivos-grandes` (encadenada sobre `feat/instalacion-poca-ram`). Incluye también el fix `653a282` de `armar-paquete.sh` (fuera del arnés).
+- **Pendiente:** prueba manual con un video real grande (413/507/409, cancelar) en la PC del estudio.

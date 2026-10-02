@@ -1,8 +1,12 @@
+using System.Globalization;
 using Factum.Backend.DTOs;
+using Factum.Backend.Infrastructure;
 using Factum.Backend.Models;
 using Factum.Backend.Services.Cases;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace Factum.Backend.Controllers;
 
@@ -12,7 +16,7 @@ namespace Factum.Backend.Controllers;
 [Route("api/cases")]
 [Authorize]
 [Produces("application/json")]
-public sealed class CasesController(ICaseService caseService) : ControllerBase
+public sealed class CasesController(ICaseService caseService, IOptions<StorageOptions> storage) : ControllerBase
 {
     private User Officer => (User)HttpContext.Items["User"]!;
 
@@ -87,15 +91,48 @@ public sealed class CasesController(ICaseService caseService) : ControllerBase
         return result.IsSuccess ? Ok(new CaptureRolesResponse(result.Value!)) : this.ErrorResult(result);
     }
 
+    // subida-archivos-grandes §4.2: cuerpo crudo con Content-Length obligatorio, hasta
+    // Storage:MaxUploadBytes (solo acá; el resto sigue con el tope de Kestrel). Errores
+    // { error, code, ... } (§7); los rechazos salen sin leer el cuerpo.
     [HttpPost("{id}/files")]
+    [DisableFormValueModelBinding]
     [ProducesResponseType<FileInfoDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status413PayloadTooLarge)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    [ProducesResponseType(StatusCodes.Status507InsufficientStorage)]
     public async Task<IActionResult> UploadFile(string id,
         [FromQuery] string? filename, [FromQuery(Name = "source_path")] string? sourcePath,
         CancellationToken ct)
     {
+        // Antes de tocar el cuerpo: la red de Kestrel pasa a ser el tope configurado.
+        var bodySize = HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
+        if (bodySize is { IsReadOnly: false }) bodySize.MaxRequestBodySize = storage.Value.MaxUploadBytes;
+
         var name = filename ?? $"file_{DateTime.UtcNow:yyyyMMdd_HHmmss}";
-        var result = await caseService.UploadFileAsync(id, Officer.Dni, name, sourcePath, Request.Body, ct);
+        var result = await caseService.UploadFileAsync(id, Officer.Dni, name, sourcePath,
+            Request.ContentLength, Request.Body, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    // subida-archivos-grandes §4.1: mismos chequeos que la subida, sin cuerpo. `size` se parsea a
+    // mano para que un valor no numérico dé nuestro length_required y no el ProblemDetails de MVC.
+    [HttpGet("{id}/files/upload-check")]
+    [ProducesResponseType<UploadCheckResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status413PayloadTooLarge)]
+    [ProducesResponseType(StatusCodes.Status507InsufficientStorage)]
+    public async Task<IActionResult> UploadCheck(string id, [FromQuery] string? filename,
+        [FromQuery(Name = "size")] string? size, CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store";
+        long? parsed = long.TryParse(size, NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n : null;
+        var result = await caseService.CheckUploadAsync(id, Officer.Dni, filename, parsed, ct);
         return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
     }
 

@@ -15,8 +15,8 @@ import { cn } from "@/lib/utils";
  * solo cambia el disparador.
  */
 export function CaptureRoleMenu({
-  filename, role, onChange,
-}: { filename: string; role?: CaptureRoleValue; onChange: (role: CaptureRoleValue | null) => void }) {
+  filename, role, onChange, disabled,
+}: { filename: string; role?: CaptureRoleValue; onChange: (role: CaptureRoleValue | null) => void; disabled?: boolean }) {
   const menuRef = useRef<Menu>(null);
   const [open, setOpen] = useState(false);
   const menuId = "capture-role-menu";
@@ -44,17 +44,18 @@ export function CaptureRoleMenu({
       <button
         type="button"
         onClick={e => menuRef.current?.toggle(e)}
+        disabled={disabled}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? `${menuId}_list` : undefined}
         aria-label={`Marcar como… ${filename}${role ? ` (actual: ${CAPTURE_ROLE_LABELS[role]})` : ""}`}
         className={cn(
           "inline-flex min-h-8 shrink-0 items-center gap-1 rounded-fx-md border px-2 py-1 text-xs font-semibold",
-          "transition-colors duration-fx-fast ease-fx",
+          "transition-colors duration-fx-fast ease-fx disabled:cursor-not-allowed disabled:opacity-50",
           FOCUS_RING,
           role
             ? "border-fx-accent bg-fx-accent-soft text-fx-accent-text"
-            : "border-fx-border-strong text-fx-text-2 hover:bg-fx-surface-3 hover:text-fx-text",
+            : "border-fx-border-strong text-fx-text-2 enabled:hover:bg-fx-surface-3 enabled:hover:text-fx-text",
         )}
       >
         <Tag className="h-3 w-3" aria-hidden="true" />

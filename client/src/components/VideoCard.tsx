@@ -12,12 +12,14 @@ interface CapturedFile { name: string; uploaded: boolean; sourcePath?: string; }
 
 /** Reproductor de una grabación del agente con sus versiones (original + variantes). */
 export function VideoCard({
-  file, variants, isPending, onRemove,
+  file, variants, isPending, onRemove, removeDisabled,
 }: {
   file: CapturedFile;
   variants: VideoVariant[];
   isPending: boolean;
   onRemove: () => void;
+  /** Durante el envío de evidencia no se puede quitar. */
+  removeDisabled?: boolean;
 }) {
   const [activeTab, setActiveTab] = useState("original");
 
@@ -73,6 +75,7 @@ export function VideoCard({
             icon={<Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
             aria-label={`Eliminar ${file.name}`}
             onClick={onRemove}
+            disabled={removeDisabled}
           />
         </div>
       </div>

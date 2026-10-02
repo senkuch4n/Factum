@@ -163,11 +163,35 @@ export const agent = {
     return data.files || [];
   },
 
-  /** Descarga un archivo del agente como Blob para subirlo al backend. */
-  async downloadFile(filename: string): Promise<Blob> {
-    const res = await fetch(`${AGENT_URL}/files/${filename}`);
-    if (!res.ok) throw new Error(`Error descargando ${filename}`);
-    return res.blob();
+  /**
+   * Descarga un archivo del agente como Blob para subirlo al backend. Con XHR
+   * para tener progreso (`onProgress`, `total` = null si el agente no manda
+   * `Content-Length`) y cancelación (`signal`: rechaza con `DOMException("AbortError")`).
+   * Falla de red o estado no-2xx: rechaza con `Error`.
+   */
+  downloadFile(
+    filename: string,
+    opts: { signal?: AbortSignal; onProgress?: (loaded: number, total: number | null) => void } = {},
+  ): Promise<Blob> {
+    const { signal, onProgress } = opts;
+    return new Promise<Blob>((resolve, reject) => {
+      if (signal?.aborted) { reject(new DOMException("Descarga cancelada", "AbortError")); return; }
+      const xhr = new XMLHttpRequest();
+      const onAbortSignal = () => xhr.abort();
+      const done = () => signal?.removeEventListener("abort", onAbortSignal);
+      xhr.open("GET", `${AGENT_URL}/files/${filename}`);
+      xhr.responseType = "blob";
+      if (onProgress) xhr.onprogress = e => onProgress(e.loaded, e.lengthComputable ? e.total : null);
+      xhr.onload = () => {
+        done();
+        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as Blob);
+        else reject(new Error(`Error descargando ${filename} (${xhr.status})`));
+      };
+      xhr.onerror = () => { done(); reject(new Error(`Error descargando ${filename}`)); };
+      xhr.onabort = () => { done(); reject(new DOMException("Descarga cancelada", "AbortError")); };
+      signal?.addEventListener("abort", onAbortSignal, { once: true });
+      xhr.send();
+    });
   },
 
   /** Elimina un archivo capturado del agente (best-effort). */

@@ -130,3 +130,12 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-02 — `architect` done -> Refactorizaciones/instalacion-poca-ram.md; usuario confirma DT8 A. HU → implementando, lanzado `implementer-backend`.
 - 2026-10-02 — `implementer-backend` (poca RAM) done -> progress/impl_backend_instalacion-poca-ram.md. Medición: pico anon backend 259 MiB (34 % de 768m), sin OOM; topes sin cambios. HU → en_revision, lanzado `reviewer`.
 - 2026-10-02 — `reviewer` APROBADA. instalacion-poca-ram → aprobada, commit.
+- 2026-10-02 — Push de feat/instalacion-poca-ram y PR #3 contra develop: https://github.com/senkuch4n/Factum/pull/3. Alta `subida-archivos-grandes` (afinando) en feat/subida-archivos-grandes (encadenada sobre poca-ram), lanzado `afinador`.
+- 2026-10-02 — `afinador` done -> docs/hu-subida-archivos-grandes.md (12 dudas). HU → afinada_pendiente_validacion.
+- 2026-10-02 — Usuario valida subida-archivos-grandes (D1–D12 A). HU → en_arquitectura, lanzado `architect`.
+- 2026-10-02 — `architect` done -> Refactorizaciones/subida-archivos-grandes.md (DT1–DT17, sin DP bloqueantes). verify → implementando; lanzados implementer-backend y implementer-frontend.
+- 2026-10-02 — Armando paquete de instalación v1.0.0 desde origin/develop (0a1cc68) por pedido del usuario.
+- 2026-10-02 — `implementer-frontend` (subida) done -> progress/impl_frontend_subida-archivos-grandes.md. Esperando backend.
+- 2026-10-02 — Fix fuera del arnés (autorizado): armar-paquete.sh verificaba arquitectura sin --platform (containerd devolvía arm64 de mongo). Commit en feat/subida-archivos-grandes. Reintentando paquete v1.0.0.
+- 2026-10-02 — `implementer-backend` (subida) done -> progress/impl_backend_subida-archivos-grandes.md (406 tests, medición OK, 2 arreglos extra D-1/D-2). HU → en_revision, lanzado `reviewer`.
+- 2026-10-02 — `reviewer` APROBADA -> progress/review_subida-archivos-grandes.md. subida → aprobada, commit. Queda usuarios-locales (no_afinada).

@@ -118,6 +118,7 @@ export default function Dashboard() {
     files, loading: fileLoading, videoVariants, pendingVariantFiles, pendingBlobs, localBlobs,
     addFile, addVideoVariant, markPendingVariant,
     removeFile, setCaptureRole, handlePhotoBlob, handleUploadAndContinue, clearFiles,
+    uploadProgress, uploadStates, uploadNotice, dismissUploadNotice, cancelUpload,
   } = useFileManager();
 
   const {
@@ -790,6 +791,12 @@ export default function Dashboard() {
                               onStopAirplayShot={handleStopAirplayShot}
                               androidWithMic={androidWithMic}
                               onToggleAndroidWithMic={setAndroidWithMic}
+                              uploading={!!fileLoading.upload}
+                              uploadProgress={uploadProgress}
+                              uploadStates={uploadStates}
+                              uploadNotice={uploadNotice}
+                              onCancelUpload={cancelUpload}
+                              onDismissUploadNotice={dismissUploadNotice}
                             />
                           )}
 

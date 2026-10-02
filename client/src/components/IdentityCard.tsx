@@ -14,12 +14,14 @@ import { Lightbox } from "./Lightbox";
  * captura a la derecha. Va dentro de un `<li>` de una lista con `divide-y`.
  */
 export function IdentityCard({
-  label, role, icon: Icon, name, dni, blobURL, agentFilename, onCapture, loading, done,
+  label, role, icon: Icon, name, dni, blobURL, agentFilename, onCapture, loading, done, disabled,
 }: {
   label: string; role: string; icon: React.ElementType;
   name?: string; dni?: string;
   blobURL?: string; agentFilename?: string;
   onCapture: () => void; loading: boolean; done: boolean;
+  /** Durante el envío de evidencia: no se puede tomar ni retomar la foto (verla sí). */
+  disabled?: boolean;
 }) {
   const [lightbox, setLightbox] = useState(false);
   const previewSrc = blobURL || (agentFilename ? agentFileURL(agentFilename) : undefined);
@@ -38,7 +40,7 @@ export function IdentityCard({
         <button
           type="button"
           onClick={showPhoto ? () => setLightbox(true) : onCapture}
-          disabled={loading}
+          disabled={loading || (!!disabled && !showPhoto)}
           aria-label={showPhoto ? `Ver foto — ${label}` : `Tomar foto — ${label}`}
           aria-haspopup="dialog"
           className={cn("relative h-14 w-14 shrink-0 rounded-full disabled:cursor-wait", FOCUS_RING)}
@@ -87,6 +89,7 @@ export function IdentityCard({
             : <Camera className="h-3.5 w-3.5" aria-hidden="true" />}
           label={loading ? "Abriendo…" : showPhoto ? "Retomar" : "Tomar foto"}
           loading={loading}
+          disabled={disabled}
           onClick={onCapture}
           aria-label={`${showPhoto ? "Retomar" : "Tomar"} foto — ${label}`}
           aria-haspopup="dialog"
