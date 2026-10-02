@@ -158,3 +158,128 @@ Describe 'ConvertTo-VersionFactum' {
         ConvertTo-VersionFactum 'basura' | Should -BeNullOrEmpty
     }
 }
+
+# ── Perfil de memoria (SDD instalacion-poca-ram, B13-B16) ──────────────────────
+
+Describe 'Get-PerfilMemoria' {
+    It '<Gb> GB -> <Esperado>' -TestCases @(
+        @{ Gb = 0; Esperado = 'bloquea' }
+        @{ Gb = 3.4; Esperado = 'bloquea' }
+        @{ Gb = 3.5; Esperado = 'poca' }
+        @{ Gb = 3.8; Esperado = 'poca' }
+        @{ Gb = 7.4; Esperado = 'poca' }
+        @{ Gb = 7.5; Esperado = 'normal' }
+        @{ Gb = 7.6; Esperado = 'normal' }
+        @{ Gb = 16; Esperado = 'normal' }
+    ) {
+        param($Gb, $Esperado)
+        Get-PerfilMemoria -Gb $Gb | Should -Be $Esperado
+    }
+}
+
+Describe 'Get-PerfilMemoriaConfigurado' {
+    BeforeEach { $script:dir = New-Dir; $script:env = Join-Path $script:dir '.env' }
+    AfterEach { Remove-Item -LiteralPath $script:dir -Recurse -Force }
+
+    It 'sin archivo -> normal' {
+        Get-PerfilMemoriaConfigurado (Join-Path $script:dir 'no-existe.env') | Should -Be 'normal'
+    }
+
+    It 'sin la clave -> normal' {
+        Write-Archivo $script:env "FACTUM_VERSION=1.0.0`n"
+        Get-PerfilMemoriaConfigurado $script:env | Should -Be 'normal'
+    }
+
+    It '<Valor> -> <Esperado>' -TestCases @(
+        @{ Valor = 'normal'; Esperado = 'normal' }
+        @{ Valor = 'poca'; Esperado = 'poca' }
+        @{ Valor = ' POCA '; Esperado = 'poca' }
+        @{ Valor = 'xyz'; Esperado = 'normal' }
+        @{ Valor = ''; Esperado = 'normal' }
+    ) {
+        param($Valor, $Esperado)
+        Write-Archivo $script:env ("FACTUM_VERSION=1.0.0`nFACTUM_PERFIL_MEMORIA=" + $Valor + "`n")
+        Get-PerfilMemoriaConfigurado $script:env | Should -Be $Esperado
+    }
+}
+
+Describe 'Get-FactumComposeArgumento' {
+    BeforeEach {
+        $script:dir = New-Dir
+        $script:env = Join-Path (Join-Path $script:dir 'config') '.env'
+        $script:FactumAvisoPocaRamMostrado = $false
+        Mock Write-Aviso { }
+    }
+    AfterEach { Remove-Item -LiteralPath $script:dir -Recurse -Force }
+
+    It '(a) perfil normal: el arreglo es idéntico al de antes de la HU' {
+        Write-Archivo $script:env "COMPOSE_PROJECT_NAME=factum-test`nFACTUM_PERFIL_MEMORIA=normal`n"
+        Write-Archivo (Join-Path $script:dir 'docker-compose.poca-ram.yml') "services: {}`n"
+        Initialize-FactumContext $script:dir
+        $h = Get-RutaAbsoluta $script:dir
+        $esperado = @('compose', '--project-directory', $h, '-f', (Join-Path $h 'docker-compose.yml'), '--env-file', (Join-Path (Join-Path $h 'config') '.env'), '-p', 'factum-test')
+        $obtenido = @(Get-FactumComposeArgumento)
+        $obtenido.Count | Should -Be $esperado.Count
+        for ($i = 0; $i -lt $esperado.Count; $i++) { $obtenido[$i] | Should -Be $esperado[$i] }
+    }
+
+    It '(b) perfil poca con el overlay: segundo -f justo después del primero' {
+        Write-Archivo $script:env "COMPOSE_PROJECT_NAME=factum-test`nFACTUM_PERFIL_MEMORIA=poca`n"
+        Write-Archivo (Join-Path $script:dir 'docker-compose.poca-ram.yml') "services: {}`n"
+        Initialize-FactumContext $script:dir
+        $h = Get-RutaAbsoluta $script:dir
+        $esperado = @('compose', '--project-directory', $h, '-f', (Join-Path $h 'docker-compose.yml'), '-f', (Join-Path $h 'docker-compose.poca-ram.yml'), '--env-file', (Join-Path (Join-Path $h 'config') '.env'), '-p', 'factum-test')
+        $obtenido = @(Get-FactumComposeArgumento)
+        $obtenido.Count | Should -Be $esperado.Count
+        for ($i = 0; $i -lt $esperado.Count; $i++) { $obtenido[$i] | Should -Be $esperado[$i] }
+        Should -Invoke Write-Aviso -Times 0 -Exactly
+    }
+
+    It '(c) perfil poca sin el overlay: arreglo base y un solo aviso por proceso' {
+        Write-Archivo $script:env "COMPOSE_PROJECT_NAME=factum-test`nFACTUM_PERFIL_MEMORIA=poca`n"
+        Initialize-FactumContext $script:dir
+        $h = Get-RutaAbsoluta $script:dir
+        $esperado = @('compose', '--project-directory', $h, '-f', (Join-Path $h 'docker-compose.yml'), '--env-file', (Join-Path (Join-Path $h 'config') '.env'), '-p', 'factum-test')
+        $obtenido = @(Get-FactumComposeArgumento)
+        $obtenido.Count | Should -Be $esperado.Count
+        for ($i = 0; $i -lt $esperado.Count; $i++) { $obtenido[$i] | Should -Be $esperado[$i] }
+        $null = Get-FactumComposeArgumento
+        Should -Invoke Write-Aviso -Times 1 -Exactly
+    }
+
+    It '(d) sin la clave en el .env: igual que el perfil normal' {
+        Write-Archivo $script:env "COMPOSE_PROJECT_NAME=factum-test`n"
+        Write-Archivo (Join-Path $script:dir 'docker-compose.poca-ram.yml') "services: {}`n"
+        Initialize-FactumContext $script:dir
+        $h = Get-RutaAbsoluta $script:dir
+        $esperado = @('compose', '--project-directory', $h, '-f', (Join-Path $h 'docker-compose.yml'), '--env-file', (Join-Path (Join-Path $h 'config') '.env'), '-p', 'factum-test')
+        $obtenido = @(Get-FactumComposeArgumento)
+        $obtenido.Count | Should -Be $esperado.Count
+        for ($i = 0; $i -lt $esperado.Count; $i++) { $obtenido[$i] | Should -Be $esperado[$i] }
+    }
+
+    It 'lee el .env en cada llamada (sin caché)' {
+        Write-Archivo $script:env "COMPOSE_PROJECT_NAME=factum-test`nFACTUM_PERFIL_MEMORIA=normal`n"
+        Write-Archivo (Join-Path $script:dir 'docker-compose.poca-ram.yml') "services: {}`n"
+        Initialize-FactumContext $script:dir
+        @(Get-FactumComposeArgumento).Count | Should -Be 9
+        Write-Archivo $script:env "COMPOSE_PROJECT_NAME=factum-test`nFACTUM_PERFIL_MEMORIA=poca`n"
+        @(Get-FactumComposeArgumento).Count | Should -Be 11
+    }
+}
+
+Describe 'Guardas del repo (perfil de memoria)' {
+    BeforeAll { $script:raizW = Split-Path -Parent $PSScriptRoot }
+
+    It '.env.example trae FACTUM_PERFIL_MEMORIA=normal' {
+        (Read-EnvFile (Join-Path $script:raizW '.env.example'))['FACTUM_PERFIL_MEMORIA'] | Should -Be 'normal'
+    }
+
+    It 'el compose de poca RAM no tiene image: (Get-MongoImagen devuelve $null)' {
+        Get-MongoImagen (Join-Path $script:raizW 'docker-compose.poca-ram.yml') | Should -BeNullOrEmpty
+    }
+
+    It 'el compose base sigue con mongo:7.0.43' {
+        Get-MongoImagen (Join-Path $script:raizW 'docker-compose.yml') | Should -Be 'mongo:7.0.43'
+    }
+}

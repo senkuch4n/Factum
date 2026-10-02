@@ -108,7 +108,7 @@ try {
         Write-Paso 5 $total 'Copiando la configuración'
         $dirConfig = Join-Path $dirBackup 'config'
         Get-ChildItem -LiteralPath (Join-Path $homeDir 'config') -Force | Copy-Item -Destination $dirConfig -Recurse -Force
-        foreach ($f in @('docker-compose.yml', 'version.txt')) {
+        foreach ($f in @('docker-compose.yml', 'docker-compose.poca-ram.yml', 'version.txt')) {
             $origen = Join-Path $homeDir $f
             if (Test-Path -LiteralPath $origen) { Copy-Item -LiteralPath $origen -Destination $dirConfig -Force }
         }

@@ -3,7 +3,7 @@
     Diagnóstico de Factum (solo lectura). Todo lo que muestra queda además en
     <instalación>\logs\diagnostico-<fecha>.txt para mandárselo al proveedor.
 .PARAMETER ReiniciarBackend
-    Reinicia el backend (para aplicar cambios de config\appsettings.Local.json o del logo).
+    Reinicia Factum para aplicar cambios de configuración (config\appsettings.Local.json, logo o perfil de memoria de config\.env): up -d + restart backend.
     Si no se pasa y la consola es interactiva, se pregunta al final.
 #>
 [CmdletBinding()]
@@ -59,6 +59,65 @@ try {
         Write-Salida (Invoke-FactumCompose -Argumentos @('ps', '--all', '--format', 'table {{.Service}}\t{{.Status}}\t{{.Image}}') -Silencioso)
     }
 
+    # ── Memoria (SDD instalacion-poca-ram §5.6; solo lectura) ──
+    Write-Titulo 'Memoria'
+    $ramPc = $null
+    try {
+        $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+        $ramPc = [math]::Round($cs.TotalPhysicalMemory / 1GB, 1)
+        Write-Host ('  RAM de la PC: {0} GB' -f $ramPc)
+    } catch {
+        Write-Aviso 'No se pudo leer la RAM (WMI).'
+    }
+    $perfilCrudo = ''
+    if (Test-Path -LiteralPath $envPath -PathType Leaf) {
+        $cfgMem = Read-EnvFile $envPath
+        if ($cfgMem.ContainsKey('FACTUM_PERFIL_MEMORIA')) { $perfilCrudo = [string]$cfgMem['FACTUM_PERFIL_MEMORIA'] }
+    }
+    $perfilMem = Get-PerfilMemoriaConfigurado $envPath
+    $overlayMem = Join-Path $homeDir $script:FactumComposePocaRam
+    $overlayTexto = 'ausente'
+    if (Test-Path -LiteralPath $overlayMem -PathType Leaf) { $overlayTexto = 'presente' }
+    $perfilTexto = 'normal'
+    if ($perfilMem -eq 'poca') { $perfilTexto = 'poca RAM' }
+    Write-Host ('  Perfil de memoria: ' + $perfilTexto + ' (FACTUM_PERFIL_MEMORIA=' + $perfilCrudo + '; ' + $script:FactumComposePocaRam + ' ' + $overlayTexto + ')')
+    $perfilNorm = $perfilCrudo.Trim().ToLowerInvariant()
+    if ($perfilNorm -ne '' -and $perfilNorm -ne 'poca' -and $perfilNorm -ne 'normal') {
+        Write-Aviso ('FACTUM_PERFIL_MEMORIA="' + $perfilCrudo + '" no es válido: se usa el perfil normal.')
+    }
+    if ($null -ne $ramPc) {
+        if ($ramPc -lt 7.5 -and $perfilMem -eq 'normal') {
+            Write-Aviso 'La PC tiene poca RAM y el perfil es normal (sin límites). Ver guía, sección 2.1.'
+        } elseif ($ramPc -ge 7.5 -and $perfilMem -eq 'poca') {
+            Write-Host '  La PC tiene RAM suficiente para el perfil normal (guía, sección 2.1).'
+        }
+    }
+    if ($dockerOk) {
+        $idsMem = @()
+        $nombresMem = @{}
+        foreach ($s in $script:FactumServicios) {
+            $id = Get-FactumContainerId $s
+            if ($id) { $idsMem += $id; $nombresMem[$id] = $s }
+        }
+        if ($idsMem.Count -gt 0) {
+            Write-Salida (Invoke-Nativo -Exe 'docker' -Argumentos (@('stats', '--no-stream', '--format', 'table {{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.CPUPerc}}') + $idsMem) -Silencioso)
+            $reinicios = @()
+            foreach ($id in $idsMem) {
+                $ri = Invoke-Nativo -Exe 'docker' -Argumentos @('inspect', '-f', '{{.RestartCount}} {{.State.OOMKilled}}', $id) -Silencioso
+                $texto = $nombresMem[$id] + ' ?'
+                if ($ri.ExitCode -eq 0 -and $ri.Salida.Count -gt 0) {
+                    $partes = ([string]$ri.Salida[0]).Trim() -split '\s+'
+                    $texto = $nombresMem[$id] + ' ' + $partes[0]
+                    if ($partes.Count -gt 1 -and $partes[1] -eq 'true') { $texto = $texto + ' (sin memoria: SÍ)' }
+                }
+                $reinicios += $texto
+            }
+            Write-Host ('  Reinicios: ' + ($reinicios -join ', '))
+        } else {
+            Write-Host '  (no hay contenedores de Factum para medir)'
+        }
+    }
+
     Write-Titulo 'Puertos'
     foreach ($p in @(3000, 8080, 8765)) {
         $duenio = Test-PuertoLibre $p
@@ -111,18 +170,25 @@ try {
     $reiniciar = $ReiniciarBackend
     if (-not $reiniciar -and -not $SinPreguntas -and $dockerOk -and [Environment]::UserInteractive) {
         Write-Host ''
-        $reiniciar = Confirm-SN '¿Reiniciar Factum para aplicar cambios de la identidad del estudio (appsettings.Local.json o logo)?'
+        $reiniciar = Confirm-SN '¿Reiniciar Factum para aplicar cambios de configuración (identidad del estudio, logo o perfil de memoria)?'
     }
     if ($reiniciar) {
-        Write-Titulo 'Reiniciando el backend'
-        $r = Invoke-FactumCompose -Argumentos @('restart', 'backend')
+        Write-Titulo 'Reiniciando Factum'
+        # up -d recrea los contenedores cuya configuración de compose cambió (por ejemplo, el perfil
+        # de memoria); restart backend toma appsettings.Local.json y el logo (DT8 A).
         $pendiente = $null
-        if ($r.ExitCode -ne 0) { $pendiente = 'backend' } else { $pendiente = Wait-FactumHealthy -TimeoutSec 180 }
+        $r = Invoke-FactumCompose -Argumentos @('up', '-d')
+        if ($r.ExitCode -ne 0) {
+            $pendiente = 'docker compose up'
+        } else {
+            $r = Invoke-FactumCompose -Argumentos @('restart', 'backend')
+            if ($r.ExitCode -ne 0) { $pendiente = 'backend' } else { $pendiente = Wait-FactumHealthy -TimeoutSec 180 }
+        }
         if ($pendiente) {
             Show-BackendLogTail
-            Write-Falla 'El backend no volvió a arrancar: revisá config\appsettings.Local.json (el registro de arriba dice qué valor falla).'
+            Write-Falla 'Factum no volvió a arrancar: revisá config\appsettings.Local.json o config\.env (el registro de arriba dice qué valor falla).'
         } else {
-            Write-Ok 'Backend reiniciado con la configuración nueva.'
+            Write-Ok 'Factum reiniciado con la configuración nueva.'
         }
     }
 

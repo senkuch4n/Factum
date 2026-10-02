@@ -8,12 +8,17 @@
     Reinstala scripts, compose e imágenes sin tocar la configuración ni los datos.
 .PARAMETER SinTatana
     No instala Tatana (el agente de captura).
+.PARAMETER PerfilMemoria
+    auto (por defecto) = según la RAM de la PC; poca o normal = forzarlo (por ejemplo para probar
+    el perfil de poca memoria en una PC con más RAM). No saltea el mínimo de RAM. No se combina
+    con -Reparar (reparar conserva el perfil de config\.env).
 #>
 [CmdletBinding()]
 param(
     [string]$Carpeta = 'C:\Factum',
     [switch]$Reparar,
-    [switch]$SinTatana
+    [switch]$SinTatana,
+    [ValidateSet('auto', 'poca', 'normal')][string]$PerfilMemoria = 'auto'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,7 +36,19 @@ Write-Host '=== Instalación de Factum ===' -ForegroundColor White
 # <Carpeta>\logs en el paso 4.
 $logTemporal = Start-FactumLog -Nombre 'instalar' -HomeDir ''
 
+function Write-PerfilElegido {
+    param([string]$Perfil, [bool]$Forzado)
+    $texto = 'normal'
+    if ($Perfil -eq 'poca') { $texto = 'poca RAM (límites de memoria activos)' }
+    if ($Forzado) { $texto = $texto + ' (elegido con -PerfilMemoria)' }
+    Write-Ok ('Perfil de memoria: ' + $texto)
+}
+
 try {
+    if ($Reparar -and $PerfilMemoria -ne 'auto') {
+        Stop-Factum 'Con -Reparar no se cambia el perfil de memoria.' 'Para cambiarlo seguí la guía, sección 2.1.'
+    }
+
     # 1 ── Paquete
     Write-Paso 1 $total 'Verificando el paquete de instalación'
     $version = Read-VersionTxt (Join-Path $paquete 'version.txt')
@@ -57,7 +74,28 @@ try {
             Stop-Factum 'Instalación cancelada.' 'Resolvé los avisos y volvé a ejecutar el instalador.'
         }
     }
+    # Poca memoria: bloque y pregunta propios, la última decisión antes de tocar el disco
+    # (SDD instalacion-poca-ram §5.4, DT3). Si WMI falló, PerfilMemoria es $null = normal (DT2).
+    $perfilDetectado = $req.PerfilMemoria
+    if ($perfilDetectado -eq 'poca') {
+        Write-AvisoPocaMemoria -Gb $req.RamGb
+        if ($PerfilMemoria -eq 'normal') {
+            Write-Aviso 'Elegiste el perfil normal con -PerfilMemoria: los contenedores no van a tener límite de memoria y la PC puede quedarse sin memoria.'
+        }
+        if (-not (Confirm-SN '¿Instalar igual con poca memoria?')) {
+            Stop-Factum 'Instalación cancelada. No se tocó nada.' 'Podés volver a ejecutar el instalador cuando quieras.'
+        }
+    }
     Write-Ok 'La PC cumple los requisitos.'
+    $perfilForzado = ($PerfilMemoria -ne 'auto')
+    if ($perfilForzado) {
+        $perfilFinal = $PerfilMemoria
+    } elseif ($perfilDetectado -eq 'poca') {
+        $perfilFinal = 'poca'
+    } else {
+        $perfilFinal = 'normal'
+    }
+    if (-not $Reparar) { Write-PerfilElegido $perfilFinal $perfilForzado }
 
     # 3 ── ¿Ya instalado?
     Write-Paso 3 $total 'Revisando si Factum ya está instalado'
@@ -75,6 +113,12 @@ try {
             Stop-Factum ('La versión instalada es ' + $instalada + ' y este paquete es ' + $version + '.') 'Para cambiar de versión usá "Actualizar Factum.bat"; -Reparar es solo para la misma versión.'
         }
         Write-Ok 'Modo reparar: no se toca la configuración ni los datos.'
+        # Reparar conserva el perfil de config\.env (no se escribe).
+        $perfilFinal = Get-PerfilMemoriaConfigurado $envPath
+        if ($perfilFinal -eq 'poca' -and $perfilDetectado -eq 'normal') {
+            Write-Host ('  La PC tiene {0} GB: podés pasar al perfil normal (guía, sección 2.1).' -f $req.RamGb)
+        }
+        Write-PerfilElegido $perfilFinal $false
     } else {
         Write-Ok 'Instalación nueva.'
     }
@@ -113,9 +157,10 @@ try {
         Write-Ok 'Se conserva la configuración existente.'
     } else {
         $valores = @{
-            'FACTUM_VERSION'    = $version
-            'FACTUM_HOME'       = ($Carpeta -replace '\\', '/')
-            'FACTUM_JWT_SECRET' = (New-JwtSecret)
+            'FACTUM_VERSION'        = $version
+            'FACTUM_HOME'           = ($Carpeta -replace '\\', '/')
+            'FACTUM_JWT_SECRET'     = (New-JwtSecret)
+            'FACTUM_PERFIL_MEMORIA' = $perfilFinal
         }
         Write-EnvFile -Path $envPath -Valores $valores -Template (Join-Path $paquete '.env.example')
         $local = Join-Path (Join-Path $Carpeta 'config') 'appsettings.Local.json'
@@ -129,6 +174,8 @@ try {
     # 7 ── Archivos de la instalación
     Write-Paso 7 $total 'Copiando los archivos de Factum'
     Copy-Item -LiteralPath (Join-Path $paquete 'docker-compose.yml') -Destination $Carpeta -Force
+    # El compose de poca RAM se copia siempre, sea cual sea el perfil (DT6).
+    Copy-Item -LiteralPath (Join-Path $paquete $script:FactumComposePocaRam) -Destination $Carpeta -Force
     Copy-Item -LiteralPath (Join-Path $paquete 'version.txt') -Destination $Carpeta -Force
     $icono = Join-Path $paquete 'factum.ico'
     if (Test-Path -LiteralPath $icono) { Copy-Item -LiteralPath $icono -Destination $Carpeta -Force }
@@ -208,6 +255,11 @@ try {
     Write-Host ('  - Abrilo con el acceso "Factum" del Escritorio o en  http://localhost:3000')
     Write-Host ('  - Evidencia (ZIP e informes):  ' + (Join-Path $Carpeta 'evidencia'))
     Write-Host ('  - Backups:                     ' + (Join-Path $Carpeta 'backups'))
+    if ((Get-PerfilMemoriaConfigurado $envPath) -eq 'poca') {
+        Write-Host '  - Perfil de memoria:           poca RAM (para cambiarlo: guía, sección 2.1)'
+    } else {
+        Write-Host '  - Perfil de memoria:           normal'
+    }
     Write-Host ''
     Write-Host '  AVISO DE SEGURIDAD' -ForegroundColor Yellow
     Write-Host '  En esta versión Factum no tiene usuarios con contraseña propia: acepta cualquier DNI y' -ForegroundColor Yellow

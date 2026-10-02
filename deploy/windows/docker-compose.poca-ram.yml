@@ -1,0 +1,21 @@
+# Factum — perfil de memoria "poca RAM" (FACTUM_PERFIL_MEMORIA=poca en config/.env).
+# Se SUMA a docker-compose.yml solo en ese perfil: lo agrega Invoke-FactumCompose (scripts\_comun.ps1)
+# con un segundo -f. En el perfil normal no se usa y la configuración es la de siempre.
+# SDD instalacion-poca-ram §5.1. Reglas de este archivo:
+# - Solo límites de memoria. Nada de image:, ports:, volumes: ni healthcheck: (el tag de mongo
+#   se lee del compose base: Get-MongoImagen y armar-paquete.sh).
+# - Los topes son máximos, no reservas. Sin memswap_limit: Docker permite swap igual al límite
+#   dentro de la VM de WSL2 (preferible lento a que el contenedor muera).
+
+services:
+  mongo:
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
+    mem_limit: 512m
+  backend:
+    mem_limit: 768m
+    environment:
+      DOTNET_gcServer: "0"
+  frontend:
+    mem_limit: 384m
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=256"
