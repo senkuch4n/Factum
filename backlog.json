@@ -336,10 +336,10 @@
     {
       "id": "informe-diseno-modelo",
       "titulo": "Rediseño visual del informe pericial siguiendo docs/informe_modelo.pdf, con el logo del estudio",
-      "estado": "implementando",
+      "estado": "aprobada",
       "creada": "2026-10-01T00:00:00-03:00",
       "actualizada": "2026-10-01",
-      "intentos_revision": 0,
+      "intentos_revision": 1,
       "toca": {
         "backend": true,
         "frontend": false,
@@ -351,9 +351,9 @@
         "reviewer_model": "sonnet",
         "skill": null,
         "rama": "feat/informe-diseno-modelo",
-        "fase": "implementacion"
+        "fase": "cerrada"
       },
-      "notas": "Pedido del usuario 2026-10-01: usar docs/informe_modelo.pdf como modelo de informe y el logo del estudio (docs/Logo_del_estudio, JPEG 1408x768 fondo azul oscuro con datos del estudio). Ambos excluidos de git (.git/info/exclude / .gitignore); el modelo es una plantilla genérica (informe financiero de farmacia): se toma el estilo, no el contenido. Encadenar después de formulario-caso-catalogos (ambas tocan ReportService). Afinado ADELANTADO. Validada por el usuario 2026-10-01: D1–D11 recomendadas. Isotipo pendiente (fallback texto). SDD adelantada; espera turno tras formulario-caso-catalogos. SDD lista: 15 decisiones recomendadas; DP1–DP3 A confirmadas por el usuario. 2026-10-01: implementando en feat/informe-diseno-modelo (desde formulario-caso-catalogos)."
+      "notas": "Pedido del usuario 2026-10-01: usar docs/informe_modelo.pdf como modelo de informe y el logo del estudio (docs/Logo_del_estudio, JPEG 1408x768 fondo azul oscuro con datos del estudio). Ambos excluidos de git (.git/info/exclude / .gitignore); el modelo es una plantilla genérica (informe financiero de farmacia): se toma el estilo, no el contenido. Encadenar después de formulario-caso-catalogos (ambas tocan ReportService). Afinado ADELANTADO. Validada por el usuario 2026-10-01: D1–D11 recomendadas. Isotipo pendiente (fallback texto). SDD adelantada; espera turno tras formulario-caso-catalogos. SDD lista: 15 decisiones recomendadas; DP1–DP3 A confirmadas por el usuario. 2026-10-01: implementando en feat/informe-diseno-modelo (desde formulario-caso-catalogos). Revisión 1 RECHAZADA: colores exactos del estudio en la SDD versionada; corregido por el orquestador (doc del arnés), re-revisión. Reviewer APROBADA en intento 2 (2026-10-01)."
     }
   ]
 }

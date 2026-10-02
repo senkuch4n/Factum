@@ -40,3 +40,5 @@ server/src/Factum.Backend/branding/
 
 # Plantillas e informes del usuario con datos reales (la v4 se deriva con ops/plantilla/)
 docs/INFORME*
+docs/informe_modelo*
+docs/Logo_del_estudio*

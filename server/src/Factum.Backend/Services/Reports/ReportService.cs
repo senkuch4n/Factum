@@ -32,14 +32,35 @@ public interface IReportService
 }
 
 /// <summary>
-/// Genera el Informe Pericial Técnico Informático a partir de <c>Templates/plantilla_informe_v4.docx</c>
-/// (que nace de <c>ops/plantilla/build_plantilla_v4.py</c>) y el ZIP de evidencia.
-/// Ver Refactorizaciones/informe-pericial-de-parte.md §7 y Anexo B.
+/// Genera el Informe Pericial Técnico Informático a partir de <c>Templates/plantilla_informe_v5.docx</c>
+/// (que nace de <c>ops/plantilla/build_plantilla_v5.py</c>, a partir de la v4) y el ZIP de
+/// evidencia. Ver Refactorizaciones/informe-pericial-de-parte.md §7 y Anexo B, y
+/// Refactorizaciones/informe-diseno-modelo.md (portada, banda, colores de marca e isotipo).
 /// </summary>
-public sealed class ReportService(IBrandingService branding, IReportSettings settings,
-    ILogger<ReportService> logger) : IReportService
+public sealed class ReportService : IReportService
 {
-    private const string TemplateFileName = "plantilla_informe_v4.docx";
+    private const string DefaultTemplateFileName = "plantilla_informe_v5.docx";
+
+    private readonly IBrandingService branding;
+    private readonly IReportSettings settings;
+    private readonly ILogger<ReportService> logger;
+    private readonly string templateFileName;
+
+    public ReportService(IBrandingService branding, IReportSettings settings, ILogger<ReportService> logger)
+        : this(branding, settings, logger, DefaultTemplateFileName)
+    {
+    }
+
+    // Solo para los tests (p. ej. generar el mismo caso con la v4 como línea de base). DI usa
+    // el constructor público.
+    internal ReportService(IBrandingService branding, IReportSettings settings, ILogger<ReportService> logger,
+        string templateFileName)
+    {
+        this.branding = branding;
+        this.settings = settings;
+        this.logger = logger;
+        this.templateFileName = templateFileName;
+    }
 
     private static readonly string TemplatesDir =
         Path.Combine(AppContext.BaseDirectory, "Templates");
@@ -140,9 +161,10 @@ public sealed class ReportService(IBrandingService branding, IReportSettings set
             docxPath, Path.GetFileName(docxPath), reportHash);
     }
 
-    // ── DOCX (Anexo B, pasadas B-R0 a B-R9) ───────────────────────────────────
+    // ── DOCX (Anexo B, pasadas B-R0 a B-R9, más B-R2b de informe-diseno-modelo) ─
 
-    // Placeholders que la v4 puede traer (A7.1). Cualquier otro se borra en B-R1.
+    // Placeholders de texto que la plantilla puede traer (A7.1; la v5 no agrega ninguno de
+    // texto). Cualquier otro se borra en B-R1.
     private static readonly HashSet<string> KnownPlaceholders = new(StringComparer.Ordinal)
     {
         "{nombreTribunal}", "{organismoTribunal}", "{nombrePerito}", "{matriculaPerito}",
@@ -165,6 +187,7 @@ public sealed class ReportService(IBrandingService branding, IReportSettings set
     {
         "MEMBRETE", "organismoTribunal", "objetoInforme", "capturasNombreDispositivo",
         "descripcionNotasTecnicas", "descripcionReserva", "anexoCapturas",
+        "ISOTIPO", "NOMBRE_EN_BANDA",
     };
 
     private static readonly Regex AnyPlaceholderRegex = new(
@@ -181,7 +204,7 @@ public sealed class ReportService(IBrandingService branding, IReportSettings set
     private const long AnnexShotMaxH = 3_780_000;
 
     private const string CaptionColor = "595959";
-    private const string BodyFont = "Times New Roman";
+    private const string BodyFont = "Arial";
 
     private Task GenerateDocxAsync(Case cas, List<FileInfoDto> files,
         Dictionary<string, string> hashes, string outputPath, string caseDir,
@@ -190,7 +213,7 @@ public sealed class ReportService(IBrandingService branding, IReportSettings set
         return Task.Run(() =>
         {
             // B-R0
-            var templatePath = Path.Combine(TemplatesDir, TemplateFileName);
+            var templatePath = Path.Combine(TemplatesDir, templateFileName);
             if (!File.Exists(templatePath))
                 throw new FileNotFoundException("Plantilla DOCX no encontrada", templatePath);
 
@@ -233,7 +256,11 @@ public sealed class ReportService(IBrandingService branding, IReportSettings set
 
             var conditions = new Dictionary<string, bool>(StringComparer.Ordinal)
             {
+                // MEMBRETE vive en el pie de la portada (footer2 de la v5).
                 ["MEMBRETE"] = brand.OrganizationName is not null || brand.Logo is not null || brand.ContactLines.Count > 0,
+                // Banda interior y cierre: isotipo si hay; si no, el nombre en texto (solo banda).
+                ["ISOTIPO"] = brand.Isotype is not null,
+                ["NOMBRE_EN_BANDA"] = brand.Isotype is null && brand.OrganizationName is not null,
                 ["organismoTribunal"] = !string.IsNullOrWhiteSpace(cas.OrganismoTribunal),
                 ["objetoInforme"] = !string.IsNullOrWhiteSpace(texts.ObjetoInforme),
                 ["capturasNombreDispositivo"] = nameShots.Count > 0,
@@ -251,9 +278,18 @@ public sealed class ReportService(IBrandingService branding, IReportSettings set
             foreach (var (_, root) in parts)
                 ResolveBlocks(root, conditions);
 
-            // B-R3: {LOGO_ORGANIZACION[:WxH]} → logo (o párrafo vacío).
+            // B-R2b: colores de marca. La plantilla trae los centinelas (= defaults neutros).
+            BrandColors.Apply(mainPart, brand.PrimaryColor, brand.AccentColor);
+
+            // B-R3: {LOGO_ORGANIZACION[:WxH]} → logo y {ISOTIPO_ORGANIZACION[:WxH]} → isotipo
+            // (o párrafo vacío).
             foreach (var (part, root) in parts)
-                ReplaceOrganizationLogo(part, root, brand.Logo, ref drawId);
+            {
+                ReplaceImagePlaceholder(part, root, LogoPlaceholderRegex, brand.Logo, "logo-organizacion",
+                    DefaultLogoBoxWidthCm, DefaultLogoBoxHeightCm, ref drawId);
+                ReplaceImagePlaceholder(part, root, IsotypePlaceholderRegex, brand.Isotype, "isotipo-organizacion",
+                    DefaultIsotypeBoxCm, DefaultIsotypeBoxCm, ref drawId);
+            }
 
             // B-R4: multilínea. {CONTACTO} (saltos dentro del run) y los textos del perito
             // (un párrafo por línea).
@@ -324,6 +360,7 @@ public sealed class ReportService(IBrandingService branding, IReportSettings set
     {
         if (KnownPlaceholders.Contains(ph)) return true;
         if (LogoPlaceholderRegex.IsMatch(ph) && LogoPlaceholderRegex.Match(ph).Length == ph.Length) return true;
+        if (IsotypePlaceholderRegex.IsMatch(ph) && IsotypePlaceholderRegex.Match(ph).Length == ph.Length) return true;
         var marker = BlockMarkerRegex.Match(ph);
         return marker.Success && BlockKeys.Contains(marker.Groups[2].Value);
     }
@@ -796,35 +833,42 @@ public sealed class ReportService(IBrandingService branding, IReportSettings set
         @"\{LOGO_ORGANIZACION(?::(\d+(?:[.,]\d+)?)x(\d+(?:[.,]\d+)?))?\}",
         RegexOptions.CultureInvariant);
 
+    // {ISOTIPO_ORGANIZACION} o {ISOTIPO_ORGANIZACION:<ancho>x<alto>} (cm), en la banda y al cierre.
+    private static readonly Regex IsotypePlaceholderRegex = new(
+        @"\{ISOTIPO_ORGANIZACION(?::(\d+(?:[.,]\d+)?)x(\d+(?:[.,]\d+)?))?\}",
+        RegexOptions.CultureInvariant);
+
     private const double DefaultLogoBoxWidthCm = 5.0;
     private const double DefaultLogoBoxHeightCm = 1.5;
+    private const double DefaultIsotypeBoxCm = 2.0;
     private const long EmuPerCm = 360_000;
 
-    // Reemplaza cada párrafo con {LOGO_ORGANIZACION[:WxH]} por el logo ajustado SIN recortar
-    // dentro de la caja, conservando las ParagraphProperties del párrafo original. Sin logo, se
-    // borra solo el texto del placeholder y el párrafo queda vacío.
-    private static void ReplaceOrganizationLogo(OpenXmlPart owner, OpenXmlElement root,
-        BrandingLogo? logo, ref uint drawId)
+    // Reemplaza cada párrafo con el placeholder de imagen ({LOGO_ORGANIZACION[:WxH]} o
+    // {ISOTIPO_ORGANIZACION[:WxH]}) por la imagen ajustada SIN recortar dentro de la caja,
+    // conservando las ParagraphProperties del párrafo original. Sin imagen, se borra solo el
+    // texto del placeholder y el párrafo queda vacío.
+    private static void ReplaceImagePlaceholder(OpenXmlPart owner, OpenXmlElement root, Regex placeholder,
+        BrandingLogo? image, string baseName, double defaultWidthCm, double defaultHeightCm, ref uint drawId)
     {
         foreach (var para in root.Descendants<Paragraph>().ToList())
         {
             var runs = para.Elements<Run>().ToList();
             var fullText = string.Concat(runs.SelectMany(r => r.Elements<Text>()).Select(t => t.Text));
-            var match = LogoPlaceholderRegex.Match(fullText);
+            var match = placeholder.Match(fullText);
             if (!match.Success) continue;
 
-            if (logo is null)
+            if (image is null)
             {
-                CollapseParagraphText(runs, LogoPlaceholderRegex.Replace(fullText, string.Empty));
+                CollapseParagraphText(runs, placeholder.Replace(fullText, string.Empty));
                 continue;
             }
 
-            var boxW = ParseCm(match.Groups[1], DefaultLogoBoxWidthCm);
-            var boxH = ParseCm(match.Groups[2], DefaultLogoBoxHeightCm);
+            var boxW = ParseCm(match.Groups[1], defaultWidthCm);
+            var boxH = ParseCm(match.Groups[2], defaultHeightCm);
             var pPr = para.ParagraphProperties?.CloneNode(true) as ParagraphProperties
                       ?? new ParagraphProperties();
-            var source = ImageSource.FromBytes($"logo-organizacion{logo.Extension}", logo.Data,
-                logo.ContentType, logo.Width, logo.Height);
+            var source = ImageSource.FromBytes($"{baseName}{image.Extension}", image.Data,
+                image.ContentType, image.Width, image.Height);
             var imgPara = BuildImageParagraph(owner, source,
                 (long)Math.Round(boxW * EmuPerCm), (long)Math.Round(boxH * EmuPerCm),
                 ref drawId, paragraphProperties: pPr);

@@ -88,3 +88,6 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — Usuario re-activa MODO AUTÓNOMO (/goal): cerrar formulario-caso-catalogos e informe-diseno-modelo.
 - 2026-10-01 — `implementer-frontend` (formulario) done -> progress/impl_frontend_formulario-caso-catalogos.md. HU → en_revision, lanzado `reviewer`.
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_formulario-caso-catalogos.md. formulario → aprobada, commit. Rama feat/informe-diseno-modelo; informe → implementando, lanzado `implementer-backend`.
+- 2026-10-01 — `implementer-backend` (informe) done -> progress/impl_backend_informe-diseno-modelo.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` RECHAZADA (1/2) -> progress/review_informe-diseno-modelo.md: colores exactos del estudio en la SDD versionada. Es doc del arnés: lo corrigió el orquestador (sin tocar código). Relanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA (intento 2). informe → aprobada, commit. Colores del estudio también limpiados de los progress de esta HU. BACKLOG VACÍO.

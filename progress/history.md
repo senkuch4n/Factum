@@ -103,3 +103,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos. 48 tests backend OK.
 - **Rama:** `feat/formulario-caso-catalogos` (encadenada sobre `feat/grabacion-camara-duplicada`).
 - **Pendiente:** reiniciar el backend para tomar los endpoints nuevos; prueba manual e2e con Mongo real (SDD §11) y vista a 375 px en ambos temas.
+
+## informe-diseno-modelo — APROBADA (2026-10-01)
+
+- **Qué:** plantilla v5 del informe pericial (generada por `ops/plantilla/build_plantilla_v5.py`, determinista) con el estilo de `docs/informe_modelo.pdf`: portada (título, causa, carátula, perito, fecha, logo completo como tarjeta, nombre y contacto del estudio, franja primaria y bandas de acento), banda fina en el encabezado de páginas interiores con título y causa, títulos de sección en color primario, bloques en dos columnas, tabla de hashes rediseñada, Century Gothic/Arial/Courier New, "Página N de M" (cuenta la portada) y "Realizado con Factum" en todas las páginas. Branding suma `PrimaryColor`, `AccentColor` (validación hex y contraste ≥ 4.5:1) y `OrganizationIsotype` opcional (fallback: nombre del estudio en la banda). Defaults neutros versionados; logo y colores del estudio solo en `branding/` y `appsettings.Local.json` (ignorados). Texto legal sin cambios; sigue DOCX; informes ya generados no cambian.
+- **Decisiones:** HU D1–D11 recomendadas (usuario); SDD 15 recomendadas, DP1–DP3 A (usuario).
+- **Modelos:** afinador/architect (sesión), implementer-backend opus, reviewer sonnet. 1 rechazo (colores exactos del estudio en la SDD versionada; corregido por el orquestador en el doc).
+- **Rama:** `feat/informe-diseno-modelo` (encadenada sobre `feat/formulario-caso-catalogos`).
+- **Pendiente:** abrir las muestras en Word (scratchpad de la sesión, `muestras/estudio/`) y aprobar colores; pasar el isotipo PNG transparente cuando exista (solo config); reiniciar el backend.

@@ -185,7 +185,7 @@ npm run package   # empaqueta la app instalable
 | `Audit:AdminDnis` | DNIs habilitados a leer `GET /api/agent-events` (auditoría de uso del agente) |
 | `TatanaUpdates:ProjectId` / `ProjectRawBaseUrl` / `PrivateToken` | Proyecto de GitLab del que se espeja la última release de Tatana |
 | `TatanaUpdates:PublicBaseUrl` | URL pública de este backend — a la que apuntan el instalador Electron y el `.bat` portátil para actualizarse |
-| `Branding:OrganizationName` / `OrganizationLogo` / `ContactLines` | Identidad de la organización que emite los informes — ver [Branding](#identidad-de-la-organización-branding). Vacío en el repo |
+| `Branding:OrganizationName` / `OrganizationLogo` / `OrganizationIsotype` / `ContactLines` / `PrimaryColor` / `AccentColor` | Identidad de la organización que emite los informes (nombre, logo, isotipo, contacto y colores del informe) — ver [Branding](#identidad-de-la-organización-branding). Vacío en el repo |
 | `Report:TimeZone` / `DomicilioConstituido` / `DefaultTexts:*` | Zona horaria, domicilio constituido y textos por defecto del informe pericial — ver [Informe pericial](#informe-pericial-configuración). Domicilio vacío en el repo |
 
 **`client/.env.local`**
@@ -252,6 +252,9 @@ el informe y en la web (login, menú de usuario y pie, vía
 | `Branding:OrganizationName` | texto | Nombre del emisor. Máx. 150 caracteres (se trunca con un warning). Vacío = no configurado. |
 | `Branding:OrganizationLogo` | ruta | Logo del emisor: ruta absoluta o relativa al directorio del backend (`/app` en Docker). |
 | `Branding:ContactLines` | lista de textos | Domicilio, teléfonos, correo, matrícula… Máx. 6 líneas de 150 caracteres. No se expone a la web. |
+| `Branding:OrganizationIsotype` | ruta | Isotipo (versión reducida del logo, idealmente PNG transparente): va en la banda de las páginas interiores del informe y al cierre, debajo de la firma. Mismas reglas que el logo. Vacío = sin isotipo (la banda muestra el nombre en texto). No se expone a la web. |
+| `Branding:PrimaryColor` | `#RRGGBB` | Color primario del informe (franja de la portada, banda, títulos, líneas y encabezado de la tabla de hashes). Vacío = gris pizarra neutro `#2F3B4C`. |
+| `Branding:AccentColor` | `#RRGGBB` | Color de acento (remate de la portada y bloque de la banda; solo decoración, nunca texto). Vacío = gris claro neutro `#9AA5B1`. |
 
 **Logo:** PNG o JPEG (se valida por contenido, no por extensión; SVG no se
 acepta), de hasta **1 MiB** y entre **16 y 4096 px** por lado. Para fondo
@@ -260,6 +263,17 @@ transparente, PNG. Si es inválido, el backend loguea
 informes fallan. El logo se lee **una sola vez al arrancar**: para cambiarlo
 (o cambiar el nombre o el contacto) hay que **reiniciar el backend**. Se sirve
 desde memoria en `GET /api/config/branding/logo`.
+
+**Isotipo y colores:** el isotipo sigue las mismas reglas que el logo (si es
+inválido: `Branding: isotipo ignorado (<motivo>)` y se sigue sin él). Los
+colores aceptan `#RRGGBB` o `RRGGBB`, sin distinguir mayúsculas; un valor
+inválido loguea `Branding: PrimaryColor '<valor>' no es un color #RRGGBB; se
+usa el default` y se usa el neutro. El primario lleva texto blanco encima y se
+usa en títulos sobre blanco, así que **tiene que tener un contraste de al
+menos 4.5:1 con blanco**: si no, el backend loguea un warning con el contraste
+calculado y usa el default. El acento no se chequea. Al arrancar se loguea
+`Branding: colores primario <P> y acento <A>`. Los informes ya generados no
+cambian: los colores se aplican al generar.
 
 **Los datos reales del cliente nunca van al repo.** En el
 `appsettings.json` versionado la sección está vacía, y
@@ -282,10 +296,13 @@ Ejemplo de `appsettings.Local.json` (valores ficticios):
   "Branding": {
     "OrganizationName": "Dr. Nombre Apellido · Dra. Nombre Apellido",
     "OrganizationLogo": "branding/logo.png",
+    "OrganizationIsotype": "branding/isotipo.png",
     "ContactLines": [
       "Calle Ejemplo 123, Ciudad",
       "Cel. +54 9 000 000-0000 · +54 9 000 000-0000"
-    ]
+    ],
+    "PrimaryColor": "#203040",
+    "AccentColor": "#B0A080"
   }
 }
 ```
@@ -301,6 +318,8 @@ services:
       Branding__OrganizationLogo: "/app/branding/logo.png"
       Branding__ContactLines__0: "Calle Ejemplo 123, Ciudad"
       Branding__ContactLines__1: "Cel. +54 9 000 000-0000"
+      Branding__PrimaryColor: "#203040"
+      Branding__AccentColor: "#B0A080"
     volumes:
       - ./branding/logo.png:/app/branding/logo.png:ro
 ```
@@ -311,10 +330,15 @@ plantilla), así que ninguna plantilla la puede sacar.
 
 ### Placeholders de la plantilla del informe
 
-La plantilla (`server/src/Factum.Backend/Templates/plantilla_informe_v4.docx`)
-no se edita a mano: la genera `ops/plantilla/build_plantilla_v4.py` (ver
-[Informe pericial: configuración](#informe-pericial-configuración)). Se
-completa en el cuerpo y en los encabezados/pies:
+La plantilla (`server/src/Factum.Backend/Templates/plantilla_informe_v5.docx`)
+no se edita a mano: la genera `ops/plantilla/build_plantilla_v5.py` a partir de
+la v4 (que a su vez sale de la plantilla del usuario con
+`build_plantilla_v4.py`; ver `ops/plantilla/README.md`). La v5 tiene dos
+secciones: la **portada** (título, causa, carátula, perito y fecha; abajo el
+logo, el nombre y el contacto del estudio; a la derecha la franja del color
+primario) y el **interior** (banda del color primario arriba con el título, la
+causa y el isotipo o el nombre; "Página N de M" al pie, contando la portada).
+Se completa en el cuerpo y en los encabezados/pies:
 
 | Placeholder | Reemplazo |
 |---|---|
@@ -330,7 +354,16 @@ completa en el cuerpo y en los encabezados/pies:
 | `{ORGANIZACION}` | `Branding:OrganizationName` (vacío si no hay). |
 | `{CONTACTO}` | `Branding:ContactLines`, una por línea (mismo formato del run) |
 | `{CONTACTO_EN_LINEA}` | `Branding:ContactLines` unidas con " · " |
-| `{LOGO_ORGANIZACION}` / `{LOGO_ORGANIZACION:4x1.2}` | Logo de la organización (párrafo completo), ajustado sin recortar a una caja de 5 × 1.5 cm o del tamaño indicado en cm. Sin logo, el párrafo queda vacío. |
+| `{LOGO_ORGANIZACION}` / `{LOGO_ORGANIZACION:4x1.2}` | Logo de la organización (párrafo completo), ajustado sin recortar a una caja de 5 × 1.5 cm o del tamaño indicado en cm. Sin logo, el párrafo queda vacío. En la v5 va en el pie de la portada, en 7 × 3.8 cm. |
+| `{ISOTIPO_ORGANIZACION}` / `{ISOTIPO_ORGANIZACION:2.4x1.6}` | Isotipo (párrafo completo), ajustado sin recortar a una caja de 2 × 2 cm o del tamaño indicado. En la v5 va en la banda (2.4 × 1.6) y al cierre (2 × 2). |
+| `{#MEMBRETE}` … `{/MEMBRETE}` | Bloque de identidad del estudio (logo, nombre, contacto). En la v5 está en el pie de la portada; desaparece entero si no hay nombre, logo ni contacto. |
+| `{#ISOTIPO}` … `{/ISOTIPO}` | Bloque que solo queda si hay `Branding:OrganizationIsotype` válido. |
+| `{#NOMBRE_EN_BANDA}` … `{/NOMBRE_EN_BANDA}` | El nombre de la organización en la banda: solo queda si **no** hay isotipo y sí hay nombre. |
+
+Los colores de la plantilla v5 (`2F3B4C` primario y `9AA5B1` acento, los mismos
+defaults neutros) funcionan como centinelas: al generar, el backend los
+reemplaza por `Branding:PrimaryColor` y `Branding:AccentColor` en el cuerpo,
+los encabezados, los pies, la numeración y los estilos.
 
 Un placeholder que la plantilla traiga y Factum no conozca se borra y se
 loguea un warning (`Plantilla: placeholder desconocido {x}`).
@@ -381,8 +414,8 @@ solo al dueño del caso por `GET /api/cases/{id}/zip-password`
 (`{ "password": "…" }`, `Cache-Control: no-store`; 403 para un caso ajeno, 404
 si el caso no tiene un ZIP cifrado).
 
-**Regenerar la plantilla v4** (por ejemplo, si cambia la plantilla de origen):
-ver `ops/plantilla/README.md`.
+**Regenerar las plantillas v4 y v5** (por ejemplo, si cambia la plantilla de
+origen o el diseño): ver `ops/plantilla/README.md`.
 
 ## Integración de soporte (Faro)
 

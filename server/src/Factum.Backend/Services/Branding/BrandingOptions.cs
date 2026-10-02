@@ -16,4 +16,17 @@ public sealed class BrandingOptions
 
     /// <summary>Líneas libres de contacto (domicilio, teléfonos, correo, matrícula…).</summary>
     public List<string> ContactLines { get; set; } = [];
+
+    /// <summary>
+    /// Isotipo (versión reducida del logo, idealmente PNG transparente): va en la banda de las
+    /// páginas interiores y al cierre del informe. Mismas reglas que <see cref="OrganizationLogo"/>.
+    /// Vacío = sin isotipo (la banda muestra el nombre de la organización).
+    /// </summary>
+    public string OrganizationIsotype { get; set; } = "";
+
+    /// <summary>Color primario del informe, <c>#RRGGBB</c>. Vacío = gris pizarra neutro.</summary>
+    public string PrimaryColor { get; set; } = "";
+
+    /// <summary>Color de acento del informe, <c>#RRGGBB</c>. Vacío = gris claro neutro.</summary>
+    public string AccentColor { get; set; } = "";
 }
