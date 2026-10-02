@@ -5,7 +5,7 @@ namespace Factum.Backend.Services.Auth;
 
 public sealed class DevAuthProvider : IAuthProvider
 {
-    public string Mode => "dev";
+    public string Mode => AuthModes.Dev;
 
     public Task<Result<User>> AuthenticateAsync(string dni, string username, string password,
         CancellationToken ct = default)
@@ -25,7 +25,7 @@ public sealed class DevAuthProvider : IAuthProvider
         return Task.FromResult(Result.Ok(user));
     }
 
-    // Convención de prueba compartida con Faro: username = "nombre.apellido".
+    // Convención de prueba: username = "nombre.apellido".
     private static string FormatName(string username)
     {
         var partes = username.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

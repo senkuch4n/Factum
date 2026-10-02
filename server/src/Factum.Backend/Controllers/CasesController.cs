@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Factum.Backend.Controllers;
 
+// Errores: { error } y, en validación de obligatorios, { error, missing } (claves de la SDD
+// §6.4). El código HTTP sale del ErrorKind del Result (ResultHttpExtensions), no del texto.
 [ApiController]
 [Route("api/cases")]
 [Authorize]
@@ -28,10 +30,9 @@ public sealed class CasesController(ICaseService caseService) : ControllerBase
     public async Task<IActionResult> Get(string id, CancellationToken ct)
     {
         var result = await caseService.GetAsync(id, Officer.Dni, ct);
-        return result.Match<IActionResult>(
-            onSuccess: t => Ok(new { cas = t.Case, files = t.Files }),
-            onFailure: err => err.Contains("no encontrado") ? NotFound(new { error = err })
-                : Forbid());
+        return result.IsSuccess
+            ? Ok(new { cas = result.Value.Case, files = result.Value.Files })
+            : this.ErrorResult(result);
     }
 
     [HttpPost]
@@ -39,8 +40,51 @@ public sealed class CasesController(ICaseService caseService) : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Create([FromBody] CreateCaseRequest request, CancellationToken ct)
     {
-        var cas = await caseService.CreateAsync(request, Officer, ct);
-        return CreatedAtAction(nameof(Get), new { id = cas.Id }, cas);
+        var result = await caseService.CreateAsync(request, Officer, ct);
+        return result.IsSuccess
+            ? CreatedAtAction(nameof(Get), new { id = result.Value!.Id }, result.Value)
+            : this.ErrorResult(result);
+    }
+
+    [HttpPut("{id}")]
+    [ProducesResponseType<Case>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Update(string id, [FromBody] UpdateCaseRequest request,
+        CancellationToken ct)
+    {
+        var result = await caseService.UpdateAsync(id, request, Officer, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    [HttpGet("{id}/report-texts/defaults")]
+    [ProducesResponseType<ReportTextsDto>(StatusCodes.Status200OK)]
+    public async Task<IActionResult> ReportTextDefaults(string id, CancellationToken ct)
+    {
+        var result = await caseService.GetReportTextDefaultsAsync(id, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    [HttpPut("{id}/report-texts")]
+    [ProducesResponseType<ReportTexts>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SaveReportTexts(string id, [FromBody] ReportTextsDto request,
+        CancellationToken ct)
+    {
+        var result = await caseService.SaveReportTextsAsync(id, request, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    [HttpPut("{id}/capture-roles")]
+    [ProducesResponseType<CaptureRolesResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SaveCaptureRoles(string id, [FromBody] CaptureRolesRequest request,
+        CancellationToken ct)
+    {
+        var result = await caseService.UpsertCaptureRolesAsync(id, request, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(new CaptureRolesResponse(result.Value!)) : this.ErrorResult(result);
     }
 
     [HttpPost("{id}/files")]
@@ -52,10 +96,7 @@ public sealed class CasesController(ICaseService caseService) : ControllerBase
     {
         var name = filename ?? $"file_{DateTime.UtcNow:yyyyMMdd_HHmmss}";
         var result = await caseService.UploadFileAsync(id, Officer.Dni, name, sourcePath, Request.Body, ct);
-        return result.Match<IActionResult>(
-            onSuccess: Ok,
-            onFailure: err => err.Contains("no encontrado") ? NotFound(new { error = err })
-                : Forbid());
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
     }
 
     [HttpGet("{id}/files")]
@@ -63,10 +104,7 @@ public sealed class CasesController(ICaseService caseService) : ControllerBase
     public async Task<IActionResult> ListFiles(string id, CancellationToken ct)
     {
         var result = await caseService.ListFilesAsync(id, Officer.Dni, ct);
-        return result.Match<IActionResult>(
-            onSuccess: files => Ok(new { files }),
-            onFailure: err => err.Contains("no encontrado") ? NotFound(new { error = err })
-                : Forbid());
+        return result.IsSuccess ? Ok(new { files = result.Value }) : this.ErrorResult(result);
     }
 
     [HttpPost("{id}/generate")]
@@ -76,14 +114,50 @@ public sealed class CasesController(ICaseService caseService) : ControllerBase
     public async Task<IActionResult> Generate(string id, CancellationToken ct)
     {
         var result = await caseService.GenerateAsync(id, Officer.Dni, ct);
-        return result.Match<IActionResult>(
-            onSuccess: Ok,
-            onFailure: err =>
-            {
-                if (err.Contains("no encontrado")) return NotFound(new { error = err });
-                if (err.Contains("denegado")) return Forbid();
-                return BadRequest(new { error = err });
-            });
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    // La contraseña sale solo de acá (y una vez en generate). No se cachea en ningún lado.
+    [HttpGet("{id}/zip-password")]
+    [ProducesResponseType<ZipPasswordResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ZipPassword(string id, CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store";
+        var result = await caseService.GetZipPasswordAsync(id, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    // editor-imagenes-informe §4.4: capturas insertables en las secciones del informe.
+    [HttpGet("{id}/report-images")]
+    [ProducesResponseType<ReportImagesResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ReportImages(string id, CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store";
+        var result = await caseService.ListReportImagesAsync(id, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(new ReportImagesResponse(result.Value!)) : this.ErrorResult(result);
+    }
+
+    // editor-imagenes-informe §4.5: vista previa de una captura disponible, por streaming, con el
+    // tipo detectado por contenido. Solo lectura, sin auditoría.
+    [HttpGet("{id}/files/{filename}/preview")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ReportImagePreview(string id, string filename, CancellationToken ct)
+    {
+        var result = await caseService.GetReportImagePreviewAsync(id, filename, Officer.Dni, ct);
+        if (!result.IsSuccess) return this.ErrorResult(result);
+        Response.Headers.CacheControl = "private, no-store";
+        Response.Headers.XContentTypeOptions = "nosniff";
+        Response.Headers.ContentSecurityPolicy = "default-src 'none'; sandbox";
+        Response.Headers.ContentDisposition = "inline";
+        // FileStreamResult: streaming y cierra el stream al terminar. Sin fileDownloadName (sería attachment).
+        return File(result.Value.Content, result.Value.ContentType);
     }
 
     [HttpGet("{id}/download/{filename}")]
@@ -92,9 +166,8 @@ public sealed class CasesController(ICaseService caseService) : ControllerBase
     public async Task<IActionResult> Download(string id, string filename, CancellationToken ct)
     {
         var result = await caseService.DownloadAsync(id, filename, Officer.Dni, ct);
-        return result.Match<IActionResult>(
-            onSuccess: t => PhysicalFile(t.Path, t.ContentType, t.FileName),
-            onFailure: err => err.Contains("no encontrado") ? NotFound(new { error = err })
-                : Forbid());
+        if (!result.IsSuccess) return this.ErrorResult(result);
+        var (path, contentType, fileName) = result.Value;
+        return PhysicalFile(path, contentType, fileName);
     }
 }

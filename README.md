@@ -1,17 +1,19 @@
 # Factum
 
-Sistema de adquisición forense de evidencia digital para dispositivos móviles,
-desarrollado para el **Gabinete Forense Digital (GFD)** del **Ministerio
-Público Fiscal**. Permite a un fiscal/oficial crear un expediente, conectar un
-celular (Android o iOS) por USB, capturar evidencia (fotos, video de pantalla,
-capturas) y generar un informe forense en PDF + un paquete ZIP cifrado con
-firma/hash, todo sin que la evidencia original salga del dispositivo del
-usuario hacia un servidor de terceros.
+Sistema de adquisición forense de evidencia digital para dispositivos móviles.
+Permite a un perito u operador crear un expediente, conectar un celular
+(Android o iOS) por USB, capturar evidencia (fotos, video de pantalla,
+capturas) y generar un informe forense (DOCX) + un paquete ZIP cifrado (AES-256) con
+hash, todo sin que la evidencia original salga del dispositivo del usuario
+hacia un servidor de terceros. El informe sale con la identidad de la
+organización que lo emite (ver
+[Identidad de la organización (Branding)](#identidad-de-la-organización-branding)).
 
-También integra con **[Faro](https://gitlab.com/joelserrudo/faro-sistema-de-tokens)**,
-el sistema de mesa de ayuda del GFD: un oficial puede reportar un problema
-técnico de Factum y hacerle seguimiento sin salir de la app, y comparte la
-misma identidad de usuario (DNI) que Faro — ver [Integración con Faro](#integración-con-faro).
+Como **integración opcional de soporte** (apagada por defecto) se puede
+conectar con **[Faro](https://gitlab.com/joelserrudo/faro-sistema-de-tokens)**,
+una mesa de ayuda (sistema de tokens): el usuario reporta un problema técnico
+de Factum y le hace seguimiento sin salir de la app, con la misma identidad
+(DNI) — ver [Integración de soporte (Faro)](#integración-de-soporte-faro).
 
 ## Arquitectura
 
@@ -26,9 +28,9 @@ El proyecto tiene 4 partes que corren por separado:
         │ WebSocket + HTTP (localhost:8765)      │ HTTP + X-Service-Key
         ▼                                        ▼
 ┌─────────────────┐                    ┌──────────────────────┐
-│  server/.../Agent │  (proceso local) │  Faro (sistema de     │
+│  server/.../Agent │  (proceso local) │  Faro (soporte,       │
 │  "Tatana"          │ ◀── ADB/USB ──  │  gestión de tokens)   │
-│  habla con el      │     dispositivo │  ver repo hermano     │
+│  habla con el      │     dispositivo │  opcional)            │
 │  celular por USB   │                 └──────────────────────┘
 └─────────────────┘
         ▲
@@ -42,10 +44,12 @@ El proyecto tiene 4 partes que corren por separado:
 - **`client/`** — Frontend web en Next.js 16 (App Router) + React 19 +
   Tailwind. Login, dashboard, wizard de inspección (guía USB → conectar
   dispositivo → datos del expediente → captura → generar informe → resultado),
-  historial de casos, y el modal de soporte GFD (Faro).
+  historial de casos, y el modal de soporte (solo si la integración
+  opcional de soporte está habilitada).
 - **`server/src/Factum.Backend`** — API en ASP.NET Core (.NET 10) +
   MongoDB. Autenticación JWT, gestión de casos/expedientes, generación de
-  informes (PDF + ZIP cifrado), y el cliente HTTP que habla con Faro.
+  informes (DOCX + ZIP cifrado AES-256), y el cliente HTTP de la integración
+  opcional de soporte (Faro).
 - **`server/src/Factum.Agent`** ("Tatana") — Un segundo servicio ASP.NET
   Core que **corre en la PC del oficial**, no en el servidor. Se comunica con
   el celular conectado por USB (Android vía ADB, iOS vía `pymobiledevice3`) y
@@ -67,7 +71,7 @@ El proyecto tiene 4 partes que corren por separado:
 | Agente local | ASP.NET Core (.NET 10), WebSockets, ADB / pymobiledevice3 |
 | UI del agente | Electron + Vite |
 | Base de datos | MongoDB 7 |
-| Auth | JWT (access token corto) — modos `dev` (mock) y `mpf` (real, HTTP al Ministerio) |
+| Auth | JWT (access token corto) — modos `dev` (mock) y `external` (proveedor HTTP externo genérico) |
 
 ## Requisitos previos
 
@@ -168,15 +172,21 @@ npm run package   # empaqueta la app instalable
 |---|---|
 | `MongoDb:ConnectionString` / `DatabaseName` | Conexión a Mongo |
 | `Jwt:Secret` / `ExpiryHours` | Firma y expiración del token de sesión |
-| `Auth:Mode` | `dev` (identidad simulada) o `mpf` (login real contra el Ministerio) |
-| `Auth:MpfBaseUrl` / `MpfLoginPath` / `MpfTimeoutSeconds` | Solo si `Auth:Mode=mpf` |
-| `FaroIntegration:BaseUrl` | URL del backend de Faro (`http://localhost:5038` en local) |
-| `FaroIntegration:ServiceKey` | Clave compartida servicio-a-servicio con Faro (debe coincidir con `Integrations:ServiceKey` de Faro) |
-| `FaroIntegration:FrontendUrl` | URL del frontend de Faro, para armar el link de SSO (`http://localhost:3001` en local) |
+| `Auth:Mode` | `dev` (identidad simulada, default) o `external` (login real contra un proveedor HTTP externo). Sin distinguir mayúsculas; cualquier otro valor impide arrancar |
+| `Auth:External:BaseUrl` / `LoginPath` / `TimeoutSeconds` | Solo si `Auth:Mode=external`. Se hace `POST {BaseUrl}{LoginPath}` (default `/auth/login`); timeout entre 1 y 120 s (default 10) |
+| `Auth:External:Request:DniField` / `UserField` / `PasswordField` | Nombres de los campos del body JSON que se manda al proveedor (default `dni` / `user` / `password`). Tienen que ser distintos |
+| `Auth:External:Response:NameField` / `SiglaField` | Campos que se leen de la respuesta (default `name` / `sigla`). Admiten rutas con puntos (`data.user.fullName`). `SiglaField` vacío = no se lee sigla |
+| `Integrations:Support:Enabled` | `true` activa la integración opcional de soporte (Faro). Default `false` |
+| `Integrations:Support:BaseUrl` | URL del backend de Faro (`http://localhost:5038` en local). Obligatoria si está habilitada |
+| `Integrations:Support:ServiceKey` | Clave compartida servicio-a-servicio con Faro (debe coincidir con `Integrations:ServiceKey` de Faro). Obligatoria si está habilitada. **No va en el repo**: `appsettings.Local.json` o variable de entorno |
+| `Integrations:Support:TimeoutSeconds` | Timeout de las llamadas a Faro, entre 1 y 120 s (default 10) |
+| `Integrations:Support:FrontendUrl` | URL del frontend de Faro, para armar el link de SSO (`http://localhost:3001` en local). Obligatoria si está habilitada |
 | `Storage:DataDirectory` | Carpeta local donde se guardan los ZIP/PDF generados (dev) |
 | `Audit:AdminDnis` | DNIs habilitados a leer `GET /api/agent-events` (auditoría de uso del agente) |
 | `TatanaUpdates:ProjectId` / `ProjectRawBaseUrl` / `PrivateToken` | Proyecto de GitLab del que se espeja la última release de Tatana |
 | `TatanaUpdates:PublicBaseUrl` | URL pública de este backend — a la que apuntan el instalador Electron y el `.bat` portátil para actualizarse |
+| `Branding:OrganizationName` / `OrganizationLogo` / `OrganizationIsotype` / `ContactLines` / `PrimaryColor` / `AccentColor` | Identidad de la organización que emite los informes (nombre, logo, isotipo, contacto y colores del informe) — ver [Branding](#identidad-de-la-organización-branding). Vacío en el repo |
+| `Report:TimeZone` / `DomicilioConstituido` / `DefaultTexts:*` | Zona horaria, domicilio constituido y textos por defecto del informe pericial — ver [Informe pericial](#informe-pericial-configuración). Domicilio vacío en el repo |
 
 **`client/.env.local`**
 
@@ -193,39 +203,274 @@ npm run package   # empaqueta la app instalable
 | `Agent:Mock` | `true` simula dispositivos sin USB real — útil para desarrollar sin celular a mano |
 | `Agent:DataDirectory` | Carpeta temporal de capturas antes de subirlas al backend |
 
-> Los secretos que están commiteados (`Jwt:Secret`, `FaroIntegration:ServiceKey`)
-> son valores de desarrollo, pensados para correr todo en local. Rotalos antes
-> de cualquier despliegue real.
+> `Jwt:Secret` sigue commiteado con un valor de desarrollo, pensado para correr
+> todo en local: rotalo antes de cualquier despliegue real. La `ServiceKey` de
+> soporte **ya no está en el repo**: va en `appsettings.Local.json` (ignorado por
+> git) o en la variable de entorno `Integrations__Support__ServiceKey`. La clave
+> que quedó expuesta en el historial de git hay que rotarla (en Faro y en tu
+> config local).
 
 ## Autenticación
 
-El login pide **DNI + usuario + contraseña** — es la misma identidad de MPF
-que usa Faro, no un usuario propio de Factum.
+El login pide **DNI + usuario + contraseña**. El DNI identifica al usuario
+(si la integración de soporte está activa, es la misma identidad que usa Faro).
 
 - **Modo `dev`** (default): cualquier DNI de 7-8 dígitos y cualquier
   contraseña no vacía autentican. El nombre se arma a partir del usuario con
   la convención `nombre.apellido` (ej: usuario `carlos.mendoza` → "Carlos
   Mendoza"). No hace falta pre-registrar a nadie: el usuario se crea la
   primera vez que loguea.
-- **Modo `mpf`**: valida contra el endpoint real del Ministerio
-  (`Auth:MpfBaseUrl` + `Auth:MpfLoginPath`).
+  Si el backend corre con `Auth:Mode=dev` fuera de `Development`, avisa en el
+  log de arranque que acepta cualquier contraseña.
+- **Modo `external`**: valida contra un proveedor HTTP externo genérico
+  (`POST {Auth:External:BaseUrl}{Auth:External:LoginPath}`). Los nombres de los
+  campos del request y de la respuesta se configuran en
+  `Auth:External:Request:*` / `Auth:External:Response:*` (la respuesta admite
+  rutas con puntos). Un 401/403 del proveedor es "Credenciales inválidas"; un
+  proveedor caído, lento o con 5xx da "No se pudo conectar al servicio de
+  autenticación…", y cualquier otra respuesta rara, "El servicio de
+  autenticación respondió de forma inesperada." El detalle técnico va al log,
+  nunca a la pantalla.
 
-## Integración con Faro
+Si `Auth:Mode` (o la config de `external`) es inválida, **el backend no
+arranca** y dice por qué, en vez de caer en `dev` sin avisar. El log de
+arranque muestra el modo y, en `external`, la URL de login efectiva.
 
-Factum y Faro comparten la misma identidad de usuario (DNI). Desde el
-dashboard de Factum, un oficial puede:
+> Compatibilidad: `Auth:Mode=mpf` y `Auth:MpfBaseUrl`/`MpfLoginPath`/`MpfTimeoutSeconds`
+> se aceptan como legado, con un warning al arrancar.
+
+## Identidad de la organización (Branding)
+
+Factum es un producto: el **emisor** del informe es la organización cliente
+(un estudio, un gabinete, un perito). Su nombre, su logo y sus datos de
+contacto se configuran en el backend, en la sección `Branding`, y se usan en
+el informe y en la web (login, menú de usuario y pie, vía
+`GET /api/config/public`).
+
+| Clave | Tipo | Qué es |
+|---|---|---|
+| `Branding:OrganizationName` | texto | Nombre del emisor. Máx. 150 caracteres (se trunca con un warning). Vacío = no configurado. |
+| `Branding:OrganizationLogo` | ruta | Logo del emisor: ruta absoluta o relativa al directorio del backend (`/app` en Docker). |
+| `Branding:ContactLines` | lista de textos | Domicilio, teléfonos, correo, matrícula… Máx. 6 líneas de 150 caracteres. No se expone a la web. |
+| `Branding:OrganizationIsotype` | ruta | Isotipo (versión reducida del logo, idealmente PNG transparente): va solo al cierre del informe, debajo de la firma. Mismas reglas que el logo. Vacío = sin isotipo. No se expone a la web. |
+| `Branding:PrimaryColor` | `#RRGGBB` | Color primario del informe (filetes de la portada, de los títulos y del cierre, números de sección y línea bajo el encabezado de la tabla de hashes). Vacío = verde de Factum `#2F6F12`. |
+| `Branding:AccentColor` | `#RRGGBB` | Color de acento: el tinte de fondo de la fila del contenedor ZIP en la tabla de hashes (lleva texto en tinta encima). Vacío = tinte de Factum `#E8F3DF`. |
+
+**Logo:** PNG o JPEG (se valida por contenido, no por extensión; SVG no se
+acepta), de hasta **1 MiB** y entre **16 y 4096 px** por lado. Para fondo
+transparente, PNG. Si es inválido, el backend loguea
+`Branding: logo ignorado (<motivo>)` y sigue sin logo: ni el arranque ni los
+informes fallan. El logo se lee **una sola vez al arrancar**: para cambiarlo
+(o cambiar el nombre o el contacto) hay que **reiniciar el backend**. Se sirve
+desde memoria en `GET /api/config/branding/logo`.
+
+**Isotipo y colores:** el isotipo sigue las mismas reglas que el logo (si es
+inválido: `Branding: isotipo ignorado (<motivo>)` y se sigue sin él). Los
+colores aceptan `#RRGGBB` o `RRGGBB`, sin distinguir mayúsculas; un valor
+inválido loguea `Branding: PrimaryColor '<valor>' no es un color #RRGGBB; se
+usa el default` y se usa el de Factum. El primario va sobre blanco (filetes y
+números), así que **tiene que tener un contraste de al menos 4.5:1 con
+blanco**: si no, el backend loguea un warning con el contraste calculado y usa
+el default. El acento es fondo de texto, así que **tiene que tener un
+contraste de al menos 4.5:1 con la tinta** (`#0E1013`): si no, se loguea
+`Branding: AccentColor <hex> tiene contraste <x.x>:1 con la tinta (mínimo
+4.5:1); se usa el default` y se usa el tinte de Factum. Los defaults son la
+paleta de Factum (la marca del producto); los colores de un estudio son
+configuración local. Al arrancar se loguea
+`Branding: colores primario <P> y acento <A>`. Los informes ya generados no
+cambian: los colores se aplican al generar.
+
+**Los datos reales del cliente nunca van al repo.** En el
+`appsettings.json` versionado la sección está vacía, y
+`appsettings.Development.json` también está versionado, así que no sirve para
+esto:
+
+- **Desarrollo local:** `server/src/Factum.Backend/appsettings.Local.json`
+  (ignorado por git, se carga después de `appsettings.{Environment}.json` y
+  antes de las variables de entorno) y el logo en
+  `server/src/Factum.Backend/branding/` (también ignorada). Ninguno de los dos
+  se copia a `bin/`, a `publish/` ni a la imagen Docker.
+- **Docker / producción:** variables de entorno, o el mismo
+  `appsettings.Local.json` montado como volumen de solo lectura en
+  `/app/appsettings.Local.json`. El logo, también como volumen de solo lectura.
+
+Ejemplo de `appsettings.Local.json` (valores ficticios):
+
+```json
+{
+  "Branding": {
+    "OrganizationName": "Dr. Nombre Apellido · Dra. Nombre Apellido",
+    "OrganizationLogo": "branding/logo.png",
+    "OrganizationIsotype": "branding/isotipo.png",
+    "ContactLines": [
+      "Calle Ejemplo 123, Ciudad",
+      "Cel. +54 9 000 000-0000 · +54 9 000 000-0000"
+    ],
+    "PrimaryColor": "#203040",
+    "AccentColor": "#B0A080"
+  }
+}
+```
+
+Lo mismo con variables de entorno, en el servicio `backend` de un
+`docker-compose.override.yml` (valores ficticios):
+
+```yaml
+services:
+  backend:
+    environment:
+      Branding__OrganizationName: "Estudio Jurídico Ejemplo"
+      Branding__OrganizationLogo: "/app/branding/logo.png"
+      Branding__ContactLines__0: "Calle Ejemplo 123, Ciudad"
+      Branding__ContactLines__1: "Cel. +54 9 000 000-0000"
+      Branding__PrimaryColor: "#203040"
+      Branding__AccentColor: "#B0A080"
+    volumes:
+      - ./branding/logo.png:/app/branding/logo.png:ro
+```
+
+**Atribución fija:** todo informe lleva en el pie de cada página el Sello de
+Factum y la leyenda **"Realizado con Factum"**. La inyecta el código (no la
+plantilla), así que ninguna plantilla la puede sacar.
+
+### Placeholders de la plantilla del informe
+
+La plantilla (`server/src/Factum.Backend/Templates/plantilla_informe_v6.docx`)
+no se edita a mano: la genera `ops/plantilla/build_plantilla_v6.py` a partir de
+la v4 (que a su vez sale de la plantilla del usuario con
+`build_plantilla_v4.py`; ver `ops/plantilla/README.md`). La v6 (diseño
+"Filete", sin formas flotantes) tiene dos secciones: la **portada** (filete
+verde, título grande, subtítulo y una ficha con causa, carátula, perito y
+fecha; abajo el logo, el nombre y el contacto del estudio) y el **interior**
+(encabezado de texto chico con la causa y el nombre del estudio sobre una línea
+fina; cada sección con su número romano arriba del título y un filete debajo;
+pie con "Realizado con Factum" y "Página N de M" en la misma línea, contando la
+portada). Se completa en el cuerpo y en los encabezados/pies:
+
+| Placeholder | Reemplazo |
+|---|---|
+| `{nombreTribunal}`, `{organismoTribunal}`, `{tipoCausa}`, `{numeroCausa}`, `{caratula}`, `{parteDenunciante}`, `{parteDenunciada}`, `{objetoCausa}`, `{ambitoCausa}`, `{fechaIntervencion}` | Datos de la causa (los opcionales vacíos salen como "No informado") |
+| `{tramiteAnte}`, `{fraseIntegracion}`, `{fraseDomicilio}`, `{datosProponente}`, `{elSuscripto}` | Frases armadas en código, para que un dato opcional vacío no deje una frase rota |
+| `{nombrePerito}`, `{matriculaPerito}`, `{profesionPerito}`, `{caracterPerito}` | La copia del perfil del perito guardada en el caso |
+| `{fechaInspeccion}`, `{horaInspeccion}` | Creación del caso, en la zona `Report:TimeZone` |
+| `{tipoDispositivo}`, `{marcaModeloDispositivo}`, `{imeiDispositivo}`, `{lineaDispositivo}`, `{titularDispositivo}` | Datos del equipo |
+| `{objetoInforme}`, `{descripcion…}` | Textos del paso Informe, un párrafo por línea (párrafo completo) |
+| `{nombreArchivo}` / `{hashArchivo}` | Fila modelo de la tabla de hashes: una fila por archivo más la del ZIP |
+| `{capturasImeiModelo}`, `{capturasNombreDispositivo}`, `{anexoCapturas}` | Capturas marcadas por rol y anexo con las capturas sin marca (párrafo completo) |
+| `{#clave}` … `{/clave}` | Bloque condicional (párrafos propios): desaparece si el dato está vacío |
+| `{ORGANIZACION}` | `Branding:OrganizationName` (vacío si no hay). |
+| `{CONTACTO}` | `Branding:ContactLines`, una por línea (mismo formato del run) |
+| `{CONTACTO_EN_LINEA}` | `Branding:ContactLines` unidas con " · " |
+| `{LOGO_ORGANIZACION}` / `{LOGO_ORGANIZACION:4.5x2.5}` | Logo de la organización (párrafo completo), ajustado sin recortar a una caja de 5 × 1.5 cm o del tamaño indicado en cm. Sin logo, el párrafo queda vacío. En la v6 va en el pie de la portada, en 4.5 × 2.5 cm. |
+| `{ISOTIPO_ORGANIZACION}` / `{ISOTIPO_ORGANIZACION:2x2}` | Isotipo (párrafo completo), ajustado sin recortar a una caja de 2 × 2 cm o del tamaño indicado. En la v6 va solo al cierre (2 × 2). |
+| `{ATRIBUCION_FACTUM}` | Slot (run propio) donde el backend pone el sello y "Realizado con Factum" (B-R8). En la v6 está en el pie interior, a la izquierda de "Página N de M". Si una plantilla no lo trae, la atribución va en un párrafo centrado al final de cada pie. |
+| `{#MEMBRETE}` … `{/MEMBRETE}` | Bloque de identidad del estudio (logo, nombre, contacto). En la v6 está en el pie de la portada; desaparece entero si no hay nombre, logo ni contacto. |
+| `{#MEMBRETE_CON_LOGO}` … `{/MEMBRETE_CON_LOGO}` | Dentro de `MEMBRETE`: queda solo si hay logo (en la v6, tabla logo \| nombre y contacto). |
+| `{#MEMBRETE_SIN_LOGO}` … `{/MEMBRETE_SIN_LOGO}` | Dentro de `MEMBRETE`: queda solo si **no** hay logo (nombre y contacto en texto, sin una celda vacía). |
+| `{#ISOTIPO}` … `{/ISOTIPO}` | Bloque que solo queda si hay `Branding:OrganizationIsotype` válido. |
+
+El verde de la plantilla v6 (`2F6F12`, el default del primario) funciona como
+centinela: al generar, el backend lo reemplaza por `Branding:PrimaryColor` en
+el cuerpo, los encabezados, los pies, la numeración y los estilos. El tinte
+(`Branding:AccentColor`) no está en la plantilla: el backend lo aplica como
+fondo de la fila del contenedor ZIP al llenar la tabla de hashes.
+
+Un placeholder que la plantilla traiga y Factum no conozca se borra y se
+loguea un warning (`Plantilla: placeholder desconocido {x}`).
+
+## Informe pericial: configuración
+
+El informe es el **Informe Pericial Técnico Informático** del perito de parte.
+Los datos del perito salen del perfil de cada usuario ("Mi perfil de perito",
+colección `expert_profiles`) y se copian al caso al crearlo o editarlo. Lo que
+es propio del estudio va en la sección `Report` del backend:
+
+| Clave | Qué es |
+|---|---|
+| `Report:TimeZone` | Zona IANA de la fecha y hora de la inspección (default `America/Argentina/Buenos_Aires`). Si no existe en el sistema, se loguea un warning y se usa UTC-03:00 fijo. |
+| `Report:DomicilioConstituido` | Domicilio constituido del perito, para la presentación ("…, con domicilio constituido en …"). Máx. 300 caracteres. Vacío = la frase se omite. |
+| `Report:DefaultTexts:OperacionesRealizadas` / `AseguramientoEvidencia` / `NotasTecnicas` / `Reserva` | Textos por defecto propios del estudio para el paso Informe. Vacío = el texto neutro versionado en `Services/Reports/ReportDefaultTexts.cs`. Admiten los tokens `{fechaInspeccion}`, `{horaInspeccion}`, `{tipoDispositivo}`, `{marcaModeloDispositivo}`, `{imeiDispositivo}`, `{sistemaOperativo}`, `{zonaHoraria}`, `{elSuscripto}` y `{cantidadCapturas}`/`{cantidadGrabaciones}`/`{cantidadArchivosExtraidos}`/`{cantidadOtros}`. El texto se interpreta como **Markdown línea por línea**: cada línea es un párrafo (una línea vacía en el medio deja un párrafo vacío); `- ` al principio es viñeta y `1. ` numerada; adentro de la línea valen `**negrita**`, `*cursiva*` y `<u>subrayado</u>`. Sin HTML (salvo `<u>`), sin imágenes y solo enlaces `http`, `https` o `mailto`: un texto configurado con algo de eso se descarta con un warning al arrancar y se usa el texto versionado. Los valores de los tokens se escapan (un `_` del dato no se vuelve cursiva). |
+| `Report:EncryptZip` | Cifra el ZIP de evidencia con AES-256 (formato WinZip AE-2) y una contraseña aleatoria por caso (default `true`; variable de entorno `Report__EncryptZip`). Con `false` el ZIP sale sin cifrar y sin contraseña, el backend loguea un warning al arrancar y `GET /api/config/public` devuelve `encrypt_zip: false` para que el wizard no prometa cifrado. El texto por defecto de aseguramiento de la evidencia cambia según este valor; si se define `Report:DefaultTexts:AseguramientoEvidencia`, ese texto **gana en los dos modos** y el estudio es responsable de que hable (o no) del cifrado. |
+
+Como con `Branding`, **el domicilio real no va al repo**: va en
+`appsettings.Local.json` (ignorado por git) o en `Report__DomicilioConstituido`.
+La config se lee una sola vez al arrancar. Ejemplo (valores ficticios):
+
+```json
+{
+  "Report": {
+    "TimeZone": "America/Argentina/Buenos_Aires",
+    "DomicilioConstituido": "Calle Ejemplo 123, Ciudad"
+  }
+}
+```
+
+**Hashes:** el ZIP de evidencia se cierra antes de generar el informe y no se
+vuelve a escribir, así que el hash del ZIP que figura en la tabla del informe es
+el del ZIP que se descarga: el del archivo **cifrado** final, que se puede
+verificar (`shasum -a 256`) sin la contraseña. Antes de borrar los archivos
+sueltos, el backend reabre el ZIP en solo lectura con la contraseña y compara el
+SHA-256 de cada entrada con el del original; si algo no coincide, la generación
+falla, los sueltos se conservan y el caso se puede reintentar. AES-ZIP usa sal
+aleatoria por entrada, así que el mismo contenido da otro hash del ZIP en cada
+generación (no es reproducible; un caso generado no se regenera). El DOCX va
+aparte (no dentro del ZIP) y su SHA-256 se guarda en el caso (`report_hash`); el
+informe no puede contener su propio hash.
+
+**Contraseña del ZIP:** no figura en el informe ni en las respuestas del caso
+(`zip_password` no se serializa). Se devuelve una vez en
+`POST /api/cases/{id}/generate` (`password`, `null` si no se cifró) y después
+solo al dueño del caso por `GET /api/cases/{id}/zip-password`
+(`{ "password": "…" }`, `Cache-Control: no-store`; 403 para un caso ajeno, 404
+si el caso no tiene un ZIP cifrado).
+
+**Regenerar las plantillas v4 y v6** (por ejemplo, si cambia la plantilla de
+origen o el diseño): ver `ops/plantilla/README.md`.
+
+## Integración de soporte (Faro)
+
+Es **opcional y está apagada por defecto**. Apagada, el backend no llama a Faro,
+`GET /api/config/public` devuelve `support_enabled: false`, el dashboard no
+muestra el soporte y `/api/support/*` responde `404`.
+
+Encendida, Factum y Faro comparten la misma identidad de usuario (DNI). Desde el
+dashboard de Factum, un usuario puede:
 
 1. **Reportar un problema** (botón del ícono del faro) — se crea un token de
    soporte real en Faro, con el DNI, nombre, número interno y teléfono del
    oficial.
 2. **Ver el estado de sus reportes y calificarlos** sin salir de Factum.
-3. **Abrir Faro ya logueado** ("Ver todo en Faro") — usa un código de
+3. **Abrir Faro ya logueado** ("Ver todo en el portal de soporte") — usa un código de
    intercambio de un solo uso (SSO) generado por Faro, así el oficial no
    vuelve a poner su contraseña ahí.
 
-Para que esto funcione en local, el backend de Faro tiene que estar corriendo
-y `FaroIntegration:ServiceKey` tiene que ser idéntico al `Integrations:ServiceKey`
-configurado en Faro. Ver el README de Faro para levantarlo.
+Para activarla en local, con el backend de Faro corriendo (ver su README),
+agregá en `server/src/Factum.Backend/appsettings.Local.json` (ignorado por git):
+
+```json
+{
+  "Integrations": {
+    "Support": {
+      "Enabled": true,
+      "BaseUrl": "http://localhost:5038",
+      "ServiceKey": "<clave-compartida-con-faro>",
+      "FrontendUrl": "http://localhost:3001"
+    }
+  }
+}
+```
+
+`ServiceKey` tiene que ser idéntica al `Integrations:ServiceKey` configurado en
+Faro. En Docker/producción se usan las variables de entorno
+`Integrations__Support__Enabled`, `Integrations__Support__BaseUrl`,
+`Integrations__Support__ServiceKey` y `Integrations__Support__FrontendUrl`. Con
+`Enabled=true`, si falta `BaseUrl`, `ServiceKey` o `FrontendUrl` el backend no
+arranca y dice qué clave falta.
+
+Una sección vieja `FaroIntegration` **no activa** el soporte: el backend arranca
+con el soporte apagado y avisa en el log. Con `Enabled=true`, las claves que
+falten en `Integrations:Support` se toman de `FaroIntegration` (también con un
+warning); conviene renombrarlas.
 
 ## Estructura del proyecto
 
@@ -240,8 +485,10 @@ factum/
 │   ├── Factum.Backend/         # API principal (.NET)
 │   │   ├── Controllers/
 │   │   ├── Services/
-│   │   │   ├── Auth/              # Proveedores de identidad (Dev/Mpf)
-│   │   │   └── Support/           # Integración con Faro
+│   │   │   ├── Auth/              # Proveedores de identidad (Dev/External)
+│   │   │   ├── Branding/          # Identidad de la organización (nombre, logo, contacto)
+│   │   │   ├── Reports/           # Informe DOCX + ZIP
+│   │   │   └── Support/           # Integración de soporte opcional (Faro)
 │   │   └── Models/
 │   └── Factum.Agent/           # Agente local "Tatana" (.NET)
 ├── agent-ui/                      # UI de escritorio del agente (Electron)
@@ -284,4 +531,5 @@ el arranque del wizard reportan al backend quién (DNI), desde qué PC
   correr en la PC del oficial, con acceso físico al USB — por diseño no
   forman parte de `docker-compose.yml`.
 - La evidencia capturada (fotos/video) no se sube a ningún servidor externo
-  fuera de este sistema; el ZIP final queda cifrado con contraseña.
+  fuera de este sistema; el ZIP final queda cifrado con AES-256 y su
+  contraseña se entrega por separado.

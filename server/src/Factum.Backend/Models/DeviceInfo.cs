@@ -1,8 +1,13 @@
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace Factum.Backend.Models;
 
+[BsonIgnoreExtraElements]
 public sealed class DeviceInfo
 {
     public string Serial { get; set; } = string.Empty;
+    /// <summary>Nombre del dispositivo que reporta el agente (device.name). "" en casos viejos.</summary>
+    public string Name { get; set; } = string.Empty;
     public string Manufacturer { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
     public int AndroidVersion { get; set; }

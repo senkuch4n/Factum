@@ -1,7 +1,8 @@
 # Factum — instrucciones para agentes de IA
 
-Sistema de adquisición forense de evidencia digital en dispositivos móviles
-del Gabinete Forense Digital (GFD). Cualquier agente (Claude Code u otro)
+Producto comercial de adquisición forense de evidencia digital en
+dispositivos móviles. La identidad del cliente que lo usa (nombre, logo,
+contacto) es configuración, no código. Cualquier agente (Claude Code u otro)
 que trabaje en este repo debería leer esto antes de tocar código. El detalle
 funcional y de arquitectura está en `README.md`, y los casos de uso del
 agente de escritorio en `AGENTE_TATANA.md`.
@@ -11,7 +12,7 @@ agente de escritorio en `AGENTE_TATANA.md`.
 | Parte | Carpeta | Tecnología |
 |---|---|---|
 | Frontend web | `client/` | Next.js 16 (App Router) + React 19 + Tailwind + Framer Motion. **Leer `client/AGENTS.md` antes de tocar código ahí**: tiene cambios de API respecto al Next.js "de memoria" de cualquier modelo. |
-| Backend API | `server/src/Factum.Backend` | ASP.NET Core (.NET 10) + MongoDB.Driver. JWT, casos/expedientes, informes (PDF + ZIP cifrado), cliente HTTP de Faro. |
+| Backend API | `server/src/Factum.Backend` | ASP.NET Core (.NET 10) + MongoDB.Driver. JWT, casos/expedientes, informes (DOCX + ZIP cifrado AES-256), integración opcional de soporte (Faro). |
 | Agente local "Tatana" | `server/src/Factum.Agent` | ASP.NET Core (.NET 10). Corre en la PC del oficial, habla con el celular por USB (ADB / pymobiledevice3) y expone API + WebSocket en `localhost:8765`. No está en `docker-compose.yml`. |
 | UI del agente | `agent-ui/` | Electron + electron-vite + React 19. |
 | Base de datos | — | MongoDB 7 (Docker en desarrollo). |
@@ -58,7 +59,7 @@ TypeScript (`client/src/types/`) y el backend sus DTOs en C#
 
 - Si un cambio de backend agrega/renombra/saca un campo que el frontend
   manda o lee, se avisa el nombre exacto del campo (con su casing JSON real:
-  ASP.NET serializa en camelCase por defecto, verificarlo en `Program.cs`) y
+  el backend serializa en **snake_case_lower** — `JsonNamingPolicy.SnakeCaseLower` en `Program.cs`, no el camelCase por defecto de ASP.NET) y
   en qué archivo del otro lado hay que tocarlo.
 - Si un cambio de frontend necesita un campo nuevo del backend, se pide como
   tarea de backend primero.

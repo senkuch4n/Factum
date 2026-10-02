@@ -26,6 +26,14 @@ services:
       - Jwt__Secret=factum-dev-secret-change-in-production
       - Jwt__ExpiryHours=8
       - Auth__Mode=dev
+      # Login real contra un proveedor HTTP externo (ver README, "Autenticación"):
+      # - Auth__Mode=external
+      # - Auth__External__BaseUrl=https://<proveedor>
+      # Integración opcional de soporte (Faro), apagada por defecto:
+      # - Integrations__Support__Enabled=true
+      # - Integrations__Support__BaseUrl=https://<backend-de-faro>
+      # - Integrations__Support__ServiceKey=<clave>
+      # - Integrations__Support__FrontendUrl=https://<frontend-de-faro>
       - Storage__DataDirectory=/data
     volumes:
       - backend-data:/data

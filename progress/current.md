@@ -4,3 +4,112 @@ Bitácora viva del orquestador: una línea por evento (`- AAAA-MM-DD — qué pa
 Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 
 - 2026-10-01 — Arnés RDD/SDD replicado desde Evidentia-GFD en la rama `develop`. Sin HU en curso.
+- 2026-10-01 — Usuario pide rediseño comercial con PrimeReact, referencia xbox.com/es-AR. Alcance: solo client/. Estructura: HU base + una por página. Alta de 3 HU; `rediseno-base-primereact` → afinando, lanzado `afinador`.
+- 2026-10-01 — `afinador` terminó docs/hu-rediseno-base-primereact.md (11 dudas). HU → afinada_pendiente_validacion, esperando al usuario.
+- 2026-10-01 — Usuario valida D1–D11 (todas las recomendadas; contenido del footer pendiente). HU validada → en_arquitectura, lanzado `architect`.
+- 2026-10-01 — `architect` terminó Refactorizaciones/rediseno-base-primereact.md con 1 decisión pendiente (DP1: PrimeReact 11 = licencia comercial; recomienda 10.9.9 MIT unstyled + pt Tailwind). Verificado en npm: latest 11.2.0 'SEE LICENSE IN LICENSE.md', v10-stable 10.9.9. HU sigue en_arquitectura hasta respuesta del usuario.
+- 2026-10-01 — Usuario elige DP1-a (primereact 10.9.9 MIT unstyled + pt). verify.sh OK → arquitectura_lista. Rama feat/rediseno-base-primereact creada desde develop. HU → implementando, lanzado `implementer-frontend` (opus).
+- 2026-10-01 — `implementer-frontend` done -> progress/impl_frontend_rediseno-base-primereact.md. HU → en_revision, lanzado `reviewer` (sonnet).
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-base-primereact.md (tuvo que relanzarse para escribir el archivo). HU → aprobada, resumen en history.md. Pendiente: prueba manual del usuario y commit.
+- 2026-10-01 — Usuario probó /design-system y pidió commit. Commit en feat/rediseno-base-primereact. Próximo pedido: cambiar el logo.
+- 2026-10-01 — Commit 008351b de rediseno-base-primereact. Usuario pide logo nuevo (canvas de 4 propuestas publicado) y sacar MPF/GFD del producto comercial → alta HU `marca-comercial-sin-mpf-gfd` (afinando), lanzado `afinador`.
+- 2026-10-01 — Usuario elige logo A · Sello; confirma GFD. Dato pasado al `afinador` en curso.
+- 2026-10-01 — `afinador` terminó docs/hu-marca-comercial-sin-mpf-gfd.md (10 dudas, logo A incorporado). HU → afinada_pendiente_validacion.
+- 2026-10-01 — Usuario valida D1–D10 (recomendadas); Faro es suyo; sin razón social. HU partida: alta `auth-e-integraciones-sin-mpf` (no_afinada). `marca-comercial-sin-mpf-gfd` → en_arquitectura en rama feat/marca-comercial-sin-mpf-gfd (encadenada sobre feat/rediseno-base-primereact). Lanzado `architect`.
+- 2026-10-01 — Usuario: Factum se instala en un estudio jurídico; informes con identidad del estudio + leyenda 'Realizado con Factum'. D4 → C. Va a pasar un informe de referencia. Avisado al `architect` en curso.
+- 2026-10-01 — Usuario pasó datos del estudio (2 profesionales, domicilio, 2 celulares) — NO se versionan; se cargan en config local. Branding suma ContactLines (avisado al `architect`). Esperando informes de referencia.
+- 2026-10-01 — Usuario dejó 3 informes de referencia en docs/ (2 DOCX pericia de parte con datos reales de una causa + 1 PDF de Policía de Salta como referencia de layout). Excluidos de git vía .git/info/exclude (local). Detectado: el emisor real es un perito de parte, no el estudio → consulta al usuario.
+- 2026-10-01 — `architect` done -> Refactorizaciones/marca-comercial-sin-mpf-gfd.md (5 DP). Usuario: emisor = estudio jurídico; HU aparte `informe-pericial-de-parte` (alta no_afinada, absorbe DP1 plantilla v4 y DP5 terminología). Pendiente: DP2–DP4.
+- 2026-10-01 — DP2 sí / DP3 pie+logo sin versión / DP4 variante clara. O1–O3 hechos (AGENTS.md). verify OK → arquitectura_lista → implementando. Lanzados `implementer-backend` y `implementer-frontend` (opus) en paralelo.
+- 2026-10-01 — `implementer-backend` done -> progress/impl_backend_marca-comercial-sin-mpf-gfd.md; B9 (borrado de assets/plantillas viejas en Templates/) pendiente: permiso denegado al subagente → consultado al usuario. Frontend sigue.
+- 2026-10-01 — Usuario autorizó B9: orquestador hizo git rm de assets/plantillas viejas MPF/GFD (build backend 0 errores).
+- 2026-10-01 — `implementer-frontend` done -> progress/impl_frontend_marca-comercial-sin-mpf-gfd.md; pendiente factum-sello.png en server/Templates (escritura rechazada por permisos) → consultado al usuario.
+- 2026-10-01 — factum-sello.png generado (autorizado). HU → en_revision, lanzado `reviewer` (sonnet).
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_marca-comercial-sin-mpf-gfd.md. verify OK. HU → aprobada, resumen en history.md. Pendiente: prueba manual y commit.
+- 2026-10-01 — Commit 61ae0f4 (marca-comercial-sin-mpf-gfd) en feat/marca-comercial-sin-mpf-gfd. Próxima HU: `informe-pericial-de-parte`; usuario va a pasar una plantilla nueva con datos adicionales antes de afinar.
+- 2026-10-01 — Usuario dejó la plantilla 'INFORME PERICIAL TÉCNICO INFORMÁTICO - FACTUM.docx' (placeholders {…}) en docs/ (excluida de git). `informe-pericial-de-parte` → afinando, lanzado `afinador` con extracción de texto en scratchpad.
+- 2026-10-01 — `afinador` done -> docs/hu-informe-pericial-de-parte.md (16 dudas). Hallazgos: hash del ZIP informado ≠ ZIP descargado (D10); ZIP no está cifrado (fuera de alcance, a consultar). HU → afinada_pendiente_validacion.
+- 2026-10-01 — Usuario valida D1–D16 (recomendadas; es el perito). Alta `zip-cifrado-real` (no_afinada). `informe-pericial-de-parte` → en_arquitectura en rama feat/informe-pericial-de-parte (encadenada sobre feat/marca-comercial-sin-mpf-gfd). Lanzado `architect`.
+- 2026-10-01 — Usuario activa MODO AUTÓNOMO: 'realizá todas las HU que puedas de manera autónoma; si no podés con una, avanzá con otra'. Desde acá el orquestador toma las opciones recomendadas como validadas (constancia en cada HU), commitea cada HU aprobada en su rama encadenada, sin push. Adelantando afinado de auth-e-integraciones-sin-mpf y rediseno-pagina-inicio.
+- 2026-10-01 — `afinador` done -> docs/hu-rediseno-pagina-inicio.md (9 dudas) → validada (autónomo, recomendadas). Adelantando SDD con `architect` (queda en validada en backlog: una activa a la vez).
+- 2026-10-01 — `afinador` done -> docs/hu-auth-e-integraciones-sin-mpf.md (12 dudas) → validada (autónomo). Hallazgo D8: ServiceKey de Faro commiteada → avisar rotación al usuario. SDD adelantada con `architect`.
+- 2026-10-01 — `architect` done -> Refactorizaciones/rediseno-pagina-inicio.md (0 DP). Queda en validada (SDD adelantada) hasta su turno.
+- 2026-10-01 — `architect` done -> Refactorizaciones/auth-e-integraciones-sin-mpf.md; DP1 A, DP2 A (autónomo). Queda en validada hasta su turno.
+- 2026-10-01 — `architect` done -> Refactorizaciones/informe-pericial-de-parte.md; DP1/DP2 aceptadas (autónomo). verify OK → arquitectura_lista → implementando. Lanzados implementer-backend y implementer-frontend (opus) en paralelo.
+- 2026-10-01 — `implementer-frontend` done -> progress/impl_frontend_informe-pericial-de-parte.md (tsc/build OK; recorrido e2e pendiente hasta que el backend tenga los endpoints). Esperando backend.
+- 2026-10-01 — `implementer-backend` done -> progress/impl_backend_informe-pericial-de-parte.md (sin bloqueos). HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_informe-pericial-de-parte.md. verify OK. HU → aprobada, history.md. Commit en su rama. Siguiente: auth-e-integraciones-sin-mpf.
+- 2026-10-01 — Commit f3471e7 (informe-pericial-de-parte). Rama feat/auth-e-integraciones-sin-mpf creada desde ella. auth → arquitectura_lista (SDD adelantada) → implementando.
+- 2026-10-01 — `implementer-frontend` (auth) done -> progress/impl_frontend_auth-e-integraciones-sin-mpf.md (tsc/build OK; F13/F15 ya cubiertos por informe-pericial). Esperando backend.
+- 2026-10-01 — `afinador` done -> docs/hu-zip-cifrado-real.md (11 dudas) → validada (autónomo). SDD adelantada con `architect`.
+- 2026-10-01 — `implementer-backend` (auth) done -> progress/impl_backend_auth-e-integraciones-sin-mpf.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `afinador` done -> docs/hu-rediseno-dashboard.md (11 dudas) → validada (autónomo). D1 C: paraguas + 4 hijas (historial, wizard, captura, cierre-legacy) en backlog, validadas. Lanzado `architect` para historial.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_auth-e-integraciones-sin-mpf.md. verify OK. auth → aprobada, commit. rediseno-pagina-inicio → implementando en feat/rediseno-pagina-inicio.
+- 2026-10-01 — `architect` done -> Refactorizaciones/zip-cifrado-real.md; P1 A, P2 A (autónomo). Queda validada hasta su turno.
+- 2026-10-01 — `architect` done -> Refactorizaciones/rediseno-dashboard-historial.md; DP1–DP3 A (autónomo). Lanzado `architect` para rediseno-dashboard-wizard.
+- 2026-10-01 — `implementer-frontend` (login) done -> progress/impl_frontend_rediseno-pagina-inicio.md. F14 (borrado de 2 archivos sin consumidores) denegado por permisos → NO se rodea; diferido a autorización del usuario / rediseno-cierre-legacy. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-pagina-inicio.md. verify OK. Login → aprobada, commit. zip-cifrado-real → implementando en feat/zip-cifrado-real.
+- 2026-10-01 — `implementer-frontend` (zip) done -> progress/impl_frontend_zip-cifrado-real.md. Esperando backend.
+- 2026-10-01 — USUARIO PIDIÓ PARAR. Detenidos: implementer-backend de zip-cifrado-real (a mitad, en ReportService; frontend ya done) y architect de rediseno-dashboard-wizard (a mitad). Nada commiteado de zip. Para retomar: revisar diff de server/ en feat/zip-cifrado-real y relanzar backend; relanzar SDD del wizard.
+- 2026-10-01 — Nueva sesión. Usuario re-activa MODO AUTÓNOMO (/goal: todas las HU hasta vaciar backlog). Relanzados `implementer-backend` (zip-cifrado-real, retomando diff parcial) y `architect` (rediseno-dashboard-wizard, desde cero).
+- 2026-10-01 — Adelantando SDD de rediseno-dashboard-captura con `architect` (queda validada en backlog).
+- 2026-10-01 — `implementer-backend` (zip) done -> progress/impl_backend_zip-cifrado-real.md (build OK, 10 tests OK). HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_zip-cifrado-real.md. zip → aprobada, history.md.
+- 2026-10-01 — Commit de zip-cifrado-real en feat/zip-cifrado-real. Siguiente: rediseno-dashboard-historial (SDD lista) en feat/rediseno-dashboard-historial.
+- 2026-10-01 — Rama feat/rediseno-dashboard-historial desde feat/zip-cifrado-real. historial → arquitectura_lista → implementando; lanzado `implementer-frontend` (opus).
+- 2026-10-01 — `architect` done -> Refactorizaciones/rediseno-dashboard-wizard.md; DP1–DP6 A (autónomo). Queda validada hasta su turno. Avisó que la SDD de historial leía zip_password (eliminado por zip): corregida la SDD y avisado al implementer-frontend en curso.
+- 2026-10-01 — `architect` done -> Refactorizaciones/rediseno-dashboard-captura.md; DP1–DP6 A (autónomo). Queda validada hasta su turno. SDD de cierre-legacy se escribe recién con las partes 1–3 implementadas (inventario de código muerto depende de ellas).
+- 2026-10-01 — `implementer-frontend` (historial) done -> progress/impl_frontend_rediseno-dashboard-historial.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-dashboard-historial.md. historial → aprobada, history.md, commit. Siguiente: rediseno-dashboard-wizard en feat/rediseno-dashboard-wizard.
+- 2026-10-01 — Rama feat/rediseno-dashboard-wizard desde historial. wizard → implementando; lanzado `implementer-frontend` (opus).
+- 2026-10-01 — `implementer-frontend` (wizard) done -> progress/impl_frontend_rediseno-dashboard-wizard.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-dashboard-wizard.md. wizard → aprobada, commit. Rama feat/rediseno-dashboard-captura; captura → implementando, lanzado `implementer-frontend`.
+- 2026-10-01 — `implementer-frontend` (captura) done -> progress/impl_frontend_rediseno-dashboard-captura.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — Adelantando SDD de rediseno-cierre-legacy con `architect` (base: partes 1–3 en el árbol). Queda validada en backlog.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-dashboard-captura.md. captura → aprobada, commit. Esperando SDD de cierre-legacy.
+- 2026-10-01 — `architect` done -> Refactorizaciones/rediseno-cierre-legacy.md; DP1–DP8 A (autónomo). Rama feat/rediseno-cierre-legacy desde captura; cierre-legacy → implementando, lanzado `implementer-frontend`.
+- 2026-10-01 — `implementer-frontend` (cierre-legacy) done -> progress/impl_frontend_rediseno-cierre-legacy.md (sin denegaciones; DP7 sin fallback). HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_rediseno-cierre-legacy.md (relanzado para escribir el archivo). cierre-legacy y paraguas rediseno-dashboard → aprobadas, commit. BACKLOG VACÍO: todas las HU aprobadas. Sin push (5+5 ramas feat/* encadenadas pendientes de merge a develop).
+- 2026-10-01 — Usuario pide HU para el bug de grabación de cámara externa duplicada en la bandeja. Alta `grabacion-camara-duplicada` → afinando, lanzado `afinador`.
+- 2026-10-01 — `afinador` done -> docs/hu-grabacion-camara-duplicada.md (4 dudas). HU → afinada_pendiente_validacion, esperando al usuario.
+- 2026-10-01 — Usuario valida D1–D4 A. Rama feat/grabacion-camara-duplicada desde cierre-legacy. HU → en_arquitectura, lanzado `architect`.
+- 2026-10-01 — `architect` done -> Refactorizaciones/grabacion-camara-duplicada.md (D1–D7). Usuario elige D4 B (nombre original en el chip). arquitectura_lista → implementando, lanzado `implementer-frontend`.
+- 2026-10-01 — Usuario pide 6 correcciones al formulario del paso 2. Alta `formulario-caso-catalogos` (no_afinada en backlog; afinado adelantado), lanzado `afinador`.
+- 2026-10-01 — `implementer-frontend` (grabación) done -> progress/impl_frontend_grabacion-camara-duplicada.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_grabacion-camara-duplicada.md. HU → aprobada, commit (sin el Mock:true local del agente).
+- 2026-10-01 — `afinador` done -> docs/hu-formulario-caso-catalogos.md (11 dudas). HU → afinada_pendiente_validacion, esperando al usuario.
+- 2026-10-01 — Usuario valida D1–D11 A. Fix de fecha (1 línea) commiteado aparte en feat/formulario-caso-catalogos. HU → en_arquitectura, lanzado `architect`.
+- 2026-10-01 — `architect` done -> Refactorizaciones/formulario-caso-catalogos.md (D1–D15). Usuario confirma DP1 A. verify → arquitectura_lista → implementando; lanzados implementer-backend y implementer-frontend (opus) en paralelo.
+- 2026-10-01 — Usuario dejó docs/informe_modelo.pdf (plantilla genérica de informe financiero, se toma el estilo) y docs/Logo_del_estudio (JPEG con datos del estudio). Ambos excluidos de git. Alta `informe-diseno-modelo` (no_afinada; afinado adelantado), lanzado `afinador`.
+- 2026-10-01 — `afinador` done -> docs/hu-informe-diseno-modelo.md (11 dudas). HU → afinada_pendiente_validacion, esperando al usuario. Necesita del usuario: isotipo PNG transparente (D4) y si hay reglas de formato del tribunal (D1).
+- 2026-10-01 — Usuario valida D1–D11 de informe-diseno-modelo (recomendadas). Isotipo pendiente → fallback. SDD adelantada con `architect` (queda validada en backlog).
+- 2026-10-01 — `implementer-backend` (formulario) done -> progress/impl_backend_formulario-caso-catalogos.md. Esperando frontend.
+- 2026-10-01 — `architect` done -> Refactorizaciones/informe-diseno-modelo.md; usuario confirma DP1–DP3 A. Queda validada hasta que cierre formulario-caso-catalogos.
+- 2026-10-01 — Usuario re-activa MODO AUTÓNOMO (/goal): cerrar formulario-caso-catalogos e informe-diseno-modelo.
+- 2026-10-01 — `implementer-frontend` (formulario) done -> progress/impl_frontend_formulario-caso-catalogos.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_formulario-caso-catalogos.md. formulario → aprobada, commit. Rama feat/informe-diseno-modelo; informe → implementando, lanzado `implementer-backend`.
+- 2026-10-01 — `implementer-backend` (informe) done -> progress/impl_backend_informe-diseno-modelo.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` RECHAZADA (1/2) -> progress/review_informe-diseno-modelo.md: colores exactos del estudio en la SDD versionada. Es doc del arnés: lo corrigió el orquestador (sin tocar código). Relanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA (intento 2). informe → aprobada, commit. Colores del estudio también limpiados de los progress de esta HU. BACKLOG VACÍO.
+- 2026-10-01 — Usuario probó la v5: no le gusta el bloque de acento del encabezado; pide diseño moderno/empresarial con paleta Factum, misma estructura. Alta `informe-diseno-v6` (afinando) en feat/informe-diseno-v6, lanzado `afinador`.
+- 2026-10-01 — `afinador` done -> docs/hu-informe-diseno-v6.md (10 dudas). HU → afinada_pendiente_validacion.
+- 2026-10-01 — Usuario valida D1–D10 (recomendadas). D9 pendiente: canvas comparativo A/B/C publicado (https://claude.ai/artifact/FabuSoobjeFwZKxkn96uU5). SDD espera la elección.
+- 2026-10-01 — Usuario elige D9 A (Filete). HU → en_arquitectura, lanzado `architect`.
+- 2026-10-01 — `architect` done -> Refactorizaciones/informe-diseno-v6.md; usuario confirma DP1/DP2 A. HU → implementando, lanzado `implementer-backend`.
+- 2026-10-01 — `implementer-backend` (v6) done -> progress/impl_backend_informe-diseno-v6.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_informe-diseno-v6.md. v6 → aprobada, commit (sin Mock:true del agente). BACKLOG VACÍO.
+- 2026-10-01 — Usuario pide editor de texto enriquecido estilo GitLab en los campos de redacción. Alta `editor-texto-enriquecido` (afinando) en feat/editor-texto-enriquecido, lanzado `afinador`.
+- 2026-10-01 — `afinador` done -> docs/hu-editor-texto-enriquecido.md (11 dudas; propone partir imágenes en HU aparte). HU → afinada_pendiente_validacion.
+- 2026-10-01 — Usuario valida editor-texto-enriquecido (11 recomendadas). Alta `editor-imagenes-informe` (no_afinada). editor → en_arquitectura, lanzado `architect`; adelantado `afinador` de imágenes.
+- 2026-10-01 — `afinador` done -> docs/hu-editor-imagenes-informe.md (12 dudas). HU → afinada_pendiente_validacion (se implementa después de editor-texto-enriquecido).
+- 2026-10-01 — Usuario valida editor-imagenes-informe (D1–D12 A) → validada. SDD cuando esté la de editor-texto-enriquecido.
+- 2026-10-01 — `architect` done -> Refactorizaciones/editor-texto-enriquecido.md; usuario confirma DP1/DP2 A. verify → arquitectura_lista → implementando; lanzados implementer-backend y implementer-frontend (opus). SDD de editor-imagenes-informe adelantada con `architect`.
+- 2026-10-01 — `architect` done -> Refactorizaciones/editor-imagenes-informe.md. Usuario elige DP1 B (sección opcional con solo imágenes sale) y DP2 B (sin límite de 32 MB); pedido al architect que ajuste la SDD.
+- 2026-10-01 — SDD de editor-imagenes-informe ajustada (DP1/DP2 B, sin DP nuevas). Queda validada hasta que cierre editor-texto-enriquecido.
+- 2026-10-01 — `implementer-backend` (editor) done -> progress/impl_backend_editor-texto-enriquecido.md. Esperando frontend.
+- 2026-10-01 — `implementer-frontend` (editor) done -> progress/impl_frontend_editor-texto-enriquecido.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_editor-texto-enriquecido.md. editor → aprobada, commit. Rama feat/editor-imagenes-informe; imágenes → implementando, lanzados implementer-backend y implementer-frontend.
+- 2026-10-02 — `implementer-frontend` (imágenes) done -> progress/impl_frontend_editor-imagenes-informe.md. Esperando backend.
+- 2026-10-02 — `implementer-backend` (imágenes) done -> progress/impl_backend_editor-imagenes-informe.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-02 — `reviewer` APROBADA -> progress/review_editor-imagenes-informe.md (obs: 2 tests intermitentes por timestamps del ZIP). imágenes → aprobada, commit. BACKLOG VACÍO.
+- 2026-10-02 — Fix fuera del arnés (autorizado): 2 tests intermitentes. Causa real: la máscara de hash se aplicaba tras concatenar y la 'a' de 'evidencia' corría el match; T11 no enmascaraba. Helper TextOfMaskingHashes en ReportTestSupport. 0 fallas en 30 corridas, 335 OK.

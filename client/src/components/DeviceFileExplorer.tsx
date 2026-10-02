@@ -1,18 +1,23 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { Dialog } from "primereact/dialog";
+import { Button } from "primereact/button";
+import { Checkbox } from "primereact/checkbox";
 import {
-  X, ChevronRight, ArrowLeft, FolderClosed, File as FileIcon, FileImage, FileVideo,
+  ChevronRight, ArrowLeft, FolderClosed, File as FileIcon, FileImage, FileVideo,
   FileAudio, FileText, FileSpreadsheet, Package, FileArchive, Loader2, AlertTriangle,
-  CheckSquare, Square, Smartphone, RefreshCw,
+  Smartphone, RefreshCw, Check, Lightbulb,
 } from "lucide-react";
 import { agent, type DeviceFileEntry } from "@/lib/agent";
+import { FOCUS_RING } from "@/lib/prime/pt/shared";
 import { cn } from "@/lib/utils";
+import { FxTip } from "./overlay/FxTip";
 
 export interface PulledFileRef { filename: string; sourcePath: string; }
 
 interface Props {
+  open: boolean;
   serial: string;
   onClose: () => void;
   onFilesAdded: (files: PulledFileRef[]) => void;
@@ -49,25 +54,23 @@ function folderHint(name: string): string | null {
   return FOLDER_HINTS.find(h => h.test.test(name))?.label ?? null;
 }
 
-/* ── Ícono/color por tipo de archivo (extensión) — estilo Explorador de Windows ── */
-const FOLDER_COLOR = "#f2b705";
-
-const EXT_KIND: Record<string, { icon: typeof FileIcon; color: string }> = {};
-function registerExts(exts: string[], icon: typeof FileIcon, color: string) {
-  exts.forEach(e => { EXT_KIND[e] = { icon, color }; });
+/* ── Ícono por tipo de archivo (extensión). Sin color por tipo (DP5 A): el ícono ya diferencia. ── */
+const EXT_KIND: Record<string, { icon: typeof FileIcon }> = {};
+function registerExts(exts: string[], icon: typeof FileIcon) {
+  exts.forEach(e => { EXT_KIND[e] = { icon }; });
 }
-registerExts(["jpg", "jpeg", "png", "gif", "webp", "heic", "bmp"], FileImage, "#2dd4bf");
-registerExts(["mp4", "mkv", "mov", "avi", "webm", "3gp"], FileVideo, "#8b5cf6");
-registerExts(["mp3", "m4a", "opus", "wav", "aac", "ogg"], FileAudio, "#a855f7");
-registerExts(["pdf"], FileText, "#f87171");
-registerExts(["doc", "docx", "txt"], FileText, "#60a5fa");
-registerExts(["xls", "xlsx", "csv"], FileSpreadsheet, "#4ade80");
-registerExts(["apk"], Package, "#fb923c");
-registerExts(["zip", "rar", "7z"], FileArchive, "#facc15");
+registerExts(["jpg", "jpeg", "png", "gif", "webp", "heic", "bmp"], FileImage);
+registerExts(["mp4", "mkv", "mov", "avi", "webm", "3gp"], FileVideo);
+registerExts(["mp3", "m4a", "opus", "wav", "aac", "ogg"], FileAudio);
+registerExts(["pdf"], FileText);
+registerExts(["doc", "docx", "txt"], FileText);
+registerExts(["xls", "xlsx", "csv"], FileSpreadsheet);
+registerExts(["apk"], Package);
+registerExts(["zip", "rar", "7z"], FileArchive);
 
 function fileKind(name: string) {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  return EXT_KIND[ext] ?? { icon: FileIcon, color: "var(--text-muted)" };
+  return EXT_KIND[ext] ?? { icon: FileIcon };
 }
 
 function humanSize(bytes: number): string {
@@ -85,7 +88,52 @@ function humanDate(iso: string | null): string {
   return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" });
 }
 
-export function DeviceFileExplorer({ serial, onClose, onFilesAdded }: Props) {
+/** Grilla de una fila: check · ícono · nombre (· tamaño · fecha en sm+). */
+const ROW = cn(
+  "grid min-h-10 items-center gap-2.5 border-b border-fx-border px-3",
+  "grid-cols-[2.25rem_1.5rem_minmax(0,1fr)] sm:grid-cols-[2.25rem_1.5rem_minmax(0,1fr)_6rem_7rem]",
+);
+const CHECK_ICON = <Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden="true" />;
+
+/**
+ * Explorador de archivos del celular (Android): Dialog estándar. El
+ * componente público es solo el diálogo; el `Body` (navegación, búsqueda,
+ * selección) se monta al abrir, así el explorador arranca de cero en cada
+ * apertura. Escape y la X cierran; la máscara no (se perdería la selección).
+ */
+export function DeviceFileExplorer({ open, serial, onClose, onFilesAdded }: Props) {
+  return (
+    <Dialog
+      visible={open}
+      onHide={onClose}
+      dismissableMask={false}
+      draggable={false}
+      resizable={false}
+      // Tamaño y pantalla completa en < sm por pt (el className de props pierde
+      // contra el pt global y en unstyled maskClassName no se aplica).
+      pt={{
+        root: {
+          className:
+            "w-[min(48rem,100%)] h-[85vh] max-h-[85vh] max-sm:w-full max-sm:h-full max-sm:max-h-full max-sm:rounded-none max-sm:border-0",
+        },
+        header: { className: "px-4 pt-3 pb-3" },
+        headerTitle: { className: "text-fx-body-sm font-bold" },
+        content: { className: "flex min-h-0 flex-1 flex-col overflow-hidden p-0" },
+        mask: { className: "max-sm:p-0" },
+      }}
+      header={
+        <span className="flex min-w-0 items-center gap-2">
+          <Smartphone className="h-4 w-4 shrink-0 text-fx-text-3" aria-hidden="true" />
+          <span className="truncate">Explorador de archivos del celular</span>
+        </span>
+      }
+    >
+      <ExplorerBody serial={serial} onClose={onClose} onFilesAdded={onFilesAdded} />
+    </Dialog>
+  );
+}
+
+function ExplorerBody({ serial, onClose, onFilesAdded }: Omit<Props, "open">) {
   // Historial de navegación (como el botón "atrás" de un navegador/explorador): cada carpeta
   // visitada se apila, y "atrás" retrocede un paso sin volver a pedirle al usuario que navegue
   // por las migas de pan.
@@ -117,14 +165,6 @@ export function DeviceFileExplorer({ serial, onClose, onFilesAdded }: Props) {
   }, [serial]);
 
   useEffect(() => { fetchDir(navStack[0]); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
 
   function navigateTo(target: string) {
     setNavStack(prev => [...prev.slice(0, navIndex + 1), target]);
@@ -202,205 +242,197 @@ export function DeviceFileExplorer({ serial, onClose, onFilesAdded }: Props) {
   }
 
   const segments = path.split("/").filter(Boolean);
+  const currentHint = mode === "browse" && segments.length > 0 ? folderHint(segments[segments.length - 1]) : null;
+  const crumbs = [
+    { label: "Almacenamiento", target: "/sdcard" },
+    ...segments.slice(1).map((seg, i) => ({ label: seg, target: "/" + segments.slice(0, i + 2).join("/") })),
+  ];
 
   return (
-    <motion.div className="explorer-overlay"
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <motion.div className="explorer-panel"
-        initial={{ opacity: 0, scale: 0.97, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.97, y: 8 }} transition={{ duration: 0.16 }}>
-
-        {/* Header */}
-        <div className="flex items-center justify-between gap-3 px-4 py-3 flex-shrink-0"
-          style={{ borderBottom: "1px solid var(--border)" }}>
-          <div className="flex items-center gap-2 min-w-0">
-            <Smartphone className="w-4 h-4 flex-shrink-0" style={{ color: "var(--text-muted)" }} aria-hidden="true" />
-            <h2 className="text-sm font-bold truncate" style={{ color: "var(--text-primary)" }}>
-              Explorador de archivos del celular
-            </h2>
-          </div>
-          <button onClick={onClose} className="btn-icon btn-ghost" aria-label="Cerrar">
-            <X className="w-4 h-4" aria-hidden="true" />
-          </button>
-        </div>
-
-        {/* Filtros por app + volver a explorar */}
-        <div className="flex items-center gap-2 px-4 py-2.5 flex-wrap flex-shrink-0"
-          style={{ borderBottom: "1px solid var(--border)" }}>
-          {mode === "search" && (
-            <button onClick={() => fetchDir(path)}
-              className="text-xs font-semibold px-2.5 py-1.5 rounded-md flex items-center gap-1.5"
-              style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}>
-              <ChevronRight className="w-3 h-3 rotate-180" aria-hidden="true" /> Volver a explorar carpetas
-            </button>
-          )}
+    <>
+      {/* Filtros por app + volver a explorar */}
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-y border-fx-border px-4 py-2.5">
+        {mode === "search" && (
+          <Button type="button" text severity="secondary" size="small"
+            icon={<ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />}
+            label="Volver a explorar carpetas" onClick={() => fetchDir(path)} />
+        )}
+        <div role="group" aria-label="Buscar contenido por app" className="flex flex-wrap gap-2">
           {APP_CHIPS.map(chip => (
-            <button key={chip.key} onClick={() => runSearch(chip.key)}
-              className="text-xs font-semibold px-2.5 py-1.5 rounded-md transition-colors flex items-center gap-1.5"
-              style={searchApp === chip.key
-                ? { background: "rgba(45,212,191,0.15)", color: "#2dd4bf", border: "1px solid rgba(45,212,191,0.3)" }
-                : { background: "var(--bg-elevated)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>
-              <img src={chip.icon} alt="" className="w-3.5 h-3.5 flex-shrink-0" />
+            <button
+              key={chip.key}
+              type="button"
+              onClick={() => runSearch(chip.key)}
+              aria-pressed={searchApp === chip.key}
+              className={cn(
+                "inline-flex min-h-8 items-center gap-1.5 rounded-fx-md border px-2.5 text-xs font-semibold",
+                "transition-colors duration-fx-fast ease-fx",
+                FOCUS_RING,
+                searchApp === chip.key
+                  ? "border-fx-accent bg-fx-accent-soft text-fx-accent-text"
+                  : "border-fx-border bg-fx-surface-2 text-fx-text-2 hover:bg-fx-surface-3",
+              )}
+            >
+              {/* contenido de imagen: logo de marca con sus colores */}
+              <img src={chip.icon} alt="" width={14} height={14} className="h-3.5 w-3.5 shrink-0" />
               {chip.label}
             </button>
           ))}
-          {mode === "search" && (
-            <span className="text-[9px]" style={{ color: "var(--text-muted)" }}>
-              {searchApp === "whatsapp"
-                ? "Búsqueda por nombre de archivo en todo el dispositivo"
-                : "Búsqueda por carpetas conocidas (cobertura limitada, la app guarda la mayoría del contenido en almacenamiento privado)"}
-            </span>
-          )}
         </div>
+        {mode === "search" && (
+          <p className="m-0 basis-full text-xs text-fx-text-3">
+            {searchApp === "whatsapp"
+              ? "Búsqueda por nombre de archivo en todo el dispositivo"
+              : "Búsqueda por carpetas conocidas (cobertura limitada, la app guarda la mayoría del contenido en almacenamiento privado)"}
+          </p>
+        )}
+      </div>
 
-        {/* Atrás + breadcrumbs (solo en modo carpetas) */}
-        {mode === "browse" && (
-          <div className="flex items-center gap-2 px-4 py-2 flex-wrap flex-shrink-0 text-xs">
-            <button onClick={goBack} disabled={navIndex === 0}
-              className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:enabled:bg-[var(--bg-hover)]"
-              style={{ color: "var(--text-secondary)" }} aria-label="Atrás">
-              <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-            </button>
-            <button onClick={() => navigateTo("/sdcard")} className="hover:underline font-medium"
-              style={{ color: "var(--text-secondary)" }}>
-              Almacenamiento
-            </button>
-            {segments.slice(1).map((seg, i) => {
-              const target = "/" + segments.slice(0, i + 2).join("/");
+      {/* Atrás + migas (solo en modo carpetas) */}
+      {mode === "browse" && (
+        <nav aria-label="Ruta de la carpeta" className="flex shrink-0 items-center gap-2 px-4 py-2 text-xs">
+          <FxTip label="Carpeta anterior">
+            <Button type="button" text severity="secondary" size="small"
+              icon={<ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />}
+              aria-label="Carpeta anterior" disabled={navIndex === 0} onClick={goBack} />
+          </FxTip>
+          <ol className="m-0 flex min-w-0 list-none flex-wrap items-center gap-1 p-0">
+            {crumbs.map((c, i) => {
+              const last = i === crumbs.length - 1;
               return (
-                <span key={target} className="flex items-center gap-1">
-                  <ChevronRight className="w-3 h-3" style={{ color: "var(--text-muted)" }} aria-hidden="true" />
-                  <button onClick={() => navigateTo(target)} className="hover:underline font-medium"
-                    style={{ color: "var(--text-secondary)" }}>
-                    {seg}
-                  </button>
-                </span>
+                <li key={c.target} className="flex items-center gap-1">
+                  {i > 0 && <ChevronRight className="h-3 w-3 text-fx-text-3" aria-hidden="true" />}
+                  {last ? (
+                    <span aria-current="page" className="px-1 font-semibold text-fx-text">{c.label}</span>
+                  ) : (
+                    <button type="button" onClick={() => navigateTo(c.target)}
+                      className={cn("rounded-fx-sm px-1 font-medium text-fx-text-2 hover:text-fx-text hover:underline", FOCUS_RING)}>
+                      {c.label}
+                    </button>
+                  )}
+                </li>
               );
             })}
+          </ol>
+        </nav>
+      )}
+
+      {/* Pista de la carpeta actual */}
+      {currentHint && (
+        <p className="m-0 mx-4 mb-2 flex shrink-0 items-center gap-1.5 rounded-fx-md border border-fx-info bg-fx-info-soft px-2.5 py-1.5 text-xs text-fx-text">
+          <Lightbulb className="h-3.5 w-3.5 shrink-0 text-fx-info" aria-hidden="true" />
+          {currentHint}
+        </p>
+      )}
+
+      {/* Lista */}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {loading && (
+          <div role="status" className="flex h-full items-center justify-center gap-2 text-fx-body-sm text-fx-text-3">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Cargando…
           </div>
         )}
-
-        {/* Hint de la carpeta actual */}
-        {mode === "browse" && segments.length > 0 && folderHint(segments[segments.length - 1]) && (
-          <div className="mx-4 mb-2 px-2.5 py-1.5 rounded-md text-[10px] font-medium flex-shrink-0"
-            style={{ background: "rgba(245,158,11,0.08)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.2)" }}>
-            💡 {folderHint(segments[segments.length - 1])}
+        {!loading && error && (
+          <div role="alert" className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+            <AlertTriangle className="h-6 w-6 text-fx-danger" aria-hidden="true" />
+            <p className="m-0 text-fx-body-sm font-medium text-fx-text-2">{error}</p>
+            <Button type="button" text size="small" icon={<RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />}
+              label="Reintentar" onClick={() => fetchDir(path)} />
           </div>
         )}
-
-        {/* Lista */}
-        <div className="flex-1 overflow-y-auto min-h-0">
-          {loading && (
-            <div className="flex items-center justify-center h-full gap-2 text-sm" style={{ color: "var(--text-muted)" }} role="status" aria-live="polite">
-              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> Cargando…
+        {!loading && !error && entries.length === 0 && (
+          <div className="flex h-full items-center justify-center px-6 text-center text-fx-body-sm text-fx-text-3">
+            {mode === "search" ? "No se encontró contenido de esta app en el dispositivo" : "Carpeta vacía"}
+          </div>
+        )}
+        {!loading && !error && entries.length > 0 && (
+          <>
+            {/* Encabezado de columnas + seleccionar todo */}
+            <div className={cn(ROW, "sticky top-0 z-10 bg-fx-surface-2 text-fx-label uppercase text-fx-text-3")}>
+              <span className="flex justify-center">
+                <Checkbox inputId="explorer-select-all" checked={allSelected} onChange={toggleSelectAll}
+                  disabled={selectableFiles.length === 0} icon={CHECK_ICON} />
+                <label htmlFor="explorer-select-all" className="sr-only">
+                  {allSelected ? "Deseleccionar todos" : "Seleccionar todos"}
+                </label>
+              </span>
+              <span />
+              <span>{mode === "search" ? "Ruta" : "Nombre"}</span>
+              <span className="hidden sm:block">Tamaño</span>
+              <span className="hidden sm:block">Modificado</span>
             </div>
-          )}
-          {!loading && error && (
-            <div className="flex flex-col items-center justify-center h-full gap-2 px-6 text-center" role="alert">
-              <AlertTriangle className="w-6 h-6" style={{ color: "#f87171" }} aria-hidden="true" />
-              <p className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>{error}</p>
-              <button onClick={() => fetchDir(path)} className="btn-ghost btn-sm flex items-center gap-1.5">
-                <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" /> Reintentar
-              </button>
-            </div>
-          )}
-          {!loading && !error && entries.length === 0 && (
-            <div className="flex items-center justify-center h-full text-sm" style={{ color: "var(--text-muted)" }}>
-              {mode === "search" ? "No se encontró contenido de esta app en el dispositivo" : "Carpeta vacía"}
-            </div>
-          )}
-          {!loading && !error && entries.length > 0 && (
-            <>
-              {/* Header de columnas + seleccionar todo */}
-              <div className="explorer-row text-[9px] font-bold uppercase tracking-wider sticky top-0"
-                style={{ color: "var(--text-muted)", background: "var(--bg-surface)" }}>
-                <button onClick={toggleSelectAll} disabled={selectableFiles.length === 0}
-                  className="flex items-center justify-center disabled:opacity-30"
-                  aria-pressed={allSelected} aria-label={allSelected ? "Deseleccionar todos" : "Seleccionar todos"}>
-                  {allSelected ? <CheckSquare className="w-3.5 h-3.5" style={{ color: "#2dd4bf" }} aria-hidden="true" /> : <Square className="w-3.5 h-3.5" aria-hidden="true" />}
-                </button>
-                <span />
-                <span>{mode === "search" ? "Ruta" : "Nombre"}</span>
-                <span>Tamaño</span>
-                <span>Modificado</span>
-              </div>
-              {visibleFiles.map(e => {
-                const kind = e.is_directory ? null : fileKind(e.name);
-                const hint = e.is_directory ? folderHint(e.name) : null;
+            <ul aria-label={mode === "search" ? "Resultados de la búsqueda" : "Contenido de la carpeta"} className="m-0 list-none p-0">
+              {visibleFiles.map((e, i) => {
+                if (e.is_directory) {
+                  const hint = folderHint(e.name);
+                  return (
+                    <li key={e.path}>
+                      <button
+                        type="button"
+                        onClick={() => navigate(e)}
+                        aria-label={`Abrir carpeta ${e.name}`}
+                        className={cn(ROW, "w-full text-left transition-colors duration-fx-fast hover:bg-fx-surface-3", FOCUS_RING, "focus-visible:-outline-offset-2")}
+                      >
+                        <span />
+                        <FolderClosed className="h-[18px] w-[18px] justify-self-center text-fx-text-2" fill="currentColor" fillOpacity={0.2} aria-hidden="true" />
+                        <span className="min-w-0">
+                          <span translate="no" className="block truncate text-xs font-medium text-fx-text">{mode === "search" ? e.path : e.name}</span>
+                          {hint && <span className="block truncate text-[11px] text-fx-text-3">{hint}</span>}
+                        </span>
+                        <span className="hidden text-xs text-fx-text-3 sm:block">—</span>
+                        <span className="hidden text-xs tabular-nums text-fx-text-3 sm:block">{humanDate(e.modified_at)}</span>
+                      </button>
+                    </li>
+                  );
+                }
+                const kind = fileKind(e.name);
                 const isSelected = selected.has(e.path);
+                const id = `explorer-f-${i}`;
                 return (
-                  <div key={e.path} className="explorer-row cursor-pointer"
-                    role="button"
-                    tabIndex={0}
-                    aria-label={e.is_directory ? `Abrir carpeta ${e.name}` : `${isSelected ? "Deseleccionar" : "Seleccionar"} ${e.name}`}
-                    onClick={() => e.is_directory ? navigate(e) : toggleSelect(e.path)}
-                    onKeyDown={ev => {
-                      if (ev.key === "Enter" || ev.key === " ") {
-                        ev.preventDefault();
-                        e.is_directory ? navigate(e) : toggleSelect(e.path);
-                      }
-                    }}>
-                    <button onClick={ev => { ev.stopPropagation(); if (!e.is_directory) toggleSelect(e.path); }}
-                      disabled={e.is_directory} tabIndex={-1} aria-hidden="true" className="flex items-center justify-center disabled:opacity-20">
-                      {isSelected ? <CheckSquare className="w-3.5 h-3.5" style={{ color: "#2dd4bf" }} /> : <Square className="w-3.5 h-3.5" style={{ color: "var(--text-muted)" }} />}
-                    </button>
-                    <div className="flex items-center justify-center flex-shrink-0">
-                      {e.is_directory
-                        ? <FolderClosed className="w-[18px] h-[18px]" style={{ color: FOLDER_COLOR }} fill={FOLDER_COLOR} fillOpacity={0.25} aria-hidden="true" />
-                        : <kind.icon className="w-[18px] h-[18px]" style={{ color: kind!.color }} aria-hidden="true" />}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium truncate" style={{ color: "var(--text-primary)" }}>
-                        {mode === "search" ? e.path : e.name}
-                      </p>
-                      {hint && <p className="text-[9px] truncate" style={{ color: "#f59e0b" }}>{hint}</p>}
-                    </div>
-                    <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                      {e.is_directory ? "—" : humanSize(e.size)}
+                  <li key={e.path} className={cn(ROW, "transition-colors duration-fx-fast", isSelected ? "bg-fx-accent-soft" : "hover:bg-fx-surface-3")}>
+                    <span className="flex justify-center">
+                      <Checkbox inputId={id} checked={isSelected} onChange={() => toggleSelect(e.path)}
+                        aria-labelledby={`${id}-name`} icon={CHECK_ICON} />
                     </span>
-                    <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                      {humanDate(e.modified_at)}
-                    </span>
-                  </div>
+                    <kind.icon className="h-[18px] w-[18px] justify-self-center text-fx-text-3" aria-hidden="true" />
+                    <label htmlFor={id} id={`${id}-name`} translate="no" className="min-w-0 cursor-pointer truncate text-xs font-medium text-fx-text">
+                      {mode === "search" ? e.path : e.name}
+                    </label>
+                    <span className="hidden text-xs tabular-nums text-fx-text-3 sm:block">{humanSize(e.size)}</span>
+                    <span className="hidden text-xs tabular-nums text-fx-text-3 sm:block">{humanDate(e.modified_at)}</span>
+                  </li>
                 );
               })}
-              {entries.length > visibleCount && (
-                <div className="flex justify-center py-3">
-                  <button onClick={() => setVisibleCount(v => v + PAGE_SIZE)} className="btn-ghost btn-sm">
-                    Mostrar más ({entries.length - visibleCount} restantes)
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
+            </ul>
+            {entries.length > visibleCount && (
+              <div className="flex justify-center py-3">
+                <Button type="button" text size="small" label={`Mostrar más (${entries.length - visibleCount} restantes)`}
+                  onClick={() => setVisibleCount(v => v + PAGE_SIZE)} />
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
-        {/* Barra de selección */}
-        <AnimatePresence>
-          {selected.size > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }}
-              className="flex items-center justify-between gap-3 px-4 py-3 flex-shrink-0"
-              style={{ borderTop: "1px solid var(--border)", background: "var(--bg-elevated)" }}>
-              <div className="min-w-0">
-                <span className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
-                  {selected.size} seleccionado{selected.size > 1 ? "s" : ""}
-                </span>
-                {addError && <p className="text-[9px] mt-0.5" style={{ color: "#f87171" }}>{addError}</p>}
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <button onClick={() => setSelected(new Set())} className="btn-ghost btn-sm">Cancelar</button>
-                <button onClick={handleAddToEvidence} disabled={adding}
-                  className="btn-primary btn-sm flex items-center gap-1.5">
-                  {adding ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" /> : null}
-                  Agregar {selected.size} a evidencia
-                </button>
-              </div>
-            </motion.div>
+      {/* Botonera fija con el contador */}
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-fx-border bg-fx-surface-2 px-4 py-3">
+        <div aria-live="polite" className="min-w-0">
+          {selected.size > 0 ? (
+            <p className="m-0 text-fx-body-sm font-semibold text-fx-text">
+              {selected.size} seleccionado{selected.size > 1 ? "s" : ""}
+            </p>
+          ) : (
+            <p className="m-0 text-xs text-fx-text-3">Seleccioná archivos para agregarlos a la evidencia</p>
           )}
-        </AnimatePresence>
-      </motion.div>
-    </motion.div>
+          {addError && <p role="alert" className="m-0 mt-0.5 text-xs text-fx-danger">{addError}</p>}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button type="button" text severity="secondary" size="small" label="Limpiar selección"
+            disabled={selected.size === 0} onClick={() => setSelected(new Set())} className="min-h-11 sm:min-h-0" />
+          <Button type="button" size="small" label={`Agregar ${selected.size} a evidencia`} loading={adding}
+            disabled={selected.size === 0} onClick={handleAddToEvidence} className="min-h-11 sm:min-h-0" />
+        </div>
+      </div>
+    </>
   );
 }

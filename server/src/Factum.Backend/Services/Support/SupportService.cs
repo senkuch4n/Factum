@@ -4,25 +4,13 @@ using System.Web;
 using Factum.Backend.Common;
 using Factum.Backend.DTOs;
 using Factum.Backend.Models;
-using Microsoft.Extensions.Options;
 
 namespace Factum.Backend.Services.Support;
 
-public sealed class FaroIntegrationOptions
-{
-    public string BaseUrl { get; set; } = string.Empty;
-    public string ServiceKey { get; set; } = string.Empty;
-    public int TimeoutSeconds { get; set; } = 10;
-
-    // URL pública del frontend de Faro (no del backend) — a donde se manda al
-    // oficial con el código de SSO.
-    public string FrontendUrl { get; set; } = string.Empty;
-}
-
 // Le pasa al backend de Faro (sistema-gestion-de-tokens) los problemas que
-// reportan los oficiales desde Factum, para que se abra un token de
-// soporte del GFD sin que el oficial necesite loguearse ahí. Factum y Faro
-// comparten la identidad de MPF — el Dni es la llave real, Faro resuelve (o
+// reportan los oficiales desde Factum, para que se abra un token en la
+// mesa de soporte sin que el oficial necesite loguearse ahí. Factum y Faro
+// comparten la misma identidad (DNI) — el Dni es la llave real, Faro resuelve (o
 // provisiona) el mismo Usuario que vería si entrara directo a Faro.
 public sealed class SupportService : ISupportService
 {
@@ -34,14 +22,16 @@ public sealed class SupportService : ISupportService
     private static readonly JsonSerializerOptions FaroJsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly HttpClient _http;
-    private readonly FaroIntegrationOptions _opts;
+    private readonly SupportIntegrationOptions _opts;
+    private readonly ILogger<SupportService> _logger;
 
-    public SupportService(IOptions<FaroIntegrationOptions> opts, HttpClient http)
+    // BaseAddress y Timeout se configuran en el registro (Program.cs) a partir de valores ya
+    // validados por SupportSettingsResolver: el constructor no parsea URLs.
+    public SupportService(HttpClient http, SupportSettings settings, ILogger<SupportService> logger)
     {
-        _opts = opts.Value;
         _http = http;
-        _http.Timeout = TimeSpan.FromSeconds(_opts.TimeoutSeconds);
-        _http.BaseAddress = new Uri(_opts.BaseUrl);
+        _opts = settings.Options;
+        _logger = logger;
     }
 
     public async Task<Result<ReportarProblemaResponse>> ReportarProblemaAsync(
@@ -74,7 +64,7 @@ public sealed class SupportService : ISupportService
 
         var creado = await response!.Content.ReadFromJsonAsync<FaroTokenCreado>(FaroJsonOptions, ct);
         if (creado is null)
-            return Result.Fail<ReportarProblemaResponse>("Faro no devolvió una respuesta válida");
+            return Result.Fail<ReportarProblemaResponse>("El servicio de soporte no devolvió una respuesta válida");
 
         return Result.Ok(new ReportarProblemaResponse(creado.NumeroToken));
     }
@@ -131,7 +121,7 @@ public sealed class SupportService : ISupportService
         if (!ok) return Result.Fail<FaroSsoLinkResponse>(error!);
 
         var body = await response!.Content.ReadFromJsonAsync<FaroSsoCode>(FaroJsonOptions, ct);
-        if (body is null) return Result.Fail<FaroSsoLinkResponse>("Faro no devolvió un código de acceso válido");
+        if (body is null) return Result.Fail<FaroSsoLinkResponse>("El servicio de soporte no devolvió una respuesta válida");
 
         var url = $"{_opts.FrontendUrl.TrimEnd('/')}/sso?code={HttpUtility.UrlEncode(body.Code)}";
         return Result.Ok(new FaroSsoLinkResponse(url));
@@ -155,13 +145,14 @@ public sealed class SupportService : ISupportService
         }
         catch (Exception ex)
         {
-            return (false, null, $"No se pudo contactar a Faro: {ex.Message}");
+            _logger.LogWarning("Soporte: no se pudo contactar al servicio ({Type}: {Message})", ex.GetType().Name, ex.Message);
+            return (false, null, "No se pudo contactar al servicio de soporte.");
         }
 
         if (response.IsSuccessStatusCode) return (true, response, null);
 
         var motivo = await TryReadFaroError(response, ct);
-        return (false, null, motivo ?? $"Faro respondió {(int)response.StatusCode}");
+        return (false, null, motivo ?? $"El servicio de soporte respondió {(int)response.StatusCode}");
     }
 
     private static async Task<string?> TryReadFaroError(HttpResponseMessage response, CancellationToken ct)

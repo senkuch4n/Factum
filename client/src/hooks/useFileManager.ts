@@ -1,9 +1,22 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { agent } from "@/lib/agent";
 import { api } from "@/lib/api";
-import type { Case, CapturedFile, VideoVariant } from "@/types";
+import { isRoleEligible } from "@/lib/pericial";
+import type { Case, CapturedFile, CaptureRole, CaptureRoleValue, VideoVariant } from "@/types";
+
+/**
+ * Datos de vista de un archivo generado en el navegador (cámara externa, webcam
+ * o adjunto de la PC). Indexado por el nombre con el que se sube; `files` sigue
+ * siendo la única lista de lo que se sube.
+ */
+export interface LocalBlobInfo {
+  url: string;           // URL.createObjectURL(blob), creada en el handler (nunca en render)
+  size: number;          // blob.size, en bytes
+  type: string;          // blob.type (MIME, puede venir vacío)
+  originalName?: string; // nombre original del File de la PC; undefined para cámara/webcam
+}
 
 export function useFileManager() {
   const [files, setFiles]                   = useState<CapturedFile[]>([]);
@@ -11,6 +24,23 @@ export function useFileManager() {
   const [videoVariants, setVideoVariants]   = useState<Record<string, VideoVariant[]>>({});
   const [pendingVariantFiles, setPending]   = useState<Set<string>>(new Set());
   const pendingBlobs                        = useRef<Map<string, Blob>>(new Map());
+  const [localBlobs, setLocalBlobsState]    = useState<Record<string, LocalBlobInfo>>({});
+  // Espejo de `localBlobs` para revocar las URLs al desmontar (el cleanup no ve el estado).
+  const localBlobsRef                       = useRef<Record<string, LocalBlobInfo>>({});
+
+  // Los efectos (revocar) quedan fuera del updater: se calcula sobre el ref y se
+  // publica el resultado, así StrictMode no los duplica.
+  const setLocalBlobs = useCallback((update: (prev: Record<string, LocalBlobInfo>) => Record<string, LocalBlobInfo>) => {
+    const next = update(localBlobsRef.current);
+    localBlobsRef.current = next;
+    setLocalBlobsState(next);
+  }, []);
+
+  // Al salir de /dashboard se liberan todas las blob URLs que queden vivas.
+  useEffect(() => () => {
+    Object.values(localBlobsRef.current).forEach(b => URL.revokeObjectURL(b.url));
+    localBlobsRef.current = {};
+  }, []);
 
   const setLoad = useCallback((key: string, val: boolean) => {
     setLoading(l => ({ ...l, [key]: val }));
@@ -44,11 +74,46 @@ export function useFileManager() {
     agent.deleteFile(filename).catch(() => {});
     pendingBlobs.current.delete(filename);
     setFiles(prev => prev.filter(f => f.name !== filename));
+    const gone = localBlobsRef.current[filename];
+    if (gone) {
+      URL.revokeObjectURL(gone.url);
+      setLocalBlobs(prev => {
+        const rest = { ...prev };
+        delete rest[filename];
+        return rest;
+      });
+    }
   }
 
   function handlePhotoBlob(blob: Blob, filename: string) {
     pendingBlobs.current.set(filename, blob);
+    const url = URL.createObjectURL(blob);
+    const originalName = blob instanceof File && blob.name !== filename ? blob.name : undefined;
+    const old = localBlobsRef.current[filename];
+    if (old) URL.revokeObjectURL(old.url); // defensivo: con nombres únicos no debería pasar
+    setLocalBlobs(prev => ({ ...prev, [filename]: { url, size: blob.size, type: blob.type, originalName } }));
     addFile(filename);
+  }
+
+  /**
+   * Marca (o desmarca con `null`) una captura. Si el archivo ya está subido, la
+   * marca se persiste al instante (`PUT capture-roles`); si no, queda local y se
+   * manda después de subir todo (`handleUploadAndContinue`).
+   */
+  async function setCaptureRole(
+    name: string,
+    role: CaptureRoleValue | null,
+    opts: { caseId?: string; onSaved?: (roles: CaptureRole[]) => void; onError?: (msg: string) => void } = {},
+  ) {
+    const file = files.find(f => f.name === name);
+    setFiles(prev => prev.map(f => f.name === name ? { ...f, captureRole: role ?? undefined } : f));
+    if (!file?.uploaded || !opts.caseId) return;
+    try {
+      const res = await api.saveCaptureRoles(opts.caseId, [{ filename: name, role }]);
+      opts.onSaved?.(res.capture_roles);
+    } catch (e) {
+      opts.onError?.(e instanceof Error ? e.message : "No se pudo guardar la marca de la captura");
+    }
   }
 
   async function handleUploadAndContinue(
@@ -56,6 +121,7 @@ export function useFileManager() {
     onSuccess: () => void,
     onError: (msg: string) => void,
     onStatus: (msg: string) => void,
+    onRolesSaved?: (roles: CaptureRole[]) => void,
   ) {
     setLoad("upload", true);
     onStatus("Enviando archivos al servidor...");
@@ -68,6 +134,15 @@ export function useFileManager() {
         await api.uploadFile(currentCase.id, f.name, blob, f.sourcePath);
         setFiles(prev => prev.map(fi => fi.name === f.name ? { ...fi, uploaded: true } : fi));
       }
+      // Después de subir todo: el rol de cada captura local (o null), en un solo PUT.
+      const roles = files
+        .filter(f => isRoleEligible(f.name))
+        .map(f => ({ filename: f.name, role: f.captureRole ?? null }));
+      if (roles.length > 0) {
+        onStatus("Guardando marcas de las capturas...");
+        const res = await api.saveCaptureRoles(currentCase.id, roles);
+        onRolesSaved?.(res.capture_roles);
+      }
       onSuccess();
     } catch (e) {
       onError(e instanceof Error ? e.message : "Error al enviar archivos");
@@ -79,14 +154,16 @@ export function useFileManager() {
 
   function clearFiles() {
     pendingBlobs.current.clear();
+    Object.values(localBlobsRef.current).forEach(b => URL.revokeObjectURL(b.url));
+    setLocalBlobs(() => ({}));
     setFiles([]);
     setVideoVariants({});
     setPending(new Set());
   }
 
   return {
-    files, loading, videoVariants, pendingVariantFiles: pendingVariantFiles, pendingBlobs,
+    files, loading, videoVariants, pendingVariantFiles: pendingVariantFiles, pendingBlobs, localBlobs,
     setLoad, addFile, addVideoVariant, markPendingVariant,
-    removeFile, handlePhotoBlob, handleUploadAndContinue, clearFiles,
+    removeFile, setCaptureRole, handlePhotoBlob, handleUploadAndContinue, clearFiles,
   };
 }

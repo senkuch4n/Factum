@@ -33,3 +33,12 @@ agent-ui/resources/agent/
 
 # Claude Code: config local de cada usuario (no va al repo)
 .claude/settings.local.json
+
+# Identidad real del cliente (Branding): config local y logo, nunca al repo
+**/appsettings.Local.json
+server/src/Factum.Backend/branding/
+
+# Plantillas e informes del usuario con datos reales (la v4 se deriva con ops/plantilla/)
+docs/INFORME*
+docs/informe_modelo*
+docs/Logo_del_estudio*

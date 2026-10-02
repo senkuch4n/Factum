@@ -1,4 +1,4 @@
-// Beacon de Faro (el sistema de tokens del GFD): un punto de luz que converge
+// Beacon de Faro (el sistema de tokens de soporte): un punto de luz que converge
 // en un haz. Se usa como disparador de soporte en cualquier sistema
 // integrado — la idea es que el mismo símbolo se reconozca en todos lados,
 // en vez de un ícono genérico (salvavidas, signo de pregunta) que no dice
