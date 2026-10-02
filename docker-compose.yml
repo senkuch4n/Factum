@@ -1,3 +1,5 @@
+# Compose de DESARROLLO. Para instalar Factum en la PC de un estudio se usa
+# deploy/windows/docker-compose.yml (ver docs/instalacion-windows.md).
 services:
   mongo:
     image: mongo:7
@@ -46,11 +48,13 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
+      # URLs que usa el NAVEGADOR: Next las hornea en el bundle durante `next build`, así que
+      # van como build args. Un `environment:` acá no tendría efecto en el navegador.
+      args:
+        NEXT_PUBLIC_BACKEND_URL: http://localhost:8080
+        NEXT_PUBLIC_AGENT_URL: http://localhost:8765
     ports:
       - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_BACKEND_URL=http://localhost:8080
-      - NEXT_PUBLIC_AGENT_URL=http://localhost:8765
     depends_on:
       - backend
     restart: unless-stopped
