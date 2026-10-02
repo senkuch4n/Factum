@@ -152,3 +152,19 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementer-backend opus, reviewer sonnet. 0 rechazos.
 - **Rama:** `feat/instalacion-poca-ram` (desde `develop`).
 - **Pendiente:** prueba real en la PC del estudio (checklist de la guía §2.1).
+
+## subida-archivos-grandes — APROBADA (2026-10-02)
+
+- **Qué:** `POST /api/cases/{id}/files` acepta archivos hasta `Storage:MaxUploadBytes` (4 GB por defecto) solo en ese endpoint; escritura atómica (temporal en `.upload-tmp/` fuera del listado, verificación de bytes, move atómico, reemplazo atómico, limpieza de huérfanos al arrancar); chequeo de espacio con margen de 1 GB (con `statvfs` en Linux: `DriveInfo` sobreestimaba ×256 en el bind mount de Docker Desktop); `filename` con ruta o nombres inválidos → 400 (cierra un path traversal real); errores JSON `{ error }` 413/507/409/400; endpoint de prechequeo `upload-check`; `[DisableFormValueModelBinding]` en el POST. Frontend: subida por XHR con barra de progreso por archivo, contador, estado en cada tile, "Cancelar envío", mensajes claros y marcas/explorador deshabilitados durante el envío.
+- **Decisiones:** HU D1–D12 A (usuario); SDD DT1–DT17 recomendadas.
+- **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos. 406 tests backend.
+- **Rama:** `feat/subida-archivos-grandes` (encadenada sobre `feat/instalacion-poca-ram`). Incluye también el fix `653a282` de `armar-paquete.sh` (fuera del arnés).
+- **Pendiente:** prueba manual con un video real grande (413/507/409, cancelar) en la PC del estudio.
+
+## grabacion-android-windows — APROBADA (2026-10-02)
+
+- **Qué:** la grabación de pantalla de Android funciona en Windows. El portátil de Tatana incluye scrcpy 4.1 (versión fija + SHA-256, sin su adb, con LICENSE) en `tools/scrcpy/`, lanzado con `ADB` apuntando al adb de platform-tools. `ToolResolver` común (tools/ junto al exe → PATH con `.exe`/PATHEXT → Homebrew) para Adb e iOS. Cierre limpio en Windows con `CTRL_C_EVENT` (`WindowsConsoleSignal`/`ProcessStop`, timeout y fallback Kill + remux). Micrófono de la PC en Windows con ffmpeg `dshow` (`MicCapture`) y error claro si falla (DP6). `/health` con bloque `tools` (`ToolInventory`) y "Diagnóstico de Factum" lo muestra; `actualizar.ps1` cierra el adb de Tatana. La web muestra el motivo real del error de Tatana. Proyecto de tests nuevo `server/tests/Factum.Agent.Tests` (33 tests).
+- **Decisiones:** HU D1–D10 a, D11–D12 b (usuario); SDD recomendadas, DP6 A y DP14 "no por ahora" (usuario).
+- **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos.
+- **Rama:** `feat/grabacion-android-windows` (encadenada sobre `feat/subida-archivos-grandes`).
+- **Pendiente:** prueba manual en la PC del estudio (guion en `progress/impl_backend_grabacion-android-windows.md`), en especial R1: que `AttachConsole` cierre scrcpy limpio y el MKV tenga duración; HU `ios-herramientas-windows`; avisos de licencia del resto de binarios (DP14, no por ahora).

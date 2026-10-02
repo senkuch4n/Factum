@@ -877,6 +877,31 @@ function Test-TatanaReal {
     return $true
 }
 
+function Get-LineasHerramientasTatana {
+    # Arma las líneas de "Herramientas de Tatana" del diagnóstico a partir de /health.tools
+    # (SDD grabacion-android-windows §8.4). Devuelve objetos { Ok; Texto } para poder testearla
+    # sin consola. Tatana <= 1.0.0 no trae "tools".
+    param($Health)
+    $lineas = New-Object System.Collections.Generic.List[object]
+    if ($null -eq $Health) { return $lineas.ToArray() }
+    $tools = Get-PropiedadSegura $Health 'tools'
+    if ($null -eq $tools) {
+        $lineas.Add([pscustomobject]@{ Ok = $false; Texto = 'Esta versión de Tatana no informa sus herramientas. Actualizala con "Actualizar Factum".' })
+        return $lineas.ToArray()
+    }
+    foreach ($nombre in @('adb', 'scrcpy', 'ffmpeg', 'python')) {
+        $t = Get-PropiedadSegura $tools $nombre
+        if ($null -ne $t -and (Get-PropiedadSegura $t 'found') -eq $true) {
+            $version = Get-PropiedadSegura $t 'version'
+            if (-not $version) { $version = '(versión desconocida)' }
+            $lineas.Add([pscustomobject]@{ Ok = $true; Texto = ($nombre + ': OK  ' + $version + '  (' + (Get-PropiedadSegura $t 'path') + ')') })
+        } else {
+            $lineas.Add([pscustomobject]@{ Ok = $false; Texto = ($nombre + ': FALTA') })
+        }
+    }
+    return $lineas.ToArray()
+}
+
 function Get-TatanaZip {
     param([string]$Paquete)
     $carpeta = Join-Path $Paquete 'tatana'
@@ -895,6 +920,18 @@ function Install-TatanaPortable {
         Write-Host '    Deteniendo Tatana para reemplazarlo...' -ForegroundColor DarkGray
         $agente | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
+    }
+    # El servidor adb de Tatana (tools\platform-tools\adb.exe) y un scrcpy/ffmpeg que haya
+    # quedado vivo bloquean sus .exe: sin cerrarlos, xcopy no puede reemplazar tools\ (DP9 de
+    # la SDD grabacion-android-windows). Los celulares "desaparecen" hasta que Tatana vuelve.
+    $destino = Join-Path $env:LOCALAPPDATA 'Programs\Tatana'
+    $deTatana = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $ruta = $null; try { $ruta = $_.Path } catch { $ruta = $null }
+        $ruta -and $ruta.StartsWith($destino + '\', [StringComparison]::OrdinalIgnoreCase) })
+    if ($deTatana.Count -gt 0) {
+        Write-Host ('    Cerrando ' + $deTatana.Count + ' proceso(s) de Tatana (adb, scrcpy, ffmpeg)...') -ForegroundColor DarkGray
+        $deTatana | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
     }
     $temp = Join-Path $env:TEMP ('factum-tatana-' + (Get-FactumStamp))
     Expand-Archive -LiteralPath $Zip -DestinationPath $temp -Force

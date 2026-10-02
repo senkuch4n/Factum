@@ -104,6 +104,12 @@ public sealed record FileInfoDto(
     string? SourcePath = null
 );
 
+/// <summary>
+/// Respuesta OK de <c>GET /api/cases/{id}/files/upload-check</c>: <c>{ "max_upload_bytes": N }</c>
+/// (subida-archivos-grandes §4.1).
+/// </summary>
+public sealed record UploadCheckResponse(long MaxUploadBytes);
+
 /// <summary>Respuesta de <c>GET /api/cases/{id}/zip-password</c>: <c>{ "password": "…" }</c>.</summary>
 public sealed record ZipPasswordResponse(string Password);
 

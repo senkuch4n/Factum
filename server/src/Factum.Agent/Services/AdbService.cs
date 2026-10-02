@@ -19,42 +19,36 @@ public interface IAdbService
 
 public sealed class AdbService : IAdbService
 {
-    // scrcpy puede estar en el PATH o en la ruta de Homebrew en macOS
-    private static readonly string[] ScrcpyPaths =
-        ["scrcpy", "/opt/homebrew/bin/scrcpy", "/usr/local/bin/scrcpy"];
+    // adb: tools/platform-tools junto al exe (portátil), PATH o Homebrew (ToolResolver). Si no
+    // aparece, queda el nombre pelado "adb": ProcessRunner devuelve -1 y se mantienen los
+    // mensajes de "ADB no instalado".
+    private static readonly Lazy<string> AdbPath =
+        new(() => ToolResolver.Find(AgentTools.Adb)?.Path ?? "adb");
 
-    // ffmpeg para la captura de audio del micrófono de la PC (modo "con mic" — análogo al
-    // with_mic de iOS). No se comparte con IosService.BuildToolCandidates (cada servicio
-    // resuelve sus propios binarios en este código); alcanza con PATH + rutas de Homebrew.
-    private static readonly string[] FfmpegPaths =
-        ["ffmpeg", "/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"];
+    // Textos de error de grabación (SDD grabacion-android-windows §4.3). El client los muestra.
+    private const string ErrorScrcpyMissing =
+        "No se encontró el componente de grabación de Android (scrcpy). Actualizá o reinstalá Tatana con el paquete de Factum.";
+    private const string ErrorAlreadyRecording = "Ya hay una grabación de Android en curso.";
+    private const string ErrorNotRecording = "No hay una grabación en curso.";
 
-    private static string? FindBinary(string[] candidates) =>
-        candidates.FirstOrDefault(p => p.Contains('/') ? File.Exists(p) : IsOnPath(p));
-
-    // Modo portátil ("Tatana Portable"): adb viene copiado junto al exe en
-    // tools/platform-tools/, sin depender del PATH del sistema (no requiere
-    // permisos de admin para "instalarlo"). Si no existe esa carpeta, se cae
-    // al comportamiento actual (bare "adb" resuelto por PATH).
-    private static readonly Lazy<string> AdbPath = new(() =>
-    {
-        var portable = Path.Combine(AppContext.BaseDirectory, "tools", "platform-tools",
-            OperatingSystem.IsWindows() ? "adb.exe" : "adb");
-        return File.Exists(portable) ? portable : "adb";
-    });
+    private static readonly TimeSpan ScrcpyEarlyExitWindow = TimeSpan.FromMilliseconds(1500);
+    private static readonly TimeSpan ScrcpyStopTimeout = TimeSpan.FromSeconds(10);
 
     private readonly bool _mock;
+    private readonly string? _micDevice;
     private readonly ILogger<AdbService> _log;
     private Process? _recordingProcess;
     private string?  _recordingPath;
-    private Process? _micAudioProcess;
-    private string?  _micAudioPath;
+    private MicCapture? _mic;
+    // Últimas líneas de scrcpy, para los errores E2/E8. Se reemplaza en cada start.
+    private LineTail _scrcpyTail = new(20);
     private readonly SemaphoreSlim _recordLock = new(1, 1);
 
     public AdbService(IOptions<AgentOptions> opts, ILogger<AdbService> log)
     {
-        _mock = opts.Value.Mock;
-        _log  = log;
+        _mock      = opts.Value.Mock;
+        _micDevice = opts.Value.MicDevice;
+        _log       = log;
     }
 
     public async Task EnsureServerAsync(CancellationToken ct = default)
@@ -109,8 +103,10 @@ public sealed class AdbService : IAdbService
     // ── Grabación con scrcpy ──────────────────────────────────────────────────
     //
     // scrcpy graba directo al archivo local (no hay adb pull).
-    // Formato MKV: escribe el índice incrementalmente → válido incluso tras SIGKILL.
+    // Formato MKV: si scrcpy se cierra limpio (SIGINT / Ctrl+C) escribe duración e índice; si
+    // hubo que matarlo, se remuxea con ffmpeg -c copy para que quede con duración.
     // Audio interno del dispositivo disponible con scrcpy v2+ y Android 11+.
+    // SDD grabacion-android-windows §6.2 / §6.3.
 
     public async Task StartRecordingAsync(string serial, string outputPath,
         int androidVersion, bool withMic = false, CancellationToken ct = default)
@@ -120,125 +116,136 @@ public sealed class AdbService : IAdbService
         {
             if (_mock) { _recordingPath = outputPath; return; }
 
-            var scrcpy = FindScrcpy();
+            // E3: una sola grabación Android a la vez.
+            if (_recordingProcess is not null && !HasExitedSafe(_recordingProcess))
+                throw new InvalidOperationException(ErrorAlreadyRecording);
+            await DiscardStaleRecordingAsync();
+
+            // E1: scrcpy (y, en el portátil, su scrcpy-server al lado).
+            var scrcpy = ToolResolver.Find(AgentTools.Scrcpy)
+                ?? throw new InvalidOperationException(ScrcpyMissingMessage());
+            string? serverPath = null;
+            if (scrcpy.Source == ToolSource.Portable)
+            {
+                serverPath = Path.Combine(Path.GetDirectoryName(scrcpy.Path)!, "scrcpy-server");
+                if (!File.Exists(serverPath))
+                    throw new InvalidOperationException(ScrcpyMissingMessage());
+            }
+
             // Con mic de PC activo, no tiene sentido además intentar el audio de sistema de
             // scrcpy (que de todos modos falla en silencio para contenido protegido como las
             // notas de voz de WhatsApp) — una sola fuente de audio limpia, mismo criterio que
             // el modo with_mic de iOS (video solo + mic de PC, sin mezclar con otra fuente).
-            var audioArgs = withMic
+            // Sin --no-audio-playback: el audio del celular se sigue escuchando en la PC (D12 b).
+            var audioArg = withMic
                 ? "--no-audio"
                 : androidVersion >= 11 ? "--audio-source=output" : "--no-audio";
 
-            // --no-video-playback: scrcpy 4.x — no abrir ventana de visualización
-            var args = string.Join(' ',
-                "--serial", serial,
-                "--record", $"\"{outputPath}\"",
-                "--record-format", "mkv",
-                "--no-video-playback",
-                "--max-size", "1080",
-                "--video-bit-rate", "4M",
-                audioArgs);
-
-            _recordingProcess = Process.Start(new ProcessStartInfo
+            // ArgumentList (no Arguments): la ruta del perfil puede tener espacios o acentos.
+            // --no-video-playback: scrcpy 4.x — no abrir ventana de visualización.
+            // UseShellExecute=false + CreateNoWindow=true le da a scrcpy su propia consola
+            // oculta, que es lo que permite el Ctrl+C de ProcessStop en Windows. No usar
+            // CreateNewProcessGroup: deshabilitaría el Ctrl+C en scrcpy.
+            var psi = new ProcessStartInfo
             {
-                FileName               = scrcpy,
-                Arguments              = args,
+                FileName               = scrcpy.Path,
                 RedirectStandardOutput = true,
                 RedirectStandardError  = true,
                 UseShellExecute        = false,
                 CreateNoWindow         = true,
-            })!;
+            };
+            foreach (var a in new[]
+            {
+                "--serial", serial,
+                "--record", outputPath,
+                "--record-format", "mkv",
+                "--no-video-playback",
+                "--max-size", "1080",
+                "--video-bit-rate", "4M",
+                audioArg,
+            }) psi.ArgumentList.Add(a);
+
+            // D3: un solo servidor adb. Sin esto scrcpy usa su adb propio, de otra versión, y
+            // mata/relanza el servidor de Tatana ("adb server version doesn't match").
+            var adb = ToolResolver.Find(AgentTools.Adb);
+            if (adb is not null) psi.Environment["ADB"] = adb.Path;
+            if (serverPath is not null) psi.Environment["SCRCPY_SERVER_PATH"] = serverPath;
+
+            var tail = new LineTail(20);
+            _scrcpyTail = tail;
+
+            Process proc;
+            try
+            {
+                proc = Process.Start(psi)
+                    ?? throw new InvalidOperationException("scrcpy no pudo iniciar la grabación: no se pudo lanzar el proceso");
+            }
+            catch (System.ComponentModel.Win32Exception ex)
+            {
+                throw new InvalidOperationException("scrcpy no pudo iniciar la grabación: " + ex.Message);
+            }
 
             // Sin drenar stdout/stderr, el pipe del SO se llena con el log de scrcpy y el
             // proceso se bloquea escribiendo → la grabación se congela en silencio (el MKV
             // queda truncado) mucho antes de que el usuario aprete Stop.
-            _recordingProcess.OutputDataReceived += (_, e) => { if (e.Data != null) _log.LogDebug("scrcpy: {Line}", e.Data); };
-            _recordingProcess.ErrorDataReceived  += (_, e) => { if (e.Data != null) _log.LogDebug("scrcpy: {Line}", e.Data); };
-            _recordingProcess.BeginOutputReadLine();
-            _recordingProcess.BeginErrorReadLine();
+            void OnLine(string? line)
+            {
+                if (line is null) return;
+                tail.Add(line);
+                if (IsScrcpyWarningLine(line)) _log.LogWarning("scrcpy: {Line}", line);
+                else _log.LogDebug("scrcpy: {Line}", line);
+            }
+            proc.OutputDataReceived += (_, e) => OnLine(e.Data);
+            proc.ErrorDataReceived  += (_, e) => OnLine(e.Data);
+            proc.BeginOutputReadLine();
+            proc.BeginErrorReadLine();
 
-            _recordingPath = outputPath;
-            _log.LogInformation("scrcpy iniciado: serial={Serial} audio={Audio} output={Path}",
-                serial, audioArgs, outputPath);
+            // E2 (DP4): si scrcpy muere enseguida, el start falla con su error real.
+            await Task.WhenAny(proc.WaitForExitAsync(ct), Task.Delay(ScrcpyEarlyExitWindow, ct));
+            if (HasExitedSafe(proc))
+            {
+                proc.WaitForExit(); // termina de vaciar stdout/stderr
+                var code = proc.ExitCode;
+                proc.Dispose();
+                var detail = ScrcpyErrorSummary(tail) ?? $"código de salida {code}";
+                throw new InvalidOperationException("scrcpy no pudo iniciar la grabación: " + detail);
+            }
 
-            if (withMic) StartMicAudio(outputPath);
+            _recordingProcess = proc;
+            _recordingPath    = outputPath;
+
+            // DP6 A: con mic, si el mic no arranca (E4/E5/E6), no se graba.
+            if (withMic)
+            {
+                var micPath = outputPath + ".mic.mka";
+                try
+                {
+                    _mic = await MicCapture.StartAsync(micPath, _micDevice, _log, ct);
+                }
+                catch
+                {
+                    try
+                    {
+                        await ProcessStop.StopGracefullyAsync(proc, ScrcpyStopTimeout, _log, "scrcpy",
+                            CancellationToken.None);
+                    }
+                    catch (Exception ex) { _log.LogWarning(ex, "Error deteniendo scrcpy tras fallar el mic"); }
+                    proc.Dispose();
+                    _recordingProcess = null;
+                    _recordingPath    = null;
+                    _mic              = null;
+                    // Solo lo que creó este intento.
+                    TryDelete(outputPath);
+                    TryDelete(micPath);
+                    throw;
+                }
+            }
+
+            _log.LogInformation(
+                "scrcpy iniciado: serial={Serial} audio={Audio} mic={Mic} adb={Adb} output={Path}",
+                serial, audioArg, withMic, adb?.Path ?? "(no encontrado)", outputPath);
         }
         finally { _recordLock.Release(); }
-    }
-
-    // ── Captura de audio del micrófono de la PC ("con mic") ───────────────────
-    //
-    // Análogo al modo with_mic de iOS (IosService.StartAudio/StopAudio/MuxAudioIntoVideoAsync):
-    // graba el mic por separado vía ffmpeg y, al detener, lo remuxea sobre el MKV de scrcpy.
-    // Sirve para capturar audio que la app bloquea digitalmente (ej. notas de voz de WhatsApp,
-    // protegidas a nivel de sistema operativo) — al ser una captura acústica real, no hay
-    // protección de contenido que la afecte.
-
-    private void StartMicAudio(string videoPath)
-    {
-        var audioPath = videoPath + ".mic.m4a";
-        var ffmpeg    = FindBinary(FfmpegPaths) ?? "ffmpeg";
-        var inputArgs = OperatingSystem.IsWindows() ? "-f wasapi -i default" :
-                        OperatingSystem.IsMacOS()   ? "-f avfoundation -i :0" :
-                                                      "-f alsa -i default";
-        var proc = Process.Start(new ProcessStartInfo
-        {
-            FileName  = ffmpeg,
-            Arguments = $"-y {inputArgs} -c:a aac -b:a 128k \"{audioPath}\"",
-            RedirectStandardOutput = true,
-            RedirectStandardError  = true,
-            UseShellExecute = false,
-            CreateNoWindow  = true,
-        });
-        if (proc is null) { _log.LogWarning("No se pudo iniciar captura de audio (mic)"); return; }
-
-        // Mismo motivo que en el proceso de scrcpy: drenar los pipes para que ffmpeg no se
-        // bloquee escribiendo a stderr y se congele la captura de audio.
-        proc.OutputDataReceived += (_, e) => { if (e.Data != null) _log.LogDebug("ffmpeg (mic): {Line}", e.Data); };
-        proc.ErrorDataReceived  += (_, e) => { if (e.Data != null) _log.LogDebug("ffmpeg (mic): {Line}", e.Data); };
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-
-        _micAudioProcess = proc;
-        _micAudioPath    = audioPath;
-        _log.LogInformation("Captura de audio (mic PC) iniciada para grabación Android");
-    }
-
-    private void StopMicAudio()
-    {
-        if (_micAudioProcess is null || _micAudioProcess.HasExited) return;
-        try
-        {
-            if (OperatingSystem.IsWindows())
-            {
-                _micAudioProcess.Kill();
-            }
-            else
-            {
-                using var sigint = Process.Start(new ProcessStartInfo
-                {
-                    FileName = "kill", Arguments = $"-2 {_micAudioProcess.Id}",
-                    UseShellExecute = false, CreateNoWindow = true,
-                });
-                sigint?.WaitForExit();
-            }
-            _micAudioProcess.WaitForExit();
-        }
-        catch { }
-    }
-
-    // Re-mux el MKV de scrcpy (ya codificado) + audio del mic → reemplaza el archivo de video.
-    private async Task MuxMicAudioIntoVideoAsync(string videoPath, string audioPath, CancellationToken ct)
-    {
-        var ffmpeg = FindBinary(FfmpegPaths) ?? "ffmpeg";
-        var tmp    = videoPath + ".mux.mkv";
-        var r = await ProcessRunner.RunAsync(ffmpeg,
-            $"-y -i \"{videoPath}\" -i \"{audioPath}\" " +
-            $"-c:v copy -c:a aac -b:a 128k -shortest \"{tmp}\"", ct);
-        if (!r.Success) { _log.LogWarning("mux audio (mic) falló: {E}", r.Stderr); try { File.Delete(tmp); } catch { } return; }
-        File.Delete(videoPath);
-        File.Move(tmp, videoPath);
-        try { File.Delete(audioPath); } catch { }
     }
 
     public async Task<string> StopRecordingAsync(string serial, CancellationToken ct = default)
@@ -248,70 +255,164 @@ public sealed class AdbService : IAdbService
         {
             if (_mock)
             {
-                var mockPath = _recordingPath ?? throw new InvalidOperationException("Sin grabación activa");
+                var mockPath = _recordingPath ?? throw new InvalidOperationException(ErrorNotRecording);
                 await File.WriteAllBytesAsync(mockPath, Array.Empty<byte>(), ct);
                 _recordingPath = null;
                 return mockPath;
             }
 
-            var outPath = _recordingPath ?? throw new InvalidOperationException("Sin grabación activa");
+            // E7
+            var outPath = _recordingPath ?? throw new InvalidOperationException(ErrorNotRecording);
+            var proc    = _recordingProcess;
+            var mic     = _mic;
+            var tail    = _scrcpyTail;
 
-            if (_recordingProcess != null && !_recordingProcess.HasExited)
+            var clean = true;
+            try
             {
-                // SIGINT primero → scrcpy cierra limpiamente el MKV
-                try
-                {
-                    using var sigint = Process.Start(new ProcessStartInfo
-                    {
-                        FileName       = "kill",
-                        Arguments      = $"-2 {_recordingProcess.Id}",
-                        UseShellExecute = false,
-                        CreateNoWindow  = true,
-                    });
-                    await sigint!.WaitForExitAsync(ct);
-                }
-                catch { /* kill no disponible → caemos a SIGKILL */ }
-
-                // Esperar hasta 5 s; si no terminó, SIGKILL (MKV sigue siendo válido)
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                using var linked  = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
-                try   { await _recordingProcess.WaitForExitAsync(linked.Token); }
-                catch { _recordingProcess.Kill(); await _recordingProcess.WaitForExitAsync(ct); }
+                if (proc is not null)
+                    clean = await ProcessStop.StopGracefullyAsync(proc, ScrcpyStopTimeout, _log, "scrcpy", ct);
+            }
+            finally
+            {
+                // El estado se limpia siempre, y el mic se detiene aunque el MKV no exista (antes
+                // el ffmpeg del mic quedaba vivo en ese caso).
+                proc?.Dispose();
+                _recordingProcess = null;
+                _recordingPath    = null;
+                _mic              = null;
+                if (mic is not null) await mic.StopAsync();
             }
 
-            _recordingProcess?.Dispose();
-            _recordingProcess = null;
-            _recordingPath    = null;
-
-            // scrcpy ya escribió el archivo en outPath — sin adb pull necesario
+            // E8: scrcpy no dejó archivo.
             if (!File.Exists(outPath))
-                throw new InvalidOperationException($"scrcpy no generó el archivo: {outPath}");
-
-            if (_micAudioProcess is not null)
             {
-                StopMicAudio();
-                _micAudioProcess = null;
-                if (_micAudioPath is not null && File.Exists(_micAudioPath))
-                    await MuxMicAudioIntoVideoAsync(outPath, _micAudioPath, ct);
-                _micAudioPath = null;
+                if (mic is not null) TryDelete(mic.AudioPath);
+                var detail = ScrcpyErrorSummary(tail);
+                throw new InvalidOperationException(
+                    "scrcpy no generó el archivo de la grabación." + (detail is null ? "" : " " + detail));
             }
+
+            // El mux del mic reescribe el contenedor, así que reemplaza al remux.
+            var muxed = false;
+            if (mic is not null && File.Exists(mic.AudioPath))
+                muxed = await MuxMicAudioIntoVideoAsync(outPath, mic.AudioPath, ct);
+
+            if (!clean && !muxed)
+                await RemuxAsync(outPath, ct);
 
             return outPath;
         }
         finally { _recordLock.Release(); }
     }
 
-    private static string FindScrcpy() =>
-        ScrcpyPaths.FirstOrDefault(p =>
-            p.Contains('/') ? File.Exists(p) : IsOnPath(p))
-        ?? throw new InvalidOperationException(
-            "scrcpy no encontrado. Instalá con: brew install scrcpy");
-
-    private static bool IsOnPath(string exe)
+    // Si scrcpy terminó solo (celular desconectado, etc.) el estado viejo queda colgado: se
+    // limpia antes de un start nuevo, deteniendo el mic si seguía grabando.
+    private async Task DiscardStaleRecordingAsync()
     {
-        var sep   = OperatingSystem.IsWindows() ? ';' : ':';
-        var paths = Environment.GetEnvironmentVariable("PATH")?.Split(sep) ?? [];
-        return paths.Any(dir => File.Exists(Path.Combine(dir, exe)));
+        if (_recordingProcess is null && _mic is null) return;
+        _recordingProcess?.Dispose();
+        _recordingProcess = null;
+        _recordingPath    = null;
+        var mic = _mic;
+        _mic = null;
+        if (mic is not null) await mic.StopAsync();
+    }
+
+    // Re-mux el MKV de scrcpy (ya codificado) + audio del mic → reemplaza el archivo de video.
+    // Devuelve true si el archivo final quedó reescrito por ffmpeg.
+    private async Task<bool> MuxMicAudioIntoVideoAsync(string videoPath, string audioPath, CancellationToken ct)
+    {
+        var ffmpeg = ToolResolver.Find(AgentTools.Ffmpeg)?.Path;
+        if (ffmpeg is null)
+        {
+            _log.LogWarning("mux audio (mic): no se encontró ffmpeg; queda el video sin el audio del mic");
+            return false;
+        }
+        var tmp = videoPath + ".mux.mkv";
+        var r = await ProcessRunner.RunArgumentListAsync(ffmpeg,
+            ["-hide_banner", "-y", "-i", videoPath, "-i", audioPath,
+             "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-shortest", tmp], ct);
+        if (!r.Success || !File.Exists(tmp))
+        {
+            _log.LogWarning("mux audio (mic) falló: {E}", LastLines(r.Stderr, 5));
+            TryDelete(tmp);
+            return false;
+        }
+        File.Move(tmp, videoPath, overwrite: true);
+        TryDelete(audioPath);
+        _log.LogInformation("Audio del micrófono incorporado a la grabación");
+        return true;
+    }
+
+    // Tras un cierre forzado, el MKV puede quedar sin duración ni índice: se reescribe el
+    // contenedor sin recodificar. Si falla, queda el MKV crudo (sigue siendo reproducible).
+    private async Task RemuxAsync(string outPath, CancellationToken ct)
+    {
+        var ffmpeg = ToolResolver.Find(AgentTools.Ffmpeg)?.Path;
+        if (ffmpeg is null)
+        {
+            _log.LogWarning("No se encontró ffmpeg para remuxear el MKV tras el cierre forzado; queda el archivo crudo");
+            return;
+        }
+        var tmp = outPath + ".remux.mkv";
+        try
+        {
+            var r = await ProcessRunner.RunArgumentListAsync(ffmpeg,
+                ["-hide_banner", "-y", "-i", outPath, "-map", "0", "-c", "copy", tmp], ct);
+            if (r.Success && File.Exists(tmp))
+            {
+                File.Move(tmp, outPath, overwrite: true);
+                _log.LogInformation("MKV remuxeado tras cierre forzado: {Path}", outPath);
+                return;
+            }
+            _log.LogWarning("El remux del MKV falló; queda el archivo crudo: {E}", LastLines(r.Stderr, 5));
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "El remux del MKV falló; queda el archivo crudo");
+        }
+        TryDelete(tmp);
+    }
+
+    // E1: solo en macOS se sugiere Homebrew.
+    private static string ScrcpyMissingMessage() =>
+        OperatingSystem.IsMacOS()
+            ? ErrorScrcpyMissing + " En la Mac: brew install scrcpy."
+            : ErrorScrcpyMissing;
+
+    private static bool IsScrcpyWarningLine(string line) =>
+        line.StartsWith("ERROR", StringComparison.Ordinal) ||
+        line.StartsWith("WARN", StringComparison.Ordinal) ||
+        line.Contains("adb server version", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("doesn't match", StringComparison.OrdinalIgnoreCase);
+
+    // Hasta 3 líneas de error de scrcpy unidas con " · ". Prefiere las ERROR/WARN; si no hay,
+    // las últimas líneas que haya escrito. null si no escribió nada.
+    private static string? ScrcpyErrorSummary(LineTail tail)
+    {
+        var lines = tail.Snapshot()
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0)
+            .ToList();
+        if (lines.Count == 0) return null;
+        var errors = lines.Where(IsScrcpyWarningLine).ToList();
+        var chosen = (errors.Count > 0 ? errors : lines).TakeLast(3);
+        return string.Join(" · ", chosen);
+    }
+
+    private static string LastLines(string text, int n) =>
+        string.Join(" | ", text.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).TakeLast(n));
+
+    private static bool HasExitedSafe(Process p)
+    {
+        try { return p.HasExited; }
+        catch (InvalidOperationException) { return true; }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
     }
 
     // ── Device info ───────────────────────────────────────────────────────────

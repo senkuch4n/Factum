@@ -6,6 +6,19 @@
 export const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:8765";
 export function agentFileURL(filename: string) { return `${AGENT_URL}/files/${filename}`; }
 
+/** Mensaje cuando `fetch` ni siquiera llega a Tatana (agente cerrado o puerto ocupado). */
+const AGENT_UNREACHABLE = "No se pudo conectar con Tatana. Revisá que esté abierto en esta PC.";
+
+/**
+ * Lee `{ error }` de una respuesta no-2xx de Tatana (contrato de la SDD
+ * grabacion-android-windows §5.1); si no viene o no es texto, usa `fallback`.
+ */
+async function readAgentError(res: Response, fallback: string): Promise<Error> {
+  const data = (await res.json().catch(() => null)) as { error?: unknown } | null;
+  const msg = data && typeof data.error === "string" && data.error.trim() ? data.error.trim() : fallback;
+  return new Error(msg);
+}
+
 export interface Device {
   serial: string;
   state: string;
@@ -127,22 +140,32 @@ export const agent = {
     iosMode?: "video_only" | "with_mic" | "on_device" | "airplay",
     androidWithMic?: boolean,
   ): Promise<{ filename: string }> {
-    const res = await fetch(`${AGENT_URL}/devices/${serial}/record/start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        android_version: androidVersion, platform, ios_mode: iosMode,
-        android_with_mic: androidWithMic,
-      }),
-    });
-    if (!res.ok) throw new Error("Error iniciando grabación");
+    let res: Response;
+    try {
+      res = await fetch(`${AGENT_URL}/devices/${serial}/record/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          android_version: androidVersion, platform, ios_mode: iosMode,
+          android_with_mic: androidWithMic,
+        }),
+      });
+    } catch {
+      throw new Error(AGENT_UNREACHABLE);
+    }
+    if (!res.ok) throw await readAgentError(res, "Error iniciando grabación");
     return res.json();
   },
 
   async stopRecording(serial: string, platform: "android" | "ios" = "android"): Promise<{ filename: string; url: string }> {
     const url = `${AGENT_URL}/devices/${serial}/record/stop${platform === "ios" ? "?platform=ios" : ""}`;
-    const res = await fetch(url, { method: "POST" });
-    if (!res.ok) throw new Error("Error deteniendo grabación");
+    let res: Response;
+    try {
+      res = await fetch(url, { method: "POST" });
+    } catch {
+      throw new Error(AGENT_UNREACHABLE);
+    }
+    if (!res.ok) throw await readAgentError(res, "Error deteniendo grabación");
     return res.json();
   },
 
@@ -163,11 +186,35 @@ export const agent = {
     return data.files || [];
   },
 
-  /** Descarga un archivo del agente como Blob para subirlo al backend. */
-  async downloadFile(filename: string): Promise<Blob> {
-    const res = await fetch(`${AGENT_URL}/files/${filename}`);
-    if (!res.ok) throw new Error(`Error descargando ${filename}`);
-    return res.blob();
+  /**
+   * Descarga un archivo del agente como Blob para subirlo al backend. Con XHR
+   * para tener progreso (`onProgress`, `total` = null si el agente no manda
+   * `Content-Length`) y cancelación (`signal`: rechaza con `DOMException("AbortError")`).
+   * Falla de red o estado no-2xx: rechaza con `Error`.
+   */
+  downloadFile(
+    filename: string,
+    opts: { signal?: AbortSignal; onProgress?: (loaded: number, total: number | null) => void } = {},
+  ): Promise<Blob> {
+    const { signal, onProgress } = opts;
+    return new Promise<Blob>((resolve, reject) => {
+      if (signal?.aborted) { reject(new DOMException("Descarga cancelada", "AbortError")); return; }
+      const xhr = new XMLHttpRequest();
+      const onAbortSignal = () => xhr.abort();
+      const done = () => signal?.removeEventListener("abort", onAbortSignal);
+      xhr.open("GET", `${AGENT_URL}/files/${filename}`);
+      xhr.responseType = "blob";
+      if (onProgress) xhr.onprogress = e => onProgress(e.loaded, e.lengthComputable ? e.total : null);
+      xhr.onload = () => {
+        done();
+        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as Blob);
+        else reject(new Error(`Error descargando ${filename} (${xhr.status})`));
+      };
+      xhr.onerror = () => { done(); reject(new Error(`Error descargando ${filename}`)); };
+      xhr.onabort = () => { done(); reject(new DOMException("Descarga cancelada", "AbortError")); };
+      signal?.addEventListener("abort", onAbortSignal, { once: true });
+      xhr.send();
+    });
   },
 
   /** Elimina un archivo capturado del agente (best-effort). */

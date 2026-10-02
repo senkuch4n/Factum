@@ -51,6 +51,12 @@ builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(port));
 var authSettings = AuthSettingsResolver.Resolve(builder.Configuration, builder.Environment.IsDevelopment());
 var supportSettings = SupportSettingsResolver.Resolve(builder.Configuration);
 var configErrors = authSettings.Errors.Concat(supportSettings.Errors).ToList();
+// subida-archivos-grandes §5.1 / DT11: un tope o margen fuera de rango dejaría la subida inutilizable.
+var storageSettings = builder.Configuration.GetSection("Storage").Get<StorageOptions>() ?? new StorageOptions();
+if (storageSettings.MaxUploadBytes <= 0)
+    configErrors.Add("Storage:MaxUploadBytes tiene que ser mayor que 0");
+if (storageSettings.MinFreeBytes < 0)
+    configErrors.Add("Storage:MinFreeBytes tiene que ser mayor o igual que 0");
 if (configErrors.Count > 0)
     throw new InvalidOperationException(
         "Configuración inválida, el backend no arranca:" + string.Concat(configErrors.Select(e => "\n  - " + e)));
@@ -102,6 +108,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 // ── Infraestructura ───────────────────────────────────────────────────────────
 builder.Services.AddSingleton<ICaseRepository, CaseRepository>();
 builder.Services.AddSingleton<IAgentEventRepository, AgentEventRepository>();
+builder.Services.AddSingleton<IDiskSpaceProbe, DriveInfoDiskSpaceProbe>();
 builder.Services.AddSingleton<IStorageService, StorageService>();
 builder.Services.AddSingleton<IBrandingService, BrandingService>();
 builder.Services.AddSingleton<IReportSettings, ReportSettings>();
@@ -179,6 +186,19 @@ foreach (var warning in authSettings.Warnings.Concat(supportSettings.Warnings))
 app.Services.GetRequiredService<IBrandingService>();
 // Ídem la config del informe (zona horaria, domicilio, textos por defecto).
 app.Services.GetRequiredService<IReportSettings>();
+// subida-archivos-grandes §5.1: temporales de subidas de un proceso anterior (nunca hay subidas en
+// curso al arrancar) y una línea con el tope y el espacio que ve el contenedor (D12).
+{
+    var storage = app.Services.GetRequiredService<IStorageService>();
+    var orphans = storage.CleanupOrphanUploads();
+    var storageOpts = app.Services.GetRequiredService<IOptions<StorageOptions>>().Value;
+    var free = storage.GetAvailableFreeBytes();
+    app.Logger.LogInformation(
+        "Subidas: tope {Max}, margen libre {MinFree}, espacio libre en {DataDirectory}: {Free} (temporales huérfanos borrados: {N})",
+        EvidenceUpload.FormatBytes(storageOpts.MaxUploadBytes), EvidenceUpload.FormatBytes(storageOpts.MinFreeBytes),
+        Path.GetFullPath(storageOpts.DataDirectory), free is { } f ? EvidenceUpload.FormatBytes(f) : "desconocido",
+        orphans);
+}
 
 app.UseForwardedHeaders();
 app.UseCors();

@@ -3,6 +3,7 @@
  */
 
 import { agent } from "./agent";
+import type { UploadCheckResponse, UploadedFileInfo, UploadErrorBody, UploadErrorCode } from "@/types";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
@@ -31,6 +32,41 @@ export class ApiError extends Error {
     this.missing = missing;
     this.serverMessage = serverMessage;
   }
+}
+
+/**
+ * Error de las rutas de subida (`upload-check` y `POST …/files`).
+ * - `kind: "http"`: el backend respondió con un código de error (`status`, `code`, `body`).
+ * - `kind: "network"`: no hubo respuesta (corte, backend caído, CORS); `status` = 0.
+ * - `kind: "aborted"`: el usuario canceló; `status` = 0.
+ * `message` nunca es "Failed to fetch" ni "HTTP 413": la UI arma el texto con
+ * `lib/upload-messages.ts`.
+ */
+export class UploadError extends ApiError {
+  kind: "http" | "network" | "aborted";
+  code: UploadErrorCode | null;
+  body: UploadErrorBody | null;
+  constructor(kind: "http" | "network" | "aborted", status = 0, body: UploadErrorBody | null = null) {
+    const serverMessage = typeof body?.error === "string" && body.error.trim() ? body.error : null;
+    const fallback =
+      kind === "aborted" ? "Envío cancelado"
+      : kind === "network" ? "Se cortó la conexión con el servidor"
+      : "El servidor rechazó el archivo";
+    super(serverMessage ?? fallback, kind === "http" ? status : 0, undefined, serverMessage);
+    this.name = "UploadError";
+    this.kind = kind;
+    this.code = body?.code ?? null;
+    this.body = body;
+  }
+}
+
+/** Lee un cuerpo de error de subida; `null` si no es JSON con `error`. */
+function parseUploadErrorBody(text: string): UploadErrorBody | null {
+  try {
+    const b = JSON.parse(text) as unknown;
+    if (b && typeof b === "object" && typeof (b as { error?: unknown }).error === "string") return b as UploadErrorBody;
+  } catch { /* cuerpo vacío o no JSON (ej. 403) */ }
+  return null;
 }
 
 /** `fetch` al backend con el token y el `Content-Type` JSON. */
@@ -367,27 +403,68 @@ export const api = {
   },
 
   /**
-   * Sube un archivo desde el agente al backend bajo un caso específico.
+   * Prechequeo de una subida (mismas reglas que el POST, sin cuerpo): tope,
+   * espacio libre, nombre y caso editable. Rechaza con `UploadError`.
+   */
+  async checkUpload(caseId: string, filename: string, size: number, signal?: AbortSignal): Promise<UploadCheckResponse> {
+    const params = new URLSearchParams({ filename, size: String(size) });
+    let res: Response;
+    try {
+      res = await send(`/api/cases/${caseId}/files/upload-check?${params.toString()}`, { method: "GET", signal, cache: "no-store" });
+    } catch (e) {
+      if (signal?.aborted || (e instanceof DOMException && e.name === "AbortError")) throw new UploadError("aborted");
+      throw new UploadError("network");
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new UploadError("http", res.status, parseUploadErrorBody(text));
+    }
+    return res.json();
+  },
+
+  /**
+   * Sube un archivo (cuerpo crudo) al caso con XHR: progreso real de envío,
+   * cancelación con `signal` y errores tipados (`UploadError`).
    * `sourcePath` (opcional) es la ruta de origen en el dispositivo — solo aplica a archivos
    * traídos con el explorador de archivos, y queda registrada en el informe forense.
    */
-  async uploadFile(caseId: string, filename: string, blob: Blob, sourcePath?: string): Promise<{ filename: string; hash: string }> {
-    const token = getToken();
-    const params = new URLSearchParams({ filename });
-    if (sourcePath) params.set("source_path", sourcePath);
-    const res = await fetch(`${BACKEND_URL}/api/cases/${caseId}/files?${params.toString()}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": blob.type || "application/octet-stream",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: blob,
+  uploadFile(
+    caseId: string,
+    filename: string,
+    blob: Blob,
+    opts: { sourcePath?: string; signal?: AbortSignal; onProgress?: (loaded: number, total: number) => void } = {},
+  ): Promise<UploadedFileInfo> {
+    const { sourcePath, signal, onProgress } = opts;
+    return new Promise<UploadedFileInfo>((resolve, reject) => {
+      if (signal?.aborted) { reject(new UploadError("aborted")); return; }
+      const params = new URLSearchParams({ filename });
+      if (sourcePath) params.set("source_path", sourcePath);
+      const xhr = new XMLHttpRequest();
+      const onAbortSignal = () => xhr.abort();
+      const done = () => signal?.removeEventListener("abort", onAbortSignal);
+
+      xhr.open("POST", `${BACKEND_URL}/api/cases/${caseId}/files?${params.toString()}`);
+      const token = getToken();
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      xhr.timeout = 0;
+      if (onProgress) {
+        xhr.upload.onprogress = e => onProgress(e.loaded, e.lengthComputable ? e.total : blob.size);
+      }
+      xhr.onload = () => {
+        done();
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try { resolve(JSON.parse(xhr.responseText) as UploadedFileInfo); }
+          catch { reject(new UploadError("http", xhr.status, null)); }
+          return;
+        }
+        reject(new UploadError("http", xhr.status, parseUploadErrorBody(xhr.responseText)));
+      };
+      xhr.onerror = () => { done(); reject(new UploadError("network")); };
+      xhr.ontimeout = () => { done(); reject(new UploadError("network")); };
+      xhr.onabort = () => { done(); reject(new UploadError("aborted")); };
+      signal?.addEventListener("abort", onAbortSignal, { once: true });
+      xhr.send(blob);
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Upload failed: ${res.status}`);
-    }
-    return res.json();
   },
 
   /**

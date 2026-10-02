@@ -8,6 +8,9 @@ public sealed class AgentOptions
     // Dónde escucha el servidor HTTP/WebSocket: "localhost" (127.0.0.1 + ::1, default) o una IP.
     // "0.0.0.0"/"::" expone el agente a la red (sin auth): solo a propósito. CLI: --bind.
     public string BindAddress { get; set; } = "localhost";
+    // Micrófono de la PC para el modo "con mic" en Windows (nombre de dshow o su alternative
+    // name). null = el primero que lista Windows. Sin UI: se fija en appsettings.Local.json.
+    public string? MicDevice { get; set; }
 }
 
 public sealed class Device

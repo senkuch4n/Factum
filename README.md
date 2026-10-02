@@ -199,11 +199,15 @@ npm run package   # empaqueta la app instalable
 | `Integrations:Support:TimeoutSeconds` | Timeout de las llamadas a Faro, entre 1 y 120 s (default 10) |
 | `Integrations:Support:FrontendUrl` | URL del frontend de Faro, para armar el link de SSO (`http://localhost:3001` en local). Obligatoria si está habilitada |
 | `Storage:DataDirectory` | Carpeta local donde se guardan los ZIP/PDF generados (dev) |
+| `Storage:MaxUploadBytes` | Env `Storage__MaxUploadBytes`. Tope de tamaño de un archivo de evidencia en `POST /api/cases/{id}/files` (solo ese endpoint; el resto sigue con el tope de 30 MB de Kestrel). Default `4294967296` (4 GB). Tiene que ser mayor que 0 o el backend no arranca |
+| `Storage:MinFreeBytes` | Env `Storage__MinFreeBytes`. Espacio libre que tiene que quedar en el disco de `DataDirectory` después de una subida; si no alcanza, la subida se rechaza con 507 antes de escribir. Default `1073741824` (1 GB). Tiene que ser mayor o igual que 0 o el backend no arranca |
 | `Audit:AdminDnis` | DNIs habilitados a leer `GET /api/agent-events` (auditoría de uso del agente) |
 | `TatanaUpdates:ProjectId` / `ProjectRawBaseUrl` / `PrivateToken` | Proyecto de GitLab del que se espeja la última release de Tatana |
 | `TatanaUpdates:PublicBaseUrl` | URL pública de este backend — a la que apuntan el instalador Electron y el `.bat` portátil para actualizarse |
 | `Branding:OrganizationName` / `OrganizationLogo` / `OrganizationIsotype` / `ContactLines` / `PrimaryColor` / `AccentColor` | Identidad de la organización que emite los informes (nombre, logo, isotipo, contacto y colores del informe) — ver [Branding](#identidad-de-la-organización-branding). Vacío en el repo |
 | `Report:TimeZone` / `DomicilioConstituido` / `DefaultTexts:*` | Zona horaria, domicilio constituido y textos por defecto del informe pericial — ver [Informe pericial](#informe-pericial-configuración). Domicilio vacío en el repo |
+
+Las subidas en curso se escriben en `<DataDirectory>/.upload-tmp/` y recién al terminar completas se mueven a `cases/<id>/`; esa carpeta no es evidencia, no entra al ZIP y se vacía al arrancar el backend.
 
 **`client/.env.local`**
 

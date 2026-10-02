@@ -65,3 +65,50 @@ export interface ProfileFormData {
 }
 
 export type IosRecordMode = "video_only" | "with_mic" | "on_device" | "airplay";
+
+/* ── Subida de evidencia (subida-archivos-grandes, SDD §6.1) ── */
+
+/** Respuesta de POST /api/cases/{id}/files (FileInfoDto). */
+export interface UploadedFileInfo {
+  name: string;
+  size: number;
+  hash: string;
+  modified_at: string;
+  source_path?: string | null;
+}
+
+/** Respuesta OK de GET /api/cases/{id}/files/upload-check. */
+export interface UploadCheckResponse {
+  max_upload_bytes: number;
+}
+
+export type UploadErrorCode =
+  | "invalid_filename" | "case_not_editable" | "length_required" | "file_too_large"
+  | "insufficient_storage" | "incomplete_upload" | "storage_error";
+
+/** Cuerpo de error de las rutas de subida (snake_case tal cual viaja). */
+export interface UploadErrorBody {
+  error: string;
+  code?: UploadErrorCode;
+  size?: number;
+  max_upload_bytes?: number;
+  required_bytes?: number;
+  available_bytes?: number | null;
+  received_bytes?: number;
+}
+
+export type UploadPhase = "checking" | "preparing" | "uploading" | "finishing";
+export type FileUploadState = "uploading" | "error";
+
+export interface UploadProgress {
+  /** 1-based, archivo actual. */
+  index: number;
+  /** Archivos a enviar en esta tanda. */
+  total: number;
+  name: string;
+  phase: UploadPhase;
+  /** Bytes de la fase actual. */
+  loaded: number;
+  /** `null` si no se conoce (lengthComputable=false). */
+  totalBytes: number | null;
+}

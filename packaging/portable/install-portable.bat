@@ -14,6 +14,7 @@ if /I "%SRC%"=="%DEST%\" (
 echo Instalando Tatana Portable en %DEST% ...
 if not exist "%DEST%" mkdir "%DEST%"
 xcopy "%SRC%*" "%DEST%\" /E /I /Y /Q >nul
+if errorlevel 1 ( echo ERROR: no se pudieron copiar los archivos de Tatana a %DEST% ^(algun programa de Tatana sigue abierto?^). & exit /b 1 )
 
 :shortcut
 rem ── Autostart sin admin: acceso directo en el Startup del usuario actual ────

@@ -5,6 +5,7 @@ using Factum.Backend.Models;
 using Factum.Backend.Services.Catalogs;
 using Factum.Backend.Services.Profile;
 using Factum.Backend.Services.Reports;
+using Microsoft.Extensions.Options;
 
 namespace Factum.Backend.Services.Cases;
 
@@ -22,8 +23,15 @@ public interface ICaseService
         CancellationToken ct = default);
     Task<Result<List<CaptureRole>>> UpsertCaptureRolesAsync(string id, CaptureRolesRequest request,
         string officerDni, CancellationToken ct = default);
+    /// <summary>
+    /// Subida atómica (subida-archivos-grandes §4.2/§5.5): nunca lanza; los rechazos traen
+    /// <c>Details</c> con <c>code</c> (<see cref="UploadErrorCodes"/>) y los tamaños.
+    /// </summary>
     Task<Result<FileInfoDto>> UploadFileAsync(string id, string officerDni, string filename,
-        string? sourcePath, Stream content, CancellationToken ct = default);
+        string? sourcePath, long? contentLength, Stream content, CancellationToken ct = default);
+    /// <summary>Prechequeo sin cuerpo de la subida (GET …/files/upload-check, §4.1).</summary>
+    Task<Result<UploadCheckResponse>> CheckUploadAsync(string id, string officerDni, string? filename,
+        long? size, CancellationToken ct = default);
     Task<Result<List<FileInfoDto>>> ListFilesAsync(string id, string officerDni,
         CancellationToken ct = default);
     Task<Result<GenerateResponse>> GenerateAsync(string id, string officerDni,
@@ -56,12 +64,14 @@ public sealed class CaseService : ICaseService
     private readonly IExpertProfileService _profiles;
     private readonly IReportSettings _reportSettings;
     private readonly ICatalogService _catalogs;
+    private readonly StorageOptions _storageOptions;
     private readonly ILogger<CaseService> _log;
 
     public CaseService(ICaseRepository repo, IStorageService storage, IReportService reports,
         IExpertProfileService profiles, IReportSettings reportSettings, ICatalogService catalogs,
-        ILogger<CaseService> log)
+        IOptions<StorageOptions> storageOptions, ILogger<CaseService> log)
     {
+        _storageOptions = storageOptions.Value;
         _catalogs = catalogs;
         _repo = repo;
         _storage = storage;
@@ -299,20 +309,147 @@ public sealed class CaseService : ICaseService
 
     // ── Archivos ──────────────────────────────────────────────────────────────
 
-    public async Task<Result<FileInfoDto>> UploadFileAsync(string id, string officerDni,
-        string filename, string? sourcePath, Stream content, CancellationToken ct = default)
+    // ── Subida de evidencia (subida-archivos-grandes §4.1, §4.2, §5.5) ───────
+
+    public async Task<Result<UploadCheckResponse>> CheckUploadAsync(string id, string officerDni,
+        string? filename, long? size, CancellationToken ct = default)
     {
-        var (cas, error) = await LoadOwnedAsync<FileInfoDto>(id, officerDni, ct);
+        var (cas, error) = await PrecheckUploadAsync<UploadCheckResponse>(id, officerDni, filename, size, ct);
         if (cas is null) return error!;
-
-        var (path, hash) = await _storage.SaveFileAsync(id, filename, content, ct);
-        var info = new FileInfo(path);
-
-        if (!string.IsNullOrWhiteSpace(sourcePath))
-            await _repo.AddFileSourceAsync(id, info.Name, sourcePath, ct);
-
-        return Result.Ok(new FileInfoDto(info.Name, info.Length, hash, info.LastWriteTimeUtc, sourcePath));
+        return Result.Ok(new UploadCheckResponse(_storageOptions.MaxUploadBytes));
     }
+
+    // Chequeos 1-6 de §4.1, en orden (el primero que falla gana). Ninguno lee el cuerpo ni
+    // crea archivos. Devuelve el caso si pasa.
+    private async Task<(Case? Case, Result<T>? Error)> PrecheckUploadAsync<T>(string id, string officerDni,
+        string? filename, long? size, CancellationToken ct)
+    {
+        if (!EvidenceUpload.IsValidUploadName(filename))
+            return (null, UploadFail<T>(ErrorKind.Validation, EvidenceUpload.InvalidFilenameMessage,
+                UploadErrorCodes.InvalidFilename));
+
+        var (cas, error) = await LoadOwnedAsync<T>(id, officerDni, ct);
+        if (cas is null) return (null, error);
+
+        if (!IsEditable(cas))
+            return (null, UploadFail<T>(ErrorKind.Conflict, NotEditableMessage, UploadErrorCodes.CaseNotEditable));
+
+        if (size is not { } length || length < 0)
+            return (null, UploadFail<T>(ErrorKind.Validation, EvidenceUpload.LengthRequiredMessage,
+                UploadErrorCodes.LengthRequired));
+
+        var rejection = EvidenceUpload.Evaluate(length, _storageOptions.MaxUploadBytes,
+            _storage.GetAvailableFreeBytes(), _storageOptions.MinFreeBytes);
+        if (rejection is { Kind: UploadRejectionKind.TooLarge })
+            return (null, UploadFail<T>(ErrorKind.PayloadTooLarge,
+                EvidenceUpload.FileTooLargeMessage(filename!, length, rejection.MaxUploadBytes),
+                UploadErrorCodes.FileTooLarge,
+                ("size", length), ("max_upload_bytes", rejection.MaxUploadBytes)));
+        if (rejection is { Kind: UploadRejectionKind.InsufficientStorage })
+            return (null, UploadFail<T>(ErrorKind.InsufficientStorage,
+                EvidenceUpload.InsufficientStorageMessage(filename!, rejection.RequiredBytes, rejection.AvailableBytes),
+                UploadErrorCodes.InsufficientStorage,
+                ("size", length), ("required_bytes", rejection.RequiredBytes),
+                ("available_bytes", rejection.AvailableBytes)));
+
+        return (cas, null);
+    }
+
+    // Error de subida con { code, ...extra } (claves en snake_case literal, §7).
+    private static Result<T> UploadFail<T>(ErrorKind kind, string error, string code,
+        params (string Key, object? Value)[] extra)
+    {
+        var details = new Dictionary<string, object?> { ["code"] = code };
+        foreach (var (key, value) in extra) details[key] = value;
+        return Result.Fail<T>(kind, error, details);
+    }
+
+    public async Task<Result<FileInfoDto>> UploadFileAsync(string id, string officerDni,
+        string filename, string? sourcePath, long? contentLength, Stream content, CancellationToken ct = default)
+    {
+        // Ninguna excepción sale de acá: un 500 de Kestrel saldría sin CORS ("Failed to fetch").
+        try
+        {
+            var (cas, error) = await PrecheckUploadAsync<FileInfoDto>(id, officerDni, filename, contentLength, ct);
+            if (cas is null) return error!;
+            var expected = contentLength!.Value;
+
+            StagedUpload staged;
+            try
+            {
+                staged = await _storage.StageUploadAsync(id, filename, content, expected, ct);
+            }
+            catch (UploadIncompleteException ex)
+            {
+                _log.LogInformation("Subida incompleta al caso {CaseId} ({Name}): {Received} de {Expected} bytes",
+                    id, filename, ex.ReceivedBytes, ex.ExpectedBytes);
+                return IncompleteUpload(filename, ex.ReceivedBytes, ex.ExpectedBytes);
+            }
+            catch (InsufficientStorageException ex)
+            {
+                _log.LogWarning(ex, "Disco lleno subiendo al caso {CaseId} ({Name}, {Size} bytes)",
+                    id, filename, expected);
+                return UploadFail<FileInfoDto>(ErrorKind.InsufficientStorage,
+                    EvidenceUpload.InsufficientStorageMessage(filename, ex.AvailableBytes is null ? null : ex.RequiredBytes,
+                        ex.AvailableBytes),
+                    UploadErrorCodes.InsufficientStorage,
+                    ("size", expected), ("required_bytes", ex.RequiredBytes), ("available_bytes", ex.AvailableBytes));
+            }
+
+            using (staged)
+            {
+                // DT9: si empezó una generación durante la subida, se descarta el temporal.
+                var fresh = await _repo.FindByIdAsync(id, CancellationToken.None);
+                if (fresh is null || !IsEditable(fresh))
+                {
+                    _log.LogInformation("Subida al caso {CaseId} ({Name}) descartada: el caso dejó de ser editable",
+                        id, filename);
+                    return UploadFail<FileInfoDto>(ErrorKind.Conflict, NotEditableMessage,
+                        UploadErrorCodes.CaseNotEditable);
+                }
+
+                var info = staged.Commit();
+                if (!string.IsNullOrWhiteSpace(sourcePath))
+                {
+                    try
+                    {
+                        await _repo.AddFileSourceAsync(id, info.Name, sourcePath, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        // El archivo ya quedó publicado (completo); falta solo la ruta de origen.
+                        // Reenviarlo lo reemplaza con el mismo contenido y registra la ruta.
+                        _log.LogError(ex, "Subida al caso {CaseId} ({Name}) guardada sin registrar su ruta de origen",
+                            id, filename);
+                        return UploadFail<FileInfoDto>(ErrorKind.ServerError,
+                            $"El servidor guardó {filename} pero no pudo registrar su ruta de origen; volvé a enviarlo",
+                            UploadErrorCodes.StorageError);
+                    }
+                }
+
+                return Result.Ok(new FileInfoDto(info.Name, info.Length, staged.Hash, info.LastWriteTimeUtc,
+                    sourcePath));
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // El cliente cortó o canceló: nadie lee la respuesta; el temporal ya se borró.
+            _log.LogInformation("Subida al caso {CaseId} ({Name}) cancelada/cortada por el cliente", id, filename);
+            return IncompleteUpload(filename, 0, contentLength ?? 0);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Error guardando la subida al caso {CaseId} ({Name})", id, filename);
+            return UploadFail<FileInfoDto>(ErrorKind.ServerError, EvidenceUpload.StorageErrorMessage(filename),
+                UploadErrorCodes.StorageError);
+        }
+    }
+
+    private static Result<FileInfoDto> IncompleteUpload(string filename, long received, long expected) =>
+        UploadFail<FileInfoDto>(ErrorKind.Validation,
+            EvidenceUpload.IncompleteUploadMessage(filename, received, expected),
+            UploadErrorCodes.IncompleteUpload,
+            ("size", expected), ("received_bytes", received));
 
     public async Task<Result<List<FileInfoDto>>> ListFilesAsync(string id, string officerDni,
         CancellationToken ct = default)

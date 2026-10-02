@@ -6,6 +6,17 @@ using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.Options;
 using Factum.Agent.Services;
 using Factum.Agent.WebSockets;
+using Factum.Agent.Common;
+
+// Modo auxiliar `--ctrl-c <pid>`: manda Ctrl+C a la consola de scrcpy y sale. Va antes de todo
+// para no levantar el host ni registrar handlers de consola (SDD grabacion-android-windows §6.3).
+if (args.Length == 2 && args[0] == WindowsConsoleSignal.HelperFlag)
+{
+    Environment.Exit(WindowsConsoleSignal.RunHelper(args[1]));
+}
+
+// DP12: que scrcpy no herede un "ignorar Ctrl+C" que haya dejado algún lanzador (solo Windows).
+WindowsConsoleSignal.EnableCtrlCForChildren();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -68,6 +79,7 @@ builder.Services.AddSingleton<IIosService, IosService>();
 builder.Services.AddSingleton<IWebcamService, WebcamService>();
 builder.Services.AddSingleton<IFileStorageService, FileStorageService>();
 builder.Services.AddSingleton<AgentWebSocketHub>();
+builder.Services.AddSingleton<ToolInventory>();
 
 // ── Puerto y dirección de escucha (CLI > config > default) ───────────────────
 var port = builder.Configuration.GetValue<int>("Agent:Port", 8765);
@@ -144,6 +156,9 @@ if (exposedToNetwork)
         listenUrl);
 
 await adb.EnsureServerAsync();
+
+// Versiones de adb/scrcpy/ffmpeg/python para /health.tools, en segundo plano.
+app.Services.GetRequiredService<ToolInventory>().WarmUp();
 
 _ = Task.Run(async () =>
 {

@@ -33,7 +33,10 @@ import {
 } from "./capture/gallery";
 import type { LocalBlobInfo } from "@/hooks/useFileManager";
 import { StageEmpty, StageScreen } from "./capture/StageScreen";
-import { AttachmentChip, EvidenceTrayTile } from "./capture/EvidenceTray";
+import { AttachmentChip, EvidenceTrayTile, type TrayUploadState } from "./capture/EvidenceTray";
+import { UploadLiveRegion, UploadProgressPanel } from "./capture/UploadProgressPanel";
+import type { UploadMessage } from "@/lib/upload-messages";
+import type { FileUploadState, UploadProgress } from "@/types";
 import { CaptureRoleMenu } from "./capture/CaptureRoleMenu";
 import { AirplayConnectGuide, OnDeviceStopGuide } from "./capture/CaptureGuides";
 
@@ -89,6 +92,14 @@ interface Props {
   // audio digital no se puede capturar (ej. notas de voz de WhatsApp, protegidas por el SO).
   androidWithMic?: boolean;
   onToggleAndroidWithMic?: (value: boolean) => void;
+  // Envío de evidencia en curso (subida-archivos-grandes): mientras dura se
+  // deshabilitan captura, adjuntar, explorador, quitar y marcas (DT13).
+  uploading?: boolean;
+  uploadProgress?: UploadProgress | null;
+  uploadStates?: Record<string, FileUploadState>;
+  uploadNotice?: UploadMessage | null;
+  onCancelUpload?: () => void;
+  onDismissUploadNotice?: () => void;
 }
 
 export function CaptureStep({
@@ -112,6 +123,8 @@ export function CaptureStep({
   airplayShotActive, airplayShotConnected, airplayShotReceiverName, airplayShotMarksCount = 0,
   onStartAirplayShot, onMarkAirplayShot, onStopAirplayShot,
   androidWithMic = false, onToggleAndroidWithMic,
+  uploading = false, uploadProgress = null, uploadStates = NO_UPLOAD_STATES, uploadNotice = null,
+  onCancelUpload, onDismissUploadNotice,
 }: Props) {
   const isIOS = platform === "ios";
   const [lightbox, setLightbox]     = useState<string | null>(null);
@@ -188,7 +201,14 @@ export function CaptureStep({
   }, [totalItems]);
 
   function removeItem(item: GItem) {
+    if (uploading) return;
     onRemoveFile?.(item.name);
+  }
+
+  /** Estado de envío de un ítem: subido (en el caso), subiendo/error (esta tanda) o pendiente. */
+  function uploadStateOf(item: GItem): TrayUploadState {
+    if (item.remoteFile?.uploaded) return "uploaded";
+    return uploadStates[item.name] ?? "pending";
   }
 
   function handleWebcamCapture(blob: Blob, _raw: string) {
@@ -219,7 +239,7 @@ export function CaptureStep({
     });
   }
 
-  const recordBtnDisabled = !!loading.startRecord || !!loading.stopRecord || !!deviceOffline;
+  const recordBtnDisabled = !!loading.startRecord || !!loading.stopRecord || !!deviceOffline || uploading;
   const recordBusy = !!loading.startRecord || !!loading.stopRecord;
 
   return (
@@ -254,7 +274,8 @@ export function CaptureStep({
 
       {/* ── Input de archivos oculto ── */}
       <input ref={fileInputRef} type="file" multiple accept="image/*,video/*,audio/*" className="hidden"
-        onChange={e => { if (e.target.files?.length) processFiles(e.target.files); e.target.value = ""; }} />
+        disabled={uploading}
+        onChange={e => { if (!uploading && e.target.files?.length) processFiles(e.target.files); e.target.value = ""; }} />
 
       <StepHeader
         title="Captura de evidencia"
@@ -277,7 +298,8 @@ export function CaptureStep({
               blobURL={fotoFunc ? localBlobs[fotoFunc.name]?.url : undefined}
               agentFilename={fotoFunc?.name}
               onCapture={() => setWebcam("funcionario")}
-              loading={!!loading.photo} />
+              loading={!!loading.photo}
+              disabled={uploading} />
           </li>
           <li>
             <IdentityCard label="Titular del dispositivo" role="Titular" icon={User}
@@ -287,7 +309,8 @@ export function CaptureStep({
               blobURL={fotoDen ? localBlobs[fotoDen.name]?.url : undefined}
               agentFilename={fotoDen?.name}
               onCapture={() => setWebcam("denunciante")}
-              loading={!!loading.photo} />
+              loading={!!loading.photo}
+              disabled={uploading} />
           </li>
         </ul>
       </section>
@@ -364,7 +387,7 @@ export function CaptureStep({
               <button
                 type="button"
                 onClick={onScreenshot}
-                disabled={!!loading.screenshot || !!deviceOffline}
+                disabled={!!loading.screenshot || !!deviceOffline || uploading}
                 aria-busy={!!loading.screenshot || undefined}
                 className={cn(TILE, TILE_IDLE)}
               >
@@ -410,14 +433,14 @@ export function CaptureStep({
                 label="Espejar para capturas"
                 onClick={onStartAirplayShot}
                 loading={!!loading.shotStart}
-                disabled={!!deviceOffline || isRecording}
+                disabled={!!deviceOffline || isRecording || uploading}
                 className="w-full min-h-11 sm:min-h-0" />
             )}
             {isIOS && airplayShotActive && !airplayShotConnected && (
               <div className={cn("space-y-2", ENTER)}>
                 <AirplayConnectGuide airplayReceiverName={airplayShotReceiverName} />
                 <Button type="button" text severity="secondary" size="small" label="Cancelar"
-                  onClick={onStopAirplayShot} disabled={!!loading.shotStop} className="w-full min-h-11 sm:min-h-0" />
+                  onClick={onStopAirplayShot} disabled={!!loading.shotStop || uploading} className="w-full min-h-11 sm:min-h-0" />
               </div>
             )}
             {isIOS && airplayShotActive && airplayShotConnected && (
@@ -429,11 +452,11 @@ export function CaptureStep({
                 <Button type="button" size="small"
                   icon={<Camera className="h-3.5 w-3.5" aria-hidden="true" />}
                   label={`Marcar captura${airplayShotMarksCount > 0 ? ` (${airplayShotMarksCount})` : ""}`}
-                  onClick={onMarkAirplayShot} loading={!!loading.shotMark} className="w-full min-h-11 sm:min-h-0" />
+                  onClick={onMarkAirplayShot} loading={!!loading.shotMark} disabled={uploading} className="w-full min-h-11 sm:min-h-0" />
                 <Button type="button" severity="secondary" size="small"
                   icon={<WifiOff className="h-3.5 w-3.5" aria-hidden="true" />}
                   label="Finalizar espejado"
-                  onClick={onStopAirplayShot} loading={!!loading.shotStop} className="w-full min-h-11 sm:min-h-0" />
+                  onClick={onStopAirplayShot} loading={!!loading.shotStop} disabled={uploading} className="w-full min-h-11 sm:min-h-0" />
               </div>
             )}
 
@@ -445,6 +468,7 @@ export function CaptureStep({
                   inputId="capture-android-mic"
                   checked={androidWithMic}
                   onChange={e => onToggleAndroidWithMic?.(!!e.checked)}
+                  disabled={uploading}
                   icon={<Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden="true" />}
                   aria-describedby="capture-android-mic-hint"
                   className="mt-0.5"
@@ -487,7 +511,7 @@ export function CaptureStep({
                     icon={<Camera className="h-3.5 w-3.5" aria-hidden="true" />}
                     label="Filmar con cámara externa"
                     onClick={() => setCameraRecordOpen(true)}
-                    disabled={!!deviceOffline}
+                    disabled={!!deviceOffline || uploading}
                     aria-haspopup="dialog"
                     className="w-full min-h-11 sm:min-h-0" />
                   {!isIOS && (
@@ -495,7 +519,7 @@ export function CaptureStep({
                       icon={<FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />}
                       label="Explorar archivos del celular"
                       onClick={() => setExplorerOpen(true)}
-                      disabled={!!deviceOffline || !deviceSerial}
+                      disabled={!!deviceOffline || !deviceSerial || uploading}
                       aria-haspopup="dialog"
                       className="w-full min-h-11 sm:min-h-0" />
                   )}
@@ -551,6 +575,8 @@ export function CaptureStep({
                         index={i}
                         total={screenItems.length}
                         role={roleByName.get(item.name)}
+                        uploadState={uploadStateOf(item)}
+                        removeDisabled={uploading}
                         onSelect={() => setSelectedKey(item.key)}
                         onRemove={() => removeItem(item)}
                       />
@@ -575,6 +601,8 @@ export function CaptureStep({
                           item={item}
                           active={item.key === selected?.key}
                           sizeMB={sizeMB}
+                          uploadState={uploadStateOf(item)}
+                          removeDisabled={uploading}
                           onSelect={() => setSelectedKey(item.key)}
                           onRemove={() => removeItem(item)}
                         />
@@ -589,17 +617,24 @@ export function CaptureStep({
           {/* ── Zona para adjuntar (click o arrastrar) ── */}
           <div
             className="shrink-0"
-            onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+            onDragOver={e => { e.preventDefault(); if (!uploading) setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
-            onDrop={e => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files.length) processFiles(e.dataTransfer.files); }}
+            onDrop={e => {
+              e.preventDefault();
+              setIsDragging(false);
+              if (uploading) return;
+              if (e.dataTransfer.files.length) processFiles(e.dataTransfer.files);
+            }}
           >
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
               className={cn(
                 "group block w-full rounded-fx-xl border-2 border-dashed p-5 text-center transition-colors duration-fx-fast ease-fx",
+                "disabled:cursor-not-allowed disabled:opacity-50",
                 FOCUS_RING,
-                isDragging ? "border-fx-accent bg-fx-accent-soft" : "border-fx-border-strong bg-fx-surface-2 hover:bg-fx-surface-3",
+                isDragging ? "border-fx-accent bg-fx-accent-soft" : "border-fx-border-strong bg-fx-surface-2 enabled:hover:bg-fx-surface-3",
               )}
             >
               <span className="flex flex-col items-center gap-1.5">
@@ -681,6 +716,7 @@ export function CaptureStep({
                   variants={videoVariants[selected.name] ?? []}
                   isPending={pendingVariantFiles.has(selected.name)}
                   onRemove={() => removeItem(selected)}
+                  removeDisabled={uploading}
                 />
               </div>
             ) : (
@@ -705,6 +741,7 @@ export function CaptureStep({
                           filename={selected.name}
                           role={roleByName.get(selected.name)}
                           onChange={role => onSetCaptureRole(selected.name, role)}
+                          disabled={uploading}
                         />
                       )}
                       <span
@@ -725,7 +762,8 @@ export function CaptureStep({
                       <Button type="button" text severity="danger" size="small"
                         icon={<Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
                         aria-label={`Eliminar ${selected.originalName ?? selected.name}`}
-                        onClick={() => removeItem(selected)} />
+                        onClick={() => removeItem(selected)}
+                        disabled={uploading} />
                     </div>
                   );
                 })()}
@@ -734,6 +772,19 @@ export function CaptureStep({
           </div>
         </div>
       </div>
+
+      {/* ── Envío en curso: progreso real + cancelar; aviso de cancelación ── */}
+      <UploadLiveRegion progress={uploading ? uploadProgress : null} />
+      {(uploadNotice || (uploading && uploadProgress)) && (
+        <div className="mt-6 space-y-3">
+          {uploadNotice && (
+            <FxBanner tone="info" onClose={onDismissUploadNotice}>{uploadNotice.text}</FxBanner>
+          )}
+          {uploading && uploadProgress && (
+            <UploadProgressPanel progress={uploadProgress} onCancel={() => onCancelUpload?.()} />
+          )}
+        </div>
+      )}
 
       {/* ── Botonera del paso ── */}
       <StepActions className="mt-6 border-t border-fx-border pt-5">
@@ -753,6 +804,7 @@ export function CaptureStep({
 
 /* Default estable de `localBlobs` (un `{}` literal en el destructuring sería nuevo en cada render). */
 const NO_LOCAL_BLOBS: Record<string, LocalBlobInfo> = {};
+const NO_UPLOAD_STATES: Record<string, FileUploadState> = {};
 
 /* Subtítulo de bloque del paso (misma convención que la parte 2). */
 const LABEL = "m-0 flex items-center gap-1.5 text-fx-label uppercase text-fx-text-2";

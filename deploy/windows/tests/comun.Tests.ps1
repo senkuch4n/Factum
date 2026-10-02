@@ -283,3 +283,42 @@ Describe 'Guardas del repo (perfil de memoria)' {
         Get-MongoImagen (Join-Path $script:raizW 'docker-compose.yml') | Should -Be 'mongo:7.0.43'
     }
 }
+
+Describe 'Get-LineasHerramientasTatana' {
+    It 'con $null devuelve una lista vacía' {
+        @(Get-LineasHerramientasTatana $null).Count | Should -Be 0
+    }
+
+    It 'sin tools (Tatana 1.0.0) pide actualizar' {
+        $h = [pscustomobject]@{ status = 'ok'; version = '2.0.0'; mock = $false }
+        $l = @(Get-LineasHerramientasTatana $h)
+        $l.Count | Should -Be 1
+        $l[0].Ok | Should -BeFalse
+        $l[0].Texto | Should -Be 'Esta versión de Tatana no informa sus herramientas. Actualizala con "Actualizar Factum".'
+    }
+
+    It 'todas OK, con y sin version, en orden adb/scrcpy/ffmpeg/python' {
+        $json = '{"status":"ok","tools":{' +
+            '"python":{"found":true,"source":"portable","path":"C:\\T\\tools\\python-embed\\python.exe"},' +
+            '"adb":{"found":true,"source":"portable","path":"C:\\T\\tools\\platform-tools\\adb.exe","version":"37.0.1-13426479"},' +
+            '"scrcpy":{"found":true,"source":"portable","path":"C:\\T\\tools\\scrcpy\\scrcpy.exe","version":"4.1"},' +
+            '"ffmpeg":{"found":true,"source":"path","path":"C:\\ff\\ffmpeg.exe","version":"8.1.2"}}}'
+        $l = @(Get-LineasHerramientasTatana ($json | ConvertFrom-Json))
+        $l.Count | Should -Be 4
+        @($l | Where-Object { -not $_.Ok }).Count | Should -Be 0
+        $l[0].Texto | Should -Be 'adb: OK  37.0.1-13426479  (C:\T\tools\platform-tools\adb.exe)'
+        $l[1].Texto | Should -Be 'scrcpy: OK  4.1  (C:\T\tools\scrcpy\scrcpy.exe)'
+        $l[2].Texto | Should -Be 'ffmpeg: OK  8.1.2  (C:\ff\ffmpeg.exe)'
+        $l[3].Texto | Should -Be 'python: OK  (versión desconocida)  (C:\T\tools\python-embed\python.exe)'
+    }
+
+    It 'scrcpy con found=false sale como FALTA' {
+        $json = '{"tools":{"adb":{"found":true,"path":"C:\\a\\adb.exe","version":"1"},"scrcpy":{"found":false},' +
+            '"ffmpeg":{"found":true,"path":"C:\\f\\ffmpeg.exe","version":"2"},"python":{"found":true,"path":"C:\\p\\python.exe","version":"3"}}}'
+        $l = @(Get-LineasHerramientasTatana ($json | ConvertFrom-Json))
+        $l.Count | Should -Be 4
+        $l[1].Ok | Should -BeFalse
+        $l[1].Texto | Should -Be 'scrcpy: FALTA'
+        @($l | Where-Object { $_.Ok }).Count | Should -Be 3
+    }
+}
