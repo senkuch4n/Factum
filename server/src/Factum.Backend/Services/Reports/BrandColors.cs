@@ -5,16 +5,19 @@ using Factum.Backend.Services.Branding;
 namespace Factum.Backend.Services.Reports;
 
 /// <summary>
-/// Pasada B-R2b del informe: la plantilla v5 trae los colores de marca como "centinelas" (los
-/// mismos defaults neutros de <see cref="BrandingColors"/>) y acá se reemplazan por los
-/// configurados. Ver Refactorizaciones/informe-diseno-modelo.md §5.6. El script de la v5
-/// garantiza que la v4 de origen no contenía ninguno de los dos valores, así que el
+/// Pasada B-R2b del informe: la plantilla v6 trae el color primario como "centinela" (el mismo
+/// default de <see cref="BrandingColors"/>, el verde de Factum) y acá se reemplaza por el
+/// configurado. En la v6 el primario está en document (filetes, números de sección, línea de
+/// la tabla de hashes) y en numbering; el acento NO está en la plantilla (lo aplica B-R5 como
+/// fondo de la fila del ZIP), así que su reemplazo es un no-op que se conserva por si una
+/// plantilla futura lo usa. Ver Refactorizaciones/informe-diseno-v6.md §5.5. El script de la
+/// v6 garantiza que la v4 de origen no contenía ninguno de los dos valores, así que el
 /// reemplazo nunca pisa un color ajeno.
 /// </summary>
 internal static class BrandColors
 {
-    public const string PrimarySentinel = BrandingColors.DefaultPrimary; // "2F3B4C"
-    public const string AccentSentinel = BrandingColors.DefaultAccent;   // "9AA5B1"
+    public const string PrimarySentinel = BrandingColors.DefaultPrimary; // "2F6F12"
+    public const string AccentSentinel = BrandingColors.DefaultAccent;   // "E8F3DF"
 
     private static readonly string[] ColorAttributes = ["val", "fill", "color"];
 

@@ -7,7 +7,8 @@ using Microsoft.Extensions.Options;
 namespace Factum.Backend.Tests;
 
 /// <summary>
-/// Colores de marca e isotipo (Refactorizaciones/informe-diseno-modelo.md §3.1, §5.8, B20).
+/// Colores de marca e isotipo (Refactorizaciones/informe-diseno-modelo.md §3.1, §5.8, B20, y
+/// Refactorizaciones/informe-diseno-v6.md §5.7, B20: paleta de Factum y acento contra la tinta).
 /// Solo colores ficticios; el ContentRoot es una carpeta temporal propia que se borra al final.
 /// </summary>
 public sealed class BrandingColorsTests : IDisposable
@@ -33,6 +34,23 @@ public sealed class BrandingColorsTests : IDisposable
     [InlineData("#GGGGGG", null)]
     public void Normalize(string? raw, string? expected) =>
         Assert.Equal(expected, BrandingColors.Normalize(raw));
+
+    [Fact]
+    public void Defaults_SonLaPaletaDeFactum()
+    {
+        Assert.Equal("2F6F12", BrandingColors.DefaultPrimary);
+        Assert.Equal("E8F3DF", BrandingColors.DefaultAccent);
+        Assert.True(BrandingColors.ContrastWithWhite(BrandingColors.DefaultPrimary) >= BrandingColors.MinPrimaryContrast);
+        Assert.True(BrandingColors.Contrast(BrandingColors.DefaultAccent, BrandingColors.InkColor)
+                    >= BrandingColors.MinAccentContrastWithInk);
+    }
+
+    [Fact]
+    public void Contrast_Simetrico()
+    {
+        Assert.Equal(21.0, BrandingColors.Contrast("000000", "FFFFFF"), 2);
+        Assert.Equal(BrandingColors.Contrast("123456", "ABCDEF"), BrandingColors.Contrast("ABCDEF", "123456"), 10);
+    }
 
     [Fact]
     public void ContrastWithWhite()
@@ -63,7 +81,8 @@ public sealed class BrandingColorsTests : IDisposable
 
     [Theory]
     [InlineData("#abcdef", "ABCDEF")]
-    [InlineData("#FFFF00", "FFFF00")] // el acento no tiene chequeo de contraste
+    [InlineData("#FFFF00", "FFFF00")] // claro: pasa el contraste con la tinta
+    [InlineData("#123456", BrandingColors.DefaultAccent)] // oscuro: no contrasta con la tinta
     [InlineData("nada", BrandingColors.DefaultAccent)]
     [InlineData("", BrandingColors.DefaultAccent)]
     public void AccentColor(string configured, string expected) =>
@@ -87,7 +106,7 @@ public sealed class BrandingColorsTests : IDisposable
     }
 
     [Fact]
-    public void SnapshotDeTresArgumentos_PaletaNeutra()
+    public void SnapshotDeTresArgumentos_PaletaDeFactum()
     {
         var snap = new BrandingSnapshot(null, [], null);
         Assert.Null(snap.Isotype);

@@ -32,14 +32,16 @@ public interface IReportService
 }
 
 /// <summary>
-/// Genera el Informe Pericial Técnico Informático a partir de <c>Templates/plantilla_informe_v5.docx</c>
-/// (que nace de <c>ops/plantilla/build_plantilla_v5.py</c>, a partir de la v4) y el ZIP de
-/// evidencia. Ver Refactorizaciones/informe-pericial-de-parte.md §7 y Anexo B, y
-/// Refactorizaciones/informe-diseno-modelo.md (portada, banda, colores de marca e isotipo).
+/// Genera el Informe Pericial Técnico Informático a partir de <c>Templates/plantilla_informe_v6.docx</c>
+/// (que nace de <c>ops/plantilla/build_plantilla_v6.py</c>, a partir de la v4) y el ZIP de
+/// evidencia. Ver Refactorizaciones/informe-pericial-de-parte.md §7 y Anexo B,
+/// Refactorizaciones/informe-diseno-modelo.md (colores de marca e isotipo) y
+/// Refactorizaciones/informe-diseno-v6.md (diseño "Filete": portada, encabezado de texto, pie
+/// con slot de atribución y tinte de la fila del ZIP).
 /// </summary>
 public sealed class ReportService : IReportService
 {
-    private const string DefaultTemplateFileName = "plantilla_informe_v5.docx";
+    private const string DefaultTemplateFileName = "plantilla_informe_v6.docx";
 
     private readonly IBrandingService branding;
     private readonly IReportSettings settings;
@@ -163,8 +165,8 @@ public sealed class ReportService : IReportService
 
     // ── DOCX (Anexo B, pasadas B-R0 a B-R9, más B-R2b de informe-diseno-modelo) ─
 
-    // Placeholders de texto que la plantilla puede traer (A7.1; la v5 no agrega ninguno de
-    // texto). Cualquier otro se borra en B-R1.
+    // Placeholders de texto que la plantilla puede traer (A7.1, más el slot de atribución de la
+    // v6, que llena B-R8). Cualquier otro se borra en B-R1.
     private static readonly HashSet<string> KnownPlaceholders = new(StringComparer.Ordinal)
     {
         "{nombreTribunal}", "{organismoTribunal}", "{nombrePerito}", "{matriculaPerito}",
@@ -181,13 +183,14 @@ public sealed class ReportService : IReportService
         "{descripcionConclusiones}", "{descripcionNotasTecnicas}", "{descripcionReserva}",
         "{nombreArchivo}", "{hashArchivo}",
         "{ORGANIZACION}", "{CONTACTO}", "{CONTACTO_EN_LINEA}",
+        AttributionSlot,
     };
 
     private static readonly HashSet<string> BlockKeys = new(StringComparer.Ordinal)
     {
         "MEMBRETE", "organismoTribunal", "objetoInforme", "capturasNombreDispositivo",
         "descripcionNotasTecnicas", "descripcionReserva", "anexoCapturas",
-        "ISOTIPO", "NOMBRE_EN_BANDA",
+        "ISOTIPO", "MEMBRETE_CON_LOGO", "MEMBRETE_SIN_LOGO",
     };
 
     private static readonly Regex AnyPlaceholderRegex = new(
@@ -204,6 +207,7 @@ public sealed class ReportService : IReportService
     private const long AnnexShotMaxH = 3_780_000;
 
     private const string CaptionColor = "595959";
+    private const string ContainerCaptionColor = "3D444C";
     private const string BodyFont = "Arial";
 
     private Task GenerateDocxAsync(Case cas, List<FileInfoDto> files,
@@ -256,11 +260,13 @@ public sealed class ReportService : IReportService
 
             var conditions = new Dictionary<string, bool>(StringComparer.Ordinal)
             {
-                // MEMBRETE vive en el pie de la portada (footer2 de la v5).
+                // MEMBRETE vive en el pie de la portada (footer2 de la v6), con dos variantes:
+                // con logo (tabla logo | nombre y contacto) y sin logo (solo texto).
                 ["MEMBRETE"] = brand.OrganizationName is not null || brand.Logo is not null || brand.ContactLines.Count > 0,
-                // Banda interior y cierre: isotipo si hay; si no, el nombre en texto (solo banda).
+                ["MEMBRETE_CON_LOGO"] = brand.Logo is not null,
+                ["MEMBRETE_SIN_LOGO"] = brand.Logo is null,
+                // ISOTIPO: solo al cierre (el nombre va siempre en el encabezado interior).
                 ["ISOTIPO"] = brand.Isotype is not null,
-                ["NOMBRE_EN_BANDA"] = brand.Isotype is null && brand.OrganizationName is not null,
                 ["organismoTribunal"] = !string.IsNullOrWhiteSpace(cas.OrganismoTribunal),
                 ["objetoInforme"] = !string.IsNullOrWhiteSpace(texts.ObjetoInforme),
                 ["capturasNombreDispositivo"] = nameShots.Count > 0,
@@ -278,7 +284,8 @@ public sealed class ReportService : IReportService
             foreach (var (_, root) in parts)
                 ResolveBlocks(root, conditions);
 
-            // B-R2b: colores de marca. La plantilla trae los centinelas (= defaults neutros).
+            // B-R2b: colores de marca. La plantilla trae el centinela del primario (= verde de
+            // Factum, el default).
             BrandColors.Apply(mainPart, brand.PrimaryColor, brand.AccentColor);
 
             // B-R3: {LOGO_ORGANIZACION[:WxH]} → logo y {ISOTIPO_ORGANIZACION[:WxH]} → isotipo
@@ -309,8 +316,9 @@ public sealed class ReportService : IReportService
             foreach (var (placeholder, value) in multiline)
                 ReplaceParagraphPerLine(body, placeholder, value, resolved);
 
-            // B-R5: tabla de hashes.
-            FillHashTable(body, files, hashes, zipFilename, zipHash, resolved);
+            // B-R5: tabla de hashes. Corre después de B-R2b: el tinte de la fila del ZIP es el
+            // acento ya resuelto, no un centinela.
+            FillHashTable(body, files, hashes, zipFilename, zipHash, brand.AccentColor, resolved);
 
             // B-R6: texto, por run y en una sola pasada.
             foreach (var (_, root) in parts)
@@ -458,7 +466,7 @@ public sealed class ReportService : IReportService
     // ── B-R5: tabla de hashes (§7.5) ─────────────────────────────────────────
 
     private void FillHashTable(Body body, List<FileInfoDto> files, Dictionary<string, string> hashes,
-        string zipFilename, string zipHash, HashSet<Paragraph> resolved)
+        string zipFilename, string zipHash, string tint, HashSet<Paragraph> resolved)
     {
         var model = body.Descendants<TableRow>()
             .FirstOrDefault(r => r.Descendants<Paragraph>().Any(p => ParagraphText(p).Contains("{nombreArchivo}")));
@@ -474,12 +482,15 @@ public sealed class ReportService : IReportService
             model.InsertBeforeSelf(BuildHashRow(model, f.Name, origin,
                 hashes.GetValueOrDefault(f.Name, "-"), resolved));
         }
-        model.InsertBeforeSelf(BuildHashRow(model, zipFilename, "Contenedor de la evidencia", zipHash, resolved));
+        model.InsertBeforeSelf(BuildHashRow(model, zipFilename, "Contenedor de la evidencia", zipHash, resolved,
+            isContainer: true, tint: tint));
         model.Remove();
     }
 
+    // isContainer: la fila del ZIP lleva el tinte (acento) de fondo, el nombre en negrita y la
+    // leyenda recta en gris; así se distingue también impresa en blanco y negro.
     private static TableRow BuildHashRow(TableRow model, string name, string? secondLine, string hash,
-        HashSet<Paragraph> resolved)
+        HashSet<Paragraph> resolved, bool isContainer = false, string? tint = null)
     {
         var row = (TableRow)model.CloneNode(true);
         StripParagraphIds(row);
@@ -494,18 +505,48 @@ public sealed class ReportService : IReportService
 
         if (secondLine is not null)
         {
-            // Segundo párrafo en la misma celda: cursiva, 7 pt, gris (el estilo del "Origen:" de la v3).
+            // Segundo párrafo en la misma celda. Archivos: cursiva, 7 pt, gris (el estilo del
+            // "Origen:" de la v3). Contenedor ZIP: recto, 8 pt, gris secundario.
             var rPr = namePara.Descendants<Run>().FirstOrDefault()?.RunProperties?.CloneNode(true) as RunProperties
                       ?? new RunProperties();
             rPr.Bold = null;
-            rPr.Italic = new Italic();
-            rPr.Color = new Color { Val = CaptionColor };
-            rPr.FontSize = new FontSize { Val = "14" };
-            rPr.FontSizeComplexScript = new FontSizeComplexScript { Val = "14" };
+            rPr.BoldComplexScript = null;
+            if (isContainer)
+            {
+                rPr.Italic = null;
+                rPr.Color = new Color { Val = ContainerCaptionColor };
+                rPr.FontSize = new FontSize { Val = "16" };
+                rPr.FontSizeComplexScript = new FontSizeComplexScript { Val = "16" };
+            }
+            else
+            {
+                rPr.Italic = new Italic();
+                rPr.Color = new Color { Val = CaptionColor };
+                rPr.FontSize = new FontSize { Val = "14" };
+                rPr.FontSizeComplexScript = new FontSizeComplexScript { Val = "14" };
+            }
             var p = new Paragraph();
             if (namePara.ParagraphProperties is { } pPr) p.AppendChild((ParagraphProperties)pPr.CloneNode(true));
             p.AppendChild(new Run(rPr, new Text(ReportValues.Clean(secondLine)) { Space = SpaceProcessingModeValues.Preserve }));
             namePara.InsertAfterSelf(p);
+        }
+
+        if (isContainer)
+        {
+            // Nombre del ZIP en negrita (los runs del párrafo del nombre, no la leyenda).
+            foreach (var run in namePara.Elements<Run>())
+            {
+                var rp = run.RunProperties ??= new RunProperties();
+                rp.Bold = new Bold();
+                rp.BoldComplexScript = new BoldComplexScript();
+            }
+
+            if (!string.IsNullOrEmpty(tint))
+                foreach (var cell in row.Elements<TableCell>())
+                {
+                    var tcPr = cell.TableCellProperties ??= new TableCellProperties();
+                    tcPr.Shading = new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = tint };
+                }
         }
 
         foreach (var p in row.Descendants<Paragraph>()) resolved.Add(p);
@@ -833,7 +874,7 @@ public sealed class ReportService : IReportService
         @"\{LOGO_ORGANIZACION(?::(\d+(?:[.,]\d+)?)x(\d+(?:[.,]\d+)?))?\}",
         RegexOptions.CultureInvariant);
 
-    // {ISOTIPO_ORGANIZACION} o {ISOTIPO_ORGANIZACION:<ancho>x<alto>} (cm), en la banda y al cierre.
+    // {ISOTIPO_ORGANIZACION} o {ISOTIPO_ORGANIZACION:<ancho>x<alto>} (cm); en la v6, al cierre.
     private static readonly Regex IsotypePlaceholderRegex = new(
         @"\{ISOTIPO_ORGANIZACION(?::(\d+(?:[.,]\d+)?)x(\d+(?:[.,]\d+)?))?\}",
         RegexOptions.CultureInvariant);
@@ -940,11 +981,18 @@ public sealed class ReportService : IReportService
     // ── Atribución "Realizado con Factum" (pie de todas las páginas) ─────────
 
     private const string AttributionText = "Realizado con Factum";
+
+    // Slot de la plantilla (pie interior de la v6): B-R8 pone ahí el sello y el texto, en la
+    // misma línea que "Página N de M". Sin slot, la atribución va en un párrafo centrado al final.
+    private const string AttributionSlot = "{ATRIBUCION_FACTUM}";
     private const long SelloSizeEmu = 144_000; // 0.4 cm
 
-    // Agrega al pie de TODAS las páginas un párrafo centrado con el Sello de Factum (0.4 cm)
-    // + "Realizado con Factum" (Arial 8 pt, gris). Se inyecta por código para que ninguna
-    // plantilla (incluidas las de clientes) la pueda omitir. Por cada sección:
+    // Agrega al pie de TODAS las páginas el Sello de Factum (0.4 cm) + "Realizado con Factum"
+    // (Arial 8 pt, gris). Se inyecta por código para que ninguna plantilla (incluidas las de
+    // clientes) la pueda omitir. Si el footer trae el slot {ATRIBUCION_FACTUM} entero en un run,
+    // los runs de la atribución van en su lugar; si no, se agrega un párrafo centrado al final
+    // (y si el slot estaba partido, se borra su texto). Cada footer termina con exactamente una
+    // atribución. Por cada sección:
     //  - footer Default (y First si la sección tiene titlePg, y Even si settings tiene
     //    evenAndOddHeaders): si existe, se le agrega el párrafo al final (una sola vez por
     //    parte, aunque varias secciones la compartan);
@@ -1015,9 +1063,33 @@ public sealed class ReportService : IReportService
         foreach (var footerPart in targets)
         {
             footerPart.Footer ??= NewFooter();
-            footerPart.Footer.AppendChild(BuildAttributionParagraph(footerPart, sello, ref drawId));
+            var slot = footerPart.Footer.Descendants<Paragraph>()
+                .FirstOrDefault(p => ParagraphText(p).Contains(AttributionSlot));
+            if (slot is null || !TryFillAttributionSlot(footerPart, slot, sello, ref drawId))
+                footerPart.Footer.AppendChild(BuildAttributionParagraph(footerPart, sello, ref drawId));
             footerPart.Footer.Save();
         }
+    }
+
+    // Reemplaza el run cuyo texto es exactamente el slot por los runs de la atribución. Si el
+    // slot no está entero en un run, borra su texto (en todos los párrafos del footer donde
+    // aparezca) y devuelve false: el llamador agrega el párrafo centrado de siempre.
+    private static bool TryFillAttributionSlot(FooterPart owner, Paragraph slotPara, BrandingLogo? sello,
+        ref uint drawId)
+    {
+        var slotRun = slotPara.Elements<Run>()
+            .FirstOrDefault(r => string.Concat(r.Elements<Text>().Select(t => t.Text)) == AttributionSlot);
+        if (slotRun is null)
+        {
+            foreach (var p in owner.Footer!.Descendants<Paragraph>().ToList())
+                RewriteParagraph(p, new Regex(Regex.Escape(AttributionSlot)), _ => string.Empty);
+            return false;
+        }
+
+        foreach (var run in BuildAttributionRuns(owner, sello, ref drawId))
+            slotRun.InsertBeforeSelf(run);
+        slotRun.Remove();
+        return true;
     }
 
     private BrandingLogo? LoadSello()
@@ -1076,18 +1148,26 @@ public sealed class ReportService : IReportService
         var para = new Paragraph(new ParagraphProperties(
             new SpacingBetweenLines { Before = "0", After = "0" },
             new Justification { Val = JustificationValues.Center }));
+        foreach (var run in BuildAttributionRuns(owner, sello, ref drawId))
+            para.AppendChild(run);
+        return para;
+    }
 
+    // El sello (si hay) y el texto "Realizado con Factum" en Arial 8 pt gris.
+    private static List<Run> BuildAttributionRuns(FooterPart owner, BrandingLogo? sello, ref uint drawId)
+    {
+        var runs = new List<Run>();
         if (sello is not null)
         {
             var relId = EmbedImagePart(owner, ImageSource.FromBytes("factum-sello.png", sello.Data,
                 sello.ContentType, sello.Width, sello.Height));
             // position -3 (medios puntos) baja el Sello 1.5 pt para centrarlo con el texto de 8 pt.
-            para.AppendChild(new Run(
+            runs.Add(new Run(
                 new RunProperties(new Position { Val = "-3" }),
                 BuildDrawing(relId, "factum-sello.png", SelloSizeEmu, SelloSizeEmu, drawId++)));
         }
 
-        para.AppendChild(new Run(
+        runs.Add(new Run(
             new RunProperties(
                 new RunFonts { Ascii = "Arial", HighAnsi = "Arial", ComplexScript = "Arial" },
                 new Color { Val = "5C656E" },
@@ -1095,8 +1175,7 @@ public sealed class ReportService : IReportService
                 new FontSizeComplexScript { Val = "16" }),
             new Text(sello is not null ? " " + AttributionText : AttributionText)
             { Space = SpaceProcessingModeValues.Preserve }));
-
-        return para;
+        return runs;
     }
 
     // ── PDF: conversión del DOCX con LibreOffice ─────────────────────────────

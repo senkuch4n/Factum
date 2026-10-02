@@ -111,3 +111,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementer-backend opus, reviewer sonnet. 1 rechazo (colores exactos del estudio en la SDD versionada; corregido por el orquestador en el doc).
 - **Rama:** `feat/informe-diseno-modelo` (encadenada sobre `feat/formulario-caso-catalogos`).
 - **Pendiente:** abrir las muestras en Word (scratchpad de la sesión, `muestras/estudio/`) y aprobar colores; pasar el isotipo PNG transparente cuando exista (solo config); reiniciar el backend.
+
+## informe-diseno-v6 — APROBADA (2026-10-01)
+
+- **Qué:** plantilla v6 "Filete" del informe pericial (`ops/plantilla/build_plantilla_v6.py`, determinista; reemplaza a la v5): portada blanca con filete verde, título en tinta, subtítulo, ficha de la causa, logo más chico con nombre/contacto y "Realizado con Factum"; interior con encabezado de texto gris + línea fina (sin el bloque de acento de la v5), romanos verdes arriba de cada título con filete, fichas a todo el ancho, tabla de hashes con línea verde y fila del ZIP con tinte, pie "Realizado con Factum" + "Página N de M". Paleta Factum como default de Branding (el estudio la puede pisar); en la instalación local se borraron las claves de color. Texto legal idéntico (se conservan ":" y sangría).
+- **Decisiones:** HU D1–D10 recomendadas, D9 A "Filete" elegida sobre canvas comparativo (https://claude.ai/artifact/FabuSoobjeFwZKxkn96uU5); SDD DP1/DP2 A (usuario).
+- **Modelos:** afinador/architect (sesión), implementer-backend opus, reviewer sonnet. 0 rechazos. 88 tests OK.
+- **Rama:** `feat/informe-diseno-v6` (encadenada sobre `feat/informe-diseno-modelo`).
+- **Pendiente:** reiniciar el backend; revisar el render en Word/WPS (solo verificado en LibreOffice); README: default de la caja del logo a revisar.

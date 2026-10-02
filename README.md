@@ -252,9 +252,9 @@ el informe y en la web (login, menú de usuario y pie, vía
 | `Branding:OrganizationName` | texto | Nombre del emisor. Máx. 150 caracteres (se trunca con un warning). Vacío = no configurado. |
 | `Branding:OrganizationLogo` | ruta | Logo del emisor: ruta absoluta o relativa al directorio del backend (`/app` en Docker). |
 | `Branding:ContactLines` | lista de textos | Domicilio, teléfonos, correo, matrícula… Máx. 6 líneas de 150 caracteres. No se expone a la web. |
-| `Branding:OrganizationIsotype` | ruta | Isotipo (versión reducida del logo, idealmente PNG transparente): va en la banda de las páginas interiores del informe y al cierre, debajo de la firma. Mismas reglas que el logo. Vacío = sin isotipo (la banda muestra el nombre en texto). No se expone a la web. |
-| `Branding:PrimaryColor` | `#RRGGBB` | Color primario del informe (franja de la portada, banda, títulos, líneas y encabezado de la tabla de hashes). Vacío = gris pizarra neutro `#2F3B4C`. |
-| `Branding:AccentColor` | `#RRGGBB` | Color de acento (remate de la portada y bloque de la banda; solo decoración, nunca texto). Vacío = gris claro neutro `#9AA5B1`. |
+| `Branding:OrganizationIsotype` | ruta | Isotipo (versión reducida del logo, idealmente PNG transparente): va solo al cierre del informe, debajo de la firma. Mismas reglas que el logo. Vacío = sin isotipo. No se expone a la web. |
+| `Branding:PrimaryColor` | `#RRGGBB` | Color primario del informe (filetes de la portada, de los títulos y del cierre, números de sección y línea bajo el encabezado de la tabla de hashes). Vacío = verde de Factum `#2F6F12`. |
+| `Branding:AccentColor` | `#RRGGBB` | Color de acento: el tinte de fondo de la fila del contenedor ZIP en la tabla de hashes (lleva texto en tinta encima). Vacío = tinte de Factum `#E8F3DF`. |
 
 **Logo:** PNG o JPEG (se valida por contenido, no por extensión; SVG no se
 acepta), de hasta **1 MiB** y entre **16 y 4096 px** por lado. Para fondo
@@ -268,10 +268,15 @@ desde memoria en `GET /api/config/branding/logo`.
 inválido: `Branding: isotipo ignorado (<motivo>)` y se sigue sin él). Los
 colores aceptan `#RRGGBB` o `RRGGBB`, sin distinguir mayúsculas; un valor
 inválido loguea `Branding: PrimaryColor '<valor>' no es un color #RRGGBB; se
-usa el default` y se usa el neutro. El primario lleva texto blanco encima y se
-usa en títulos sobre blanco, así que **tiene que tener un contraste de al
-menos 4.5:1 con blanco**: si no, el backend loguea un warning con el contraste
-calculado y usa el default. El acento no se chequea. Al arrancar se loguea
+usa el default` y se usa el de Factum. El primario va sobre blanco (filetes y
+números), así que **tiene que tener un contraste de al menos 4.5:1 con
+blanco**: si no, el backend loguea un warning con el contraste calculado y usa
+el default. El acento es fondo de texto, así que **tiene que tener un
+contraste de al menos 4.5:1 con la tinta** (`#0E1013`): si no, se loguea
+`Branding: AccentColor <hex> tiene contraste <x.x>:1 con la tinta (mínimo
+4.5:1); se usa el default` y se usa el tinte de Factum. Los defaults son la
+paleta de Factum (la marca del producto); los colores de un estudio son
+configuración local. Al arrancar se loguea
 `Branding: colores primario <P> y acento <A>`. Los informes ya generados no
 cambian: los colores se aplican al generar.
 
@@ -330,15 +335,17 @@ plantilla), así que ninguna plantilla la puede sacar.
 
 ### Placeholders de la plantilla del informe
 
-La plantilla (`server/src/Factum.Backend/Templates/plantilla_informe_v5.docx`)
-no se edita a mano: la genera `ops/plantilla/build_plantilla_v5.py` a partir de
+La plantilla (`server/src/Factum.Backend/Templates/plantilla_informe_v6.docx`)
+no se edita a mano: la genera `ops/plantilla/build_plantilla_v6.py` a partir de
 la v4 (que a su vez sale de la plantilla del usuario con
-`build_plantilla_v4.py`; ver `ops/plantilla/README.md`). La v5 tiene dos
-secciones: la **portada** (título, causa, carátula, perito y fecha; abajo el
-logo, el nombre y el contacto del estudio; a la derecha la franja del color
-primario) y el **interior** (banda del color primario arriba con el título, la
-causa y el isotipo o el nombre; "Página N de M" al pie, contando la portada).
-Se completa en el cuerpo y en los encabezados/pies:
+`build_plantilla_v4.py`; ver `ops/plantilla/README.md`). La v6 (diseño
+"Filete", sin formas flotantes) tiene dos secciones: la **portada** (filete
+verde, título grande, subtítulo y una ficha con causa, carátula, perito y
+fecha; abajo el logo, el nombre y el contacto del estudio) y el **interior**
+(encabezado de texto chico con la causa y el nombre del estudio sobre una línea
+fina; cada sección con su número romano arriba del título y un filete debajo;
+pie con "Realizado con Factum" y "Página N de M" en la misma línea, contando la
+portada). Se completa en el cuerpo y en los encabezados/pies:
 
 | Placeholder | Reemplazo |
 |---|---|
@@ -354,16 +361,19 @@ Se completa en el cuerpo y en los encabezados/pies:
 | `{ORGANIZACION}` | `Branding:OrganizationName` (vacío si no hay). |
 | `{CONTACTO}` | `Branding:ContactLines`, una por línea (mismo formato del run) |
 | `{CONTACTO_EN_LINEA}` | `Branding:ContactLines` unidas con " · " |
-| `{LOGO_ORGANIZACION}` / `{LOGO_ORGANIZACION:4x1.2}` | Logo de la organización (párrafo completo), ajustado sin recortar a una caja de 5 × 1.5 cm o del tamaño indicado en cm. Sin logo, el párrafo queda vacío. En la v5 va en el pie de la portada, en 7 × 3.8 cm. |
-| `{ISOTIPO_ORGANIZACION}` / `{ISOTIPO_ORGANIZACION:2.4x1.6}` | Isotipo (párrafo completo), ajustado sin recortar a una caja de 2 × 2 cm o del tamaño indicado. En la v5 va en la banda (2.4 × 1.6) y al cierre (2 × 2). |
-| `{#MEMBRETE}` … `{/MEMBRETE}` | Bloque de identidad del estudio (logo, nombre, contacto). En la v5 está en el pie de la portada; desaparece entero si no hay nombre, logo ni contacto. |
+| `{LOGO_ORGANIZACION}` / `{LOGO_ORGANIZACION:4.5x2.5}` | Logo de la organización (párrafo completo), ajustado sin recortar a una caja de 5 × 1.5 cm o del tamaño indicado en cm. Sin logo, el párrafo queda vacío. En la v6 va en el pie de la portada, en 4.5 × 2.5 cm. |
+| `{ISOTIPO_ORGANIZACION}` / `{ISOTIPO_ORGANIZACION:2x2}` | Isotipo (párrafo completo), ajustado sin recortar a una caja de 2 × 2 cm o del tamaño indicado. En la v6 va solo al cierre (2 × 2). |
+| `{ATRIBUCION_FACTUM}` | Slot (run propio) donde el backend pone el sello y "Realizado con Factum" (B-R8). En la v6 está en el pie interior, a la izquierda de "Página N de M". Si una plantilla no lo trae, la atribución va en un párrafo centrado al final de cada pie. |
+| `{#MEMBRETE}` … `{/MEMBRETE}` | Bloque de identidad del estudio (logo, nombre, contacto). En la v6 está en el pie de la portada; desaparece entero si no hay nombre, logo ni contacto. |
+| `{#MEMBRETE_CON_LOGO}` … `{/MEMBRETE_CON_LOGO}` | Dentro de `MEMBRETE`: queda solo si hay logo (en la v6, tabla logo \| nombre y contacto). |
+| `{#MEMBRETE_SIN_LOGO}` … `{/MEMBRETE_SIN_LOGO}` | Dentro de `MEMBRETE`: queda solo si **no** hay logo (nombre y contacto en texto, sin una celda vacía). |
 | `{#ISOTIPO}` … `{/ISOTIPO}` | Bloque que solo queda si hay `Branding:OrganizationIsotype` válido. |
-| `{#NOMBRE_EN_BANDA}` … `{/NOMBRE_EN_BANDA}` | El nombre de la organización en la banda: solo queda si **no** hay isotipo y sí hay nombre. |
 
-Los colores de la plantilla v5 (`2F3B4C` primario y `9AA5B1` acento, los mismos
-defaults neutros) funcionan como centinelas: al generar, el backend los
-reemplaza por `Branding:PrimaryColor` y `Branding:AccentColor` en el cuerpo,
-los encabezados, los pies, la numeración y los estilos.
+El verde de la plantilla v6 (`2F6F12`, el default del primario) funciona como
+centinela: al generar, el backend lo reemplaza por `Branding:PrimaryColor` en
+el cuerpo, los encabezados, los pies, la numeración y los estilos. El tinte
+(`Branding:AccentColor`) no está en la plantilla: el backend lo aplica como
+fondo de la fila del contenedor ZIP al llenar la tabla de hashes.
 
 Un placeholder que la plantilla traiga y Factum no conozca se borra y se
 loguea un warning (`Plantilla: placeholder desconocido {x}`).
@@ -414,7 +424,7 @@ solo al dueño del caso por `GET /api/cases/{id}/zip-password`
 (`{ "password": "…" }`, `Cache-Control: no-store`; 403 para un caso ajeno, 404
 si el caso no tiene un ZIP cifrado).
 
-**Regenerar las plantillas v4 y v5** (por ejemplo, si cambia la plantilla de
+**Regenerar las plantillas v4 y v6** (por ejemplo, si cambia la plantilla de
 origen o el diseño): ver `ops/plantilla/README.md`.
 
 ## Integración de soporte (Faro)

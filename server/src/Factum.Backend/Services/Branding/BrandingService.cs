@@ -11,7 +11,7 @@ public sealed record BrandingLogo(
 /// Identidad de la organización normalizada (trim, límites, logo e isotipo validados, colores
 /// como 6 dígitos hex en mayúsculas y sin '#'). Los parámetros nuevos van al final y CON
 /// default, así los <c>new BrandingSnapshot(nombre, contacto, logo)</c> existentes siguen
-/// compilando y quedan con la paleta neutra y sin isotipo.
+/// compilando y quedan con la paleta de Factum y sin isotipo.
 /// </summary>
 public sealed record BrandingSnapshot(
     string? OrganizationName, IReadOnlyList<string> ContactLines, BrandingLogo? Logo,
@@ -47,7 +47,7 @@ public sealed class BrandingService : IBrandingService
     {
         var o = options.Value ?? new BrandingOptions();
         var primary = NormalizePrimary(o.PrimaryColor, logger);
-        var accent = NormalizeColor(o.AccentColor, "AccentColor", BrandingColors.DefaultAccent, logger);
+        var accent = NormalizeAccent(o.AccentColor, logger);
         Current = new BrandingSnapshot(
             NormalizeName(o.OrganizationName, logger),
             NormalizeContactLines(o.ContactLines, logger),
@@ -68,8 +68,8 @@ public sealed class BrandingService : IBrandingService
         return fallback;
     }
 
-    // El primario se usa en títulos sobre blanco y con texto blanco encima (banda, encabezado de
-    // la tabla de hashes): con contraste < 4.5:1 con blanco se rechaza (D7).
+    // El primario se usa sobre blanco (filetes, números de sección, línea de la tabla de
+    // hashes): con contraste < 4.5:1 con blanco se rechaza.
     private static string NormalizePrimary(string? raw, ILogger logger)
     {
         var hex = NormalizeColor(raw, "PrimaryColor", BrandingColors.DefaultPrimary, logger);
@@ -80,6 +80,20 @@ public sealed class BrandingService : IBrandingService
             hex, contrast.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture),
             BrandingColors.MinPrimaryContrast.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
         return BrandingColors.DefaultPrimary;
+    }
+
+    // El acento es el fondo de la fila del contenedor ZIP, con texto en tinta encima: con
+    // contraste < 4.5:1 con la tinta se rechaza (D4 de informe-diseno-v6).
+    private static string NormalizeAccent(string? raw, ILogger logger)
+    {
+        var hex = NormalizeColor(raw, "AccentColor", BrandingColors.DefaultAccent, logger);
+        var contrast = BrandingColors.Contrast(hex, BrandingColors.InkColor);
+        if (contrast >= BrandingColors.MinAccentContrastWithInk) return hex;
+        logger.LogWarning(
+            "Branding: AccentColor {Hex} tiene contraste {Contrast}:1 con la tinta (mínimo {Min}:1); se usa el default",
+            hex, contrast.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture),
+            BrandingColors.MinAccentContrastWithInk.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
+        return BrandingColors.DefaultAccent;
     }
 
     private static string? NormalizeName(string? raw, ILogger logger)

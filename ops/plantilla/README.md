@@ -1,92 +1,121 @@
-# Plantillas del informe pericial (v4 y v5)
+# Plantillas del informe pericial (v4, v5 y v6)
 
-La cadena es **plantilla del usuario (`docs/`, no versionada) → v4 → v5**:
+La cadena es **plantilla del usuario (`docs/`, no versionada) → v4 → v6**:
 
 | Plantilla | Script | Qué es |
 |---|---|---|
-| `Templates/plantilla_informe_v4.docx` | `build_plantilla_v4.py` | Contenido pericial, placeholders y bloques, sin datos reales. Es la entrada de la v5 y la línea de base de los tests. El backend ya no la usa en runtime. |
-| `Templates/plantilla_informe_v5.docx` | `build_plantilla_v5.py` | La v4 con el diseño del modelo (portada, banda, tipografía, colores). **Es la que usa `ReportService`.** |
+| `Templates/plantilla_informe_v4.docx` | `build_plantilla_v4.py` | Contenido pericial, placeholders y bloques, sin datos reales. Es la entrada de la v6 y la línea de base de los tests. El backend ya no la usa en runtime. |
+| `Templates/plantilla_informe_v6.docx` | `build_plantilla_v6.py` | La v4 con el diseño "Filete" y la paleta de Factum. **Es la que usa `ReportService`.** |
+| (no versionada) v5 | `build_plantilla_v5.py` | El diseño anterior (portada con franja, banda interior). El `.docx` se borró del repo, pero el script queda sin cambios: lo importa el v6 y reproduce la v5 desde la v4 byte a byte si alguna vez hace falta. |
 
-La v5 se reconstruye **solo desde la v4 versionada**: no necesita la plantilla
+La v6 se reconstruye **solo desde la v4 versionada**: no necesita la plantilla
 privada de `docs/`.
 
-## v5: qué agrega el script
+## v6: qué agrega el script
 
-Especificación: `Refactorizaciones/informe-diseno-modelo.md` (secciones 5 y 8.1).
+Especificación: `Refactorizaciones/informe-diseno-v6.md` (secciones 5 y 8.1).
+Reutiliza por import los helpers de `build_plantilla_v4.py` y
+`build_plantilla_v5.py` (con `sys.dont_write_bytecode`, para no dejar
+`__pycache__`).
 
-- **Portada** como sección propia (márgenes propios, `sectPr` en el último
-  párrafo de la portada): título grande, `{tipoCausa} N° {numeroCausa}`,
-  carátula, perito y fecha. `header2.xml` dibuja la franja vertical del color
-  primario y tres bandas de acento (rectángulos DrawingML anclados a la
-  página, detrás del texto, sin fallback VML). `footer2.xml` lleva el bloque
-  `MEMBRETE` (logo 7 × 3.8, nombre y contacto).
-- **Interior:** `header1.xml` pasa a ser la banda del color primario con
-  "INFORME PERICIAL TÉCNICO INFORMÁTICO", la causa y, a la derecha, el bloque
-  `ISOTIPO` o `NOMBRE_EN_BANDA`. `footer1.xml` es "Página N de M" (campos
-  `PAGE` y `NUMPAGES`, que cuentan la portada).
-- Títulos de sección en Century Gothic, mayúscula por formato y color
-  primario, con una línea fina debajo (el texto no cambia). Numeración romana
-  en el mismo estilo.
-- "Referencia de la actuación", "Identificación" y "Elementos ofrecidos" en
-  tablas de dos columnas (título / etiqueta / valor, grilla 2700/2000/3947).
-- Tabla de hashes con encabezado sombreado y solo líneas horizontales.
-- Cierre con `{#ISOTIPO}{ISOTIPO_ORGANIZACION:2x2}{/ISOTIPO}` después de la firma.
-- Cuerpo en Arial 11 pt (estilo Normal y `docDefaults`; todo Times New Roman
-  pasa a Arial). Los hashes siguen en Courier New. `fontTable.xml` declara
-  Century Gothic.
-- **Colores centinela:** la v5 lleva `2F3B4C` (primario) y `9AA5B1` (acento),
-  que son los defaults neutros. El backend los reemplaza al generar por
-  `Branding:PrimaryColor` / `Branding:AccentColor`. Si la v4 de entrada ya
-  tuviera alguno de los dos valores, el script aborta con
-  `FALLA: centinela-en-origen` (el reemplazo pisaría un color ajeno).
+- **Sin formas flotantes** en ninguna parte: encabezado, pie, portada, filetes
+  y fichas son párrafos o tablas de flujo.
+- **Portada** como sección propia (`sectPr` en el último párrafo de la
+  portada): un filete verde de ~3 cm, "Informe pericial / técnico
+  informático" en Century Gothic 34 pt, el subtítulo y una ficha
+  etiqueta/valor (causa, carátula, perito, fecha) con líneas grises.
+  `header2.xml` queda vacío. `footer2.xml` lleva el bloque `MEMBRETE` con dos
+  variantes: `MEMBRETE_CON_LOGO` (tabla logo 4.5 × 2.5 | nombre y contacto) y
+  `MEMBRETE_SIN_LOGO` (nombre y contacto en texto).
+- **Interior:** `header1.xml` es una tabla de texto chico gris ("Informe
+  pericial técnico informático · {tipoCausa} N° {numeroCausa}" a la izquierda,
+  `{ORGANIZACION}` a la derecha) con una línea fina debajo. `footer1.xml` es
+  una línea fina con el slot `{ATRIBUCION_FACTUM}` a la izquierda (lo llena el
+  backend con el sello y "Realizado con Factum") y "Página N de M" a la
+  derecha (campos `PAGE`/`NUMPAGES`, que cuentan la portada).
+- **Títulos:** cada título numerado lleva arriba un párrafo vacío con la
+  numeración romana (Century Gothic 20 pt verde, `lvlText "%1"`, sin punto) y
+  debajo un filete verde de ~1 cm (borde superior de un párrafo vacío). Los
+  títulos van en Arial negrita, mayúscula por formato, tinta e interletrado,
+  todos en el mismo margen. Los separadores vacíos de la v4 antes de los
+  títulos pasan a párrafos mínimos.
+- "Referencia de la actuación", "Identificación" y "Elementos ofrecidos" son
+  **fichas** a todo el ancho (etiqueta / valor, grilla 2490/6157, líneas
+  grises). La intro de Elementos queda como párrafo de cuerpo.
+- **Tabla de hashes** a todo el ancho (3090/5557), encabezado gris sin relleno
+  con una línea verde debajo; el tinte de la fila del ZIP lo pone el backend.
+- Título del escrito sin subrayado ni negrita; anexo con el aspecto de un
+  título; cierre con un filete centrado y `{#ISOTIPO}{ISOTIPO_ORGANIZACION:2x2}{/ISOTIPO}`.
+- Cuerpo en Arial 11 pt gris `3D444C` (estilo Normal y `docDefaults`).
+  `fontTable.xml` declara Century Gothic y Arial.
+- **Centinela:** la v6 lleva el verde `2F6F12` (default del primario) en los
+  filetes, los números (`numbering.xml`) y la línea de la tabla. El backend lo
+  reemplaza al generar por `Branding:PrimaryColor`. El tinte `E8F3DF` no va en
+  la plantilla. Si la v4 de entrada ya trae alguno de los dos valores, el
+  script aborta con `FALLA: centinela-en-origen`.
 
-Igual que el v4: edita el XML como texto, ubica cada párrafo por `w14:paraId`
-con una huella no sensible (si no coincide, `FALLA: ancla <paraId>`), los
-paraIds nuevos son deterministas y el ZIP también (la misma v4 da el mismo
-SHA-256 de la v5).
+Igual que los anteriores: edita el XML como texto, ubica cada párrafo por
+`w14:paraId` con una huella no sensible (si no coincide, `FALLA: ancla
+<paraId>`), los paraIds nuevos son deterministas (semilla `v6:`) y el ZIP
+también (la misma v4 da el mismo SHA-256 de la v6).
 
 ### Uso
 
 ```bash
 # Construir (y verificar al final)
-python3 ops/plantilla/build_plantilla_v5.py \
+python3 ops/plantilla/build_plantilla_v6.py \
   server/src/Factum.Backend/Templates/plantilla_informe_v4.docx \
-  server/src/Factum.Backend/Templates/plantilla_informe_v5.docx
+  server/src/Factum.Backend/Templates/plantilla_informe_v6.docx
 
 # Solo verificar
-python3 ops/plantilla/build_plantilla_v5.py --check \
+python3 ops/plantilla/build_plantilla_v6.py --check \
   server/src/Factum.Backend/Templates/plantilla_informe_v4.docx \
-  server/src/Factum.Backend/Templates/plantilla_informe_v5.docx
+  server/src/Factum.Backend/Templates/plantilla_informe_v6.docx
 ```
 
 Imprime solo `OK` o líneas `FALLA:<tipo>`. `--check` verifica: placeholders y
-bloques por parte (cuerpo, `header1`, `footer2`; `header2` y `footer1` sin
-placeholders), las dos secciones con su header y footer, los centinelas en las
-formas, títulos, numeración y tabla de hashes, que no quede Times New Roman,
-XML bien formado, `w14:paraId` únicos, sin `w:author`, autor `Factum` en
-`core.xml` y `PAGE`/`NUMPAGES` en `footer1`.
+bloques por parte (cuerpo, `header1`, `footer1`, `footer2`; `header2` vacío),
+las dos secciones con su header y footer (la segunda con `top 1418` y
+`header 680`), que ninguna parte tenga `wp:anchor`, `wps:wsp` ni `v:shape`, el
+centinela en los 15 filetes, la numeración y las 2 líneas de la tabla (y en
+ningún header ni footer), que `E8F3DF` no esté, 11 párrafos de número sin
+texto y ningún título con `numPr`, el título del escrito sin subrayado, el
+encabezado de la tabla sin `w:shd`, estilos con Arial y `3D444C`, que no quede
+Times New Roman, XML bien formado, `w14:paraId` únicos, sin `w:author`, autor
+`Factum` en `core.xml` y `PAGE`/`NUMPAGES` en `footer1`.
 
 ### Render
 
 ```bash
 soffice --headless --convert-to pdf --outdir /tmp/render \
-  server/src/Factum.Backend/Templates/plantilla_informe_v5.docx
+  server/src/Factum.Backend/Templates/plantilla_informe_v6.docx
 ```
 
 Para ver informes completos con datos ficticios, el test
-`ReportDesignTests.Muestras_SiHayCarpetaDeRender` genera tres DOCX (sin
-Branding, con nombre y colores, con logo e isotipo) si se le pasa una carpeta
-fuera del repo:
+`ReportDesignTests.Muestras_SiHayCarpetaDeRender` genera cuatro DOCX (sin
+Branding; nombre y contacto sin logo; logo, nombre y contacto con la paleta de
+Factum; logo e isotipo con colores ficticios) si se le pasa una carpeta fuera
+del repo:
 
 ```bash
 FACTUM_RENDER_DIR=/tmp/render dotnet test server/tests/Factum.Backend.Tests \
   --filter "FullyQualifiedName~Muestras"
-# opcional, para probar una identidad local sin versionarla:
+# opcional, para probar un logo o colores locales sin versionarlos:
 #   FACTUM_RENDER_LOGO=<ruta> FACTUM_RENDER_PRIMARY=<RRGGBB> FACTUM_RENDER_ACCENT=<RRGGBB>
 ```
 
-Después de regenerar la v5: `--check`, mirar el render, abrirla en Word y
+Después de regenerar la v6: `--check`, mirar el render, abrirla en Word y
 correr `dotnet test` (los tests comparan el texto pericial contra la v4).
+
+## v5 (reproducible, sin uso)
+
+Especificación: `Refactorizaciones/informe-diseno-modelo.md`. Para
+reproducirla (por ejemplo, para comparar), generarla fuera del repo:
+
+```bash
+python3 ops/plantilla/build_plantilla_v5.py \
+  server/src/Factum.Backend/Templates/plantilla_informe_v4.docx /tmp/plantilla_informe_v5.docx
+```
 
 ---
 

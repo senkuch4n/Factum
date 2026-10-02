@@ -91,3 +91,10 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — `implementer-backend` (informe) done -> progress/impl_backend_informe-diseno-modelo.md. HU → en_revision, lanzado `reviewer`.
 - 2026-10-01 — `reviewer` RECHAZADA (1/2) -> progress/review_informe-diseno-modelo.md: colores exactos del estudio en la SDD versionada. Es doc del arnés: lo corrigió el orquestador (sin tocar código). Relanzado `reviewer`.
 - 2026-10-01 — `reviewer` APROBADA (intento 2). informe → aprobada, commit. Colores del estudio también limpiados de los progress de esta HU. BACKLOG VACÍO.
+- 2026-10-01 — Usuario probó la v5: no le gusta el bloque de acento del encabezado; pide diseño moderno/empresarial con paleta Factum, misma estructura. Alta `informe-diseno-v6` (afinando) en feat/informe-diseno-v6, lanzado `afinador`.
+- 2026-10-01 — `afinador` done -> docs/hu-informe-diseno-v6.md (10 dudas). HU → afinada_pendiente_validacion.
+- 2026-10-01 — Usuario valida D1–D10 (recomendadas). D9 pendiente: canvas comparativo A/B/C publicado (https://claude.ai/artifact/FabuSoobjeFwZKxkn96uU5). SDD espera la elección.
+- 2026-10-01 — Usuario elige D9 A (Filete). HU → en_arquitectura, lanzado `architect`.
+- 2026-10-01 — `architect` done -> Refactorizaciones/informe-diseno-v6.md; usuario confirma DP1/DP2 A. HU → implementando, lanzado `implementer-backend`.
+- 2026-10-01 — `implementer-backend` (v6) done -> progress/impl_backend_informe-diseno-v6.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_informe-diseno-v6.md. v6 → aprobada, commit (sin Mock:true del agente). BACKLOG VACÍO.

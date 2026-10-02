@@ -15,15 +15,15 @@ using DWP = DocumentFormat.OpenXml.Drawing.Wordprocessing;
 namespace Factum.Backend.Tests;
 
 /// <summary>
-/// Estructura del informe generado con la plantilla v5 (Refactorizaciones/informe-diseno-modelo.md
-/// §8.3, B21). Cada test genera DOCX reales con <see cref="ReportService"/> en su propia carpeta
+/// Estructura del informe generado con la plantilla v6, diseño "Filete"
+/// (Refactorizaciones/informe-diseno-v6.md §8.3, B21). Cada test genera DOCX reales con <see cref="ReportService"/> en su propia carpeta
 /// temporal (Path.GetTempPath()/&lt;guid&gt;) y la borra al final: no toca Mongo ni
 /// Storage:DataDirectory. Todos los datos son ficticios.
 /// </summary>
 public sealed class ReportDesignTests : IDisposable
 {
     private const string V4 = "plantilla_informe_v4.docx";
-    private const string V5 = "plantilla_informe_v5.docx";
+    private const string V6 = "plantilla_informe_v6.docx";
     private const string Primary = "123456";
     private const string Accent = "ABCDEF";
     private const string OrgName = "Estudio Ficticio de Prueba";
@@ -93,7 +93,7 @@ public sealed class ReportDesignTests : IDisposable
     private static BrandingLogo Image(int w, int h, byte r = 0x40, byte g = 0x80, byte b = 0xC0) =>
         new(TestImages.Png(w, h, r, g, b), "image/png", ".png", w, h, "test");
 
-    private string Generate(BrandingSnapshot brand, string template = V5)
+    private string Generate(BrandingSnapshot brand, string template = V6, Case? cas = null)
     {
         var dir = Path.Combine(_root, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
@@ -113,7 +113,7 @@ public sealed class ReportDesignTests : IDisposable
 
         var service = new ReportService(new FakeBranding(brand), new FakeSettings(),
             NullLogger<ReportService>.Instance, template);
-        var result = service.GenerateAsync(MakeCase(), files, dir).GetAwaiter().GetResult();
+        var result = service.GenerateAsync(cas ?? MakeCase(), files, dir).GetAwaiter().GetResult();
         return result.PdfPath;
     }
 
@@ -140,6 +140,29 @@ public sealed class ReportDesignTests : IDisposable
         if (main.StyleDefinitionsPart?.Styles is { } s) yield return s;
     }
 
+    private static bool IsRule(Paragraph? p) =>
+        p?.ParagraphProperties?.ParagraphBorders?.TopBorder is not null && TextOf(p).Length == 0;
+
+    private static readonly string[] SectionTitles =
+    [
+        "REFERENCIA DE LA ACTUACIÓN:", "DECLARACIÓN DE IMPARCIALIDAD Y RIGOR TÉCNICO",
+        "OBJETO DEL INFORME", "IDENTIFICACIÓN", "ELEMENTOS OFRECIDOS", "OPERACIONES REALIZADAS",
+        "GENERACIÓN Y ASEGURAMIENTO DE EVIDENCIA DIGITAL", "CADENA DE CUSTODIA DIGITAL",
+        "RESULTADOS", "VALORACIÓN TÉCNICA", "CONCLUSIONES", "NOTAS TÉCNICAS", "RESERVA",
+    ];
+
+    private static Case MakeCaseWithTexts(bool notas, bool reserva)
+    {
+        var cas = MakeCase();
+        cas.ReportTexts = new ReportTexts
+        {
+            ObjetoInforme = "Objeto ficticio.",
+            NotasTecnicas = notas ? "Nota técnica ficticia." : "",
+            Reserva = reserva ? "Reserva ficticia." : "",
+        };
+        return cas;
+    }
+
     private static List<string> DrawingNames(OpenXmlElement root) =>
         root.Descendants<DWP.DocProperties>().Select(d => d.Name?.Value ?? "").ToList();
 
@@ -160,65 +183,120 @@ public sealed class ReportDesignTests : IDisposable
         Assert.All(sections, s => Assert.Null(s.GetFirstChild<TitlePage>()));
     }
 
-    // ── 2. Pies ──────────────────────────────────────────────────────────────
+    // ── 2. Sin formas flotantes ──────────────────────────────────────────────
 
     [Fact]
-    public void Pies_AtribucionEnAmbos_PaginaNdeMSoloEnInterior()
+    public void SinFormasFlotantes_EnNingunaParte()
+    {
+        using var doc = WordprocessingDocument.Open(
+            Generate(Brand(logo: Image(1408, 768), isotype: Image(64, 64))), false);
+        var main = doc.MainDocumentPart!;
+        Assert.Empty(main.Document.Descendants<DWP.Anchor>());
+        foreach (var h in main.HeaderParts) Assert.Empty(h.Header.Descendants<DWP.Anchor>());
+        foreach (var f in main.FooterParts) Assert.Empty(f.Footer.Descendants<DWP.Anchor>());
+    }
+
+    // ── 3. Pies ──────────────────────────────────────────────────────────────
+
+    private static int Count(string haystack, string needle) =>
+        Regex.Matches(haystack, Regex.Escape(needle)).Count;
+
+    [Fact]
+    public void Pies_AtribucionUnaVez_EnLaMismaLineaQuePaginaNdeM()
     {
         using var doc = WordprocessingDocument.Open(Generate(Brand()), false);
         var sections = Sections(doc);
         var cover = FooterOf(doc, sections[0]).Footer;
         var inner = FooterOf(doc, sections[1]).Footer;
 
-        Assert.Contains("Realizado con Factum", TextOf(cover));
-        Assert.Contains("Realizado con Factum", TextOf(inner));
+        Assert.Equal(1, Count(TextOf(cover), "Realizado con Factum"));
+        Assert.Equal(1, Count(TextOf(inner), "Realizado con Factum"));
+        Assert.DoesNotContain("{ATRIBUCION_FACTUM}", TextOf(inner));
 
-        var innerCodes = string.Join("|", inner.Descendants<FieldCode>().Select(f => f.Text));
-        Assert.Matches(@"\bPAGE\b", innerCodes);
-        Assert.Contains("NUMPAGES", innerCodes);
-        Assert.Contains("Página", TextOf(inner));
+        var line = Assert.Single(inner.Descendants<Paragraph>(), p => TextOf(p).Contains("Realizado con Factum"));
+        var codes = string.Join("|", line.Descendants<FieldCode>().Select(f => f.Text));
+        Assert.Matches(@"\bPAGE\b", codes);
+        Assert.Contains("NUMPAGES", codes);
+        Assert.Contains("Página", TextOf(line));
         Assert.DoesNotContain(cover.Descendants<FieldCode>(), f => f.Text.Contains("PAGE"));
     }
 
-    // ── 3. Banda ─────────────────────────────────────────────────────────────
+    // ── 4. Encabezado interior ───────────────────────────────────────────────
 
     [Fact]
-    public void Banda_TituloCausaYFormas()
+    public void EncabezadoInterior_TextoCausaYNombre_SinDibujos()
     {
         using var doc = WordprocessingDocument.Open(Generate(Brand()), false);
         var sections = Sections(doc);
-        var band = HeaderOf(doc, sections[1]).Header;
-        var stripe = HeaderOf(doc, sections[0]).Header;
+        var inner = HeaderOf(doc, sections[1]).Header;
+        var cover = HeaderOf(doc, sections[0]).Header;
 
-        Assert.Contains("INFORME PERICIAL TÉCNICO INFORMÁTICO", TextOf(band));
-        Assert.Contains("Expediente N° 4321/2026", TextOf(band));
-        Assert.True(band.Descendants<DWP.Anchor>().Count() >= 2);
-        Assert.True(stripe.Descendants<DWP.Anchor>().Count() >= 4);
-        Assert.Equal("", TextOf(stripe).Trim());
+        Assert.Contains("Informe pericial técnico informático · Expediente N° 4321/2026", TextOf(inner));
+        Assert.Contains(OrgName, TextOf(inner));
+        Assert.Empty(inner.Descendants<Drawing>());
+        Assert.Equal("", TextOf(cover).Trim());
     }
 
-    // ── 4. Colores configurados ──────────────────────────────────────────────
+    // ── 5. Títulos ───────────────────────────────────────────────────────────
+
+    private static List<Paragraph> NumberParagraphs(Body body) =>
+        body.Descendants<Paragraph>()
+            .Where(p => p.ParagraphProperties?.NumberingProperties?.NumberingId?.Val?.Value == 2)
+            .ToList();
 
     [Fact]
-    public void Colores_Configurados_ReemplazanLosCentinelas()
+    public void Titulos_NumeroArriba_FileteAbajo_MismoMargen()
+    {
+        using var doc = WordprocessingDocument.Open(
+            Generate(Brand(), cas: MakeCaseWithTexts(notas: true, reserva: true)), false);
+        var body = doc.MainDocumentPart!.Document.Body!;
+
+        var numbers = NumberParagraphs(body);
+        Assert.Equal(11, numbers.Count);
+        Assert.All(numbers, p => Assert.Equal("", TextOf(p)));
+
+        foreach (var title in SectionTitles)
+        {
+            var p = Assert.Single(body.Descendants<Paragraph>(), x => TextOf(x).Trim().ToUpperInvariant() == title);
+            var pPr = p.ParagraphProperties;
+            Assert.Null(pPr?.NumberingProperties);
+            var left = pPr?.Indentation?.Left?.Value;
+            Assert.True(left is null or "0", $"{title}: sangría {left}");
+            Assert.True(IsRule(p.NextSibling<Paragraph>()), $"{title}: sin filete debajo");
+        }
+    }
+
+    [Fact]
+    public void Titulos_SinNotasNiReserva_NueveNumeros()
+    {
+        using var doc = WordprocessingDocument.Open(
+            Generate(Brand(), cas: MakeCaseWithTexts(notas: false, reserva: false)), false);
+        Assert.Equal(9, NumberParagraphs(doc.MainDocumentPart!.Document.Body!).Count);
+    }
+
+    // ── 6. Colores configurados ──────────────────────────────────────────────
+
+    private static List<TableRow> HashRows(WordprocessingDocument doc) =>
+        doc.MainDocumentPart!.Document.Body!.Descendants<Table>()
+            .Single(t => TextOf(t).Contains("HASH SHA-256"))
+            .Elements<TableRow>().ToList();
+
+    [Fact]
+    public void Colores_Configurados_ReemplazanLaPaletaDeFactum()
     {
         using var doc = WordprocessingDocument.Open(Generate(Brand()), false);
         foreach (var root in Roots(doc))
         {
-            Assert.DoesNotContain(BrandColors.PrimarySentinel, root.OuterXml, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain(BrandColors.AccentSentinel, root.OuterXml, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(BrandingColors.DefaultPrimary, root.OuterXml, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(BrandingColors.DefaultAccent, root.OuterXml, StringComparison.OrdinalIgnoreCase);
         }
 
-        var sections = Sections(doc);
         var main = doc.MainDocumentPart!;
         Assert.Contains(Primary, main.Document.OuterXml);
         Assert.Contains(Primary, main.NumberingDefinitionsPart!.Numbering.OuterXml);
-        foreach (var s in sections)
-        {
-            var header = HeaderOf(doc, s).Header.OuterXml;
-            Assert.Contains(Primary, header);
-            Assert.Contains(Accent, header);
-        }
+        var zipRow = HashRows(doc)[^1];
+        Assert.All(zipRow.Elements<TableCell>(), c =>
+            Assert.Equal(Accent, c.TableCellProperties?.Shading?.Fill?.Value));
     }
 
     [Fact]
@@ -226,17 +304,17 @@ public sealed class ReportDesignTests : IDisposable
     {
         var dir = Path.Combine(_root, "apply");
         Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, "v5.docx");
-        File.Copy(Path.Combine(AppContext.BaseDirectory, "Templates", V5), path);
+        var path = Path.Combine(dir, "v6.docx");
+        File.Copy(Path.Combine(AppContext.BaseDirectory, "Templates", V6), path);
         using var doc = WordprocessingDocument.Open(path, true);
         Assert.True(BrandColors.Apply(doc.MainDocumentPart!, Primary, Accent) > 0);
         Assert.Equal(0, BrandColors.Apply(doc.MainDocumentPart!, Primary, Accent)); // ya no hay centinelas
     }
 
-    // ── 5. Sin Branding ──────────────────────────────────────────────────────
+    // ── 7. Sin Branding ──────────────────────────────────────────────────────
 
     [Fact]
-    public void SinBranding_SinMarcadoresNiImagenes_ColoresNeutros()
+    public void SinBranding_SinMarcadoresNiImagenes_PaletaDeFactum()
     {
         using var doc = WordprocessingDocument.Open(Generate(new BrandingSnapshot(null, [], null)), false);
         var leftover = new Regex(@"\{[#/]?[A-Za-z_]");
@@ -249,38 +327,18 @@ public sealed class ReportDesignTests : IDisposable
 
         var sections = Sections(doc);
         Assert.Equal("Realizado con Factum", TextOf(FooterOf(doc, sections[0]).Footer).Trim());
-        Assert.Contains(BrandColors.PrimarySentinel, doc.MainDocumentPart!.Document.OuterXml);
-        Assert.Contains(BrandColors.AccentSentinel, HeaderOf(doc, sections[1]).Header.OuterXml);
+        var main = doc.MainDocumentPart!;
+        Assert.Contains(BrandingColors.DefaultPrimary, main.Document.OuterXml);
+        Assert.Contains(BrandingColors.DefaultPrimary, main.NumberingDefinitionsPart!.Numbering.OuterXml);
+        var zipRow = HashRows(doc)[^1];
+        Assert.All(zipRow.Elements<TableCell>(), c =>
+            Assert.Equal(BrandingColors.DefaultAccent, c.TableCellProperties?.Shading?.Fill?.Value));
     }
 
-    // ── 6. Nombre sin isotipo ────────────────────────────────────────────────
+    // ── 8. Logo en la portada ────────────────────────────────────────────────
 
     [Fact]
-    public void NombreSinIsotipo_NombreEnLaBanda()
-    {
-        using var doc = WordprocessingDocument.Open(Generate(Brand()), false);
-        var band = HeaderOf(doc, Sections(doc)[1]).Header;
-        Assert.Contains(OrgName, TextOf(band));
-        Assert.DoesNotContain(DrawingNames(band), n => n.StartsWith("isotipo-organizacion"));
-        Assert.DoesNotContain(DrawingNames(doc.MainDocumentPart!.Document), n => n.StartsWith("isotipo-organizacion"));
-    }
-
-    // ── 7. Con isotipo ───────────────────────────────────────────────────────
-
-    [Fact]
-    public void ConIsotipo_EnLaBandaYAlCierre_SinNombreEnLaBanda()
-    {
-        using var doc = WordprocessingDocument.Open(Generate(Brand(isotype: Image(64, 64))), false);
-        var band = HeaderOf(doc, Sections(doc)[1]).Header;
-        Assert.Contains(DrawingNames(band), n => n.StartsWith("isotipo-organizacion"));
-        Assert.Contains(DrawingNames(doc.MainDocumentPart!.Document), n => n.StartsWith("isotipo-organizacion"));
-        Assert.DoesNotContain(OrgName, TextOf(band));
-    }
-
-    // ── 8. Con logo ──────────────────────────────────────────────────────────
-
-    [Fact]
-    public void ConLogo_SoloEnElPieDeLaPortada()
+    public void ConLogo_SoloEnElPieDeLaPortada_EnTabla()
     {
         using var doc = WordprocessingDocument.Open(Generate(Brand(logo: Image(1408, 768))), false);
         var sections = Sections(doc);
@@ -290,8 +348,9 @@ public sealed class ReportDesignTests : IDisposable
             .Where(i => i.GetFirstChild<DWP.DocProperties>()?.Name?.Value?.StartsWith("logo-organizacion") == true)
             .ToList();
         var logo = Assert.Single(logos);
-        Assert.True(logo.Extent!.Cx!.Value <= 2_520_000);
-        Assert.True(logo.Extent.Cy!.Value <= 1_368_000);
+        Assert.True(logo.Extent!.Cx!.Value <= 1_620_000);
+        Assert.True(logo.Extent.Cy!.Value <= 900_000);
+        Assert.NotEmpty(coverFooter.Descendants<Table>());
 
         foreach (var root in Roots(doc).Where(r => r != coverFooter))
             Assert.DoesNotContain(DrawingNames(root), n => n.StartsWith("logo-organizacion"));
@@ -299,19 +358,43 @@ public sealed class ReportDesignTests : IDisposable
         Assert.Contains("Calle Ficticia 123", TextOf(coverFooter));
     }
 
-    // ── 9. Tabla de hashes ───────────────────────────────────────────────────
-
     [Fact]
-    public void TablaDeHashes_EncabezadoSombreado_HashMonoespaciado()
+    public void SinLogo_ConNombre_PieDeLaPortadaSinTabla()
     {
         using var doc = WordprocessingDocument.Open(Generate(Brand()), false);
-        var table = doc.MainDocumentPart!.Document.Body!.Descendants<Table>()
-            .Single(t => TextOf(t).Contains("HASH SHA-256"));
-        var rows = table.Elements<TableRow>().ToList();
+        var coverFooter = FooterOf(doc, Sections(doc)[0]).Footer;
+        Assert.Empty(coverFooter.Descendants<Table>());
+        Assert.Contains(OrgName, TextOf(coverFooter));
+    }
+
+    // ── 9. Isotipo ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ConIsotipo_SoloAlCierre()
+    {
+        using var doc = WordprocessingDocument.Open(Generate(Brand(isotype: Image(64, 64))), false);
+        var main = doc.MainDocumentPart!;
+        Assert.Contains(DrawingNames(main.Document), n => n.StartsWith("isotipo-organizacion"));
+        foreach (var h in main.HeaderParts)
+            Assert.DoesNotContain(DrawingNames(h.Header), n => n.StartsWith("isotipo-organizacion"));
+        foreach (var f in main.FooterParts)
+            Assert.DoesNotContain(DrawingNames(f.Footer), n => n.StartsWith("isotipo-organizacion"));
+    }
+
+    // ── 10. Tabla de hashes ──────────────────────────────────────────────────
+
+    [Fact]
+    public void TablaDeHashes_EncabezadoSinRelleno_FilaDelZipConTinte()
+    {
+        using var doc = WordprocessingDocument.Open(Generate(Brand()), false);
+        var rows = HashRows(doc);
         Assert.Equal(1 + 2 + 1, rows.Count);
 
         foreach (var cell in rows[0].Elements<TableCell>())
-            Assert.Equal(Primary, cell.TableCellProperties?.Shading?.Fill?.Value);
+        {
+            Assert.Null(cell.TableCellProperties?.Shading);
+            Assert.Equal(Primary, cell.TableCellProperties?.TableCellBorders?.BottomBorder?.Color?.Value);
+        }
 
         foreach (var row in rows.Skip(1))
         {
@@ -320,9 +403,27 @@ public sealed class ReportDesignTests : IDisposable
             Assert.All(hashCell.Descendants<Run>(), r =>
                 Assert.Equal("Courier New", r.RunProperties?.RunFonts?.Ascii?.Value));
         }
+
+        var shaded = rows.Skip(1)
+            .Where(r => r.Elements<TableCell>().Any(c => c.TableCellProperties?.Shading is not null))
+            .ToList();
+        var zipRow = Assert.Single(shaded);
+        Assert.Same(rows[^1], zipRow);
+        Assert.Contains("Contenedor de la evidencia", TextOf(zipRow));
     }
 
-    // ── 10. Contenido idéntico a la v4 ───────────────────────────────────────
+    // ── 11. Título del escrito ───────────────────────────────────────────────
+
+    [Fact]
+    public void TituloDelEscrito_SinSubrayado()
+    {
+        using var doc = WordprocessingDocument.Open(Generate(Brand()), false);
+        var title = doc.MainDocumentPart!.Document.Body!.Descendants<Paragraph>()
+            .First(p => TextOf(p).StartsWith("INFORME PERICIAL TÉCNICO INFORMÁTICO"));
+        Assert.All(title.Descendants<Run>(), r => Assert.Null(r.RunProperties?.Underline));
+    }
+
+    // ── 12. Contenido idéntico a la v4 ───────────────────────────────────────
 
     private static string BodyTextFromTitle(WordprocessingDocument doc, bool skipCover)
     {
@@ -350,14 +451,14 @@ public sealed class ReportDesignTests : IDisposable
     {
         var brand = Brand();
         using var v4 = WordprocessingDocument.Open(Generate(brand, V4), false);
-        using var v5 = WordprocessingDocument.Open(Generate(brand, V5), false);
+        using var v6 = WordprocessingDocument.Open(Generate(brand, V6), false);
         var t4 = BodyTextFromTitle(v4, skipCover: false);
-        var t5 = BodyTextFromTitle(v5, skipCover: true);
-        Assert.StartsWith("INFORMEPERICIALTÉCNICOINFORMÁTICO", t5);
-        Assert.Equal(t4, t5);
+        var t6 = BodyTextFromTitle(v6, skipCover: true);
+        Assert.StartsWith("INFORMEPERICIALTÉCNICOINFORMÁTICO", t6);
+        Assert.Equal(t4, t6);
     }
 
-    // ── 11. Validez OpenXML ──────────────────────────────────────────────────
+    // ── 13. Validez OpenXML ──────────────────────────────────────────────────
 
     private static HashSet<string> ValidationKeys(WordprocessingDocument doc, ITestOutputHelper? output, string label)
     {
@@ -378,11 +479,11 @@ public sealed class ReportDesignTests : IDisposable
     {
         var brand = Brand(logo: Image(140, 76), isotype: Image(64, 64));
         using var v4 = WordprocessingDocument.Open(Generate(brand, V4), false);
-        using var v5 = WordprocessingDocument.Open(Generate(brand, V5), false);
+        using var v6 = WordprocessingDocument.Open(Generate(brand, V6), false);
         var before = ValidationKeys(v4, _output, "v4");
-        var after = ValidationKeys(v5, null, "v5");
+        var after = ValidationKeys(v6, null, "v6");
         var nuevos = after.Except(before).ToList();
-        foreach (var n in nuevos) _output.WriteLine("NUEVO v5: " + n);
+        foreach (var n in nuevos) _output.WriteLine("NUEVO v6: " + n);
         Assert.Empty(nuevos);
     }
 
@@ -390,9 +491,9 @@ public sealed class ReportDesignTests : IDisposable
 
     /// <summary>
     /// Solo corre si <c>FACTUM_RENDER_DIR</c> apunta a una carpeta (fuera del repo): deja ahí
-    /// tres DOCX de muestra con datos ficticios. Con <c>FACTUM_RENDER_LOGO</c>,
-    /// <c>FACTUM_RENDER_PRIMARY</c> y <c>FACTUM_RENDER_ACCENT</c> se puede probar una identidad
-    /// local sin versionarla.
+    /// cuatro DOCX de muestra con datos ficticios. Con <c>FACTUM_RENDER_LOGO</c> se puede probar
+    /// un logo local sin versionarlo (va en las muestras c y d); <c>FACTUM_RENDER_PRIMARY</c> y
+    /// <c>FACTUM_RENDER_ACCENT</c> pisan los colores ficticios de la muestra d.
     /// </summary>
     [Fact]
     public void Muestras_SiHayCarpetaDeRender()
@@ -411,17 +512,20 @@ public sealed class ReportDesignTests : IDisposable
         }
         var primary = BrandingColors.Normalize(Environment.GetEnvironmentVariable("FACTUM_RENDER_PRIMARY")) ?? Primary;
         var accent = BrandingColors.Normalize(Environment.GetEnvironmentVariable("FACTUM_RENDER_ACCENT")) ?? Accent;
+        var factum = (BrandingColors.DefaultPrimary, BrandingColors.DefaultAccent);
 
         var samples = new (string Name, BrandingSnapshot Brand)[]
         {
             ("a_sin_branding.docx", new BrandingSnapshot(null, [], null)),
-            ("b_nombre_y_colores_sin_isotipo.docx", Brand(logo: logo, primary: primary, accent: accent)),
-            ("c_logo_e_isotipo.docx", Brand(logo: logo, isotype: Image(64, 64, 0xB0, 0x30, 0x30),
+            ("b_nombre_y_contacto_sin_logo.docx", Brand(primary: factum.DefaultPrimary, accent: factum.DefaultAccent)),
+            ("c_logo_nombre_y_contacto.docx", Brand(logo: logo, primary: factum.DefaultPrimary,
+                accent: factum.DefaultAccent)),
+            ("d_logo_isotipo_colores_ficticios.docx", Brand(logo: logo, isotype: Image(64, 64, 0xB0, 0x30, 0x30),
                 primary: primary, accent: accent)),
         };
         foreach (var (name, brand) in samples)
         {
-            var path = Generate(brand);
+            var path = Generate(brand, cas: MakeCaseWithTexts(notas: false, reserva: false));
             File.Copy(path, Path.Combine(outDir, name), overwrite: true);
             _output.WriteLine(Path.Combine(outDir, name));
         }

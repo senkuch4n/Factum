@@ -18,15 +18,21 @@ public sealed class BrandingOptions
     public List<string> ContactLines { get; set; } = [];
 
     /// <summary>
-    /// Isotipo (versión reducida del logo, idealmente PNG transparente): va en la banda de las
-    /// páginas interiores y al cierre del informe. Mismas reglas que <see cref="OrganizationLogo"/>.
-    /// Vacío = sin isotipo (la banda muestra el nombre de la organización).
+    /// Isotipo (versión reducida del logo, idealmente PNG transparente): va al cierre del
+    /// informe, debajo de la firma. Mismas reglas que <see cref="OrganizationLogo"/>.
+    /// Vacío = sin isotipo.
     /// </summary>
     public string OrganizationIsotype { get; set; } = "";
 
-    /// <summary>Color primario del informe, <c>#RRGGBB</c>. Vacío = gris pizarra neutro.</summary>
+    /// <summary>
+    /// Color primario del informe (filetes, números de sección, línea de la tabla de hashes),
+    /// <c>#RRGGBB</c>. Vacío = verde de Factum.
+    /// </summary>
     public string PrimaryColor { get; set; } = "";
 
-    /// <summary>Color de acento del informe, <c>#RRGGBB</c>. Vacío = gris claro neutro.</summary>
+    /// <summary>
+    /// Color de acento del informe, <c>#RRGGBB</c>. Vacío = tinte de Factum; es el fondo de la
+    /// fila del contenedor ZIP en la tabla de hashes (tiene que contrastar ≥ 4.5:1 con la tinta).
+    /// </summary>
     public string AccentColor { get; set; } = "";
 }
