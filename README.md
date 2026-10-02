@@ -98,6 +98,11 @@ El agente **no** se levanta con Docker (ver arriba por qué) — para probar el
 flujo de captura de un dispositivo real, corré el agente por separado como se
 explica en la siguiente sección.
 
+> Este `docker-compose.yml` es de **desarrollo** (Mongo publicado, secreto JWT de
+> ejemplo). Para instalar Factum en la PC Windows de un estudio se usa
+> `deploy/windows/` (paquete sin internet, backups, actualización): ver
+> [docs/instalacion-windows.md](docs/instalacion-windows.md).
+
 ## Puesta en marcha en modo desarrollo (sin Docker)
 
 Útil para desarrollar con hot-reload en las 4 partes.
@@ -147,13 +152,25 @@ dotnet restore
 dotnet run
 ```
 
-Por defecto expone `http://localhost:8765`. Si no tenés `adb`/`pymobiledevice3`
-instalados y solo querés probar el flujo end-to-end sin un celular físico,
-activá el modo mock en `appsettings.json`:
+Por defecto escucha **solo en esta máquina** (`http://localhost:8765`, IPv4 e
+IPv6 loopback). Si no tenés `adb`/`pymobiledevice3` instalados y solo querés
+probar el flujo end-to-end sin un celular físico, usá el modo mock **sin tocar
+`appsettings.json`** (versionado, y lo que se empaqueta):
+
+```bash
+dotnet run -- --mock
+```
+
+o, para dejarlo fijo en tu máquina, en `server/src/Factum.Agent/appsettings.Local.json`
+(ignorado por git y excluido de `bin/`/`publish/`, como en el backend):
 
 ```json
-{ "Agent": { "Port": 8765, "Mock": true, "DataDirectory": "./agent-data" } }
+{ "Agent": { "Mock": true } }
 ```
+
+Argumentos de línea de comandos (ganan sobre la config): `--mock`, `--port <n>`,
+`--data <carpeta>` y `--bind <dirección>`. Al arrancar loguea la URL y el mock
+**efectivos** (`Factum Agent en http://localhost:8765 (mock=False)`).
 
 ### 5. (Opcional) UI de escritorio del agente (`agent-ui`)
 
@@ -199,8 +216,9 @@ npm run package   # empaqueta la app instalable
 
 | Clave | Qué es |
 |---|---|
-| `Agent:Port` | Puerto donde escucha el agente (8765 por defecto) |
-| `Agent:Mock` | `true` simula dispositivos sin USB real — útil para desarrollar sin celular a mano |
+| `Agent:Port` | Puerto donde escucha el agente (8765 por defecto). CLI: `--port` |
+| `Agent:BindAddress` | Dónde escucha: `localhost` (default: 127.0.0.1 y ::1, solo esta máquina) o una IP. `0.0.0.0`/`::` expone el agente a la red, que no tiene autenticación: arranca con un warning. Cualquier otro valor impide arrancar. CLI: `--bind` |
+| `Agent:Mock` | `true` simula dispositivos sin USB real — útil para desarrollar sin celular a mano. Ponelo en `appsettings.Local.json` o usá `--mock`, nunca en el `appsettings.json` versionado |
 | `Agent:DataDirectory` | Carpeta temporal de capturas antes de subirlas al backend |
 
 > `Jwt:Secret` sigue commiteado con un valor de desarrollo, pensado para correr

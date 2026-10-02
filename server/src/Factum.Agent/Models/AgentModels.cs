@@ -5,6 +5,9 @@ public sealed class AgentOptions
     public int Port { get; set; } = 8765;
     public bool Mock { get; set; }
     public string DataDirectory { get; set; } = "./agent-data";
+    // Dónde escucha el servidor HTTP/WebSocket: "localhost" (127.0.0.1 + ::1, default) o una IP.
+    // "0.0.0.0"/"::" expone el agente a la red (sin auth): solo a propósito. CLI: --bind.
+    public string BindAddress { get; set; } = "localhost";
 }
 
 public sealed class Device

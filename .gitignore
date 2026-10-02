@@ -42,3 +42,6 @@ server/src/Factum.Backend/branding/
 docs/INFORME*
 docs/informe_modelo*
 docs/Logo_del_estudio*
+
+# Paquetes de instalación armados por deploy/windows/armar-paquete.sh
+deploy/windows/dist/

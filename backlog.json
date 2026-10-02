@@ -420,6 +420,50 @@
         "fase": "cerrada"
       },
       "notas": "Desprendida de editor-texto-enriquecido (D6 A, usuario 2026-10-01). Preguntas adelantadas en docs/hu-editor-texto-enriquecido.md §D6 (origen: captura existente vs. ilustrativa; relación con el anexo; límites). Depende de editor-texto-enriquecido. Validada 2026-10-01: D1–D12 A (usuario). SDD espera a la de editor-texto-enriquecido. SDD lista 2026-10-01 (adelantada): DP1 B y DP2 B por el usuario (opcional con solo imágenes sale; sin tope de 32 MB, streaming + ImagePart reutilizado del anexo). 2026-10-01: implementando en feat/editor-imagenes-informe (desde editor-texto-enriquecido). Reviewer APROBADA 2026-10-02 (0 rechazos). Obs.: 2 tests intermitentes (comparan DOCX con hash de ZIP dependiente de timestamps)."
+    },
+    {
+      "id": "instalacion-local-docker",
+      "titulo": "Instalación local en el estudio (una PC Windows): Docker para Mongo + backend + web y Tatana nativo con instalador",
+      "estado": "aprobada",
+      "creada": "2026-10-02T00:00:00-03:00",
+      "actualizada": "2026-10-02",
+      "intentos_revision": 1,
+      "toca": {
+        "backend": true,
+        "frontend": true,
+        "agent_ui": true
+      },
+      "asignacion": {
+        "backend_model": "opus",
+        "frontend_model": "opus",
+        "reviewer_model": "sonnet",
+        "skill": null,
+        "rama": "feat/instalacion-local-docker",
+        "fase": "cerrada"
+      },
+      "notas": "Pedido del usuario 2026-10-02: el estudio jurídico quiere Factum instalado localmente; idea del usuario: Docker. Topología: UNA sola PC Windows (usuario). Tatana necesita USB → nativo (Docker Desktop no pasa USB). Ya existen docker-compose.yml y Dockerfiles de client, backend y agent. Validada 2026-10-02: D1–D20 A; D7 dev confirmado; PC Windows 10 sin specs → chequeo de requisitos en instalar.ps1. SDD lista: DT1–DT19 recomendadas; DT2/DT4/DT5 A (usuario). Revisión 1 RECHAZADA (2026-10-02): parser del .ini en launch-tatana.bat deja '%b' literal con claves vacías (rompe DT4 y UPDATE_URL). Relanzado implementer-backend. Reviewer APROBADA en intento 2 (2026-10-02)."
+    },
+    {
+      "id": "usuarios-locales",
+      "titulo": "Usuarios locales con contraseña (Auth:Mode=local) para instalaciones sin proveedor externo",
+      "estado": "no_afinada",
+      "creada": "2026-10-02T00:00:00-03:00",
+      "actualizada": "2026-10-02",
+      "intentos_revision": 0,
+      "toca": {
+        "backend": true,
+        "frontend": true,
+        "agent_ui": false
+      },
+      "asignacion": {
+        "backend_model": "opus",
+        "frontend_model": "opus",
+        "reviewer_model": "sonnet",
+        "skill": null,
+        "rama": "feat/usuarios-locales",
+        "fase": "afinado"
+      },
+      "notas": "Desprendida de instalacion-local-docker (D7, 2026-10-02): hoy la instalación del estudio usa Auth:Mode=dev (sin contraseña). Alta de usuarios con contraseña hasheada en Mongo y tercer modo de auth."
     }
   ]
 }

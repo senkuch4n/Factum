@@ -1291,8 +1291,9 @@ public sealed class ReportService : IReportService
     }
 
     // ── PDF: conversión del DOCX con LibreOffice ─────────────────────────────
-    // Sin uso: el informe se entrega en DOCX. Se conserva (T16 de la SDD del informe pericial;
-    // sacarlo, junto con libreoffice-writer del Dockerfile, es de otra HU).
+    // Sin uso: el informe se entrega en DOCX. libreoffice-writer ya no está en la imagen Docker
+    // (HU instalacion-local-docker), así que en el contenedor esto devolvería "LibreOffice no
+    // encontrado"; nadie lo llama. Borrar este código muerto queda para otra HU.
 
     private static readonly string[] LibreOfficePaths =
     [

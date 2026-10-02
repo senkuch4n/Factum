@@ -135,3 +135,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos. 335 tests backend.
 - **Rama:** `feat/editor-imagenes-informe` (encadenada sobre `feat/editor-texto-enriquecido`).
 - **Pendiente:** ~~2 tests intermitentes~~ corregidos aparte (máscara de hash por <w:t>); prueba manual (insertar capturas, borrar una captura y ver el bloqueo, abrir en Word).
+
+## instalacion-local-docker — APROBADA (2026-10-02)
+
+- **Qué:** paquete de instalación para una PC Windows en el estudio. `deploy/windows/`: compose de producción (imágenes preconstruidas por versión exportadas a `.tar`, `pull_policy: never`, web y backend solo en 127.0.0.1, Mongo 7.0.43 sin publicar en red interna, healthchecks, evidencia en `C:\Factum\evidencia`), `.env` con secretos generados al instalar, `appsettings.Local` montado, scripts PowerShell 5.1 (`instalar` con chequeo de requisitos Q1–Q11, `backup` con pausa y manifiesto de hashes + tarea diaria 20:00, `restaurar`, `actualizar` con backup y rollback, `diagnostico`, `abrir-factum`), `.bat` envoltorios, armado del paquete y del Tatana portátil (verifica `Mock=false`). Imagen del frontend `standalone` (≈295 MB, sin `.env.local`) e imagen del backend sin LibreOffice. Tatana escucha en localhost por defecto (`--bind`), carga `appsettings.Local.json`; Dockerfile del agente borrado. Guía `docs/instalacion-windows.md`. Modo de auth `dev` documentado como riesgo (HU `usuarios-locales` pendiente).
+- **Decisiones:** HU D1–D20 A (usuario); SDD DT1–DT19 recomendadas, DT2/DT4/DT5 A (usuario).
+- **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 1 rechazo (parser del `.ini` de `launch-tatana.bat` con claves vacías).
+- **Rama:** `feat/instalacion-local-docker` (desde `develop`).
+- **Pendiente:** prueba real en Windows (§10.3 de la SDD: instalación sin internet, reinicio, backup/restauración con byte alterado, actualización con falla simulada, Tatana con celular real, comando del `.ini` en cmd); mejoras no bloqueantes en `restaurar.ps1` (sobrantes del manifiesto, reinicio tras mongorestore fallido) y `actualizar.ps1` (rollback ante excepción entre paso 4 y `up`).

@@ -1,0 +1,14 @@
+FACTUM - Paquete de instalacion local (Windows 10 22H2 / 11, 64 bits)
+
+Factum corre en esta PC dentro de Docker Desktop (web, API y base de datos)
+y Tatana corre aparte para conectar los celulares por USB. No hace falta internet.
+
+Antes de empezar, abri la guia "instalacion-windows.md" (con el Bloc de notas
+o cualquier navegador): explica cada paso y que hacer si algo falla.
+
+Orden:
+  1. Instalar Docker Desktop (guia, Parte B, paso "Instalar Docker Desktop").
+  2. Doble clic en "1-Instalar Factum.bat" y seguir las instrucciones.
+
+Para pasar a una version nueva: usar "Actualizar Factum.bat" del paquete NUEVO.
+No borres ni edites los archivos de este paquete: se verifican con SHA256SUMS.txt.

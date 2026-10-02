@@ -15,4 +15,11 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.3.1" />
   </ItemGroup>
 
+  <!-- Config local de desarrollo (fuera del repo, ej. "Mock": true): no se copia a bin/ ni a
+       publish/, así el portátil nunca se la lleva. -->
+  <ItemGroup>
+    <Content Remove="appsettings.Local.json" />
+    <None Remove="appsettings.Local.json" />
+  </ItemGroup>
+
 </Project>

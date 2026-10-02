@@ -1,0 +1,4 @@
+# Los scripts de Windows van con CRLF (y los .ps1 con BOM): que git no los normalice.
+*.ps1  -text
+*.psd1 -text
+*.bat  -text

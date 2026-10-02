@@ -113,3 +113,13 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-02 — `implementer-backend` (imágenes) done -> progress/impl_backend_editor-imagenes-informe.md. HU → en_revision, lanzado `reviewer`.
 - 2026-10-02 — `reviewer` APROBADA -> progress/review_editor-imagenes-informe.md (obs: 2 tests intermitentes por timestamps del ZIP). imágenes → aprobada, commit. BACKLOG VACÍO.
 - 2026-10-02 — Fix fuera del arnés (autorizado): 2 tests intermitentes. Causa real: la máscara de hash se aplicaba tras concatenar y la 'a' de 'evidencia' corría el match; T11 no enmascaraba. Helper TextOfMaskingHashes en ReportTestSupport. 0 fallas en 30 corridas, 335 OK.
+- 2026-10-02 — Historia limpiada por el usuario (filter-branch: datos del estudio fuera de f3471e7; respaldo local backup/pre-limpieza-historia, NO pushear). Push de feat/editor-imagenes-informe y PR #1 contra develop: https://github.com/senkuch4n/Factum/pull/1
+- 2026-10-02 — Usuario pide instalar Factum localmente en el estudio con Docker. Una PC Windows. Alta `instalacion-local-docker` (afinando) en feat/instalacion-local-docker (desde develop), lanzado `afinador`.
+- 2026-10-02 — `afinador` done -> docs/hu-instalacion-local-docker.md (20 dudas). HU → afinada_pendiente_validacion.
+- 2026-10-02 — Usuario valida instalacion-local-docker (D1–D20 A; D7 dev; <250 empleados; PC Windows 10 sin specs). Alta `usuarios-locales` (no_afinada). HU → en_arquitectura, lanzado `architect`.
+- 2026-10-02 — `architect` done -> Refactorizaciones/instalacion-local-docker.md; usuario confirma DT2/DT4/DT5 A. HU → implementando.
+- 2026-10-02 — `implementer-frontend` (instalación) done -> progress/impl_frontend_instalacion-local-docker.md. Esperando backend/infra.
+- 2026-10-02 — `implementer-backend` (instalación) done -> progress/impl_backend_instalacion-local-docker.md (analyzer 0, Pester 12/12, stack verif OK; ejecución real en Windows pendiente). HU → en_revision, lanzado `reviewer`.
+- 2026-10-02 — `reviewer` RECHAZADA (1/2) -> progress/review_instalacion-local-docker.md: parser del .ini de launch-tatana.bat con claves vacías. Relanzado `implementer-backend` con el feedback.
+- 2026-10-02 — `implementer-backend` reintento 1 done (parser .ini robusto, probado con wine cmd). HU → en_revision, relanzado `reviewer` (intento 2).
+- 2026-10-02 — `reviewer` APROBADA (intento 2). instalacion-local-docker → aprobada, commit (sin el Mock local). Queda en backlog: usuarios-locales (no_afinada).

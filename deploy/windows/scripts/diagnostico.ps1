@@ -1,0 +1,137 @@
+﻿<#
+.SYNOPSIS
+    Diagnóstico de Factum (solo lectura). Todo lo que muestra queda además en
+    <instalación>\logs\diagnostico-<fecha>.txt para mandárselo al proveedor.
+.PARAMETER ReiniciarBackend
+    Reinicia el backend (para aplicar cambios de config\appsettings.Local.json o del logo).
+    Si no se pasa y la consola es interactiva, se pregunta al final.
+#>
+[CmdletBinding()]
+param(
+    [switch]$ReiniciarBackend,
+    [switch]$SinPreguntas,
+    [string]$Carpeta = ''
+)
+
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_comun.ps1')
+Set-StrictMode -Version 2.0
+
+if (-not $Carpeta) { $Carpeta = Get-FactumHome }
+Initialize-FactumContext $Carpeta
+$homeDir = $script:FactumHomeDir
+Start-FactumLog -Nombre 'diagnostico' -Extension 'txt' | Out-Null
+
+function Write-Titulo {
+    param([string]$Texto)
+    Write-Host ''
+    Write-Host ('── ' + $Texto + ' ──') -ForegroundColor Cyan
+}
+
+function Write-Salida {
+    param($Resultado)
+    foreach ($l in $Resultado.Salida) { Write-Host ('  ' + $l) }
+}
+
+try {
+    Write-Host ''
+    Write-Host '=== Diagnóstico de Factum ===' -ForegroundColor White
+    Write-Host ('Fecha: ' + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + '   Equipo: ' + $env:COMPUTERNAME + '   Carpeta: ' + $homeDir)
+
+    Write-Titulo 'Versión instalada'
+    $envPath = Get-FactumEnvPath
+    if (Test-Path -LiteralPath $envPath -PathType Leaf) {
+        $cfg = Read-EnvFile $envPath
+        Write-Host ('  Factum ' + $cfg['FACTUM_VERSION'] + '  (proyecto ' + $script:FactumProyecto + ', modo de acceso ' + $cfg['FACTUM_AUTH_MODE'] + ')')
+    } else {
+        Write-Falla ('No hay config\.env en ' + $homeDir + ': Factum no está instalado acá.')
+    }
+
+    Write-Titulo 'Docker'
+    Add-DockerAlPath
+    $r = Invoke-Nativo -Exe 'docker' -Argumentos @('version', '--format', 'Cliente {{.Client.Version}} / Motor {{.Server.Version}} ({{.Server.Os}}/{{.Server.Arch}})') -Silencioso
+    Write-Salida $r
+    $dockerOk = ($r.ExitCode -eq 0)
+    if (-not $dockerOk) { Write-Falla 'Docker Desktop no responde: abrilo desde el menú Inicio y esperá a que diga "Engine running".' }
+
+    if ($dockerOk) {
+        Write-Titulo 'Servicios (estado y salud)'
+        Write-Salida (Invoke-FactumCompose -Argumentos @('ps', '--all', '--format', 'table {{.Service}}\t{{.Status}}\t{{.Image}}') -Silencioso)
+    }
+
+    Write-Titulo 'Puertos'
+    foreach ($p in @(3000, 8080, 8765)) {
+        $duenio = Test-PuertoLibre $p
+        if (-not $duenio) { $duenio = '(nadie escucha)' }
+        Write-Host ('  ' + $p + ': ' + $duenio)
+    }
+
+    Write-Titulo 'Backend (http://127.0.0.1:8080/health)'
+    $hb = Get-BackendHealth
+    if ($null -eq $hb) {
+        Write-Falla 'El backend no responde.'
+    } else {
+        Write-Ok ('status=' + (Get-PropiedadSegura $hb 'status') + '  version=' + (Get-PropiedadSegura $hb 'version') + '  auth_mode=' + (Get-PropiedadSegura $hb 'auth_mode'))
+    }
+
+    Write-Titulo 'Tatana (http://127.0.0.1:8765/health)'
+    $ht = Get-TatanaHealth
+    if ($null -ne $ht) {
+        Write-Host ('  version=' + (Get-PropiedadSegura $ht 'version') + '  ios_available=' + (Get-PropiedadSegura $ht 'ios_available'))
+    }
+    Test-TatanaReal $ht | Out-Null
+
+    Write-Titulo 'Disco'
+    try {
+        $letra = (Split-Path -Qualifier $homeDir).TrimEnd(':')
+        $drive = Get-PSDrive -Name $letra -PSProvider FileSystem
+        Write-Host ('  Libre en ' + $letra + ': ' + (Format-Tamanio ([long]$drive.Free)))
+    } catch { Write-Aviso 'No se pudo leer el espacio libre.' }
+    $ev = Get-TamanioCarpeta (Join-Path $homeDir 'evidencia')
+    Write-Host ('  Evidencia: ' + $ev.Archivos + ' archivos, ' + (Format-Tamanio $ev.Bytes))
+
+    Write-Titulo 'Último backup válido'
+    $destinos = @(Join-Path $homeDir 'backups')
+    if ((Test-Path -LiteralPath $envPath) -and (Read-EnvFile $envPath)['FACTUM_BACKUP_DESTINO']) { $destinos += (Read-EnvFile $envPath)['FACTUM_BACKUP_DESTINO'] }
+    $ultimo = $null
+    foreach ($d in $destinos) {
+        if (-not (Test-Path -LiteralPath $d -PathType Container)) { continue }
+        $c = @(Get-ChildItem -LiteralPath $d -Directory |
+            Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}_\d{6}$' -and (Test-Path -LiteralPath (Join-Path $_.FullName 'manifiesto-sha256.txt')) } |
+            Sort-Object Name -Descending | Select-Object -First 1)
+        if ($c.Count -gt 0 -and ($null -eq $ultimo -or $c[0].Name -gt $ultimo.Name)) { $ultimo = $c[0] }
+    }
+    if ($null -eq $ultimo) { Write-Aviso 'No hay ningún backup todavía. Usá el acceso "Backup de Factum".' } else { Write-Host ('  ' + $ultimo.FullName) }
+
+    if ($dockerOk) {
+        Write-Titulo 'Últimas 40 líneas del registro del backend'
+        Write-Salida (Invoke-FactumCompose -Argumentos @('logs', '--no-color', '--tail', '40', 'backend') -Silencioso)
+    }
+
+    $reiniciar = $ReiniciarBackend
+    if (-not $reiniciar -and -not $SinPreguntas -and $dockerOk -and [Environment]::UserInteractive) {
+        Write-Host ''
+        $reiniciar = Confirm-SN '¿Reiniciar Factum para aplicar cambios de la identidad del estudio (appsettings.Local.json o logo)?'
+    }
+    if ($reiniciar) {
+        Write-Titulo 'Reiniciando el backend'
+        $r = Invoke-FactumCompose -Argumentos @('restart', 'backend')
+        $pendiente = $null
+        if ($r.ExitCode -ne 0) { $pendiente = 'backend' } else { $pendiente = Wait-FactumHealthy -TimeoutSec 180 }
+        if ($pendiente) {
+            Show-BackendLogTail
+            Write-Falla 'El backend no volvió a arrancar: revisá config\appsettings.Local.json (el registro de arriba dice qué valor falla).'
+        } else {
+            Write-Ok 'Backend reiniciado con la configuración nueva.'
+        }
+    }
+
+    Write-Host ''
+    Write-Host ('Este diagnóstico quedó guardado en: ' + $script:FactumLogPath) -ForegroundColor Yellow
+    Stop-FactumLog
+    exit 0
+} catch {
+    Write-ErrorFinal $_
+    Stop-FactumLog
+    exit 1
+}
