@@ -134,4 +134,4 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Decisiones:** HU D1–D12 A (usuario); SDD recomendadas, DP1 B y DP2 B (usuario).
 - **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos. 335 tests backend.
 - **Rama:** `feat/editor-imagenes-informe` (encadenada sobre `feat/editor-texto-enriquecido`).
-- **Pendiente:** 2 tests intermitentes (`T11_CasoViejo…`, `ContenidoPericial_IgualALaV4`) comparan DOCX con el hash del ZIP, que depende de timestamps → arreglo chico en tests; prueba manual (insertar capturas, borrar una captura y ver el bloqueo, abrir en Word).
+- **Pendiente:** ~~2 tests intermitentes~~ corregidos aparte (máscara de hash por <w:t>); prueba manual (insertar capturas, borrar una captura y ver el bloqueo, abrir en Word).

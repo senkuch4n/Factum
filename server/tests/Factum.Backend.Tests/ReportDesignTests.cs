@@ -439,11 +439,9 @@ public sealed class ReportDesignTests : IDisposable
         }
         var sb = new StringBuilder();
         foreach (var c in children.Skip(start))
-            foreach (var t in c.Descendants<Text>())
-                sb.Append(t.Text);
-        // Sin espacios; el hash del ZIP se enmascara por las dudas (el contenido es el mismo).
-        var s = Regex.Replace(sb.ToString(), @"\s+", "");
-        return Regex.Replace(s, "[0-9a-f]{64}", "<hash>");
+            sb.Append(ReportTestSupport.TextOfMaskingHashes(c));
+        // Sin espacios; el hash del ZIP ya viene enmascarado por <w:t> (cambia entre generaciones).
+        return Regex.Replace(sb.ToString(), @"\s+", "");
     }
 
     [Fact]

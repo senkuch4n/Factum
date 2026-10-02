@@ -112,3 +112,4 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-02 — `implementer-frontend` (imágenes) done -> progress/impl_frontend_editor-imagenes-informe.md. Esperando backend.
 - 2026-10-02 — `implementer-backend` (imágenes) done -> progress/impl_backend_editor-imagenes-informe.md. HU → en_revision, lanzado `reviewer`.
 - 2026-10-02 — `reviewer` APROBADA -> progress/review_editor-imagenes-informe.md (obs: 2 tests intermitentes por timestamps del ZIP). imágenes → aprobada, commit. BACKLOG VACÍO.
+- 2026-10-02 — Fix fuera del arnés (autorizado): 2 tests intermitentes. Causa real: la máscara de hash se aplicaba tras concatenar y la 'a' de 'evidencia' corría el match; T11 no enmascaraba. Helper TextOfMaskingHashes en ReportTestSupport. 0 fallas en 30 corridas, 335 OK.

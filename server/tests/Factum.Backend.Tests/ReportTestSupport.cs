@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Wordprocessing;
 using Factum.Backend.DTOs;
@@ -87,4 +88,12 @@ internal static class ReportTestSupport
     }
 
     public static string TextOf(OpenXmlElement e) => string.Concat(e.Descendants<Text>().Select(t => t.Text));
+
+    // El hash del ZIP cambia entre dos generaciones (timestamps de las entradas). Se enmascara
+    // en cada <w:t> antes de concatenar: después de unir, un texto vecino terminado en a-f
+    // ("evidencia") se pega al hash y corre la máscara un carácter.
+    private static readonly Regex Sha256 = new("^[0-9a-f]{64}$|(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])");
+
+    public static string TextOfMaskingHashes(OpenXmlElement e) =>
+        string.Concat(e.Descendants<Text>().Select(t => Sha256.Replace(t.Text, "<hash>")));
 }

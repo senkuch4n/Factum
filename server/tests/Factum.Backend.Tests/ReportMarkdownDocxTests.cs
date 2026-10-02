@@ -147,7 +147,8 @@ public sealed class ReportMarkdownDocxTests : IDisposable
         var b = GenerateCase(CaseWithTexts("texto-desconocido-no-markdown", t => t.ValoracionTecnica = PlainValoracion));
         using var da = WordprocessingDocument.Open(a, false);
         using var db = WordprocessingDocument.Open(b, false);
-        Assert.Equal(TextOf(da.MainDocumentPart!.Document.Body!), TextOf(db.MainDocumentPart!.Document.Body!));
+        Assert.Equal(TextOfMaskingHashes(da.MainDocumentPart!.Document.Body!),
+            TextOfMaskingHashes(db.MainDocumentPart!.Document.Body!));
     }
 
     // ── Caso con todos los formatos ──────────────────────────────────────────
