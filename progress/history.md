@@ -143,3 +143,12 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 1 rechazo (parser del `.ini` de `launch-tatana.bat` con claves vacías).
 - **Rama:** `feat/instalacion-local-docker` (desde `develop`).
 - **Pendiente:** prueba real en Windows (§10.3 de la SDD: instalación sin internet, reinicio, backup/restauración con byte alterado, actualización con falla simulada, Tatana con celular real, comando del `.ini` en cmd); mejoras no bloqueantes en `restaurar.ps1` (sobrantes del manifiesto, reinicio tras mongorestore fallido) y `actualizar.ps1` (rollback ante excepción entre paso 4 y `up`).
+
+## instalacion-poca-ram — APROBADA (2026-10-02)
+
+- **Qué:** instalación en PCs con poca RAM (la del estudio: i3-7100U, 4 GB, SSD). `instalar.ps1` bloquea solo con < 3.5 GB; entre 3.5 y < 7.5 GB avisa y pide una confirmación propia. Perfil de memoria automático (o `-PerfilMemoria poca|normal`) guardado en `config\.env` (`FACTUM_PERFIL_MEMORIA`); con perfil `poca` todos los scripts suman `docker-compose.poca-ram.yml` (Mongo cache 0.25 GB y tope 512m, backend 768m con GC workstation, frontend 384m con heap 256). Perfil normal idéntico a antes. Sin `.wslconfig` (solo guía). `diagnostico.ps1` suma sección "Memoria" y aplica cambios de perfil (`up -d` + `restart backend`). Guía actualizada.
+- **Medición (Mac, perfil poca RAM, 40 capturas + 3 videos de 750 MB):** informe OK en ~70 s; pico de memoria real del backend 259 MiB (34 % del tope), Mongo ~260 MiB, frontend < 40 MiB; sin OOM; incluso con el backend a 256m no falló. Topes sin cambios.
+- **Decisiones:** HU D1–D8 recomendadas (usuario); SDD DT1–DT14 recomendadas, DT8 A (usuario).
+- **Modelos:** afinador/architect (sesión), implementer-backend opus, reviewer sonnet. 0 rechazos.
+- **Rama:** `feat/instalacion-poca-ram` (desde `develop`).
+- **Pendiente:** prueba real en la PC del estudio (checklist de la guía §2.1).

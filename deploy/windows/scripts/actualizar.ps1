@@ -29,9 +29,12 @@ $bats = @('Backup de Factum.bat', 'Diagnostico de Factum.bat', 'Restaurar Factum
 
 function Copy-ArchivosInstalacion {
     # Copia compose, version.txt, scripts\ y los .bat de $Origen (paquete o copia previa) a la
-    # instalación. En el paquete los .bat de uso diario están en scripts\.
+    # instalación. En el paquete los .bat de uso diario están en scripts\. El compose de poca RAM
+    # se copia si existe en $Origen (una copia previa a esa HU no lo tiene).
     param([string]$Origen, [string]$CarpetaBats)
     Copy-Item -LiteralPath (Join-Path $Origen 'docker-compose.yml') -Destination $homeDir -Force
+    $pocaRam = Join-Path $Origen $script:FactumComposePocaRam
+    if (Test-Path -LiteralPath $pocaRam -PathType Leaf) { Copy-Item -LiteralPath $pocaRam -Destination $homeDir -Force }
     Copy-Item -LiteralPath (Join-Path $Origen 'version.txt') -Destination $homeDir -Force
     $destScripts = Join-Path $homeDir 'scripts'
     Get-ChildItem -LiteralPath (Join-Path $Origen 'scripts') -File |
@@ -96,6 +99,8 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $previo 'scripts') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $previo 'config') -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $homeDir 'docker-compose.yml') -Destination $previo -Force
+    $pocaRamActual = Join-Path $homeDir $script:FactumComposePocaRam
+    if (Test-Path -LiteralPath $pocaRamActual -PathType Leaf) { Copy-Item -LiteralPath $pocaRamActual -Destination $previo -Force }
     Copy-Item -LiteralPath (Join-Path $homeDir 'version.txt') -Destination $previo -Force
     Copy-Item -LiteralPath $envPath -Destination (Join-Path $previo 'config') -Force
     Get-ChildItem -LiteralPath (Join-Path $homeDir 'scripts') -File | Copy-Item -Destination (Join-Path $previo 'scripts') -Force

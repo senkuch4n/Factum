@@ -15,6 +15,9 @@ $script:FactumServicios = @('mongo', 'backend', 'frontend')
 $script:FactumHomeDir = $null
 $script:FactumProyecto = 'factum'
 $script:FactumLogPath = $null
+# Perfil de memoria "poca RAM" (SDD instalacion-poca-ram §5.3): compose que se suma al base.
+$script:FactumComposePocaRam = 'docker-compose.poca-ram.yml'
+$script:FactumAvisoPocaRamMostrado = $false
 
 # ── Consola (R5 / R6) ─────────────────────────────────────────────────────────
 
@@ -54,6 +57,18 @@ function Confirm-SN {
     $respuesta = Read-Host ($Pregunta + ' (S/N)')
     if ($null -eq $respuesta) { return $false }
     return ($respuesta.Trim() -eq 'S' -or $respuesta.Trim() -eq 's')
+}
+
+function Write-AvisoPocaMemoria {
+    # Bloque propio de "POCA MEMORIA" del paso 2 del instalador (separado de los demás avisos).
+    param([double]$Gb)
+    Write-Host ''
+    Write-Host ('  POCA MEMORIA: la PC tiene {0} GB de RAM (se recomiendan 8 GB).' -f $Gb) -ForegroundColor Yellow
+    Write-Host '  Factum va a funcionar, pero LENTO: abrir pantallas y generar informes puede tardar' -ForegroundColor Yellow
+    Write-Host '  bastante más, sobre todo con muchas capturas. Para que ande mejor:' -ForegroundColor Yellow
+    Write-Host '   - cerrá otros programas y pestañas mientras uses Factum,' -ForegroundColor Yellow
+    Write-Host '   - no dejes abierta la ventana de Docker Desktop (alcanza con la ballena junto al reloj).' -ForegroundColor Yellow
+    Write-Host '  Factum se va a configurar para usar la menor memoria posible.' -ForegroundColor Yellow
 }
 
 function Stop-Factum {
@@ -292,19 +307,58 @@ function Invoke-Nativo {
     return New-Object psobject -Property @{ ExitCode = [int]$codigo; Salida = $lineas.ToArray() }
 }
 
+function Get-PerfilMemoria {
+    # Decision de Q3 a partir de la RAM que reporta Windows (GB, ya redondeada a 1 decimal: la
+    # misma cifra que muestra el mensaje). Devuelve 'bloquea' | 'poca' | 'normal'.
+    param([Parameter(Mandatory = $true)][double]$Gb)
+    if ($Gb -lt 3.5) { return 'bloquea' }
+    if ($Gb -lt 7.5) { return 'poca' }
+    return 'normal'
+}
+
+function Get-PerfilMemoriaConfigurado {
+    # Perfil efectivo de un config\.env: 'poca' solo si FACTUM_PERFIL_MEMORIA vale "poca" (sin
+    # importar mayusculas ni espacios). Sin archivo, sin clave o con otro valor: 'normal'.
+    param([string]$EnvPath)
+    if (-not $EnvPath -or -not (Test-Path -LiteralPath $EnvPath -PathType Leaf)) { return 'normal' }
+    $cfg = Read-EnvFile $EnvPath
+    if (-not $cfg.ContainsKey('FACTUM_PERFIL_MEMORIA')) { return 'normal' }
+    $valor = ([string]$cfg['FACTUM_PERFIL_MEMORIA']).Trim().ToLowerInvariant()
+    if ($valor -eq 'poca') { return 'poca' }
+    return 'normal'
+}
+
 function Get-FactumComposeArgumento {
+    # Lee el perfil del .env en CADA llamada (sin cache): actualizar y la vuelta atras lo cambian
+    # a mitad del script. En el perfil normal el arreglo es identico al de antes de la HU.
     $h = $script:FactumHomeDir
-    return @(
-        'compose',
-        '--project-directory', $h,
-        '-f', (Join-Path $h 'docker-compose.yml'),
-        '--env-file', (Get-FactumEnvPath),
-        '-p', $script:FactumProyecto
-    )
+    $envPath = Get-FactumEnvPath
+    $lista = New-Object System.Collections.Generic.List[string]
+    $lista.Add('compose')
+    $lista.Add('--project-directory')
+    $lista.Add($h)
+    $lista.Add('-f')
+    $lista.Add((Join-Path $h 'docker-compose.yml'))
+    if ((Get-PerfilMemoriaConfigurado $envPath) -eq 'poca') {
+        $overlay = Join-Path $h $script:FactumComposePocaRam
+        if (Test-Path -LiteralPath $overlay -PathType Leaf) {
+            $lista.Add('-f')
+            $lista.Add($overlay)
+        } elseif (-not $script:FactumAvisoPocaRamMostrado) {
+            $script:FactumAvisoPocaRamMostrado = $true
+            Write-Aviso ('El perfil de memoria es "poca" pero falta ' + $script:FactumComposePocaRam + ' en ' + $h + ': Factum corre sin límites de memoria. Ejecutá el instalador con -Reparar.')
+        }
+    }
+    $lista.Add('--env-file')
+    $lista.Add($envPath)
+    $lista.Add('-p')
+    $lista.Add($script:FactumProyecto)
+    return $lista.ToArray()
 }
 
 function Invoke-FactumCompose {
-    # R7: SIEMPRE con --project-directory, -f, --env-file y -p de esta instalacion.
+    # R7: SIEMPRE con --project-directory, -f <home>\docker-compose.yml (+ el de poca RAM si el
+    # perfil lo pide), --env-file y -p de esta instalacion.
     # Devuelve { ExitCode, Salida }; el script llamador decide que hacer si ExitCode != 0.
     param([string[]]$Argumentos, [switch]$Silencioso)
     if (-not $script:FactumHomeDir) { throw 'Initialize-FactumContext no se llamo.' }
@@ -616,6 +670,9 @@ function Test-Requisitos {
     $fallas = New-Object System.Collections.Generic.List[string]
     $avisos = New-Object System.Collections.Generic.List[string]
     $completo = ($Modo -eq 'Instalar')
+    # RAM y perfil detectados (Q3). Quedan en $null si WMI falla o en modo Actualizar.
+    $ramGb = $null
+    $perfilMemoria = $null
 
     if ($completo) {
         # Q1 - 64 bits
@@ -637,13 +694,17 @@ function Test-Requisitos {
             } catch { Write-Verbose 'Sin datos de version en el registro.' }
             $fallas.Add(('Tu Windows es {0} {1} (build {2}). Hace falta Windows 10 versión 22H2 o posterior: Configuración > Windows Update.' -f $producto, $edicion, $build))
         }
-        # Q3 - RAM (umbral algo por debajo de 8/16 GB: Windows reporta un poco menos de lo instalado)
+        # Q3 - RAM (umbrales algo por debajo de 4/8/16 GB: Windows reporta un poco menos de lo
+        # instalado). 'poca' NO va en Avisos: instalar.ps1 muestra su propio bloque y pregunta
+        # aparte (SDD instalacion-poca-ram §5.3).
         try {
             $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
             $gb = [math]::Round($cs.TotalPhysicalMemory / 1GB, 1)
-            if ($gb -lt 7.5) {
-                $fallas.Add(('La PC tiene {0} GB de memoria RAM. Docker + Factum necesitan al menos 8 GB.' -f $gb))
-            } elseif ($gb -lt 15) {
+            $ramGb = [double]$gb
+            $perfilMemoria = Get-PerfilMemoria $gb
+            if ($perfilMemoria -eq 'bloquea') {
+                $fallas.Add(('La PC tiene {0} GB de memoria RAM. Factum necesita al menos 4 GB instalados (se recomiendan 8 GB).' -f $gb))
+            } elseif ($perfilMemoria -eq 'normal' -and $gb -lt 15) {
                 $avisos.Add(('La PC tiene {0} GB de RAM: va a andar, pero cerrá otros programas pesados mientras uses Factum (recomendable 16 GB).' -f $gb))
             }
             # Q4 - Virtualizacion
@@ -763,7 +824,12 @@ function Test-Requisitos {
         }
     }
 
-    return New-Object psobject -Property @{ Fallas = $fallas.ToArray(); Avisos = $avisos.ToArray() }
+    return New-Object psobject -Property @{
+        Fallas        = $fallas.ToArray()
+        Avisos        = $avisos.ToArray()
+        RamGb         = $ramGb
+        PerfilMemoria = $perfilMemoria
+    }
 }
 
 # ── Health de backend y Tatana ────────────────────────────────────────────────

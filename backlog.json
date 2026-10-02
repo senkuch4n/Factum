@@ -464,6 +464,28 @@
         "fase": "afinado"
       },
       "notas": "Desprendida de instalacion-local-docker (D7, 2026-10-02): hoy la instalación del estudio usa Auth:Mode=dev (sin contraseña). Alta de usuarios con contraseña hasheada en Mongo y tercer modo de auth."
+    },
+    {
+      "id": "instalacion-poca-ram",
+      "titulo": "Instalación en PCs con poca RAM (4 GB): el instalador avisa en vez de bloquear y se acotan WSL2, Mongo y contenedores",
+      "estado": "aprobada",
+      "creada": "2026-10-02T00:00:00-03:00",
+      "actualizada": "2026-10-02",
+      "intentos_revision": 0,
+      "toca": {
+        "backend": true,
+        "frontend": false,
+        "agent_ui": false
+      },
+      "asignacion": {
+        "backend_model": "opus",
+        "frontend_model": "opus",
+        "reviewer_model": "sonnet",
+        "skill": null,
+        "rama": "feat/instalacion-poca-ram",
+        "fase": "cerrada"
+      },
+      "notas": "Pedido del usuario 2026-10-02: la PC del estudio es i3-7100U con 4 GB de RAM; el usuario acepta que ande lento. Hoy instalar.ps1 (Q3 en _comun.ps1) bloquea con < 7.5 GB. Cambiar a aviso + confirmación y acotar memoria (.wslconfig, cache de WiredTiger, límites de contenedores). El usuario pidió que pase por el arnés. Validada 2026-10-02: D1–D8 recomendadas; caso de referencia 40 capturas + videos; PC con SSD. SDD lista: DT1–DT14 recomendadas; DT8 A (usuario). Reviewer APROBADA 2026-10-02 (0 rechazos)."
     }
   ]
 }

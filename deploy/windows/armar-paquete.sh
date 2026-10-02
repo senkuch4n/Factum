@@ -80,7 +80,7 @@ fi
 echo "[2/9] Extrayendo la fuente limpia (git archive)..."
 mkdir -p "$SRC"
 git -C "$REPO" archive "$COMMIT" | tar -x -C "$SRC"
-for f in deploy/windows/docker-compose.yml deploy/windows/.env.example deploy/windows/appsettings.Local.example.json \
+for f in deploy/windows/docker-compose.yml deploy/windows/docker-compose.poca-ram.yml deploy/windows/.env.example deploy/windows/appsettings.Local.example.json \
          deploy/windows/LEEME.txt docs/instalacion-windows.md client/Dockerfile server/src/Factum.Backend/Dockerfile; do
   [[ -f "$SRC/$f" ]] || { echo "ERROR: $f no está en $REF (¿falta commitear?)." >&2; exit 1; }
 done
@@ -200,7 +200,7 @@ fi
 # 8 ── Estructura del paquete (todo desde la fuente limpia)
 echo "[8/9] Armando $NOMBRE..."
 W="$SRC/deploy/windows"
-cp "$W/docker-compose.yml" "$W/.env.example" "$W/appsettings.Local.example.json" "$W/LEEME.txt" "$PAQ/"
+cp "$W/docker-compose.yml" "$W/docker-compose.poca-ram.yml" "$W/.env.example" "$W/appsettings.Local.example.json" "$W/LEEME.txt" "$PAQ/"
 cp "$W/1-Instalar Factum.bat" "$W/Actualizar Factum.bat" "$PAQ/"
 cp "$W"/scripts/*.ps1 "$W"/scripts/*.psd1 "$W"/scripts/*.bat "$PAQ/scripts/"
 cp "$SRC/docs/instalacion-windows.md" "$PAQ/"

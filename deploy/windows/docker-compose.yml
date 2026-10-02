@@ -1,6 +1,8 @@
 # Factum — instalación local en una PC Windows (Docker Desktop + WSL2).
 # Se usa SIEMPRE a través de los scripts (scripts\_comun.ps1), que pasan
 # --project-directory, -f, --env-file C:\Factum\config\.env y -p $COMPOSE_PROJECT_NAME.
+# En el perfil de memoria "poca RAM" (FACTUM_PERFIL_MEMORIA=poca) los scripts suman además
+# -f docker-compose.poca-ram.yml (solo límites de memoria; ver ese archivo).
 # Tatana NO va acá: corre nativo en Windows (USB). Ver docs/instalacion-windows.md.
 #
 # Reglas de este archivo (SDD instalacion-local-docker, §6.4):

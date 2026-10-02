@@ -123,3 +123,10 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-02 — `reviewer` RECHAZADA (1/2) -> progress/review_instalacion-local-docker.md: parser del .ini de launch-tatana.bat con claves vacías. Relanzado `implementer-backend` con el feedback.
 - 2026-10-02 — `implementer-backend` reintento 1 done (parser .ini robusto, probado con wine cmd). HU → en_revision, relanzado `reviewer` (intento 2).
 - 2026-10-02 — `reviewer` APROBADA (intento 2). instalacion-local-docker → aprobada, commit (sin el Mock local). Queda en backlog: usuarios-locales (no_afinada).
+- 2026-10-02 — Push de feat/instalacion-local-docker y PR #2 contra develop: https://github.com/senkuch4n/Factum/pull/2
+- 2026-10-02 — PC del estudio: i3-7100U, 4 GB RAM. Usuario acepta lentitud y pide que pase por el arnés. Alta `instalacion-poca-ram` (afinando) en feat/instalacion-poca-ram (desde develop), lanzado `afinador`.
+- 2026-10-02 — `afinador` done -> docs/hu-instalacion-poca-ram.md (9 dudas). HU → afinada_pendiente_validacion.
+- 2026-10-02 — Usuario valida instalacion-poca-ram (D1–D8 recomendadas; 15–20 fotos + videos; SSD). HU → en_arquitectura, lanzado `architect`.
+- 2026-10-02 — `architect` done -> Refactorizaciones/instalacion-poca-ram.md; usuario confirma DT8 A. HU → implementando, lanzado `implementer-backend`.
+- 2026-10-02 — `implementer-backend` (poca RAM) done -> progress/impl_backend_instalacion-poca-ram.md. Medición: pico anon backend 259 MiB (34 % de 768m), sin OOM; topes sin cambios. HU → en_revision, lanzado `reviewer`.
+- 2026-10-02 — `reviewer` APROBADA. instalacion-poca-ram → aprobada, commit.

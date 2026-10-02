@@ -77,7 +77,7 @@ disco (sección 10).
 | Requisito | Mínimo | Cómo verlo |
 |---|---|---|
 | Windows | **Windows 10 versión 22H2** o Windows 11, de **64 bits** | Tecla Windows + R, escribir `winver`, Enter. Dice la versión (22H2) y la compilación (19045 o mayor). |
-| Memoria RAM | **8 GB** (recomendado 16 GB) | Configuración > Sistema > Acerca de > "RAM instalada". |
+| Memoria RAM | **8 GB** recomendado. Con **4 GB** funciona, más lento, con el perfil de poca memoria (sección 2.1). Si Windows reporta menos de 3,5 GB, no se puede. | Configuración > Sistema > Acerca de > "RAM instalada". |
 | Disco libre | **50 GB** recomendado (mínimo 15 GB) en la unidad de `C:\Factum` | Explorador de archivos > Este equipo. |
 | Virtualización | Habilitada en la BIOS/UEFI | Administrador de tareas > Rendimiento > CPU > "Virtualización: Habilitado". |
 | Usuario | Una cuenta con permisos de **administrador**, solo para instalar Docker Desktop y WSL | — |
@@ -90,7 +90,9 @@ hacer con cada mensaje:
 |---|---|---|
 | Q1 | "Factum necesita Windows de 64 bits." | La PC no sirve: hace falta un Windows de 64 bits (ver sección 13). |
 | Q2 | "Tu Windows es … (build N). Hace falta Windows 10 versión 22H2 o posterior" | Configuración > Windows Update > buscar actualizaciones, hasta llegar a 22H2. Reiniciar y volver a probar. |
-| Q3 | "Docker + Factum necesitan al menos 8 GB" / aviso "recomendable 16 GB" | Con menos de 8 GB no se puede. Entre 8 y 16 GB anda, pero cerrá programas pesados (por ejemplo, muchas pestañas del navegador) mientras uses Factum. |
+| Q3 | "Factum necesita al menos 4 GB instalados" | Windows reporta menos de 3,5 GB: Factum no se puede instalar en esa PC. |
+| Q3 | Bloque "POCA MEMORIA: la PC tiene N GB de RAM…" + "¿Instalar igual con poca memoria? (S/N)" | PC de 4 GB (entre 3,5 y 7,5 GB reportados). Con **S** la instalación sigue y queda el perfil de poca memoria (sección 2.1); con **N** se cancela sin tocar nada. Es una pregunta aparte de la de los demás avisos. |
+| Q3 | Aviso "recomendable 16 GB" | Entre 8 y 16 GB anda, pero cerrá programas pesados (por ejemplo, muchas pestañas del navegador) mientras uses Factum. |
 | Q4 | "La virtualización está apagada en la BIOS/UEFI…" | Ver sección 3. |
 | Q5 | "Quedan N GB libres…" | Liberá espacio (o instalá en otra unidad con `-Carpeta D:\Factum`, ver sección 5). |
 | Q6 | "Docker Desktop no está instalado" / "WSL2 no está instalado" | Ver secciones 3 y 4. |
@@ -100,6 +102,94 @@ hacer con cada mensaje:
 | Q9 | "Docker Compose es muy viejo" | Actualizá Docker Desktop (desde el propio Docker Desktop: *Check for updates*). |
 | Q10 | "El puerto 3000 / 8080 lo está usando el programa X" | Factum necesita esos puertos. Cerrá o desinstalá ese programa. Un aviso por el **8765** quiere decir que otro programa ocupa el puerto de Tatana. |
 | Q11 | Aviso "Docker Desktop no está configurado para arrancar al iniciar sesión" | En Docker Desktop: Settings > General > tildar **Start Docker Desktop when you sign in**. Sin esto, Factum no arranca solo al prender la PC. |
+
+### 2.1 PC con poca memoria (4 GB)
+
+Si la PC tiene 4 GB de RAM (Windows reporta entre 3,5 y 7,5 GB), el instalador muestra el
+bloque **POCA MEMORIA** y pregunta si instalar igual. Con **S**, `C:\Factum\config\.env` queda
+con `FACTUM_PERFIL_MEMORIA=poca` y Factum se configura para usar la menor memoria posible. En
+las PCs de 8 GB o más el perfil es `normal` y nada cambia.
+
+**Qué hace el perfil.** Le pone un tope de memoria a cada parte de Factum (archivo
+`C:\Factum\docker-compose.poca-ram.yml`). Son **máximos, no reservas**: en reposo las tres
+partes usan bastante menos (≈ 35-90 MB cada una).
+
+| Parte | Tope | Además |
+|---|---|---|
+| Base de datos (Mongo) | 512 MB | caché de datos de 0,25 GB |
+| Backend (API e informes) | 768 MB | recolector de memoria de .NET en modo "estación de trabajo" |
+| Web (frontend) | 384 MB | memoria de Node limitada a 256 MB |
+
+**Qué esperar.** Abrir pantallas y generar informes es más lento, y Windows usa el disco como
+memoria cuando no le alcanza. La PC del estudio tiene **SSD**, así que es tolerable; con un
+disco mecánico (HDD) sería mucho más lento, y cambiarlo por un SSD es la mejora más barata.
+
+**Consejos para que ande mejor:**
+
+- Cerrá otros programas y pestañas del navegador mientras uses Factum.
+- No dejes abierta la ventana de Docker Desktop: alcanza con la ballena junto al reloj.
+- Reiniciá la PC al empezar el día.
+- No tengas otras distribuciones de WSL abiertas (si no sabés qué es, no tenés ninguna).
+
+**Si un informe falla o Factum se reinicia al generar:**
+
+- Volvé a generarlo: la evidencia **no se pierde** (los archivos del caso se borran recién
+  cuando el ZIP quedó verificado) y el caso se puede reintentar.
+- Abrí "Diagnostico de Factum" y mirá la sección **Memoria**: "sin memoria: SÍ" en una parte
+  quiere decir que se quedó sin memoria.
+- Si se repite, avisale al proveedor y mandale el archivo del diagnóstico.
+- Los casos con muchas capturas son los más exigentes. Medido con el perfil de poca memoria:
+  un caso de **40 capturas** (≈ 77 MB de imágenes) más 750 MB de video generó el informe en
+  ≈ 70 segundos y el backend usó como máximo ≈ 260 MB de sus 768 MB. Los casos de más de ~40
+  capturas son los que más se acercan al tope.
+
+**Cambiar de perfil** (por ejemplo, si le agregan RAM a la PC):
+
+1. Abrí `C:\Factum\config\.env` con el Bloc de notas.
+2. Cambiá `FACTUM_PERFIL_MEMORIA=poca` por `FACTUM_PERFIL_MEMORIA=normal` (o al revés) y
+   guardá.
+3. Abrí **"Diagnostico de Factum"** y respondé **S** a "¿Reiniciar Factum para aplicar
+   cambios de configuración…?". Se recrean los contenedores con el perfil nuevo; los casos, la
+   evidencia y la base **no se tocan**.
+
+Para **revertir** lo que hace este perfil alcanza con lo mismo: `FACTUM_PERFIL_MEMORIA=normal`
+y reiniciar desde el diagnóstico.
+
+**`.wslconfig` (opcional, a mano).** Los scripts de Factum **nunca** lo escriben. Sin ese
+archivo, WSL2 (donde corre Docker) ya usa como máximo la mitad de la RAM y ≈ 25 % de swap.
+Solo si el diagnóstico muestra que la memoria no alcanza, se puede crear
+`%UserProfile%\.wslconfig` con:
+
+```ini
+[wsl2]
+memory=2GB
+swap=2GB
+```
+
+y después, en una terminal, `wsl --shutdown`. Eso **apaga Docker Desktop**: hay que volver a
+abrirlo. El archivo afecta a todas las distribuciones de WSL de esa cuenta. Para revertirlo:
+borrar el archivo y repetir `wsl --shutdown`.
+
+**Checklist después de instalar en la PC de 4 GB** (prueba final en la PC real):
+
+1. En la Mac, `deploy/windows/armar-paquete.sh --version <X>`: `SHA256SUMS.txt` lista
+   `docker-compose.poca-ram.yml`.
+2. `1-Instalar Factum.bat`: aparece el bloque **POCA MEMORIA** con la RAM real (≈ 3,7-3,9 GB)
+   y su pregunta S/N, separada de "¿Continuar igual…?" si hubo otros avisos. Responder **N**:
+   dice "Instalación cancelada" y no existe `C:\Factum`. Volver a ejecutarlo y responder **S**.
+3. Al terminar: `config\.env` tiene `FACTUM_PERFIL_MEMORIA=poca`, el resumen dice "Perfil de
+   memoria: poca RAM" y `http://localhost:3000` muestra el login.
+4. "Diagnostico de Factum": la sección **Memoria** muestra la RAM, el perfil y el uso
+   "x / 512MiB", "x / 768MiB", "x / 384MiB"; reinicios en 0.
+5. Caso real típico (15-20 fotos + video): generar el informe. Anda (lento), el ZIP verifica y
+   el diagnóstico no muestra reinicios.
+6. `scripts\instalar.ps1 -Reparar` desde el paquete: vuelve a preguntar por la poca memoria y
+   el perfil sigue en `poca`.
+7. (Si hay una PC de 8 GB o más a mano.) La instalación queda en `normal` y el diagnóstico
+   muestra el uso sin topes propios.
+8. Cambio de perfil: `poca` → `normal` en `config\.env` + diagnóstico → **S**. Los contenedores
+   se recrean sin topes y los casos siguen ahí. Volver a `poca` de la misma forma.
+9. Actualizar con un paquete nuevo: no pregunta por la RAM y el perfil se conserva.
 
 ## 3. Habilitar la virtualización y WSL2
 
@@ -153,6 +243,8 @@ Windows para Linux").
 4. El instalador muestra los pasos numerados (`[1/13] …`). Qué hace cada uno:
    1. Verifica que el paquete esté completo (si la copia por USB quedó a medias, lo dice).
    2. Revisa los requisitos (sección 2). Si hay avisos, pregunta si continuar (**S**/**N**).
+      En una PC de 4 GB muestra además el aviso de **POCA MEMORIA** con su propia pregunta
+      **S**/**N** (sección 2.1).
    3. Revisa que Factum no esté ya instalado.
    4. Crea `C:\Factum` con sus carpetas: `config`, `evidencia`, `backups`, `logs`, `scripts`.
    5. Restringe el acceso a `C:\Factum`: solo **tu usuario**, los administradores y el
@@ -160,7 +252,8 @@ Windows para Linux").
       cuenta de Windows de la misma PC **no** puede leer esa carpeta; Factum en el navegador
       sigue andando para todas.
    6. Crea la configuración (`C:\Factum\config\.env`) con una **clave secreta propia de esta
-      PC**, y `config\appsettings.Local.json` para la identidad del estudio.
+      PC** y el **perfil de memoria** (`FACTUM_PERFIL_MEMORIA`: `poca` o `normal`, sección 2.1),
+      y `config\appsettings.Local.json` para la identidad del estudio.
    7. Copia los archivos de Factum.
    8. Carga las imágenes de Factum en Docker (**tarda unos minutos**).
    9. Arranca Factum y espera a que esté listo.
@@ -169,13 +262,15 @@ Windows para Linux").
    12. Instala **Tatana** (copia a `%LOCALAPPDATA%\Programs\Tatana`, lo deja arrancando al
        iniciar sesión, y verifica que **no** esté en modo simulado).
    13. Muestra el resumen: la dirección `http://localhost:3000`, dónde queda la evidencia, el
-       aviso de seguridad y los próximos pasos.
+       perfil de memoria ("poca RAM" o "normal"), el aviso de seguridad y los próximos pasos.
 5. Todo queda registrado en `C:\Factum\logs\instalar-<fecha>.log`.
 
 Opciones (desde una terminal en la carpeta del paquete):
 `powershell -ExecutionPolicy Bypass -File scripts\instalar.ps1 -Carpeta D:\Factum` instala en
 otra carpeta; `-Reparar` reinstala scripts e imágenes de la **misma** versión sin tocar la
-configuración ni los datos; `-SinTatana` no instala Tatana.
+configuración ni los datos; `-SinTatana` no instala Tatana; `-PerfilMemoria poca|normal`
+fuerza el perfil de memoria en vez de elegirlo por la RAM (no saltea el mínimo de RAM y no se
+combina con `-Reparar`, que conserva el perfil de `config\.env`).
 
 ## 6. Aviso de seguridad: cómo se entra a Factum
 
@@ -356,6 +451,7 @@ los datos tienen que seguir ahí. Después corré `Actualizar Factum.bat` normal
 | **"El backend no arrancó"** (al instalar, actualizar o reiniciar) | El script muestra las últimas líneas del registro. Casi siempre es un error de sintaxis en `config\appsettings.Local.json` o un valor inválido en `config\.env` (por ejemplo `FACTUM_AUTH_MODE` distinto de `dev`/`external`). Corregilo y abrí "Diagnostico de Factum" (responder S a reiniciar). |
 | **El celular no aparece** | Revisá el cable (que sea de datos), el driver (sección 8), la depuración USB / "Confiar en esta computadora", y que Tatana esté corriendo ("Diagnostico de Factum"). Si Tatana no responde: cerrá sesión de Windows y volvé a entrar, o abrí `%LOCALAPPDATA%\Programs\Tatana\launch-tatana.bat`. |
 | **El diagnóstico dice `mock: true` / "modo simulado"** | Tatana está simulando celulares: **no usar para peritajes**. Avisá al proveedor. |
+| **El informe falla o Factum se reinicia al generar** (PC con poca memoria) | Ver sección 2.1, "Si un informe falla o Factum se reinicia al generar". |
 | **Se llenó el disco** | Borrá backups viejos de `C:\Factum\backups` (después de copiarlos a otro disco) e imágenes de versiones viejas (sección 11). La evidencia de `C:\Factum\evidencia` **no se borra a mano**. |
 
 Todos los scripts dejan su registro en `C:\Factum\logs\`. Para pedir ayuda, mandá el archivo
@@ -395,4 +491,18 @@ Tests de los scripts (Pester 5 + PSScriptAnalyzer), sin Windows:
 docker run --rm -v "$PWD/deploy/windows:/w" mcr.microsoft.com/powershell:lts-ubuntu-22.04 pwsh -NoProfile -Command \
   "Install-Module PSScriptAnalyzer -Force -Scope CurrentUser; Install-Module Pester -MaximumVersion 5.99 -Force -Scope CurrentUser -SkipPublisherCheck; \
    Invoke-ScriptAnalyzer -Path /w/scripts -Settings /w/scripts/PSScriptAnalyzerSettings.psd1; Invoke-Pester /w/tests -Output Detailed"
+```
+
+Para probar el perfil de poca memoria en una VM o una PC con más RAM:
+`powershell -ExecutionPolicy Bypass -File scripts\instalar.ps1 -PerfilMemoria poca`.
+
+Para comparar la configuración efectiva de los dos perfiles sin levantar nada (en la Mac,
+con un `.env` de prueba que tenga `COMPOSE_PROJECT_NAME`, `FACTUM_VERSION`, `FACTUM_HOME` y
+`FACTUM_JWT_SECRET`; **nunca** el proyecto `factum` real):
+
+```bash
+C="docker compose -p factum-verif --project-directory <home de prueba> --env-file <.env de prueba>"
+$C -f deploy/windows/docker-compose.yml config > normal.yml
+$C -f deploy/windows/docker-compose.yml -f deploy/windows/docker-compose.poca-ram.yml config > poca.yml
+diff normal.yml poca.yml   # solo mem_limit de los 3, command de mongo, DOTNET_gcServer y NODE_OPTIONS
 ```
