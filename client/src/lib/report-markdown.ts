@@ -124,7 +124,9 @@ export function normalizeMarkdown(md: string): string {
  */
 export function isBlankMarkdown(md: string | null | undefined): boolean {
   if (!md) return true;
-  const visible = md
+  // Una imagen no aporta texto visible: ni el alt ni el nombre cuentan
+  // (editor-imagenes-informe §4.7, D12 A para los obligatorios).
+  const visible = stripReportImages(md)
     .replace(/&(#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/gi, "")
     .replace(/<\/?u>/g, "")
     .replace(/\]\([^)]*\)/g, "]")
@@ -149,4 +151,139 @@ export function isAllowedUrl(url: string | null | undefined): boolean {
 /** URL de un enlace Markdown: espacios, `(`, `)`, `<` y `>` van percent-encoded (§4.3). */
 export function encodeUrlForMarkdown(url: string): string {
   return url.replace(/[ ()<>]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0"));
+}
+
+/* ── Imágenes: capturas del caso dentro de los textos (editor-imagenes-informe, SDD §4.1 y §4.8) ── */
+
+/** Esquema de la referencia: `![alt](captura:<nombre-codificado>)`. */
+export const REPORT_IMAGE_SCHEME = "captura:" as const;
+/** Tope de imágenes por sección (D4). */
+export const MAX_REPORT_IMAGES_PER_SECTION = 20;
+/** Largo máximo de la descripción (alt), en unidades UTF-16 (`.length`). */
+export const MAX_REPORT_IMAGE_ALT = 200;
+
+const NAME_SAFE_BYTE = /^[A-Za-z0-9._-]$/;
+
+/**
+ * Nombre de archivo → forma codificada del destino: cada byte UTF-8 fuera de
+ * `[A-Za-z0-9._-]` va como `%XX` con hex en mayúsculas (igual que
+ * `ReportImageRef.EncodeName` del servidor).
+ */
+export function encodeReportImageName(name: string): string {
+  let out = "";
+  for (const byte of new TextEncoder().encode(name)) {
+    const ch = String.fromCharCode(byte);
+    out += byte < 0x80 && NAME_SAFE_BYTE.test(ch) ? ch : "%" + byte.toString(16).toUpperCase().padStart(2, "0");
+  }
+  return out;
+}
+
+/** Inversa de `encodeReportImageName`. `null` si hay un `%` mal formado, otro carácter o UTF-8 inválido. */
+export function decodeReportImageName(encoded: string): string | null {
+  if (!/^(?:[A-Za-z0-9._-]|%[0-9A-Fa-f]{2})+$/.test(encoded)) return null;
+  const bytes: number[] = [];
+  for (let i = 0; i < encoded.length; i++) {
+    if (encoded[i] === "%") {
+      bytes.push(parseInt(encoded.slice(i + 1, i + 3), 16));
+      i += 2;
+    } else {
+      bytes.push(encoded.charCodeAt(i));
+    }
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes));
+  } catch {
+    return null;
+  }
+}
+
+/** Descripción de una línea: sin caracteres de control, `trim` y espacios internos colapsados. */
+export function normalizeReportImageAlt(alt: string): string {
+  // eslint-disable-next-line no-control-regex
+  return (alt ?? "").replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Forma canónica de la referencia (la única que acepta el servidor). */
+export function formatReportImageMarkdown(filename: string, alt: string): string {
+  return `![${escapeInlineText(normalizeReportImageAlt(alt))}](${REPORT_IMAGE_SCHEME}${encodeReportImageName(filename)})`;
+}
+
+/** Línea de imagen del dialecto (§4.8 paso 3). g1 = alt escapado, g2 = nombre codificado. */
+export const REPORT_IMAGE_LINE =
+  /^!\[((?:\\.|&[a-z0-9#]+;|[^\\\]\n])*)\]\(captura:((?:[A-Za-z0-9._-]|%[0-9A-Fa-f]{2})+)\)[ \t]*$/;
+
+const NAMED_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', nbsp: "\u00A0" };
+
+/** Alt escapado → texto literal: quita `\` de la puntuación ASCII y decodifica las entidades básicas. */
+export function unescapeReportImageAlt(escaped: string): string {
+  return escaped.replace(
+    /\\([!-/:-@[-`{-~])|&(amp|lt|gt|quot|nbsp|#\d+|#[xX][0-9a-fA-F]+);/g,
+    (m, punct: string | undefined, ent: string | undefined) => {
+      if (punct !== undefined) return punct;
+      if (!ent) return m;
+      if (ent[0] !== "#") return NAMED_ENTITIES[ent] ?? m;
+      const code = ent[1] === "x" || ent[1] === "X" ? parseInt(ent.slice(2), 16) : parseInt(ent.slice(1), 10);
+      try {
+        return code > 0 ? String.fromCodePoint(code) : m;
+      } catch {
+        return m;
+      }
+    },
+  );
+}
+
+export interface ReportImageRef {
+  filename: string;
+  alt: string;
+  /** Índice de línea (0-based) en el Markdown normalizado. */
+  line: number;
+}
+
+const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/;
+
+/**
+ * Escáner de líneas (§4.8): devuelve las referencias que son imagen según el
+ * dialecto (línea propia de nivel superior, fuera de un bloque de código,
+ * rodeada de líneas vacías). Lo comparten `extractReportImageRefs` y `stripReportImages`.
+ */
+function scanReportImages(md: string): { lines: string[]; refs: ReportImageRef[] } {
+  const lines = (md ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const refs: ReportImageRef[] = [];
+  let fence: { ch: string; len: number } | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (fence) {
+      const close = /^ {0,3}(`+|~+)[ \t]*$/.exec(line);
+      if (close && close[1][0] === fence.ch && close[1].length >= fence.len) fence = null;
+      continue;
+    }
+    const open = FENCE_OPEN.exec(line);
+    if (open) {
+      fence = { ch: open[1][0], len: open[1].length };
+      continue;
+    }
+    const m = REPORT_IMAGE_LINE.exec(line);
+    if (!m) continue;
+    const prevBlank = i === 0 || lines[i - 1].trim() === "";
+    const nextBlank = i === lines.length - 1 || lines[i + 1].trim() === "";
+    if (!prevBlank || !nextBlank) continue;
+    const filename = decodeReportImageName(m[2]);
+    if (filename === null) continue;
+    refs.push({ filename, alt: unescapeReportImageAlt(m[1]), line: i });
+  }
+  return { lines, refs };
+}
+
+/** Referencias `captura:` del Markdown, en orden de documento. Sin Tiptap. */
+export function extractReportImageRefs(md: string): ReportImageRef[] {
+  return scanReportImages(md).refs;
+}
+
+/** El mismo Markdown con cada línea de imagen reemplazada por una línea vacía. */
+export function stripReportImages(md: string): string {
+  const { lines, refs } = scanReportImages(md);
+  if (refs.length === 0) return lines.join("\n");
+  const out = lines.slice();
+  refs.forEach(r => { out[r.line] = ""; });
+  return out.join("\n");
 }

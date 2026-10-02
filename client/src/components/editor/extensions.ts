@@ -6,12 +6,12 @@
  * exactamente ese dialecto y que el Markdown que llega por API se lea igual
  * que lo lee el servidor (Markdig).
  *
- * Punto de extensión para imágenes (D19, HU `editor-imagenes-informe`): hoy no
- * hay nodo `image` en el esquema, así que un `![…](…)` que llegue se lee como
- * texto. La HU de imágenes agrega acá el nodo y su botón en la barra.
+ * Imágenes (D19 → HU `editor-imagenes-informe`, SDD §7.2): el documento
+ * admite el grupo `figure` (solo en el primer nivel) con el nodo
+ * `reportImage`; cualquier otro `![…](…)` queda como texto.
  */
 
-import { Extension, type AnyExtension, type Editor, type JSONContent } from "@tiptap/core";
+import { Extension, Node, type AnyExtension, type Editor, type JSONContent } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { Paragraph } from "@tiptap/extension-paragraph";
@@ -25,6 +25,20 @@ import { Markdown } from "@tiptap/markdown";
 import {
   EMPTY_PARAGRAPH, encodeUrlForMarkdown, escapeLineStart, isAllowedUrl, normalizeMarkdown,
 } from "@/lib/report-markdown";
+import { InlineImageAsText, ReportImage } from "./ReportImageNode";
+
+/**
+ * Documento: bloques y figuras. El nodo de imagen está en el grupo `figure`,
+ * que solo admite el documento: ProseMirror no lo deja entrar en una lista
+ * (`paragraph block*`) ni en una cita (`block+`). Reemplaza al `Document` de
+ * StarterKit, con el mismo render Markdown (bloques separados por línea vacía).
+ */
+const FxDocument = Node.create({
+  name: "doc",
+  topNode: true,
+  content: "(block | figure)+",
+  renderMarkdown: (node, h) => (node.content ? h.renderChildren(node.content, "\n\n") : ""),
+});
 
 /** Profundidad máxima de las listas (D3: hasta 3 niveles). */
 export const MAX_LIST_DEPTH = 3;
@@ -202,12 +216,17 @@ export interface ReportExtensionsOptions {
   getLength: () => number;
   onLimit: () => void;
   onRequestLink: () => void;
+  /** Enter sobre una imagen seleccionada (editor-imagenes-informe). */
+  onRequestImageEdit: (editor: Editor, pos: number) => void;
+  /** Se intentó pasar el tope de 20 imágenes por sección. */
+  onImageLimit: () => void;
 }
 
 /** Todas las extensiones del editor del informe. */
 export function buildReportExtensions(opts: ReportExtensionsOptions): AnyExtension[] {
   return [
     StarterKit.configure({
+      document: false,
       heading: false,
       codeBlock: false,
       paragraph: false,
@@ -218,12 +237,15 @@ export function buildReportExtensions(opts: ReportExtensionsOptions): AnyExtensi
       horizontalRule: false,
       trailingNode: false,
     }),
+    FxDocument,
     FxParagraph,
     FxHeading,
     FxCodeBlock,
     FxUnderline,
     FxLink,
     FxOrderedList,
+    ReportImage.configure({ onRequestEdit: opts.onRequestImageEdit, onLimit: opts.onImageLimit }),
+    InlineImageAsText,
     ListDepthLimit,
     MaxMarkdownLength.configure({ max: opts.maxLength, getLength: opts.getLength, onLimit: opts.onLimit }),
     LinkShortcut.configure({ onRequest: opts.onRequestLink }),

@@ -265,6 +265,98 @@
     height: 0;
     pointer-events: none;
   }
+
+  /* ── Capturas del caso dentro del texto (editor-imagenes-informe, SDD §7.9) ──
+     Bloque centrado (máx. 60 % del editor), borde fino y radio de tarjeta; el
+     epígrafe en gris cursiva. Solo tokens --fx-*: claro y oscuro salen solos. */
+  .fx-rte figure[data-fx-report-image] {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.375rem;
+    margin-left: 0;
+    margin-right: 0;
+    white-space: normal;
+    cursor: default;
+    user-select: none;
+  }
+  .fx-rte figure[data-fx-report-image] + * { margin-top: 0.5rem; }
+  /* Imagen: hasta el 60 % del editor; aviso: hasta 28rem. `.fx-rimg-inner`
+     envuelve solo lo que se ve: la barra flotante queda arriba a la derecha. */
+  .fx-rimg-body {
+    display: flex;
+    justify-content: center;
+  }
+  .fx-rimg-body--media { width: 60%; }
+  .fx-rimg-body--note { width: min(100%, 28rem); }
+  .fx-rimg-inner {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    max-width: 100%;
+  }
+  .fx-rimg-frame {
+    max-width: 100%;
+    overflow: hidden;
+    border: 1px solid var(--fx-border);
+    border-radius: var(--fx-radius-md);
+    background: var(--fx-surface-1);
+  }
+  .fx-rimg-frame img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .fx-rimg-skeleton {
+    background: var(--fx-surface-3);
+  }
+  .fx-rimg-missing {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem 0.75rem;
+    width: 100%;
+    padding: 1rem;
+    border: 1px dashed var(--fx-border-strong);
+    border-radius: var(--fx-radius-md);
+    background: var(--fx-surface-2);
+    text-align: center;
+  }
+  /* Selección del nodo (clic o flechas): anillo de foco del sistema. Solo con el
+     editor enfocado: un texto que empieza con una imagen la tiene "seleccionada"
+     al cargar, y eso no tiene que verse en las otras secciones. */
+  .fx-rte.ProseMirror-focused figure[data-selected] .fx-rimg-frame,
+  .fx-rte.ProseMirror-focused figure[data-selected] .fx-rimg-missing {
+    box-shadow: 0 0 0 2px var(--fx-focus);
+  }
+  .fx-rte:not(.ProseMirror-focused) .fx-rimg-bar { display: none; }
+  .fx-rte figure.ProseMirror-selectednode { outline: none; }
+  .fx-rimg-bar {
+    position: absolute;
+    top: 0.375rem;
+    right: 0.375rem;
+    display: flex;
+    gap: 0.125rem;
+    padding: 0.125rem;
+    border: 1px solid var(--fx-border);
+    border-radius: var(--fx-radius-md);
+    background: var(--fx-surface-1);
+    box-shadow: var(--fx-shadow-2);
+  }
+  /* En los avisos (no disponible / error) la barra flota sobre el borde superior:
+     así no tapa el botón "Quitar" o "Reintentar" del recuadro. */
+  .fx-rimg-body--note .fx-rimg-bar { top: -1.125rem; }
+  .fx-rimg-caption {
+    max-width: min(100%, 36rem);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    font-style: italic;
+    color: var(--fx-text-3);
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
 }
 
 @tailwind utilities;

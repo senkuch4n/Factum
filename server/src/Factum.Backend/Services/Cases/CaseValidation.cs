@@ -191,8 +191,9 @@ public static class CaseValidation
 
     /// <summary>
     /// Formato, largos y contenido (editor-texto-enriquecido §4.2 y §6.6). El tope cuenta el
-    /// string guardado (D9 A). En Markdown se rechaza el HTML (salvo &lt;u&gt;), las imágenes y
-    /// los enlaces no permitidos; en texto plano no se interpreta nada, como antes.
+    /// string guardado (D9 A). En Markdown se rechaza el HTML (salvo &lt;u&gt;), las imágenes que
+    /// no son una captura del caso como párrafo propio (editor-imagenes-informe §4.3), más de 20
+    /// imágenes por sección y los enlaces no permitidos; en texto plano no se interpreta nada.
     /// </summary>
     public static string? ValidateReportTexts(ReportTextsDto d)
     {
@@ -215,8 +216,52 @@ public static class CaseValidation
 
         foreach (var (key, value) in fields)
             if (ReportMarkdown.Validate(value) is { } reason)
-                return $"El campo {key} tiene contenido no permitido: {reason}";
+                return reason == ReportMarkdown.TooManyImages
+                    ? TooManyImagesMessage(key)
+                    : $"El campo {key} tiene contenido no permitido: {reason}";
         return null;
+    }
+
+    // ── Imágenes del informe (editor-imagenes-informe §4.3 y §4.6) ───────────
+
+    public static string TooManyImagesMessage(string key) =>
+        $"El campo {key} supera las {ReportImageRef.MaxPerSection} imágenes";
+
+    /// <summary>Clave de <c>missing</c> de una sección con una captura no disponible.</summary>
+    public static string ReportImageKey(string clave) => $"report_texts.{clave}.imagen";
+
+    /// <summary>
+    /// Claves <c>report_texts.&lt;clave&gt;.imagen</c> de las secciones con alguna imagen no
+    /// disponible, una por sección y en el orden de las secciones. Solo con Formato = markdown.
+    /// Es pura: la E/S entra por <paramref name="isAvailable"/>.
+    /// </summary>
+    public static IReadOnlyList<string> BrokenImageKeys(ReportTexts? t, Func<string, bool> isAvailable)
+    {
+        if (t is null || t.Formato != ReportTextFormats.Markdown) return [];
+        var sections = new (string Key, string? Value)[]
+        {
+            ("objeto_informe", t.ObjetoInforme),
+            ("operaciones_realizadas", t.OperacionesRealizadas),
+            ("aseguramiento_evidencia", t.AseguramientoEvidencia),
+            ("resultados", t.Resultados),
+            ("valoracion_tecnica", t.ValoracionTecnica),
+            ("conclusiones", t.Conclusiones),
+            ("notas_tecnicas", t.NotasTecnicas),
+            ("reserva", t.Reserva),
+        };
+        var keys = new List<string>();
+        var cache = new Dictionary<string, bool>(StringComparer.Ordinal);
+        foreach (var (key, value) in sections)
+        {
+            foreach (var (filename, _) in ReportMarkdown.ExtractImages(value))
+            {
+                if (!cache.TryGetValue(filename, out var ok)) cache[filename] = ok = isAvailable(filename);
+                if (ok) continue;
+                keys.Add(ReportImageKey(key));
+                break;
+            }
+        }
+        return keys;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

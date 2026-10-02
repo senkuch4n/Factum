@@ -109,3 +109,6 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — `implementer-backend` (editor) done -> progress/impl_backend_editor-texto-enriquecido.md. Esperando frontend.
 - 2026-10-01 — `implementer-frontend` (editor) done -> progress/impl_frontend_editor-texto-enriquecido.md. HU → en_revision, lanzado `reviewer`.
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_editor-texto-enriquecido.md. editor → aprobada, commit. Rama feat/editor-imagenes-informe; imágenes → implementando, lanzados implementer-backend y implementer-frontend.
+- 2026-10-02 — `implementer-frontend` (imágenes) done -> progress/impl_frontend_editor-imagenes-informe.md. Esperando backend.
+- 2026-10-02 — `implementer-backend` (imágenes) done -> progress/impl_backend_editor-imagenes-informe.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-02 — `reviewer` APROBADA -> progress/review_editor-imagenes-informe.md (obs: 2 tests intermitentes por timestamps del ZIP). imágenes → aprobada, commit. BACKLOG VACÍO.

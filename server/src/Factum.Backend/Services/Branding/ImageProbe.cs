@@ -69,4 +69,89 @@ public static class ImageProbe
 
         return false;
     }
+
+    /// <summary>
+    /// Mismas reglas que <see cref="TryDetect(byte[], out string, out int, out int)"/>, leyendo
+    /// solo las cabeceras de un stream con <c>CanSeek</c> (editor-imagenes-informe §6.3): PNG =
+    /// firma + IHDR (24 bytes); JPEG = marcador y longitud de cada segmento (se saltan con
+    /// <c>Seek</c>) hasta el SOF. Memoria constante para cualquier tamaño de archivo. Lee desde
+    /// la posición 0 y deja el stream en una posición indeterminada (el que llama rebobina).
+    /// </summary>
+    public static bool TryDetect(Stream stream, out string contentType, out int w, out int h)
+    {
+        contentType = "";
+        w = 0;
+        h = 0;
+        if (stream is null || !stream.CanSeek || !stream.CanRead) return false;
+
+        var length = stream.Length;
+        stream.Position = 0;
+        Span<byte> head = stackalloc byte[24];
+
+        if (length >= 24)
+        {
+            ReadFully(stream, head);
+            if (head[..8].SequenceEqual(PngSignature))
+            {
+                var len = BinaryPrimitives.ReadUInt32BigEndian(head.Slice(8, 4));
+                if (len != 13 || head[12] != 'I' || head[13] != 'H' || head[14] != 'D' || head[15] != 'R')
+                    return false;
+                var pw = BinaryPrimitives.ReadUInt32BigEndian(head.Slice(16, 4));
+                var ph = BinaryPrimitives.ReadUInt32BigEndian(head.Slice(20, 4));
+                if (pw == 0 || ph == 0 || pw > int.MaxValue || ph > int.MaxValue) return false;
+                contentType = "image/png";
+                w = (int)pw;
+                h = (int)ph;
+                return true;
+            }
+        }
+
+        if (length < 4) return false;
+        stream.Position = 0;
+        Span<byte> soi = stackalloc byte[3];
+        ReadFully(stream, soi);
+        if (soi[0] != 0xFF || soi[1] != 0xD8 || soi[2] != 0xFF) return false;
+
+        // Mismo recorrido que la versión de byte[]: pos es el offset del 0xFF del marcador.
+        long pos = 2;
+        Span<byte> seg = stackalloc byte[4];
+        Span<byte> sof = stackalloc byte[5];
+        while (pos + 4 <= length)
+        {
+            stream.Position = pos;
+            ReadFully(stream, seg);
+            if (seg[0] != 0xFF) return false;
+            var marker = seg[1];
+            if (marker == 0xFF) { pos++; continue; }
+            if (marker == 0x01 || marker is >= 0xD0 and <= 0xD7) { pos += 2; continue; }
+            if (marker is 0xD9 or 0xDA) return false;
+
+            var segLen = (seg[2] << 8) | seg[3];
+            if (segLen < 2 || pos + 2 + segLen > length) return false;
+
+            if (marker is >= 0xC0 and <= 0xCF and not 0xC4 and not 0xC8 and not 0xCC)
+            {
+                if (segLen < 7) return false;
+                // Después de la longitud: precisión (1), alto (2), ancho (2).
+                ReadFully(stream, sof);
+                var jh = (sof[1] << 8) | sof[2];
+                var jw = (sof[3] << 8) | sof[4];
+                if (jw == 0 || jh == 0) return false;
+                contentType = "image/jpeg";
+                w = jw;
+                h = jh;
+                return true;
+            }
+
+            pos += 2 + segLen;
+        }
+        return false;
+    }
+
+    private static void ReadFully(Stream stream, Span<byte> buffer)
+    {
+        // ReadExactly lanza EndOfStreamException si el archivo se acorta mientras se lee: el que
+        // llama lo trata como "no es imagen".
+        stream.ReadExactly(buffer);
+    }
 }

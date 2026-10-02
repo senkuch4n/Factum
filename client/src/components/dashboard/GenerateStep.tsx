@@ -12,6 +12,7 @@ import type { Case, CapturedFile } from "@/types";
 import { agentFileURL } from "@/lib/agent";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { describeMissing, getMissingRequirements, type MissingRequirement } from "@/lib/pericial";
+import { useReportImages } from "@/lib/report-images";
 import { StepHeader } from "@/components/wizard/StepHeader";
 import { StepActions } from "@/components/wizard/StepActions";
 
@@ -131,7 +132,12 @@ function EvidenceGroup({
 export function GenerateStep({ currentCase, files, loading, serverMissing = [], onBack, onGenerate, onGoToField }: Props) {
   // Solo se promete cifrado si el backend lo tiene activo (`encrypt_zip`).
   const { encryptZip } = usePublicConfig();
-  const missing: MissingRequirement[] = [...getMissingRequirements(currentCase)];
+  // Capturas insertadas en los textos que ya no están disponibles (editor-imagenes-informe, §7.8).
+  // Mientras carga o si falla, no suma nada: el 400 del servidor entra por `serverMissing`.
+  const reportImages = useReportImages(currentCase.id);
+  const missing: MissingRequirement[] = [
+    ...getMissingRequirements(currentCase, { reportImages: reportImages.status === "ready" ? reportImages.images : null }),
+  ];
   serverMissing.forEach(k => {
     const m = describeMissing(k);
     if (m && !missing.some(x => x.label === m.label)) missing.push(m);

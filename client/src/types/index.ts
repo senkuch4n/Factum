@@ -1,7 +1,7 @@
 export type {
   User, Case, DeviceInput, PublicConfig,
   PeritoSnapshot, ReportTexts, ReportTextsInput, ReportTextFormat, ReportTextsRequest, ReportTextDefaults,
-  CaptureRole, CaptureRoleValue,
+  CaptureRole, CaptureRoleValue, ReportImage,
   ExpertProfile, ExpertProfileRequest, CaseDataRequest, FileSource, Tratamiento,
   AuthMode, CatalogId, CatalogEntry, CatalogsResponse,
 } from "@/lib/api";

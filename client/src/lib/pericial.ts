@@ -5,8 +5,10 @@
  * perfil, checklist del paso "Generar" y precarga del formulario.
  */
 
-import { isBlankReportText } from "@/lib/report-markdown";
-import type { Case, CaseDataRequest, CaseFormData, IntegranteRow, ProfileFormData, ReportTextsInput } from "@/types";
+import { REPORT_TEXT_FORMAT, extractReportImageRefs, isBlankReportText } from "@/lib/report-markdown";
+import type {
+  Case, CaseDataRequest, CaseFormData, IntegranteRow, ProfileFormData, ReportImage, ReportTextsInput,
+} from "@/types";
 import { cleanCatalogValue, normalizeCatalogKey } from "@/lib/catalogs";
 
 /* ── Claves de `missing` (§6.4) ─────────────────────────────────────── */
@@ -34,12 +36,35 @@ export const REPORT_TEXT_REQUIRED_KEYS = [
   "conclusiones",
 ] as const satisfies readonly (keyof ReportTextsInput)[];
 
+/**
+ * Etiquetas de las ocho secciones del paso 4, en el orden del informe. Las usan
+ * `ReportStep` y el checklist de "Generar" (editor-imagenes-informe, SDD §7.1).
+ */
+export const REPORT_SECTION_LABELS: Record<keyof ReportTextsInput, string> = {
+  objeto_informe: "Objeto del informe",
+  operaciones_realizadas: "Operaciones realizadas",
+  aseguramiento_evidencia: "Aseguramiento de la evidencia",
+  resultados: "Resultados",
+  valoracion_tecnica: "Valoración técnica",
+  conclusiones: "Conclusiones",
+  notas_tecnicas: "Notas técnicas",
+  reserva: "Reserva",
+};
+
+/** Las ocho claves de sección en el orden del informe (el mismo de `BrokenImageKeys` en el servidor). */
+export const REPORT_SECTION_KEYS = Object.keys(REPORT_SECTION_LABELS) as (keyof ReportTextsInput)[];
+
+/** Clave `missing` de una sección con una imagen no disponible (SDD §4.6). */
+export type ReportImageMissingKey = `report_texts.${keyof ReportTextsInput}.imagen`;
+export const reportImageKey = (k: keyof ReportTextsInput): ReportImageMissingKey => `report_texts.${k}.imagen`;
+
 export type MissingKey =
   | "perfil"
   | "perito"
   | CaseRequiredKey
   | "imei"
   | `report_texts.${(typeof REPORT_TEXT_REQUIRED_KEYS)[number]}`
+  | ReportImageMissingKey
   | "capture_roles.imei_modelo";
 
 /** Campos del perfil que valida la tarjeta del paso 2 (claves de error `perfil.<campo>`). */
@@ -239,6 +264,12 @@ const REQUIREMENT_META: Record<MissingKey, Omit<MissingRequirement, "key">> = {
   "report_texts.valoracion_tecnica":      { label: "Valoración técnica",           step: 4, fieldId: reportFieldId("valoracion_tecnica") },
   "report_texts.conclusiones":            { label: "Conclusiones",                 step: 4, fieldId: reportFieldId("conclusiones") },
   "capture_roles.imei_modelo": { label: "Una captura marcada como «IMEI y modelo»", step: 3, fieldId: CAPTURE_ROLES_FIELD_ID },
+  ...(Object.fromEntries(
+    REPORT_SECTION_KEYS.map(k => [
+      reportImageKey(k),
+      { label: `Imagen no disponible en «${REPORT_SECTION_LABELS[k]}»`, step: 4, fieldId: reportFieldId(k) },
+    ]),
+  ) as Record<ReportImageMissingKey, Omit<MissingRequirement, "key">>),
 };
 
 /** Metadatos (etiqueta, paso, campo) de una clave; `null` si el servidor manda una desconocida. */
@@ -247,8 +278,13 @@ export function describeMissing(key: string): MissingRequirement | null {
   return meta ? { key: key as MissingKey, ...meta } : null;
 }
 
-/** Obligatorios que faltan para generar, en el orden de los pasos. */
-export function getMissingRequirements(cas: Case): MissingRequirement[] {
+/**
+ * Obligatorios que faltan para generar, en el orden de los pasos.
+ * Con `reportImages` (el listado ya cargado), suma una clave
+ * `report_texts.<clave>.imagen` por sección con alguna imagen que no está
+ * disponible (SDD §7.8). Sin listado no se agrega nada: manda el servidor.
+ */
+export function getMissingRequirements(cas: Case, opts?: { reportImages?: ReportImage[] | null }): MissingRequirement[] {
   const keys: MissingKey[] = [];
   const p = cas.perito;
   if (!p || PROFILE_REQUIRED_KEYS.some(k => blank(p[k]))) keys.push("perito");
@@ -261,6 +297,14 @@ export function getMissingRequirements(cas: Case): MissingRequirement[] {
   for (const k of REPORT_TEXT_REQUIRED_KEYS) {
     // Texto plano: como siempre; Markdown: sin letras ni dígitos visibles (§4.5, DP1).
     if (isBlankReportText(cas.report_texts?.[k], cas.report_texts?.formato)) keys.push(`report_texts.${k}`);
+  }
+  const images = opts?.reportImages;
+  if (images && cas.report_texts?.formato === REPORT_TEXT_FORMAT) {
+    const available = new Set(images.filter(i => i.available).map(i => i.filename));
+    for (const k of REPORT_SECTION_KEYS) {
+      const refs = extractReportImageRefs(cas.report_texts[k] ?? "");
+      if (refs.some(r => !available.has(r.filename))) keys.push(reportImageKey(k));
+    }
   }
   return keys.map(k => ({ key: k, ...REQUIREMENT_META[k] }));
 }
@@ -379,6 +423,18 @@ export function isRoleEligible(name: string): boolean {
   const n = name.toLowerCase();
   if (n.includes("foto_funcionario") || n.includes("foto_denunciante")) return false;
   return (n.includes("screenshot") || n.includes("captura")) && /\.(png|jpe?g)$/.test(n);
+}
+
+/**
+ * Captura que se puede insertar en un texto del informe (SDD §4.2 "insertable",
+ * solo por el nombre): nombre plano + captura PNG/JPEG que no es foto de identidad.
+ */
+export function isInsertableReportImage(name: string): boolean {
+  if (!name || name.length > 255 || name === "." || name === "..") return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[/\\\u0000-\u001F\u007F]/.test(name)) return false;
+  // Los artefactos generados (ZIP, DOCX, PDF) nunca son .png/.jpg: `isRoleEligible` ya los deja afuera.
+  return isRoleEligible(name);
 }
 
 export const CAPTURE_ROLE_LABELS: Record<"imei_modelo" | "nombre_dispositivo", string> = {

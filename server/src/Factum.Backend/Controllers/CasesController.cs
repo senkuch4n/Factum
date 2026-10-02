@@ -129,6 +129,37 @@ public sealed class CasesController(ICaseService caseService) : ControllerBase
         return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
     }
 
+    // editor-imagenes-informe §4.4: capturas insertables en las secciones del informe.
+    [HttpGet("{id}/report-images")]
+    [ProducesResponseType<ReportImagesResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ReportImages(string id, CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store";
+        var result = await caseService.ListReportImagesAsync(id, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(new ReportImagesResponse(result.Value!)) : this.ErrorResult(result);
+    }
+
+    // editor-imagenes-informe §4.5: vista previa de una captura disponible, por streaming, con el
+    // tipo detectado por contenido. Solo lectura, sin auditoría.
+    [HttpGet("{id}/files/{filename}/preview")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ReportImagePreview(string id, string filename, CancellationToken ct)
+    {
+        var result = await caseService.GetReportImagePreviewAsync(id, filename, Officer.Dni, ct);
+        if (!result.IsSuccess) return this.ErrorResult(result);
+        Response.Headers.CacheControl = "private, no-store";
+        Response.Headers.XContentTypeOptions = "nosniff";
+        Response.Headers.ContentSecurityPolicy = "default-src 'none'; sandbox";
+        Response.Headers.ContentDisposition = "inline";
+        // FileStreamResult: streaming y cierra el stream al terminar. Sin fileDownloadName (sería attachment).
+        return File(result.Value.Content, result.Value.ContentType);
+    }
+
     [HttpGet("{id}/download/{filename}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]

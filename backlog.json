@@ -402,7 +402,7 @@
     {
       "id": "editor-imagenes-informe",
       "titulo": "Imágenes en los campos de redacción del informe (captura del caso como Figura N y/o imagen ilustrativa), con salida al DOCX",
-      "estado": "implementando",
+      "estado": "aprobada",
       "creada": "2026-10-01T00:00:00-03:00",
       "actualizada": "2026-10-01",
       "intentos_revision": 0,
@@ -417,9 +417,9 @@
         "reviewer_model": "sonnet",
         "skill": null,
         "rama": "feat/editor-imagenes-informe",
-        "fase": "implementacion"
+        "fase": "cerrada"
       },
-      "notas": "Desprendida de editor-texto-enriquecido (D6 A, usuario 2026-10-01). Preguntas adelantadas en docs/hu-editor-texto-enriquecido.md §D6 (origen: captura existente vs. ilustrativa; relación con el anexo; límites). Depende de editor-texto-enriquecido. Validada 2026-10-01: D1–D12 A (usuario). SDD espera a la de editor-texto-enriquecido. SDD lista 2026-10-01 (adelantada): DP1 B y DP2 B por el usuario (opcional con solo imágenes sale; sin tope de 32 MB, streaming + ImagePart reutilizado del anexo). 2026-10-01: implementando en feat/editor-imagenes-informe (desde editor-texto-enriquecido)."
+      "notas": "Desprendida de editor-texto-enriquecido (D6 A, usuario 2026-10-01). Preguntas adelantadas en docs/hu-editor-texto-enriquecido.md §D6 (origen: captura existente vs. ilustrativa; relación con el anexo; límites). Depende de editor-texto-enriquecido. Validada 2026-10-01: D1–D12 A (usuario). SDD espera a la de editor-texto-enriquecido. SDD lista 2026-10-01 (adelantada): DP1 B y DP2 B por el usuario (opcional con solo imágenes sale; sin tope de 32 MB, streaming + ImagePart reutilizado del anexo). 2026-10-01: implementando en feat/editor-imagenes-informe (desde editor-texto-enriquecido). Reviewer APROBADA 2026-10-02 (0 rechazos). Obs.: 2 tests intermitentes (comparan DOCX con hash de ZIP dependiente de timestamps)."
     }
   ]
 }

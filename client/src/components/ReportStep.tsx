@@ -1,13 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Editor } from "@tiptap/core";
 import dynamic from "next/dynamic";
 import { Button } from "primereact/button";
 import {
   AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, ClipboardList, FileText, Loader2, Undo2,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { EMPTY_REPORT_TEXTS, MAX_LEN_TEXT, reportFieldId } from "@/lib/pericial";
+import { EMPTY_REPORT_TEXTS, MAX_LEN_TEXT, REPORT_SECTION_LABELS, reportFieldId } from "@/lib/pericial";
+import { ReportImagePreviewCache, useReportImages } from "@/lib/report-images";
 import { REPORT_TEXT_FORMAT, plainToMarkdown } from "@/lib/report-markdown";
 import type { ReportTexts, ReportTextsInput } from "@/types";
 import { FormField } from "./FormField";
@@ -15,6 +17,8 @@ import { ConfirmDialog } from "@/components/overlay/ConfirmDialog";
 import { FxBanner } from "@/components/feedback/FxBanner";
 import { StepHeader } from "@/components/wizard/StepHeader";
 import { StepActions } from "@/components/wizard/StepActions";
+import { ReportImagesProvider, type ImagePickerRequest, type ReportImagesContextValue } from "@/components/editor/ReportImagesContext";
+import { CapturePickerDialog } from "@/components/editor/CapturePickerDialog";
 
 type TextKey = keyof ReportTextsInput;
 
@@ -48,15 +52,23 @@ const RichTextEditor = dynamic(() => import("@/components/editor/RichTextEditor"
 });
 
 const SECTIONS: { key: TextKey; label: string; required: boolean; hasDefault: boolean; placeholder?: string }[] = [
-  { key: "objeto_informe",          label: "Objeto del informe",            required: false, hasDefault: false },
-  { key: "operaciones_realizadas",  label: "Operaciones realizadas",        required: true,  hasDefault: true },
-  { key: "aseguramiento_evidencia", label: "Aseguramiento de la evidencia", required: true,  hasDefault: true },
-  { key: "resultados",              label: "Resultados",                    required: true,  hasDefault: false, placeholder: "Qué se encontró en el dispositivo…" },
-  { key: "valoracion_tecnica",      label: "Valoración técnica",            required: true,  hasDefault: false, placeholder: "Análisis técnico de lo encontrado…" },
-  { key: "conclusiones",            label: "Conclusiones",                  required: true,  hasDefault: false },
-  { key: "notas_tecnicas",          label: "Notas técnicas",                required: false, hasDefault: true },
-  { key: "reserva",                 label: "Reserva",                       required: false, hasDefault: true },
+  { key: "objeto_informe",          label: REPORT_SECTION_LABELS.objeto_informe,          required: false, hasDefault: false },
+  { key: "operaciones_realizadas",  label: REPORT_SECTION_LABELS.operaciones_realizadas,  required: true,  hasDefault: true },
+  { key: "aseguramiento_evidencia", label: REPORT_SECTION_LABELS.aseguramiento_evidencia, required: true,  hasDefault: true },
+  { key: "resultados",              label: REPORT_SECTION_LABELS.resultados,              required: true,  hasDefault: false, placeholder: "Qué se encontró en el dispositivo…" },
+  { key: "valoracion_tecnica",      label: REPORT_SECTION_LABELS.valoracion_tecnica,      required: true,  hasDefault: false, placeholder: "Análisis técnico de lo encontrado…" },
+  { key: "conclusiones",            label: REPORT_SECTION_LABELS.conclusiones,            required: true,  hasDefault: false },
+  { key: "notas_tecnicas",          label: REPORT_SECTION_LABELS.notas_tecnicas,          required: false, hasDefault: true },
+  { key: "reserva",                 label: REPORT_SECTION_LABELS.reserva,                 required: false, hasDefault: true },
 ];
+
+/** Selector abierto: en qué editor y, si se edita, sobre qué imagen. */
+interface PickerState {
+  editor: Editor;
+  pos?: number;
+  filename?: string;
+  alt?: string;
+}
 
 const AUTOSAVE_MS = 1200;
 
@@ -90,6 +102,41 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
   const defaultsRef = useRef<ReportTextsInput | null>(null);
   const onSavedRef = useRef(onSaved);
   useEffect(() => { onSavedRef.current = onSaved; }, [onSaved]);
+
+  /* ── Capturas del caso para insertar en los textos (editor-imagenes-informe, SDD §7.7) ── */
+  const reportImages = useReportImages(caseId);
+  // Una caché de vistas previas por visita al paso, compartida por las 8 secciones y el selector.
+  const previewCache = useMemo(() => new ReportImagePreviewCache(caseId), [caseId]);
+  useEffect(() => () => previewCache.dispose(), [previewCache]);
+  const [picker, setPicker] = useState<PickerState | null>(null);
+
+  const openPicker = useCallback(({ editor, pos }: ImagePickerRequest) => {
+    if (typeof pos === "number") {
+      const node = editor.state.doc.nodeAt(pos);
+      if (node?.type.name !== "reportImage") return;
+      setPicker({ editor, pos, filename: String(node.attrs.filename), alt: String(node.attrs.alt ?? "") });
+    } else {
+      setPicker({ editor });
+    }
+  }, []);
+
+  const imagesContext = useMemo<ReportImagesContextValue>(() => ({
+    caseId,
+    images: reportImages.images,
+    imagesStatus: reportImages.status,
+    reloadImages: reportImages.reload,
+    cache: previewCache,
+    openPicker,
+  }), [caseId, reportImages.images, reportImages.status, reportImages.reload, previewCache, openPicker]);
+
+  function closePicker(value?: { filename: string; alt: string }) {
+    const p = picker;
+    setPicker(null);
+    if (!p) return;
+    if (!value) { p.editor.commands.focus(); return; }
+    if (typeof p.pos === "number") p.editor.chain().focus().updateReportImageAlt(p.pos, value.alt).run();
+    else p.editor.chain().focus().insertReportImage(value).run();
+  }
 
   /* ── Guardado ── */
   const save = useCallback(async (): Promise<boolean> => {
@@ -273,6 +320,7 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Cargando los textos del informe…
         </div>
       ) : (
+        <ReportImagesProvider value={imagesContext}>
         <div className="space-y-5 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]">
           {SECTIONS.map(({ key, label, required, hasDefault, placeholder }) => {
             const id = reportFieldId(key);
@@ -297,6 +345,7 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
                     error={texts[key].length > MAX_LEN_TEXT ? OVER_LIMIT_MESSAGE : undefined}
                     onChange={md => update({ ...textsRef.current, [key]: md })}
                     onBlur={() => { void flush(); }}
+                    onRequestImage={openPicker}
                   />
                 </FormField>
                 {hasDefault && (
@@ -316,7 +365,21 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
             );
           })}
         </div>
+        </ReportImagesProvider>
       )}
+
+      <CapturePickerDialog
+        open={picker !== null}
+        mode={typeof picker?.pos === "number" ? "edit" : "insert"}
+        initialFilename={picker?.filename}
+        initialAlt={picker?.alt}
+        images={reportImages.images}
+        imagesStatus={reportImages.status}
+        onReload={reportImages.reload}
+        cache={previewCache}
+        onConfirm={v => closePicker(v)}
+        onCancel={() => closePicker()}
+      />
 
       <StepActions>
         <Button

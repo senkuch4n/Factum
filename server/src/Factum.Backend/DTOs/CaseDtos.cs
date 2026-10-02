@@ -117,3 +117,12 @@ public sealed record GenerateResponse(
 );
 
 public sealed record FilesDto(string Zip, string Pdf);
+
+/// <summary>
+/// Captura insertable en las secciones del informe (editor-imagenes-informe §4.4). Width/Height
+/// en píxeles, null si no está disponible.
+/// </summary>
+public sealed record ReportImageDto(string Filename, long Size, string? Role, bool Available, int? Width, int? Height);
+
+/// <summary>Respuesta de <c>GET /api/cases/{id}/report-images</c>: <c>{ "images": [...] }</c>.</summary>
+public sealed record ReportImagesResponse(List<ReportImageDto> Images);

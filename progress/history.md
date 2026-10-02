@@ -127,3 +127,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos. 209 tests backend OK.
 - **Rama:** `feat/editor-texto-enriquecido` (encadenada sobre `feat/informe-diseno-v6`).
 - **Pendiente:** prueba manual (pegado desde Word/Google Docs, Ctrl/Cmd+Shift+V en Chrome/Firefox/Safari, abrir el DOCX en Word sin aviso de reparación); reiniciar el backend.
+
+## editor-imagenes-informe — APROBADA (2026-10-02)
+
+- **Qué:** botón "Imagen" en el editor de las secciones del informe con selector de capturas del caso (`CapturePickerDialog`, miniaturas por endpoint autenticado de solo lectura, autorización por perito dueño, PNG/JPEG por magic bytes, sin SVG); nodo Tiptap `reportImage` serializado como `![alt](captura:<nombre>)`; en el DOCX la captura sale centrada como "Figura N" (misma numeración que el anexo, reutiliza su ImagePart, sin tope de tamaño), y sigue en el anexo. Se bloquea la generación si una captura citada falta o cambió ("Imagen no disponible" + "Quitar"); pegar/arrastrar imágenes bloqueado con aviso; tope de 20 por sección; obligatoria con solo imagen = vacía, opcional con solo imagen = sale. ZIP y tabla de hashes sin cambios.
+- **Decisiones:** HU D1–D12 A (usuario); SDD recomendadas, DP1 B y DP2 B (usuario).
+- **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos. 335 tests backend.
+- **Rama:** `feat/editor-imagenes-informe` (encadenada sobre `feat/editor-texto-enriquecido`).
+- **Pendiente:** 2 tests intermitentes (`T11_CasoViejo…`, `ContenidoPericial_IgualALaV4`) comparan DOCX con el hash del ZIP, que depende de timestamps → arreglo chico en tests; prueba manual (insertar capturas, borrar una captura y ver el bloqueo, abrir en Word).

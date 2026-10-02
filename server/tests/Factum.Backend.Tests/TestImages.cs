@@ -4,7 +4,7 @@ using System.Text;
 
 namespace Factum.Backend.Tests;
 
-/// <summary>PNG válidos generados en memoria (sin archivos de imagen en el repo).</summary>
+/// <summary>PNG (y JPEG mínimos) generados en memoria (sin archivos de imagen en el repo).</summary>
 internal static class TestImages
 {
     /// <summary>PNG RGB de w × h de un solo color.</summary>
@@ -43,6 +43,32 @@ internal static class TestImages
         WriteChunk(png, "IDAT", idat);
         WriteChunk(png, "IEND", []);
         return png.ToArray();
+    }
+
+    /// <summary>
+    /// JPEG mínimo (SOI + APP0 + segmentos APPn de relleno + SOF0 + EOI) que ImageProbe reconoce;
+    /// no se puede decodificar (no tiene tablas ni datos) y no hace falta. Cada elemento de
+    /// <paramref name="appSegments"/> es el tamaño del payload de un APP1 (máx. 65533 bytes).
+    /// </summary>
+    public static byte[] Jpeg(int w, int h, params int[] appSegments)
+    {
+        using var ms = new MemoryStream();
+        ms.Write([0xFF, 0xD8]);
+        // APP0 JFIF (longitud 16).
+        ms.Write([0xFF, 0xE0, 0x00, 0x10, (byte)'J', (byte)'F', (byte)'I', (byte)'F', 0x00, 0x01, 0x01, 0x00,
+            0x00, 0x01, 0x00, 0x01, 0x00, 0x00]);
+        foreach (var size in appSegments)
+        {
+            if (size is < 0 or > 65533) throw new ArgumentOutOfRangeException(nameof(appSegments));
+            var len = size + 2;
+            ms.Write([0xFF, 0xE1, (byte)(len >> 8), (byte)len]);
+            ms.Write(new byte[size]);
+        }
+        // SOF0: longitud 17, precisión 8, alto, ancho, 3 componentes.
+        ms.Write([0xFF, 0xC0, 0x00, 0x11, 0x08, (byte)(h >> 8), (byte)h, (byte)(w >> 8), (byte)w, 0x03,
+            0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01]);
+        ms.Write([0xFF, 0xD9]);
+        return ms.ToArray();
     }
 
     private static void WriteChunk(Stream s, string type, byte[] data)

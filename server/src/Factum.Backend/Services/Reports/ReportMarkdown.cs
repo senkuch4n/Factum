@@ -76,13 +76,128 @@ public static class ReportMarkdown
     /// Parsea el Markdown ya sanitizado con <see cref="ReportValues.Clean"/>. Los U+00A0 del
     /// principio de línea pasan a <see cref="LeadingNbspMarker"/>.
     /// </summary>
-    public static MarkdownDocument Parse(string? markdown)
+    public static MarkdownDocument Parse(string? markdown) => ParseWithSource(markdown).Doc;
+
+    // Igual que Parse, más el texto exacto que recibió Markdig (para mirar las líneas de origen).
+    private static (MarkdownDocument Doc, string Source) ParseWithSource(string? markdown)
     {
         var clean = ReportValues.Clean(markdown);
         if (clean.Contains('\u00A0'))
             clean = LeadingNbspRegex.Replace(clean,
                 m => m.Groups[1].Value + new string(LeadingNbspMarker, m.Groups[2].Length));
-        return Markdown.Parse(clean, Pipeline);
+        return (Markdown.Parse(clean, Pipeline), clean);
+    }
+
+    // ── Imágenes: capturas del caso (editor-imagenes-informe §4.1, §6.4.1) ─────
+
+    /// <summary>Motivo de <see cref="Validate"/> cuando una sección tiene más de 20 imágenes válidas.</summary>
+    public const string TooManyImages = "imagenes";
+
+    /// <summary>Párrafo-imagen válido: el párrafo, su <c>LinkInline</c>, el archivo y el alt aplanado.</summary>
+    internal sealed record BlockImage(ParagraphBlock Paragraph, LinkInline Link, string Filename, string Alt);
+
+    // Misma regex que extractReportImageRefs del cliente (SDD §4.8, paso 3): la línea de origen
+    // tiene que ser exactamente la forma canónica (sin <…>, sin espacios en el destino, sin
+    // título, sin referencia [x][y]).
+    private static readonly Regex ImageLineRegex = new(
+        @"^!\[((?:\\.|&[a-z0-9#]+;|[^\\\]\n])*)\]\(captura:((?:[A-Za-z0-9._-]|%[0-9A-Fa-f]{2})+)\)[ \t]*$",
+        RegexOptions.CultureInvariant);
+
+    private static readonly Regex Whitespace = new(@"\s+", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Parsea y devuelve las imágenes válidas en orden de documento. Una imagen es válida si
+    /// (1) está en un párrafo de nivel superior, (2) sola en ese párrafo (más espacios o saltos
+    /// suaves en los bordes), (3) sin título, (4) con alt de solo literales y entidades,
+    /// (5) alt aplanado (trim + espacios colapsados) de 200 como máximo y (6) destino
+    /// <see cref="ReportImageRef.TryParse"/>. Además, para que el servidor y el escáner del
+    /// cliente (§4.8) vean lo mismo, el párrafo es una sola línea de origen con la forma
+    /// canónica, precedida y seguida por una línea vacía (o el inicio / el fin).
+    /// </summary>
+    internal static (MarkdownDocument Doc, IReadOnlyList<BlockImage> Images) ParseWithImages(string? markdown)
+    {
+        var (doc, source) = ParseWithSource(markdown);
+        var images = new List<BlockImage>();
+        string[]? lines = null;
+        foreach (var block in doc)
+        {
+            if (block is not ParagraphBlock paragraph) continue;
+            lines ??= source.Split('\n');
+            if (TryGetBlockImage(paragraph, source, lines) is { } image) images.Add(image);
+        }
+        return (doc, images);
+    }
+
+    private static BlockImage? TryGetBlockImage(ParagraphBlock paragraph, string source, string[] lines)
+    {
+        // (1) Nivel superior.
+        if (paragraph.Parent is not MarkdownDocument || paragraph.Inline is null) return null;
+
+        // (2) Sola en el párrafo.
+        LinkInline? link = null;
+        foreach (var inline in paragraph.Inline)
+        {
+            switch (inline)
+            {
+                case LiteralInline l when l.Content.ToString().All(char.IsWhiteSpace):
+                case LineBreakInline { IsHard: false }:
+                    continue;
+                case LinkInline { IsImage: true } img when link is null:
+                    link = img;
+                    continue;
+                default:
+                    return null;
+            }
+        }
+        if (link is null) return null;
+
+        // (3) Sin título; destino sin <…>.
+        if (!string.IsNullOrEmpty(link.Title) || link.UrlHasPointyBrackets) return null;
+
+        // (4) y (5) Alt: solo literales y entidades, una línea, hasta 200 una vez normalizado.
+        var alt = new StringBuilder();
+        foreach (var child in link)
+        {
+            switch (child)
+            {
+                case LiteralInline l: alt.Append(l.Content.ToString()); break;
+                case HtmlEntityInline e: alt.Append(e.Transcoded.ToString()); break;
+                default: return null;
+            }
+        }
+        var altText = Whitespace.Replace(RestoreNbsp(alt.ToString()).Trim(), " ");
+        if (altText.Length > ReportImageRef.MaxAltLength) return null;
+
+        // (6) Destino.
+        if (!ReportImageRef.TryParse(link.Url, out var filename)) return null;
+
+        // Forma canónica en una sola línea de origen, entre líneas vacías.
+        var line = paragraph.Line;
+        // (Markdig libera paragraph.Lines después de los inlines: se mira el Span en el origen.)
+        var span = paragraph.Span;
+        if (line < 0 || line >= lines.Length || span.Start < 0 || span.End >= source.Length ||
+            source.AsSpan(span.Start, span.Length).Contains('\n'))
+            return null;
+        if (!ImageLineRegex.IsMatch(lines[line])) return null;
+        if (line > 0 && !IsBlankLine(lines[line - 1])) return null;
+        if (line + 1 < lines.Length && !IsBlankLine(lines[line + 1])) return null;
+
+        return new BlockImage(paragraph, link, filename, altText);
+    }
+
+    // "Vacía" como en el escáner del cliente (§4.8, paso 3, `trim() === ""`) y como la ve
+    // Markdig: solo espacios (Clean ya pasó los tabs a espacios). Una línea con U+00A0 llega con
+    // la marca de LeadingNbspMarker, Markdig la une al párrafo y el chequeo del Span la rechaza.
+    private static bool IsBlankLine(string line) => line.All(ch => ch is ' ' or '\t');
+
+    /// <summary>
+    /// Imágenes válidas (§6.4.1, reglas 1-6) en orden de documento, con el alt aplanado. Lo usan
+    /// <c>CaseValidation.BrokenImageKeys</c>, <see cref="ReportTextRules.HasBlockContent"/> y los tests.
+    /// </summary>
+    public static IReadOnlyList<(string Filename, string Alt)> ExtractImages(string? markdown)
+    {
+        if (string.IsNullOrEmpty(markdown)) return [];
+        return ParseWithImages(markdown).Images.Select(i => (i.Filename, i.Alt)).ToList();
     }
 
     /// <summary>Vuelve <see cref="LeadingNbspMarker"/> a U+00A0 en un texto salido del AST.</summary>
@@ -93,14 +208,18 @@ public static class ReportMarkdown
 
     /// <summary>
     /// null = OK; si no, el motivo del primer contenido no permitido, en orden de documento:
-    /// "HTML" (todo HTML salvo exactamente <c>&lt;u&gt;</c>/<c>&lt;/u&gt;</c>), "imagen" o
-    /// "enlace" (esquema que no es http, https ni mailto). Lo que el dialecto no produce pero
-    /// no es peligroso (otros niveles de encabezado, línea horizontal, "~~", "|") se acepta.
+    /// "HTML" (todo HTML salvo exactamente <c>&lt;u&gt;</c>/<c>&lt;/u&gt;</c>), "imagen" (toda
+    /// imagen que no sea una captura del caso como párrafo propio, editor-imagenes-informe
+    /// §6.4.1) o "enlace" (esquema que no es http, https ni mailto). Sin errores y con más de 20
+    /// imágenes válidas: <see cref="TooManyImages"/>. Lo que el dialecto no produce pero no es
+    /// peligroso (otros niveles de encabezado, línea horizontal, "~~", "|") se acepta.
     /// </summary>
     public static string? Validate(string? markdown)
     {
         if (string.IsNullOrEmpty(markdown)) return null;
-        foreach (var node in Parse(markdown).Descendants())
+        var (doc, images) = ParseWithImages(markdown);
+        var valid = images.Select(i => i.Link).ToHashSet();
+        foreach (var node in doc.Descendants())
         {
             switch (node)
             {
@@ -108,17 +227,19 @@ public static class ReportMarkdown
                     return ReasonHtml;
                 case HtmlInline html when html.Tag is not ("<u>" or "</u>"):
                     return ReasonHtml;
-                // editor-imagenes-informe: hoy las imágenes se rechazan; la HU de imágenes cambia
-                // esta rama (y la del renderer).
-                case LinkInline { IsImage: true }:
-                    return ReasonImage;
+                // editor-imagenes-informe §6.4.1: solo la captura del caso como párrafo propio
+                // (ParseWithImages); cualquier otra imagen es "imagen". A las imágenes no se les
+                // aplica la regla de enlaces: tienen la suya.
+                case LinkInline { IsImage: true } image:
+                    if (!valid.Contains(image)) return ReasonImage;
+                    break;
                 case LinkInline link when !IsAllowedUrl(link.Url):
                     return ReasonLink;
                 case AutolinkInline auto when !auto.IsEmail && !IsAllowedUrl(auto.Url):
                     return ReasonLink;
             }
         }
-        return null;
+        return images.Count > ReportImageRef.MaxPerSection ? TooManyImages : null;
     }
 
     private static readonly Regex AllowedUrlRegex = new(
@@ -141,6 +262,9 @@ public static class ReportMarkdown
         if (string.IsNullOrWhiteSpace(markdown)) return true;
         foreach (var node in Parse(markdown).Descendants())
         {
+            // editor-imagenes-informe §4.7: una imagen no aporta texto visible (ni el alt ni el
+            // nombre), sea válida o no.
+            if (node is Inline inline && IsInsideImage(inline)) continue;
             var visible = node switch
             {
                 LiteralInline l => l.Content.ToString(),
@@ -154,6 +278,13 @@ public static class ReportMarkdown
             if (visible is not null && visible.Any(char.IsLetterOrDigit)) return false;
         }
         return true;
+    }
+
+    private static bool IsInsideImage(Inline inline)
+    {
+        for (Inline? i = inline; i is not null; i = i.Parent)
+            if (i is LinkInline { IsImage: true }) return true;
+        return false;
     }
 
     // ── Texto plano → Markdown (§4.4) ────────────────────────────────────────
@@ -298,4 +429,13 @@ public static class ReportTextRules
         t?.Formato == ReportTextFormats.Markdown
             ? ReportMarkdown.IsBlank(value)
             : string.IsNullOrWhiteSpace(value);
+
+    /// <summary>
+    /// Condición de bloque de las secciones opcionales del DOCX (editor-imagenes-informe §4.7,
+    /// DP1 B): sale si tiene texto visible o, en Markdown, al menos una imagen válida. Los
+    /// obligatorios (<c>missing</c>) siguen con <see cref="IsBlank"/>.
+    /// </summary>
+    public static bool HasBlockContent(ReportTexts? t, string? value) =>
+        !IsBlank(t, value) ||
+        (t?.Formato == ReportTextFormats.Markdown && ReportMarkdown.ExtractImages(value).Count > 0);
 }

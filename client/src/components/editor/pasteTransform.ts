@@ -22,6 +22,11 @@ export interface PasteResult {
   html: string;
   /** true si se quitó algo que el informe no admite (imágenes, tablas, tachado…). */
   stripped: boolean;
+  /**
+   * true si el HTML traía una imagen (`<img>`): se pega el resto y el aviso es
+   * "usá el botón Imagen" (editor-imagenes-informe, D10).
+   */
+  image: boolean;
 }
 
 /** Marcador de un ítem de lista de Word (el `span` con `mso-list:Ignore`). */
@@ -106,12 +111,13 @@ function convertTables(body: HTMLElement, doc: Document): void {
 /** Transforma el HTML pegado. Pura sobre un documento inerte (`DOMParser`). */
 export function transformPastedHtml(html: string): PasteResult {
   const stripped = UNSUPPORTED.test(html);
-  if (typeof DOMParser === "undefined") return { html, stripped };
+  const image = /<img\b/i.test(html);
+  if (typeof DOMParser === "undefined") return { html, stripped, image };
   const doc = new DOMParser().parseFromString(html, "text/html");
   const body = doc.body;
   convertWordLists(body, doc);
   convertTables(body, doc);
-  return { html: body.innerHTML, stripped };
+  return { html: body.innerHTML, stripped, image };
 }
 
 /** Pegado solo de archivos (una imagen copiada): no se inserta nada. */
@@ -119,4 +125,21 @@ export function isFilesOnlyPaste(event: ClipboardEvent): boolean {
   const data = event.clipboardData;
   if (!data || data.files.length === 0) return false;
   return !data.getData("text/html") && !data.getData("text/plain");
+}
+
+/**
+ * El portapapeles trae algún archivo de imagen (una captura copiada suele traer
+ * también HTML o texto): se consume el pegado entero y se avisa (D10).
+ */
+export function hasImageFile(data: DataTransfer | null | undefined): boolean {
+  if (!data) return false;
+  return Array.from(data.files ?? []).some(f => f.type.startsWith("image/"))
+    || Array.from(data.items ?? []).some(i => i.kind === "file" && i.type.startsWith("image/"));
+}
+
+/** Arrastre desde afuera con archivos o con una imagen en el HTML: no entra nada (D10). */
+export function isExternalImageDrop(event: DragEvent): boolean {
+  const dt = event.dataTransfer;
+  if (!dt) return false;
+  return (dt.files?.length ?? 0) > 0 || /<img\b/i.test(dt.getData("text/html") ?? "");
 }

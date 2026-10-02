@@ -7,11 +7,13 @@ import { Button } from "primereact/button";
 import { Menu } from "primereact/menu";
 import type { MenuItem } from "primereact/menuitem";
 import {
-  Bold, Check, CircleHelp, Code, Heading3, Italic, Link2, List, ListOrdered, MoreHorizontal, Quote,
+  Bold, Check, CircleHelp, Code, Heading3, ImagePlus, Italic, Link2, List, ListOrdered, MoreHorizontal, Quote,
   Redo2, SquareCode, Underline, Undo2,
 } from "lucide-react";
 import { FxTip } from "@/components/overlay/FxTip";
+import { MAX_REPORT_IMAGES_PER_SECTION } from "@/lib/report-markdown";
 import { cn } from "@/lib/utils";
+import { countReportImages } from "./ReportImageNode";
 
 export interface Shortcut {
   /** Para mostrar: "Ctrl+B" / "⌘B". */
@@ -41,7 +43,12 @@ interface Props {
   controlsId: string;
   onLink: () => void;
   onHelp: () => void;
+  /** Abre el selector de capturas. Sin esta prop no hay botón "Imagen". */
+  onImage?: () => void;
 }
+
+const IMAGE_LABEL = "Insertar captura del caso";
+const IMAGE_LIMIT_LABEL = `Máximo ${MAX_REPORT_IMAGES_PER_SECTION} imágenes por sección`;
 
 /** Estado activo de cada formato. `useEditorState` evita re-renderizar todo el editor. */
 function useActiveFormats(editor: Editor) {
@@ -60,6 +67,7 @@ function useActiveFormats(editor: Editor) {
       link: e.isActive("link"),
       canUndo: e.can().undo(),
       canRedo: e.can().redo(),
+      imageLimit: countReportImages(e.state.doc) >= MAX_REPORT_IMAGES_PER_SECTION,
     }),
   });
 }
@@ -76,7 +84,7 @@ const ICON = "h-4 w-4";
  *   menú "Más": así la barra entra en una sola fila en 360 px.
  * - El `mousedown` no le saca el foco al editor: la selección queda donde estaba.
  */
-export function EditorToolbar({ editor, sectionLabel, controlsId, onLink, onHelp }: Props) {
+export function EditorToolbar({ editor, sectionLabel, controlsId, onLink, onHelp, onImage }: Props) {
   const s = useActiveFormats(editor);
   const sc = useShortcuts();
   const barRef = useRef<HTMLDivElement>(null);
@@ -113,12 +121,14 @@ export function EditorToolbar({ editor, sectionLabel, controlsId, onLink, onHelp
   const tool = (
     key: string, label: string, icon: ReactNode,
     onClick: (e: SyntheticEvent) => void,
-    opts: { shortcut?: string; pressed?: boolean; disabled?: boolean; className?: string } = {},
+    opts: { shortcut?: string; pressed?: boolean; disabled?: boolean; ariaDisabled?: boolean; tip?: string; className?: string } = {},
   ) => (
     <ToolButton
       key={key}
       toolKey={key}
       label={label}
+      tip={opts.tip}
+      ariaDisabled={opts.ariaDisabled}
       icon={icon}
       onClick={onClick}
       tabIndex={tabStop === key ? 0 : -1}
@@ -148,6 +158,13 @@ export function EditorToolbar({ editor, sectionLabel, controlsId, onLink, onHelp
     menuItem("Cita", <Quote className={ICON} aria-hidden="true" />, s.blockquote, () => run().toggleBlockquote().run()),
     menuItem("Código en línea", <Code className={ICON} aria-hidden="true" />, s.code, () => run().toggleCode().run()),
     menuItem("Bloque de código", <SquareCode className={ICON} aria-hidden="true" />, s.codeBlock, () => run().toggleCodeBlock().run()),
+    ...(onImage
+      ? [{
+          label: s.imageLimit ? `Imagen (${IMAGE_LIMIT_LABEL.toLowerCase()})` : "Imagen",
+          icon: <ImagePlus className={ICON} aria-hidden="true" />,
+          command: () => onImage(),
+        } satisfies MenuItem]
+      : []),
     { separator: true },
     { label: s.link ? "Editar enlace" : "Enlace", icon: <Link2 className={ICON} aria-hidden="true" />, command: () => onLink() },
     { separator: true },
@@ -177,6 +194,11 @@ export function EditorToolbar({ editor, sectionLabel, controlsId, onLink, onHelp
       {tool("quote", "Cita", <Quote className={ICON} aria-hidden="true" />, () => run().toggleBlockquote().run(), { shortcut: "Mod+Shift+B", pressed: s.blockquote, className: wide })}
       {tool("code", "Código en línea", <Code className={ICON} aria-hidden="true" />, () => run().toggleCode().run(), { shortcut: "Mod+E", pressed: s.code, className: wide })}
       {tool("codeBlock", "Bloque de código", <SquareCode className={ICON} aria-hidden="true" />, () => run().toggleCodeBlock().run(), { shortcut: "Mod+Alt+C", pressed: s.codeBlock, className: wide })}
+      {onImage && tool("image", IMAGE_LABEL, <ImagePlus className={ICON} aria-hidden="true" />, () => onImage(), {
+        ariaDisabled: s.imageLimit,
+        tip: s.imageLimit ? IMAGE_LIMIT_LABEL : undefined,
+        className: wide,
+      })}
       <Separator className="hidden sm:block" />
       {tool("link", s.link ? "Editar enlace" : "Enlace", <Link2 className={ICON} aria-hidden="true" />, () => onLink(), { shortcut: "Mod+K", pressed: s.link, className: wide })}
 
@@ -198,13 +220,15 @@ function Separator({ className }: { className?: string }) {
 }
 
 function ToolButton({
-  toolKey, label, shortcut, icon, pressed, disabled, tabIndex, onClick, onFocus, className,
+  toolKey, label, tip, shortcut, icon, pressed, disabled, ariaDisabled, tabIndex, onClick, onFocus, className,
 }: {
-  toolKey: string; label: string; shortcut?: Shortcut; icon: ReactNode; pressed?: boolean; disabled?: boolean;
+  toolKey: string; label: string; tip?: string; shortcut?: Shortcut; icon: ReactNode; pressed?: boolean; disabled?: boolean;
+  /** Se ve deshabilitado pero sigue enfocable y con tooltip (el clic explica por qué no hace nada). */
+  ariaDisabled?: boolean;
   tabIndex: number; onClick: (e: SyntheticEvent) => void; onFocus: () => void; className?: string;
 }) {
   return (
-    <FxTip label={shortcut ? `${label} · ${shortcut.label}` : label} side="top">
+    <FxTip label={tip ?? (shortcut ? `${label} · ${shortcut.label}` : label)} side="top">
       <Button
         type="button"
         text
@@ -214,6 +238,7 @@ function ToolButton({
         aria-label={label}
         aria-pressed={pressed}
         aria-keyshortcuts={shortcut?.aria}
+        aria-disabled={ariaDisabled || undefined}
         disabled={disabled}
         tabIndex={tabIndex}
         data-fx-tool={toolKey}
@@ -224,6 +249,7 @@ function ToolButton({
           root: {
             className: cn(
               pressed && "bg-fx-accent-soft text-fx-accent-text enabled:hover:bg-fx-accent-soft enabled:hover:text-fx-accent-text",
+              ariaDisabled && "opacity-50",
               className,
             ),
           },

@@ -268,11 +268,13 @@ public sealed class ReportService : IReportService
                 // ISOTIPO: solo al cierre (el nombre va siempre en el encabezado interior).
                 ["ISOTIPO"] = brand.Isotype is not null,
                 ["organismoTribunal"] = !string.IsNullOrWhiteSpace(cas.OrganismoTribunal),
-                // editor-texto-enriquecido §6.4: "vacío" según el formato del caso.
-                ["objetoInforme"] = !ReportTextRules.IsBlank(texts, texts.ObjetoInforme),
+                // editor-texto-enriquecido §6.4: "vacío" según el formato del caso. Con
+                // editor-imagenes-informe (DP1 B) una sección opcional sale también si solo tiene
+                // imágenes (HasBlockContent); los obligatorios siguen con IsBlank.
+                ["objetoInforme"] = ReportTextRules.HasBlockContent(texts, texts.ObjetoInforme),
                 ["capturasNombreDispositivo"] = nameShots.Count > 0,
-                ["descripcionNotasTecnicas"] = !ReportTextRules.IsBlank(texts, texts.NotasTecnicas),
-                ["descripcionReserva"] = !ReportTextRules.IsBlank(texts, texts.Reserva),
+                ["descripcionNotasTecnicas"] = ReportTextRules.HasBlockContent(texts, texts.NotasTecnicas),
+                ["descripcionReserva"] = ReportTextRules.HasBlockContent(texts, texts.Reserva),
                 ["anexoCapturas"] = annexShots.Count > 0,
             };
 
@@ -319,10 +321,13 @@ public sealed class ReportService : IReportService
             // exactamente como antes.
             var markdown = texts.Formato == ReportTextFormats.Markdown;
             var numbering = new ReportListNumbering(mainPart);
+            // editor-imagenes-informe §6.5: capturas del cuerpo; B-R4 deja anclas y B-R7b las llena.
+            var bodyImages = new List<PendingReportImage>();
             foreach (var (placeholder, value) in multiline)
             {
                 if (markdown)
-                    ReportMarkdownRenderer.ReplacePlaceholder(mainPart, body, placeholder, value, resolved, numbering);
+                    ReportMarkdownRenderer.ReplacePlaceholder(mainPart, body, placeholder, value, resolved, numbering,
+                        bodyImages);
                 else
                     ReplaceParagraphPerLine(body, placeholder, value, resolved);
             }
@@ -348,6 +353,10 @@ public sealed class ReportService : IReportService
             ReplaceWithImages(mainPart, body, "{anexoCapturas}", caseDir, annexShots,
                 AnnexShotMaxW, AnnexShotMaxH,
                 (n, name) => $"Figura {n} – {name}", ref drawId);
+
+            // B-R7b (editor-imagenes-informe §6.5): capturas dentro de las secciones, numeradas
+            // con la misma lista del anexo y reutilizando su ImagePart.
+            InsertBodyImages(mainPart, body, bodyImages, caseDir, annexShots, roles, hashes, resolved, ref drawId);
 
             // B-R8: atribución obligatoria "Realizado con Factum" en el pie de todas las
             // páginas — se inyecta por código para que ninguna plantilla la pueda sacar.
@@ -679,6 +688,89 @@ public sealed class ReportService : IReportService
         }
     }
 
+    // ── B-R7b: capturas en el cuerpo (editor-imagenes-informe §6.5) ─────────
+
+    /// <summary>
+    /// Pone cada imagen pendiente de B-R4 en su ancla: dibujo centrado en la caja del anexo
+    /// (14 × 10.5 cm, keepNext) y epígrafe D10. N = posición de la captura en
+    /// <paramref name="annexShots"/>, la misma lista que numera <c>{anexoCapturas}</c>. Reutiliza
+    /// el ImagePart que B-R7 ya embebió para esa captura si el tipo coincide (D9); si no, crea
+    /// uno del tipo detectado por streaming. Los bytes nunca se recodifican.
+    /// </summary>
+    private static void InsertBodyImages(MainDocumentPart mainPart, Body body,
+        IReadOnlyList<PendingReportImage> pending, string caseDir, IReadOnlyList<string> annexShots,
+        IReadOnlyDictionary<string, string> roles, IReadOnlyDictionary<string, string> hashes,
+        HashSet<Paragraph> resolved, ref uint drawId)
+    {
+        if (pending.Count == 0) return;
+
+        var figure = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < annexShots.Count; i++) figure[annexShots[i]] = i + 1;
+
+        // Dibujos que B-R7 ya puso en el cuerpo (anexo e identificación): BuildDrawing les pone
+        // de nombre el del archivo. Las anclas todavía no tienen dibujos.
+        var existing = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var inline in body.Descendants<DWP.Inline>())
+        {
+            var name = inline.GetFirstChild<DWP.DocProperties>()?.Name?.Value;
+            var relId = inline.Descendants<DRAW.Blip>().FirstOrDefault()?.Embed?.Value;
+            if (name is not null && relId is not null) existing.TryAdd(name, relId);
+        }
+
+        foreach (var image in pending)
+        {
+            var filename = image.Filename;
+            if (!ReportImageFiles.TryOpen(caseDir, filename, out var stream, out var contentType,
+                    out var width, out var height))
+                throw new InvalidOperationException($"La captura {filename} no está disponible");
+
+            using (stream)
+            {
+                if (!hashes.ContainsKey(filename))
+                    throw new InvalidOperationException(
+                        $"La captura {filename} no está en la tabla de hashes de la evidencia");
+
+                var suffix = image.Alt.Length > 0 ? $"{image.Alt} ({filename})" : filename;
+                var caption = roles.GetValueOrDefault(filename) switch
+                {
+                    CaptureRole.ImeiModelo => $"Captura de identificación (IMEI y modelo) – {suffix}",
+                    CaptureRole.NombreDispositivo => $"Captura de identificación (nombre del dispositivo) – {suffix}",
+                    _ => figure.TryGetValue(filename, out var n)
+                        ? $"Figura {n} – {suffix}"
+                        : throw new InvalidOperationException($"La captura {filename} no está en el anexo"),
+                };
+
+                string relId;
+                if (existing.TryGetValue(filename, out var reused) &&
+                    mainPart.TryGetPartById(reused, out var part) && part is ImagePart imagePart &&
+                    imagePart.ContentType == contentType)
+                {
+                    relId = reused;
+                }
+                else
+                {
+                    var newPart = mainPart.AddImagePart(contentType == "image/jpeg" ? ImagePartType.Jpeg : ImagePartType.Png);
+                    newPart.FeedData(stream); // por bloques, sin cargar el archivo en memoria
+                    relId = mainPart.GetIdOfPart(newPart);
+                    existing[filename] = relId;
+                }
+
+                // Mismo pPr que las capturas del anexo.
+                var pPr = new ParagraphProperties(
+                    new KeepNext(),
+                    new SpacingBetweenLines { Before = "120", After = "60" },
+                    new Justification { Val = JustificationValues.Center });
+                image.Anchor.InsertBeforeSelf(BuildImageParagraphForRel(relId, filename, width, height,
+                    AnnexShotMaxW, AnnexShotMaxH, ref drawId, pPr));
+                var captionParagraph = BuildCaptionParagraph(caption);
+                image.Anchor.InsertBeforeSelf(captionParagraph);
+                resolved.Add(captionParagraph);
+                resolved.Remove(image.Anchor);
+                image.Anchor.Remove();
+            }
+        }
+    }
+
     private static Paragraph BuildCaptionParagraph(string text) =>
         new(
             new ParagraphProperties(
@@ -766,14 +858,23 @@ public sealed class ReportService : IReportService
         ParagraphProperties? paragraphProperties = null)
     {
         var relId = EmbedImagePart(owner, source);
-        var (imgW, imgH) = (Math.Max(1, source.Width), Math.Max(1, source.Height));
+        return BuildImageParagraphForRel(relId, source.Name, source.Width, source.Height, maxW, maxH,
+            ref drawId, paragraphProperties);
+    }
+
+    // Párrafo con el dibujo de una parte ya embebida (relId), ajustado sin recortar a maxW × maxH.
+    // Lo comparten BuildImageParagraph y las capturas del cuerpo (B-R7b), que reutilizan la parte.
+    private static Paragraph BuildImageParagraphForRel(string relId, string name, int imgW, int imgH,
+        long maxW, long maxH, ref uint drawId, ParagraphProperties? paragraphProperties)
+    {
+        (imgW, imgH) = (Math.Max(1, imgW), Math.Max(1, imgH));
 
         long dispW, dispH;
         double ratio = (double)imgH / imgW;
         if (ratio * maxW <= maxH) { dispW = maxW; dispH = (long)(maxW * ratio); }
         else { dispH = maxH; dispW = (long)(maxH / ratio); }
 
-        var drawing = BuildDrawing(relId, source.Name, dispW, dispH, drawId++);
+        var drawing = BuildDrawing(relId, name, dispW, dispH, drawId++);
 
         return new Paragraph(
             paragraphProperties ?? new ParagraphProperties(

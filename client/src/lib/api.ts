@@ -135,6 +135,20 @@ export interface ReportTexts extends ReportTextsInput {
   updated_at?: string;
 }
 
+/** Captura del caso que se puede insertar en un texto del informe (SDD §4.4). */
+export interface ReportImage {
+  /** Nombre real del archivo. */
+  filename: string;
+  /** Bytes. */
+  size: number;
+  role: CaptureRoleValue | null;
+  /** Regla "disponible" de §4.2: existe, no está vacía y es PNG/JPEG por contenido. */
+  available: boolean;
+  /** px; `null` si no está disponible. */
+  width: number | null;
+  height: number | null;
+}
+
 export interface CaptureRole {
   filename: string;
   role: CaptureRoleValue;
@@ -374,6 +388,30 @@ export const api = {
       throw new Error(err.error || `Upload failed: ${res.status}`);
     }
     return res.json();
+  },
+
+  /**
+   * Capturas insertables en el cuerpo del informe, con su rol y disponibilidad
+   * (editor-imagenes-informe, SDD §4.4). Orden ordinal por nombre (el del anexo):
+   * el cliente no lo reordena.
+   */
+  async listReportImages(caseId: string): Promise<{ images: ReportImage[] }> {
+    return request<{ images: ReportImage[] }>(`/api/cases/${caseId}/report-images`);
+  },
+
+  /**
+   * Vista previa de una captura del caso (SDD §4.5): los bytes de la evidencia
+   * tal cual, como `Blob`. Sin `Content-Type` en el pedido (es un GET) y sin
+   * `request<T>` (que lee JSON). 400/404 = imagen no disponible.
+   */
+  async getReportImagePreview(caseId: string, filename: string, signal?: AbortSignal): Promise<Blob> {
+    const token = getToken();
+    const res = await fetch(
+      `${BACKEND_URL}/api/cases/${caseId}/files/${encodeURIComponent(filename)}/preview`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal },
+    );
+    if (!res.ok) throw await toApiError(res);
+    return res.blob();
   },
 
   async listFiles(caseId: string): Promise<{ files: { name: string; size: number; hash: string }[] }> {

@@ -29,8 +29,14 @@ internal static class ReportMarkdownRenderer
     /// los párrafos del Markdown. Cada párrafo creado va a <paramref name="resolved"/>: B-R6 no
     /// los escanea, así un "{caratula}" del perito queda literal.
     /// </summary>
+    /// <param name="images">
+    /// editor-imagenes-informe §6.4.2: cada párrafo-imagen válido deja un párrafo ancla vacío y
+    /// una <see cref="PendingReportImage"/> acá; B-R7b pone la imagen y el epígrafe en su lugar.
+    /// null = defensa: la imagen sale como su alt literal (rama D19 de la base).
+    /// </param>
     public static void ReplacePlaceholder(MainDocumentPart main, OpenXmlElement root, string placeholder,
-        string markdown, HashSet<Paragraph> resolved, ReportListNumbering numbering)
+        string markdown, HashSet<Paragraph> resolved, ReportListNumbering numbering,
+        ICollection<PendingReportImage>? images = null)
     {
         foreach (var para in root.Descendants<Paragraph>().ToList())
         {
@@ -40,11 +46,19 @@ internal static class ReportMarkdownRenderer
             var rPr = para.Descendants<Run>()
                 .FirstOrDefault(r => r.Elements<Text>().Any(t => t.Text.Length > 0))?.RunProperties;
 
-            var renderer = new Renderer(main, pPr, rPr, numbering);
-            var paragraphs = renderer.Render(ReportMarkdown.Parse(markdown));
+            var (doc, blockImages) = ReportMarkdown.ParseWithImages(markdown);
+            var renderer = new Renderer(main, pPr, rPr, numbering,
+                images is null ? null : blockImages.ToDictionary(i => i.Paragraph));
+            var paragraphs = renderer.Render(doc);
 
-            while (paragraphs.Count > 0 && IsEmpty(paragraphs[0])) paragraphs.RemoveAt(0);
-            while (paragraphs.Count > 0 && IsEmpty(paragraphs[^1])) paragraphs.RemoveAt(paragraphs.Count - 1);
+            // Un ancla no cuenta como vacía: no se recorta.
+            bool Trimmable(Paragraph p) => IsEmpty(p) && !renderer.Anchors.ContainsKey(p);
+            while (paragraphs.Count > 0 && Trimmable(paragraphs[0])) paragraphs.RemoveAt(0);
+            while (paragraphs.Count > 0 && Trimmable(paragraphs[^1])) paragraphs.RemoveAt(paragraphs.Count - 1);
+
+            foreach (var p in paragraphs)
+                if (renderer.Anchors.TryGetValue(p, out var image))
+                    images!.Add(new PendingReportImage(p, image.Filename, image.Alt));
 
             foreach (var p in paragraphs)
             {
@@ -95,9 +109,12 @@ internal static class ReportMarkdownRenderer
     private readonly record struct Format(bool Bold, bool Italic, bool Code, bool Link, bool Quote);
 
     private sealed class Renderer(MainDocumentPart main, ParagraphProperties? basePPr, RunProperties? baseRPr,
-        ReportListNumbering numbering)
+        ReportListNumbering numbering, IReadOnlyDictionary<ParagraphBlock, ReportMarkdown.BlockImage>? blockImages)
     {
         private readonly List<Paragraph> output = [];
+
+        /// <summary>Párrafos ancla de las imágenes del cuerpo (por identidad), con su imagen.</summary>
+        public Dictionary<Paragraph, ReportMarkdown.BlockImage> Anchors { get; } = [];
         private int underlineDepth;
         // Numeración pendiente del ítem de lista: la toma el primer párrafo que se crea adentro.
         private (int NumId, int Ilvl, int Left, bool Quote)? pendingNumbering;
@@ -129,6 +146,10 @@ internal static class ReportMarkdownRenderer
             {
                 case HeadingBlock heading:
                     RenderHeading(heading, c);
+                    break;
+                case ParagraphBlock paragraph when blockImages is not null &&
+                                                   blockImages.TryGetValue(paragraph, out var image):
+                    RenderImageAnchor(image);
                     break;
                 case ParagraphBlock paragraph:
                     RenderParagraph(paragraph, c);
@@ -204,6 +225,16 @@ internal static class ReportMarkdownRenderer
             var text = string.Concat(p.Descendants<Text>().Select(t => t.Text));
             if (text.All(char.IsWhiteSpace))
                 foreach (var run in p.Elements<Run>().ToList()) run.Remove();
+        }
+
+        // editor-imagenes-informe §6.4.2: párrafo ancla vacío y sin pPr. No hace E/S: la imagen la
+        // pone B-R7b (ReportService.InsertBodyImages), que ya conoce drawId, el anexo y los hashes.
+        private void RenderImageAnchor(ReportMarkdown.BlockImage image)
+        {
+            FlushPendingNumbering();
+            var anchor = new Paragraph();
+            output.Add(anchor);
+            Anchors[anchor] = image;
         }
 
         private void RenderHeading(HeadingBlock block, Container c)
@@ -344,8 +375,10 @@ internal static class ReportMarkdownRenderer
                         AppendText(target, " ", f);
                     }
                     break;
-                // editor-imagenes-informe: hoy una imagen (que la validación rechaza) sale como su
-                // texto alternativo literal. La HU de imágenes reemplaza esta rama.
+                // Defensa (rama D19 de la base): una imagen que no es un párrafo-imagen válido (la
+                // validación la rechaza) o sin lista de pendientes sale como su alt literal. Los
+                // párrafos-imagen válidos no llegan acá: ver RenderImageAnchor y
+                // Refactorizaciones/editor-imagenes-informe.md §6.4.2.
                 case LinkInline { IsImage: true } image:
                     RenderInlines(image, target, f);
                     break;
@@ -438,3 +471,9 @@ internal static class ReportMarkdownRenderer
         }
     }
 }
+
+/// <summary>
+/// Imagen del cuerpo pendiente (editor-imagenes-informe §6.4.2): el párrafo ancla que dejó B-R4
+/// y la captura con su alt. B-R7b inserta antes del ancla la imagen y el epígrafe, y la borra.
+/// </summary>
+internal sealed record PendingReportImage(Paragraph Anchor, string Filename, string Alt);

@@ -33,6 +33,15 @@ public interface ICaseService
         CancellationToken ct = default);
     Task<Result<(string Path, string ContentType, string FileName)>> DownloadAsync(
         string id, string filename, string officerDni, CancellationToken ct = default);
+    /// <summary>Capturas insertables del caso propio, con su disponibilidad (GET …/report-images).</summary>
+    Task<Result<List<ReportImageDto>>> ListReportImagesAsync(string id, string officerDni,
+        CancellationToken ct = default);
+    /// <summary>
+    /// Vista previa de una captura disponible (GET …/files/{filename}/preview): el stream queda
+    /// ABIERTO en solo lectura y lo cierra el que lo sirve.
+    /// </summary>
+    Task<Result<(Stream Content, string ContentType)>> GetReportImagePreviewAsync(string id, string filename,
+        string officerDni, CancellationToken ct = default);
 }
 
 public sealed class CaseService : ICaseService
@@ -349,6 +358,11 @@ public sealed class CaseService : ICaseService
             new FileInfo(Path.Combine(caseDir, r.Filename)).Length > 0);
 
         var missing = CaseValidation.ValidateForGenerate(cas, hasImeiCapture);
+        // editor-imagenes-informe §4.6: referencias a capturas no disponibles (solo Markdown),
+        // después de las claves de siempre y ANTES de pasar a Generating.
+        var broken = CaseValidation.BrokenImageKeys(cas.ReportTexts,
+            name => ReportImageFiles.Inspect(caseDir, name).IsAvailable);
+        if (broken.Count > 0) missing = [.. missing, .. broken];
         if (missing.Count > 0)
             return Result.Invalid<GenerateResponse>(CaseValidation.MissingMessage, missing);
 
@@ -402,6 +416,54 @@ public sealed class CaseService : ICaseService
             return Result.NotFound<ZipPasswordResponse>(NoEncryptedZipMessage);
 
         return Result.Ok(new ZipPasswordResponse(cas.ZipPassword));
+    }
+
+    // ── Imágenes del informe (editor-imagenes-informe §4.4, §4.5, §6.6) ─────
+    // Solo lectura: no modifican el caso ni los archivos y no auditan (D6 de la HU).
+
+    public const string InvalidFilenameMessage = "Nombre de archivo inválido";
+    public const string ImageNotAvailableMessage = "Imagen no disponible";
+
+    public async Task<Result<List<ReportImageDto>>> ListReportImagesAsync(string id, string officerDni,
+        CancellationToken ct = default)
+    {
+        var (cas, error) = await LoadOwnedAsync<List<ReportImageDto>>(id, officerDni, ct);
+        if (cas is null) return error!;
+
+        var caseDir = _storage.CaseDir(id);
+        var roles = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var r in cas.CaptureRoles) roles[r.Filename] = r.Role;
+
+        var images = (await _storage.ListFilesAsync(id))
+            .Where(f => ReportImageRef.IsInsertableName(f.Name))
+            .OrderBy(f => f.Name, StringComparer.Ordinal)
+            .Select(f =>
+            {
+                var inspection = ReportImageFiles.Inspect(caseDir, f.Name);
+                return new ReportImageDto(f.Name, f.Size, roles.GetValueOrDefault(f.Name), inspection.IsAvailable,
+                    inspection.IsAvailable ? inspection.Width : null,
+                    inspection.IsAvailable ? inspection.Height : null);
+            })
+            .ToList();
+        return Result.Ok(images);
+    }
+
+    public async Task<Result<(Stream Content, string ContentType)>> GetReportImagePreviewAsync(string id,
+        string filename, string officerDni, CancellationToken ct = default)
+    {
+        var (cas, error) = await LoadOwnedAsync<(Stream, string)>(id, officerDni, ct);
+        if (cas is null) return error!;
+
+        if (!ReportImageRef.IsPlainName(filename))
+            return Result.Invalid<(Stream, string)>(InvalidFilenameMessage);
+
+        // Un caso Completed ya no tiene archivos sueltos: cae en "no disponible" como cualquier
+        // otro faltante. No se usa DownloadAsync (sirve cualquier archivo con cualquier tipo).
+        if (!ReportImageFiles.TryOpen(_storage.CaseDir(id), filename, out var stream, out var contentType,
+                out _, out _))
+            return Result.NotFound<(Stream, string)>(ImageNotAvailableMessage);
+
+        return Result.Ok(((Stream)stream, contentType));
     }
 
     public async Task<Result<(string Path, string ContentType, string FileName)>> DownloadAsync(

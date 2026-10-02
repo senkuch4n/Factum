@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { Editor } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { AlertCircle, Info } from "lucide-react";
-import { normalizeMarkdown } from "@/lib/report-markdown";
+import { MAX_REPORT_IMAGES_PER_SECTION, normalizeMarkdown } from "@/lib/report-markdown";
 import { cn } from "@/lib/utils";
 import { buildReportExtensions } from "./extensions";
 import { EditorToolbar } from "./EditorToolbar";
+import { countReportImages } from "./ReportImageNode";
 import { LinkPopover, readLinkTarget, type LinkTarget } from "./LinkPopover";
 import { FormatHelp } from "./FormatHelp";
-import { isFilesOnlyPaste, transformPastedHtml } from "./pasteTransform";
+import { hasImageFile, isExternalImageDrop, isFilesOnlyPaste, transformPastedHtml } from "./pasteTransform";
 
 export interface RichTextEditorProps {
   /** id del elemento editable (`report-<clave>`): `getElementById(id).focus()` funciona. */
@@ -29,7 +31,22 @@ export interface RichTextEditorProps {
   maxLength: number;
   /** Error de la sección (p. ej. texto viejo que no entra en el tope al convertirse). */
   error?: string;
+  /**
+   * Abre el selector de capturas (editor-imagenes-informe): sin `pos` para
+   * insertar, con `pos` para editar la descripción de esa imagen. Sin esta
+   * prop no hay botón "Imagen".
+   */
+  onRequestImage?: (req: { editor: Editor; pos?: number }) => void;
 }
+
+/** Aviso temporal debajo del editor (`aria-live`). */
+type Notice = "formats" | "image" | "imageLimit";
+
+const NOTICE_TEXT: Record<Notice, string> = {
+  formats: "Se quitaron formatos que el informe no admite",
+  image: "Para insertar una imagen usá el botón Imagen",
+  imageLimit: `Máximo ${MAX_REPORT_IMAGES_PER_SECTION} imágenes por sección`,
+};
 
 const PASTE_NOTICE_MS = 6000;
 const fmt = new Intl.NumberFormat("es-AR");
@@ -40,24 +57,29 @@ const fmt = new Intl.NumberFormat("es-AR");
  * Se carga con `next/dynamic` y `ssr: false` desde `ReportStep`.
  */
 export default function RichTextEditor({
-  id, labelId, label, value, onChange, onBlur, required, placeholder, maxLength, error,
+  id, labelId, label, value, onChange, onBlur, required, placeholder, maxLength, error, onRequestImage,
 }: RichTextEditorProps) {
   const lastValueRef = useRef(value);
   const onChangeRef = useRef(onChange);
   const onBlurRef = useRef(onBlur);
-  useEffect(() => { onChangeRef.current = onChange; onBlurRef.current = onBlur; }, [onChange, onBlur]);
+  const onRequestImageRef = useRef(onRequestImage);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+    onBlurRef.current = onBlur;
+    onRequestImageRef.current = onRequestImage;
+  }, [onChange, onBlur, onRequestImage]);
 
   const [linkTarget, setLinkTarget] = useState<LinkTarget | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [limitHit, setLimitHit] = useState(false);
-  const [pasteNotice, setPasteNotice] = useState(false);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const pasteTimer = useRef<number | null>(null);
 
   // Estable: solo usa setState y refs.
-  const showPasteNotice = useRef(() => {
-    setPasteNotice(true);
+  const showNotice = useRef((kind: Notice) => {
+    setNotice(kind);
     if (pasteTimer.current) window.clearTimeout(pasteTimer.current);
-    pasteTimer.current = window.setTimeout(() => setPasteNotice(false), PASTE_NOTICE_MS);
+    pasteTimer.current = window.setTimeout(() => setNotice(null), PASTE_NOTICE_MS);
   });
   useEffect(() => () => { if (pasteTimer.current) window.clearTimeout(pasteTimer.current); }, []);
 
@@ -75,6 +97,8 @@ export default function RichTextEditor({
         getLength: () => lastValueRef.current.length,
         onLimit: () => setLimitHit(true),
         onRequestLink: () => { if (editorRef.current) setLinkTarget(readLinkTarget(editorRef.current)); },
+        onRequestImageEdit: (ed, pos) => onRequestImageRef.current?.({ editor: ed, pos }),
+        onImageLimit: () => showNotice.current("imageLimit"),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
@@ -100,12 +124,24 @@ export default function RichTextEditor({
       scrollThreshold: { top: 56, bottom: 24, left: 8, right: 8 },
       transformPastedHTML: html => {
         const res = transformPastedHtml(html);
-        if (res.stripped) showPasteNotice.current();
+        // Con una imagen en el HTML se pega el resto y el aviso es el del botón Imagen (D10).
+        if (res.image) showNotice.current("image");
+        else if (res.stripped) showNotice.current("formats");
         return res.html;
       },
       handlePaste: (_view, event) => {
-        if (isFilesOnlyPaste(event)) { showPasteNotice.current(); return true; }
+        // Una captura copiada trae el archivo y a veces HTML/texto: no entra nada (D10).
+        if (hasImageFile(event.clipboardData)) { showNotice.current("image"); return true; }
+        if (isFilesOnlyPaste(event)) { showNotice.current("formats"); return true; }
         return false;
+      },
+      // Arrastrar una imagen o un archivo desde afuera: no entra nada (D10).
+      // Mover contenido dentro del editor (`moved`) sigue funcionando.
+      handleDrop: (_view, event, _slice, moved) => {
+        if (moved || !isExternalImageDrop(event)) return false;
+        event.preventDefault();
+        showNotice.current("image");
+        return true;
       },
     },
     onUpdate: ({ editor: e }) => {
@@ -165,6 +201,10 @@ export default function RichTextEditor({
             controlsId={id}
             onLink={() => setLinkTarget(readLinkTarget(editor))}
             onHelp={() => setHelpOpen(true)}
+            onImage={onRequestImage ? () => {
+              if (countReportImages(editor.state.doc) >= MAX_REPORT_IMAGES_PER_SECTION) showNotice.current("imageLimit");
+              else onRequestImageRef.current?.({ editor });
+            } : undefined}
           />
         ) : (
           <div aria-hidden="true" className="h-10 rounded-t-fx-md border-b border-fx-border" />
@@ -182,9 +222,9 @@ export default function RichTextEditor({
           <p id={statusId} aria-live="polite" className="m-0 text-xs">
             {atLimit ? (
               <span className="font-medium text-fx-danger">Llegaste al máximo de {fmt.format(maxLength)} caracteres</span>
-            ) : pasteNotice ? (
+            ) : notice ? (
               <span className="inline-flex items-center gap-1 text-fx-text-3">
-                <Info className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> Se quitaron formatos que el informe no admite
+                <Info className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> {NOTICE_TEXT[notice]}
               </span>
             ) : null}
           </p>
