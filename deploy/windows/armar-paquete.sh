@@ -118,11 +118,11 @@ docker pull --platform linux/amd64 "$MONGO_IMG"
 # 5 ── Arquitectura
 echo "[5/9] Verificando arquitectura..."
 for img in "$BACK_IMG" "$FRONT_IMG" "$MONGO_IMG"; do
-  arq="$(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$img")"
-  if [[ "$arq" == "/" ]]; then
-    # containerd image store: el tag apunta a un índice multi-plataforma; se pide la variante.
-    arq="$(docker image inspect --platform linux/amd64 -f '{{.Os}}/{{.Architecture}}' "$img")"
-  fi
+  # containerd image store: el tag apunta a un índice multi-plataforma y, sin --platform, Docker
+  # responde con la variante del host (arm64 en la Mac) si también está descargada. Se pide
+  # siempre la variante amd64; si este Docker no admite --platform, se usa la forma simple.
+  arq="$(docker image inspect --platform linux/amd64 -f '{{.Os}}/{{.Architecture}}' "$img" 2>/dev/null)" \
+    || arq="$(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$img")"
   [[ "$arq" == "linux/amd64" ]] || { echo "ERROR: $img es $arq, no linux/amd64." >&2; exit 1; }
   echo "  OK  $img = $arq"
 done
