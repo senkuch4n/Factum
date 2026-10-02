@@ -82,16 +82,31 @@ public sealed class ReportSettings : IReportSettings
         // El override de AseguramientoEvidencia gana en los dos modos (DT5): si el estudio lo
         // define, es responsable de que hable (o no) del cifrado.
         var d = o.DefaultTexts ?? new ReportDefaultTextsOptions();
-        DefaultOperacionesRealizadas = Pick(d.OperacionesRealizadas, ReportDefaultTexts.OperacionesRealizadas);
+        DefaultOperacionesRealizadas = Pick(d.OperacionesRealizadas, ReportDefaultTexts.OperacionesRealizadas,
+            nameof(d.OperacionesRealizadas), logger);
         DefaultAseguramientoEvidencia = Pick(d.AseguramientoEvidencia, EncryptZip
             ? ReportDefaultTexts.AseguramientoEvidenciaCifrado
-            : ReportDefaultTexts.AseguramientoEvidenciaSinCifrar);
-        DefaultNotasTecnicas = Pick(d.NotasTecnicas, ReportDefaultTexts.NotasTecnicas);
-        DefaultReserva = Pick(d.Reserva, ReportDefaultTexts.Reserva);
+            : ReportDefaultTexts.AseguramientoEvidenciaSinCifrar, nameof(d.AseguramientoEvidencia), logger);
+        DefaultNotasTecnicas = Pick(d.NotasTecnicas, ReportDefaultTexts.NotasTecnicas, nameof(d.NotasTecnicas), logger);
+        DefaultReserva = Pick(d.Reserva, ReportDefaultTexts.Reserva, nameof(d.Reserva), logger);
     }
 
-    private static string Pick(string? configured, string fallback) =>
-        string.IsNullOrWhiteSpace(configured) ? fallback : configured.Replace("\r\n", "\n").Trim();
+    // Los defaults se interpretan como Markdown línea por línea (editor-texto-enriquecido §6.5):
+    // uno configurado con contenido no permitido (HTML, imágenes, enlaces no http/https/mailto)
+    // se descarta con un warning, así el perito no arranca con un autoguardado que falla.
+    private static string Pick(string? configured, string fallback, string key, ILogger logger)
+    {
+        if (string.IsNullOrWhiteSpace(configured)) return fallback;
+        var value = configured.Replace("\r\n", "\n").Trim();
+        if (ReportMarkdown.Validate(ReportMarkdown.FromLineTemplate(value)) is { } reason)
+        {
+            logger.LogWarning(
+                "Report: DefaultTexts:{Key} tiene contenido no permitido ({Reason}); se usa el texto por defecto",
+                key, reason);
+            return fallback;
+        }
+        return value;
+    }
 
     private static string FormatOffset(TimeSpan offset)
     {

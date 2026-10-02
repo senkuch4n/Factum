@@ -218,8 +218,9 @@ public sealed class CaseService : ICaseService
         if (cas is null) return error!;
         if (!IsEditable(cas)) return Result.Conflict<ReportTexts>(NotEditableMessage);
 
-        var lengthError = CaseValidation.ValidateReportTexts(request);
-        if (lengthError is not null) return Result.Invalid<ReportTexts>(lengthError);
+        var validationError = CaseValidation.ValidateReportTexts(request);
+        if (validationError is not null) return Result.Invalid<ReportTexts>(validationError);
+        ReportTextFormats.TryNormalize(request.Formato, out var formato);
 
         var texts = new ReportTexts
         {
@@ -231,6 +232,9 @@ public sealed class CaseService : ICaseService
             Conclusiones = request.Conclusiones ?? string.Empty,
             NotasTecnicas = request.NotasTecnicas ?? string.Empty,
             Reserva = request.Reserva ?? string.Empty,
+            // null (texto plano) no se escribe en Mongo ([BsonIgnoreIfNull]). Los textos se
+            // guardan tal cual llegan.
+            Formato = formato,
             UpdatedAt = DateTime.UtcNow,
         };
 

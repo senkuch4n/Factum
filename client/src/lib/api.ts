@@ -116,7 +116,22 @@ export interface ReportTextsInput {
   reserva: string;
 }
 
+/** Formato de los textos del informe (editor-texto-enriquecido): el dialecto Markdown de Factum. */
+export type ReportTextFormat = "markdown";
+
+/** Body de `PUT /api/cases/{id}/report-texts`: este cliente siempre manda `formato: "markdown"`. */
+export interface ReportTextsRequest extends ReportTextsInput {
+  formato: ReportTextFormat;
+}
+
+/** Respuesta de `GET /api/cases/{id}/report-texts/defaults` (textos ya en Markdown). */
+export interface ReportTextDefaults extends ReportTextsInput {
+  formato: ReportTextFormat;
+}
+
 export interface ReportTexts extends ReportTextsInput {
+  /** null/ausente = texto plano anterior a esta HU. "texto" no lo devuelve el servidor, pero se tolera. */
+  formato?: ReportTextFormat | "texto" | null;
   updated_at?: string;
 }
 
@@ -318,11 +333,11 @@ export const api = {
     return request<ExpertProfile>("/api/profile", { method: "PUT", body: JSON.stringify(data) });
   },
 
-  async getReportTextDefaults(caseId: string): Promise<ReportTextsInput> {
-    return request<ReportTextsInput>(`/api/cases/${caseId}/report-texts/defaults`);
+  async getReportTextDefaults(caseId: string): Promise<ReportTextDefaults> {
+    return request<ReportTextDefaults>(`/api/cases/${caseId}/report-texts/defaults`);
   },
 
-  async saveReportTexts(caseId: string, data: ReportTextsInput): Promise<ReportTexts> {
+  async saveReportTexts(caseId: string, data: ReportTextsRequest): Promise<ReportTexts> {
     return request<ReportTexts>(`/api/cases/${caseId}/report-texts`, { method: "PUT", body: JSON.stringify(data) });
   },
 

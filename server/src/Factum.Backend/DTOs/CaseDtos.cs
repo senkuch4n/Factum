@@ -84,7 +84,10 @@ public sealed record ReportTextsDto(
     string? ValoracionTecnica = null,
     string? Conclusiones = null,
     string? NotasTecnicas = null,
-    string? Reserva = null
+    string? Reserva = null,
+    // editor-texto-enriquecido: "markdown" (cliente nuevo) o null/""/"texto" (texto plano).
+    // En la respuesta de defaults es siempre "markdown".
+    string? Formato = null
 );
 
 public sealed record CaptureRoleDto(string? Filename = null, string? Role = null);

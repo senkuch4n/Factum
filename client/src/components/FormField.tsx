@@ -9,9 +9,12 @@ export function describedBy(id: string, opts: { hint?: string; error?: string })
 }
 
 export function FormField({
-  id, label, sublabel, icon: Icon, error, required, hint, labelAside, children,
+  id, labelId, label, sublabel, icon: Icon, error, required, hint, labelAside, children,
 }: {
-  id?: string; label: string; sublabel?: string; icon: React.ElementType;
+  id?: string;
+  /** id del `<label>`, para un control que se nombra con `aria-labelledby` (p. ej. el editor del informe). */
+  labelId?: string;
+  label: string; sublabel?: string; icon: React.ElementType;
   error?: string; required?: boolean;
   /** Ayuda persistente debajo del control (id `${id}-hint`, para aria-describedby). */
   hint?: string;
@@ -23,7 +26,7 @@ export function FormField({
   children: React.ReactNode;
 }) {
   const labelEl = (className: string) => (
-    <label htmlFor={id} className={`${className} flex items-start gap-1.5`}>
+    <label id={labelId} htmlFor={id} className={`${className} flex items-start gap-1.5`}>
       <Icon className="mt-px h-3.5 w-3.5 shrink-0 text-fx-text-3" aria-hidden="true" />
       <span className="min-w-0">
         <span className="text-fx-label uppercase text-fx-text-2">{label}</span>

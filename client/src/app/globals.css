@@ -189,6 +189,82 @@
     opacity: 1;
     cursor: default;
   }
+
+  /* ── Editor de texto enriquecido del informe (editor-texto-enriquecido, SDD §7.8) ──
+     `.fx-rte-field` es el marco (borde, superficie, foco); `.fx-rte` el elemento
+     editable de ProseMirror. Solo tokens --fx-*: el modo oscuro lo resuelven ellos. */
+  .fx-rte-field:has(.ProseMirror-focused) {
+    outline: 2px solid var(--fx-focus);
+    outline-offset: 2px;
+    border-color: var(--fx-accent);
+  }
+  .fx-rte {
+    min-height: 6rem;               /* ~4 líneas; crece con el contenido */
+    padding: 0.625rem 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.625;
+    color: var(--fx-text);
+    outline: none;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+  /* :where() deja la especificidad en 0,1,0: el espaciado de abajo gana por orden. */
+  .fx-rte :where(p, ul, ol, blockquote, pre, h3) { margin: 0; }
+  .fx-rte > * + * { margin-top: 0.5rem; }
+  .fx-rte > * + h3 { margin-top: 0.75rem; }
+  .fx-rte blockquote > * + *,
+  .fx-rte li > p + p,
+  .fx-rte li > * + ul,
+  .fx-rte li > * + ol { margin-top: 0.25rem; }
+  .fx-rte ul,
+  .fx-rte ol { padding-left: 1.25rem; }
+  .fx-rte ul { list-style-type: disc; }
+  .fx-rte ul ul { list-style-type: circle; }
+  .fx-rte ul ul ul { list-style-type: square; }
+  .fx-rte ol { list-style-type: decimal; }
+  .fx-rte li::marker { color: var(--fx-text-2); }
+  .fx-rte blockquote {
+    padding-left: 0.75rem;
+    border-left: 3px solid var(--fx-border-strong);
+    color: var(--fx-text-2);
+  }
+  .fx-rte h3 {
+    font-size: inherit;
+    line-height: inherit;
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+  .fx-rte code {
+    font-family: var(--fx-font-mono);
+    font-size: 0.8125rem;
+    padding: 0.0625rem 0.3125rem;
+    border-radius: var(--fx-radius-sm);
+    background: var(--fx-surface-3);
+  }
+  .fx-rte pre {
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--fx-radius-sm);
+    background: var(--fx-surface-3);
+    font-family: var(--fx-font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .fx-rte pre code { padding: 0; background: none; font-size: inherit; }
+  .fx-rte a {
+    color: var(--fx-text);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: text;
+  }
+  .fx-rte p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    color: var(--fx-text-3);
+    float: left;
+    height: 0;
+    pointer-events: none;
+  }
 }
 
 @tailwind utilities;

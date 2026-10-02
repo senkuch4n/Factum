@@ -126,6 +126,14 @@ public sealed class ReportTexts
     public string Conclusiones { get; set; } = string.Empty;
     public string NotasTecnicas { get; set; } = string.Empty;
     public string Reserva { get; set; } = string.Empty;
+    /// <summary>
+    /// Formato de los ocho textos (editor-texto-enriquecido). null = texto plano (casos guardados
+    /// antes de esta HU o por un cliente viejo): se generan con ReplaceParagraphPerLine, como siempre.
+    /// "markdown" = dialecto Factum (ReportMarkdown). Sin default: un documento viejo sin el campo
+    /// deserializa null. No hay migración.
+    /// </summary>
+    [BsonIgnoreIfNull]
+    public string? Formato { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 

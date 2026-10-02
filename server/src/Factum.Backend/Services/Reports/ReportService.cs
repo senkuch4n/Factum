@@ -268,10 +268,11 @@ public sealed class ReportService : IReportService
                 // ISOTIPO: solo al cierre (el nombre va siempre en el encabezado interior).
                 ["ISOTIPO"] = brand.Isotype is not null,
                 ["organismoTribunal"] = !string.IsNullOrWhiteSpace(cas.OrganismoTribunal),
-                ["objetoInforme"] = !string.IsNullOrWhiteSpace(texts.ObjetoInforme),
+                // editor-texto-enriquecido §6.4: "vacío" según el formato del caso.
+                ["objetoInforme"] = !ReportTextRules.IsBlank(texts, texts.ObjetoInforme),
                 ["capturasNombreDispositivo"] = nameShots.Count > 0,
-                ["descripcionNotasTecnicas"] = !string.IsNullOrWhiteSpace(texts.NotasTecnicas),
-                ["descripcionReserva"] = !string.IsNullOrWhiteSpace(texts.Reserva),
+                ["descripcionNotasTecnicas"] = !ReportTextRules.IsBlank(texts, texts.NotasTecnicas),
+                ["descripcionReserva"] = !ReportTextRules.IsBlank(texts, texts.Reserva),
                 ["anexoCapturas"] = annexShots.Count > 0,
             };
 
@@ -313,8 +314,18 @@ public sealed class ReportService : IReportService
                 ("{descripcionNotasTecnicas}", texts.NotasTecnicas),
                 ("{descripcionReserva}", texts.Reserva),
             };
+            // Dos caminos (editor-texto-enriquecido §6.4): con Formato = "markdown", el dialecto
+            // Factum → OpenXML; sin marca (casos anteriores), texto plano, un párrafo por línea,
+            // exactamente como antes.
+            var markdown = texts.Formato == ReportTextFormats.Markdown;
+            var numbering = new ReportListNumbering(mainPart);
             foreach (var (placeholder, value) in multiline)
-                ReplaceParagraphPerLine(body, placeholder, value, resolved);
+            {
+                if (markdown)
+                    ReportMarkdownRenderer.ReplacePlaceholder(mainPart, body, placeholder, value, resolved, numbering);
+                else
+                    ReplaceParagraphPerLine(body, placeholder, value, resolved);
+            }
 
             // B-R5: tabla de hashes. Corre después de B-R2b: el tinte de la fila del ZIP es el
             // acento ya resuelto, no un centinela.

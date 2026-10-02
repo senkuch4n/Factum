@@ -98,3 +98,14 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — `architect` done -> Refactorizaciones/informe-diseno-v6.md; usuario confirma DP1/DP2 A. HU → implementando, lanzado `implementer-backend`.
 - 2026-10-01 — `implementer-backend` (v6) done -> progress/impl_backend_informe-diseno-v6.md. HU → en_revision, lanzado `reviewer`.
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_informe-diseno-v6.md. v6 → aprobada, commit (sin Mock:true del agente). BACKLOG VACÍO.
+- 2026-10-01 — Usuario pide editor de texto enriquecido estilo GitLab en los campos de redacción. Alta `editor-texto-enriquecido` (afinando) en feat/editor-texto-enriquecido, lanzado `afinador`.
+- 2026-10-01 — `afinador` done -> docs/hu-editor-texto-enriquecido.md (11 dudas; propone partir imágenes en HU aparte). HU → afinada_pendiente_validacion.
+- 2026-10-01 — Usuario valida editor-texto-enriquecido (11 recomendadas). Alta `editor-imagenes-informe` (no_afinada). editor → en_arquitectura, lanzado `architect`; adelantado `afinador` de imágenes.
+- 2026-10-01 — `afinador` done -> docs/hu-editor-imagenes-informe.md (12 dudas). HU → afinada_pendiente_validacion (se implementa después de editor-texto-enriquecido).
+- 2026-10-01 — Usuario valida editor-imagenes-informe (D1–D12 A) → validada. SDD cuando esté la de editor-texto-enriquecido.
+- 2026-10-01 — `architect` done -> Refactorizaciones/editor-texto-enriquecido.md; usuario confirma DP1/DP2 A. verify → arquitectura_lista → implementando; lanzados implementer-backend y implementer-frontend (opus). SDD de editor-imagenes-informe adelantada con `architect`.
+- 2026-10-01 — `architect` done -> Refactorizaciones/editor-imagenes-informe.md. Usuario elige DP1 B (sección opcional con solo imágenes sale) y DP2 B (sin límite de 32 MB); pedido al architect que ajuste la SDD.
+- 2026-10-01 — SDD de editor-imagenes-informe ajustada (DP1/DP2 B, sin DP nuevas). Queda validada hasta que cierre editor-texto-enriquecido.
+- 2026-10-01 — `implementer-backend` (editor) done -> progress/impl_backend_editor-texto-enriquecido.md. Esperando frontend.
+- 2026-10-01 — `implementer-frontend` (editor) done -> progress/impl_frontend_editor-texto-enriquecido.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_editor-texto-enriquecido.md. editor → aprobada, commit. Rama feat/editor-imagenes-informe; imágenes → implementando, lanzados implementer-backend y implementer-frontend.

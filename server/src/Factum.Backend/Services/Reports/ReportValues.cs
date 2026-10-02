@@ -168,19 +168,26 @@ public static class ReportValues
         };
     }
 
-    /// <summary>Defaults renderizados del paso Informe; "" en los campos sin default.</summary>
+    /// <summary>
+    /// Defaults renderizados del paso Informe, ya en el dialecto Markdown de Factum
+    /// (editor-texto-enriquecido §6.5): tokens escapados, cada línea del template es un bloque y
+    /// <c>Formato = "markdown"</c>. "" en los campos sin default.
+    /// </summary>
     public static ReportTextsDto RenderDefaults(Case cas, IReportSettings settings, IEnumerable<FileInfoDto> files)
     {
-        var tokens = DefaultTextTokens(cas, settings, files);
+        var tokens = DefaultTextTokens(cas, settings, files)
+            .ToDictionary(kv => kv.Key, kv => ReportMarkdown.EscapeInline(kv.Value), StringComparer.Ordinal);
+        string Md(string template, bool omitZeroCountLines = false) =>
+            ReportMarkdown.FromLineTemplate(ReportTextRenderer.Render(template, tokens, omitZeroCountLines));
         return new ReportTextsDto(
             ObjetoInforme: "",
-            OperacionesRealizadas: ReportTextRenderer.Render(settings.DefaultOperacionesRealizadas, tokens,
-                omitZeroCountLines: true),
-            AseguramientoEvidencia: ReportTextRenderer.Render(settings.DefaultAseguramientoEvidencia, tokens),
+            OperacionesRealizadas: Md(settings.DefaultOperacionesRealizadas, omitZeroCountLines: true),
+            AseguramientoEvidencia: Md(settings.DefaultAseguramientoEvidencia),
             Resultados: "",
             ValoracionTecnica: "",
             Conclusiones: "",
-            NotasTecnicas: ReportTextRenderer.Render(settings.DefaultNotasTecnicas, tokens),
-            Reserva: ReportTextRenderer.Render(settings.DefaultReserva, tokens));
+            NotasTecnicas: Md(settings.DefaultNotasTecnicas),
+            Reserva: Md(settings.DefaultReserva),
+            Formato: ReportTextFormats.Markdown);
     }
 }

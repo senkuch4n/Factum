@@ -5,6 +5,7 @@
  * perfil, checklist del paso "Generar" y precarga del formulario.
  */
 
+import { isBlankReportText } from "@/lib/report-markdown";
 import type { Case, CaseDataRequest, CaseFormData, IntegranteRow, ProfileFormData, ReportTextsInput } from "@/types";
 import { cleanCatalogValue, normalizeCatalogKey } from "@/lib/catalogs";
 
@@ -258,7 +259,8 @@ export function getMissingRequirements(cas: Case): MissingRequirement[] {
   if (isImeiMissing(cas.device?.imei)) keys.push("imei");
   if (!(cas.capture_roles ?? []).some(r => r.role === "imei_modelo")) keys.push("capture_roles.imei_modelo");
   for (const k of REPORT_TEXT_REQUIRED_KEYS) {
-    if (blank(cas.report_texts?.[k])) keys.push(`report_texts.${k}`);
+    // Texto plano: como siempre; Markdown: sin letras ni dígitos visibles (§4.5, DP1).
+    if (isBlankReportText(cas.report_texts?.[k], cas.report_texts?.formato)) keys.push(`report_texts.${k}`);
   }
   return keys.map(k => ({ key: k, ...REQUIREMENT_META[k] }));
 }

@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { Button } from "primereact/button";
-import { InputTextarea } from "primereact/inputtextarea";
 import {
   AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, ClipboardList, FileText, Loader2, Undo2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { EMPTY_REPORT_TEXTS, MAX_LEN_TEXT, reportFieldId } from "@/lib/pericial";
+import { REPORT_TEXT_FORMAT, plainToMarkdown } from "@/lib/report-markdown";
 import type { ReportTexts, ReportTextsInput } from "@/types";
 import { FormField } from "./FormField";
 import { ConfirmDialog } from "@/components/overlay/ConfirmDialog";
@@ -16,6 +17,35 @@ import { StepHeader } from "@/components/wizard/StepHeader";
 import { StepActions } from "@/components/wizard/StepActions";
 
 type TextKey = keyof ReportTextsInput;
+
+const SECTION_KEYS = Object.keys(EMPTY_REPORT_TEXTS) as TextKey[];
+
+/** Solo las ocho secciones: `formato`, `updated_at` y lo que venga de más no entran al estado. */
+function pickSections(src: Partial<Record<TextKey, string | null | undefined>>, map: (v: string) => string = v => v): ReportTextsInput {
+  const t = { ...EMPTY_REPORT_TEXTS };
+  SECTION_KEYS.forEach(k => { t[k] = map(src[k] ?? ""); });
+  return t;
+}
+
+/** Secciones que no entran en el tope (p. ej. un texto viejo que creció al escaparse, D16). */
+const overLimitKeys = (t: ReportTextsInput) => SECTION_KEYS.filter(k => t[k].length > MAX_LEN_TEXT);
+
+const OVER_LIMIT_MESSAGE =
+  `Este texto supera el máximo de ${new Intl.NumberFormat("es-AR").format(MAX_LEN_TEXT)} caracteres al guardarse con formato; acortalo para poder guardar.`;
+
+/**
+ * Editor de texto enriquecido (Tiptap): solo en el cliente y en un chunk aparte,
+ * así no entra al bundle del resto del dashboard (D17).
+ */
+const RichTextEditor = dynamic(() => import("@/components/editor/RichTextEditor"), {
+  ssr: false,
+  loading: () => (
+    <div
+      aria-hidden="true"
+      className="h-[8.5rem] rounded-fx-md border border-fx-border-strong bg-fx-surface-2 motion-safe:animate-pulse"
+    />
+  ),
+});
 
 const SECTIONS: { key: TextKey; label: string; required: boolean; hasDefault: boolean; placeholder?: string }[] = [
   { key: "objeto_informe",          label: "Objeto del informe",            required: false, hasDefault: false },
@@ -64,11 +94,17 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
   /* ── Guardado ── */
   const save = useCallback(async (): Promise<boolean> => {
     if (timerRef.current) { window.clearTimeout(timerRef.current); timerRef.current = null; }
+    // Un texto por encima del tope no se manda: el servidor lo rechazaría (D16).
+    if (overLimitKeys(textsRef.current).length) {
+      dirtyRef.current = true;
+      setState("error");
+      return false;
+    }
     const seq = ++seqRef.current;
     dirtyRef.current = false;
     setState("saving");
     try {
-      const res = await api.saveReportTexts(caseId, textsRef.current);
+      const res = await api.saveReportTexts(caseId, { ...textsRef.current, formato: REPORT_TEXT_FORMAT });
       onSavedRef.current(res);
       // Solo el último guardado define el estado visible.
       if (seq === seqRef.current) setState(dirtyRef.current ? "pending" : "saved");
@@ -105,14 +141,16 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
     try {
       const { cas } = await api.getCase(caseId);
       if (cas.report_texts) {
-        const t = { ...EMPTY_REPORT_TEXTS };
-        (Object.keys(EMPTY_REPORT_TEXTS) as TextKey[]).forEach(k => { t[k] = cas.report_texts?.[k] ?? ""; });
+        // Caso con formato: tal cual. Caso viejo (texto plano): se convierte a Markdown
+        // escapando lo especial, SIN marcarlo como editado; se guarda solo si el perito edita (D2 A).
+        const markdown = cas.report_texts.formato === REPORT_TEXT_FORMAT;
+        const t = pickSections(cas.report_texts, markdown ? undefined : plainToMarkdown);
         textsRef.current = t;
         setTexts(t);
         setState("idle");
       } else {
         const defaults = await api.getReportTextDefaults(caseId);
-        defaultsRef.current = { ...EMPTY_REPORT_TEXTS, ...defaults };
+        defaultsRef.current = pickSections(defaults);
         textsRef.current = defaultsRef.current;
         setTexts(defaultsRef.current);
         await save();
@@ -128,17 +166,32 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
   // Al desmontar (Atrás, salto de paso) no se pierde lo último que se escribió.
   useEffect(() => () => {
     if (timerRef.current) window.clearTimeout(timerRef.current);
-    if (dirtyRef.current) {
-      api.saveReportTexts(caseId, textsRef.current).then(r => onSavedRef.current(r)).catch(() => {});
+    if (dirtyRef.current && !overLimitKeys(textsRef.current).length) {
+      api.saveReportTexts(caseId, { ...textsRef.current, formato: REPORT_TEXT_FORMAT })
+        .then(r => onSavedRef.current(r))
+        .catch(() => {});
     }
   }, [caseId]);
 
-  // Foco pedido desde el checklist, una vez cargado.
+  // Foco pedido desde el checklist, una vez cargado. El editor se carga aparte
+  // (next/dynamic), así que se espera a que su elemento editable exista.
   useEffect(() => {
     if (!focusFieldId || state === "loading") return;
-    const el = document.getElementById(focusFieldId);
-    if (el) { el.focus(); el.scrollIntoView({ block: "center", behavior: "smooth" }); }
-    onFocusConsumed?.();
+    let tries = 0;
+    let timer: number | null = null;
+    const attempt = () => {
+      const el = document.getElementById(focusFieldId);
+      if (el) {
+        el.focus();
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+      } else if (++tries < 60) {
+        timer = window.setTimeout(attempt, 50);
+        return;
+      }
+      onFocusConsumed?.();
+    };
+    attempt();
+    return () => { if (timer) window.clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusFieldId, state === "loading"]);
 
@@ -146,7 +199,7 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
   async function getDefaults(): Promise<ReportTextsInput> {
     if (!defaultsRef.current) {
       const d = await api.getReportTextDefaults(caseId);
-      defaultsRef.current = { ...EMPTY_REPORT_TEXTS, ...d };
+      defaultsRef.current = pickSections(d);
     }
     return defaultsRef.current;
   }
@@ -227,23 +280,22 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
               <div key={key}>
                 <FormField
                   id={id}
+                  labelId={`${id}-label`}
                   icon={key === "operaciones_realizadas" ? ClipboardList : FileText}
                   label={label}
                   sublabel={required ? undefined : "· opcional"}
                   required={required}
                 >
-                  <InputTextarea
+                  <RichTextEditor
                     id={id}
-                    name={key}
-                    autoResize
-                    rows={4}
-                    // Por pt: el pt global (`min-h-[5rem]`) pisaría un className de props.
-                    pt={{ root: { className: "min-h-24 leading-relaxed" } }}
-                    aria-required={required || undefined}
-                    maxLength={MAX_LEN_TEXT}
+                    labelId={`${id}-label`}
+                    label={label}
+                    required={required}
                     placeholder={placeholder}
+                    maxLength={MAX_LEN_TEXT}
                     value={texts[key]}
-                    onChange={e => update({ ...textsRef.current, [key]: e.target.value })}
+                    error={texts[key].length > MAX_LEN_TEXT ? OVER_LIMIT_MESSAGE : undefined}
+                    onChange={md => update({ ...textsRef.current, [key]: md })}
                     onBlur={() => { void flush(); }}
                   />
                 </FormField>

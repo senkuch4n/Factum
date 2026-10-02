@@ -119,3 +119,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementer-backend opus, reviewer sonnet. 0 rechazos. 88 tests OK.
 - **Rama:** `feat/informe-diseno-v6` (encadenada sobre `feat/informe-diseno-modelo`).
 - **Pendiente:** reiniciar el backend; revisar el render en Word/WPS (solo verificado en LibreOffice); README: default de la caja del logo a revisar.
+
+## editor-texto-enriquecido — APROBADA (2026-10-01)
+
+- **Qué:** las ocho secciones del paso "Informe" pasan a un editor WYSIWYG (Tiptap 3, `client/src/components/editor/`) con barra accesible (B/I/U, viñetas, numerada, deshacer/rehacer; "Más": subtítulo, cita, código, bloque de código, enlace, formatos disponibles), atajos Markdown y pegado desde Word filtrado (Ctrl/Cmd+Shift+V sin formato). Se guarda Markdown acotado ("dialecto Factum") con `report_texts.formato = "markdown"`; casos viejos sin la marca se generan idénticos y se convierten con escape solo si el perito edita. Backend: Markdig 1.4.0 + renderer propio a OpenXML sobre la v6 (listas • ◦ ▪ y 1., código Courier New, cita, subtítulo, enlaces con URL visible), validación en servidor (sin HTML salvo `<u>`, sin imágenes, solo http/https/mailto), "vacío" igual en cliente y servidor, defaults en Markdown.
+- **Decisiones:** HU 11 recomendadas (usuario); SDD D1–D20 recomendadas, DP1/DP2 A (usuario).
+- **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos. 209 tests backend OK.
+- **Rama:** `feat/editor-texto-enriquecido` (encadenada sobre `feat/informe-diseno-v6`).
+- **Pendiente:** prueba manual (pegado desde Word/Google Docs, Ctrl/Cmd+Shift+V en Chrome/Firefox/Safari, abrir el DOCX en Word sin aviso de reparación); reiniciar el backend.

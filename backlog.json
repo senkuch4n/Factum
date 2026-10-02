@@ -376,6 +376,50 @@
         "fase": "cerrada"
       },
       "notas": "Pedido del usuario 2026-10-01 tras probar la v5: no le gusta el cuadro arriba a la derecha del encabezado de las páginas interiores; quiere un informe moderno pero empresarial, con la paleta de colores de Factum (no la del estudio), respetando la estructura (objeto, elementos ofrecidos, etc.). Rama feat/informe-diseno-v6 desde feat/informe-diseno-modelo. Validada 2026-10-01: D1–D10 recomendadas salvo D9 (dirección), pendiente de elección del usuario sobre el canvas comparativo. D9 → A Filete (usuario). SDD lista; DP1/DP2 A (usuario). Reviewer APROBADA 2026-10-01 (0 rechazos)."
+    },
+    {
+      "id": "editor-texto-enriquecido",
+      "titulo": "Editor de texto enriquecido (estilo GitLab) en los campos de redacción del informe, con salida al DOCX",
+      "estado": "aprobada",
+      "creada": "2026-10-01T00:00:00-03:00",
+      "actualizada": "2026-10-01",
+      "intentos_revision": 0,
+      "toca": {
+        "backend": true,
+        "frontend": true,
+        "agent_ui": false
+      },
+      "asignacion": {
+        "backend_model": "opus",
+        "frontend_model": "opus",
+        "reviewer_model": "sonnet",
+        "skill": null,
+        "rama": "feat/editor-texto-enriquecido",
+        "fase": "cerrada"
+      },
+      "notas": "Pedido del usuario 2026-10-01: 'como usuario necesito que los campos donde necesito redactar sean editores de texto como por ejemplo tiene gitlab: negritas, viñetas, código, imágenes, etc.' Rama desde feat/informe-diseno-v6. Validada 2026-10-01: 11 dudas recomendadas (Markdown, WYSIWYG, imágenes en HU aparte). SDD lista: D1–D20 recomendadas; DP1/DP2 A (usuario). Reviewer APROBADA 2026-10-01 (0 rechazos)."
+    },
+    {
+      "id": "editor-imagenes-informe",
+      "titulo": "Imágenes en los campos de redacción del informe (captura del caso como Figura N y/o imagen ilustrativa), con salida al DOCX",
+      "estado": "implementando",
+      "creada": "2026-10-01T00:00:00-03:00",
+      "actualizada": "2026-10-01",
+      "intentos_revision": 0,
+      "toca": {
+        "backend": true,
+        "frontend": true,
+        "agent_ui": false
+      },
+      "asignacion": {
+        "backend_model": "opus",
+        "frontend_model": "opus",
+        "reviewer_model": "sonnet",
+        "skill": null,
+        "rama": "feat/editor-imagenes-informe",
+        "fase": "implementacion"
+      },
+      "notas": "Desprendida de editor-texto-enriquecido (D6 A, usuario 2026-10-01). Preguntas adelantadas en docs/hu-editor-texto-enriquecido.md §D6 (origen: captura existente vs. ilustrativa; relación con el anexo; límites). Depende de editor-texto-enriquecido. Validada 2026-10-01: D1–D12 A (usuario). SDD espera a la de editor-texto-enriquecido. SDD lista 2026-10-01 (adelantada): DP1 B y DP2 B por el usuario (opcional con solo imágenes sale; sin tope de 32 MB, streaming + ImagePart reutilizado del anexo). 2026-10-01: implementando en feat/editor-imagenes-informe (desde editor-texto-enriquecido)."
     }
   ]
 }

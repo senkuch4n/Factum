@@ -1,6 +1,7 @@
 using System.Globalization;
 using Factum.Backend.DTOs;
 using Factum.Backend.Models;
+using Factum.Backend.Services.Reports;
 
 namespace Factum.Backend.Services.Cases;
 
@@ -173,11 +174,12 @@ public static class CaseValidation
         missing.AddRange(MissingCaseFields(f, cas.Device.Imei.Trim()));
 
         var t = cas.ReportTexts;
-        if (string.IsNullOrWhiteSpace(t?.OperacionesRealizadas)) missing.Add("report_texts.operaciones_realizadas");
-        if (string.IsNullOrWhiteSpace(t?.AseguramientoEvidencia)) missing.Add("report_texts.aseguramiento_evidencia");
-        if (string.IsNullOrWhiteSpace(t?.Resultados)) missing.Add("report_texts.resultados");
-        if (string.IsNullOrWhiteSpace(t?.ValoracionTecnica)) missing.Add("report_texts.valoracion_tecnica");
-        if (string.IsNullOrWhiteSpace(t?.Conclusiones)) missing.Add("report_texts.conclusiones");
+        // "Vacío" según el formato del caso (editor-texto-enriquecido §4.5).
+        if (ReportTextRules.IsBlank(t, t?.OperacionesRealizadas)) missing.Add("report_texts.operaciones_realizadas");
+        if (ReportTextRules.IsBlank(t, t?.AseguramientoEvidencia)) missing.Add("report_texts.aseguramiento_evidencia");
+        if (ReportTextRules.IsBlank(t, t?.Resultados)) missing.Add("report_texts.resultados");
+        if (ReportTextRules.IsBlank(t, t?.ValoracionTecnica)) missing.Add("report_texts.valoracion_tecnica");
+        if (ReportTextRules.IsBlank(t, t?.Conclusiones)) missing.Add("report_texts.conclusiones");
 
         if (!hasImeiCapture) missing.Add(KeyCapturaImei);
         return missing;
@@ -185,15 +187,37 @@ public static class CaseValidation
 
     // ── Textos del paso Informe ──────────────────────────────────────────────
 
-    public static string? ValidateReportTexts(ReportTextsDto d) => CheckLengths(
-        ("objeto_informe", d.ObjetoInforme ?? "", MaxText),
-        ("operaciones_realizadas", d.OperacionesRealizadas ?? "", MaxText),
-        ("aseguramiento_evidencia", d.AseguramientoEvidencia ?? "", MaxText),
-        ("resultados", d.Resultados ?? "", MaxText),
-        ("valoracion_tecnica", d.ValoracionTecnica ?? "", MaxText),
-        ("conclusiones", d.Conclusiones ?? "", MaxText),
-        ("notas_tecnicas", d.NotasTecnicas ?? "", MaxText),
-        ("reserva", d.Reserva ?? "", MaxText));
+    public const string InvalidFormatMessage = "El campo formato no es válido";
+
+    /// <summary>
+    /// Formato, largos y contenido (editor-texto-enriquecido §4.2 y §6.6). El tope cuenta el
+    /// string guardado (D9 A). En Markdown se rechaza el HTML (salvo &lt;u&gt;), las imágenes y
+    /// los enlaces no permitidos; en texto plano no se interpreta nada, como antes.
+    /// </summary>
+    public static string? ValidateReportTexts(ReportTextsDto d)
+    {
+        if (!ReportTextFormats.TryNormalize(d.Formato, out var formato)) return InvalidFormatMessage;
+
+        var fields = new (string Key, string Value)[]
+        {
+            ("objeto_informe", d.ObjetoInforme ?? ""),
+            ("operaciones_realizadas", d.OperacionesRealizadas ?? ""),
+            ("aseguramiento_evidencia", d.AseguramientoEvidencia ?? ""),
+            ("resultados", d.Resultados ?? ""),
+            ("valoracion_tecnica", d.ValoracionTecnica ?? ""),
+            ("conclusiones", d.Conclusiones ?? ""),
+            ("notas_tecnicas", d.NotasTecnicas ?? ""),
+            ("reserva", d.Reserva ?? ""),
+        };
+
+        var lengthError = CheckLengths(fields.Select(f => (f.Key, f.Value, MaxText)).ToArray());
+        if (lengthError is not null || formato != ReportTextFormats.Markdown) return lengthError;
+
+        foreach (var (key, value) in fields)
+            if (ReportMarkdown.Validate(value) is { } reason)
+                return $"El campo {key} tiene contenido no permitido: {reason}";
+        return null;
+    }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
