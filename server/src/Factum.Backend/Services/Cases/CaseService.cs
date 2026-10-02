@@ -2,6 +2,7 @@ using Factum.Backend.Common;
 using Factum.Backend.DTOs;
 using Factum.Backend.Infrastructure;
 using Factum.Backend.Models;
+using Factum.Backend.Services.Catalogs;
 using Factum.Backend.Services.Profile;
 using Factum.Backend.Services.Reports;
 
@@ -45,11 +46,14 @@ public sealed class CaseService : ICaseService
     private readonly IReportService _reports;
     private readonly IExpertProfileService _profiles;
     private readonly IReportSettings _reportSettings;
+    private readonly ICatalogService _catalogs;
     private readonly ILogger<CaseService> _log;
 
     public CaseService(ICaseRepository repo, IStorageService storage, IReportService reports,
-        IExpertProfileService profiles, IReportSettings reportSettings, ILogger<CaseService> log)
+        IExpertProfileService profiles, IReportSettings reportSettings, ICatalogService catalogs,
+        ILogger<CaseService> log)
     {
+        _catalogs = catalogs;
         _repo = repo;
         _storage = storage;
         _reports = reports;
@@ -115,6 +119,7 @@ public sealed class CaseService : ICaseService
             OrganismoTribunal = fields.OrganismoTribunal,
             SalaTribunal = fields.SalaTribunal,
             IntegrantesTribunal = fields.IntegrantesTribunal,
+            Integrantes = fields.Integrantes?.ToList(),
             TipoCausa = fields.TipoCausa,
             Caratula = fields.Caratula,
             ParteDenunciante = fields.ParteDenunciante,
@@ -145,6 +150,8 @@ public sealed class CaseService : ICaseService
 
         _storage.CaseDir(cas.Id);
         await _repo.InsertAsync(cas, ct);
+        // Best-effort (nunca lanza): un fallo del catálogo no cambia la respuesta del POST.
+        await _catalogs.RecordUsageAsync(officer.Dni, CatalogLogic.ValuesForCreate(cas), ct);
         return Result.Ok(cas);
     }
 
@@ -179,12 +186,17 @@ public sealed class CaseService : ICaseService
             fields.TipoDispositivo, fields.LineaDispositivo,
             profile!.ToSnapshot(), string.IsNullOrEmpty(newImei) ? null : newImei,
             // Observaciones solo se pisa si el request la trae (el cliente nuevo no la manda).
-            fields.Observaciones);
+            fields.Observaciones,
+            // null (cliente viejo) → $unset Integrantes en el repositorio (D2).
+            fields.Integrantes);
 
         if (!await _repo.UpdateCaseDataAsync(id, update, ct))
             return Result.Conflict<Case>(NotEditableMessage);
 
-        return Result.Ok((await _repo.FindByIdAsync(id, ct))!);
+        var saved = (await _repo.FindByIdAsync(id, ct))!;
+        // Solo los campos que cambiaron respecto de `cas` (leído antes del update, D12). Best-effort.
+        await _catalogs.RecordUsageAsync(officer.Dni, CatalogLogic.ValuesForUpdate(saved, cas), ct);
+        return Result.Ok(saved);
     }
 
     // ── Paso Informe ──────────────────────────────────────────────────────────

@@ -28,6 +28,11 @@ public interface ICaseRepository
     /// <summary>Upsert por filename (role null = borrar la marca); devuelve la lista completa o null si no matcheó.</summary>
     Task<List<CaptureRole>?> UpsertCaptureRolesAsync(string id,
         IReadOnlyList<(string Filename, string? Role)> roles, CancellationToken ct = default);
+    /// <summary>
+    /// SOLO LECTURA (siembra de catálogos): casos del perito, de cualquier estado o versión,
+    /// proyectados a los campos que alimentan catálogos + CreatedAt.
+    /// </summary>
+    Task<List<Case>> ListCatalogSourcesAsync(string officerDni, CancellationToken ct = default);
 }
 
 /// <summary>Valores ya normalizados (trim) de un PUT /api/cases/{id}.</summary>
@@ -38,7 +43,9 @@ public sealed record CaseDataUpdate(
     string ObjetoCausa, string AmbitoCausa, string FechaIntervencion,
     string NombreProponente, string ProfesionProponente, string MatriculaProponente,
     string TipoDispositivo, string LineaDispositivo,
-    PeritoSnapshot Perito, string? Imei, string? Observaciones);
+    PeritoSnapshot Perito, string? Imei, string? Observaciones,
+    // null = el request no trajo lista → $unset Integrantes (gana la última escritura, D2).
+    IReadOnlyList<string>? Integrantes = null);
 
 public sealed class CaseRepository : ICaseRepository
 {
@@ -77,6 +84,20 @@ public sealed class CaseRepository : ICaseRepository
             .Project<Case>(Builders<Case>.Projection
                 .Exclude(c => c.ReportTexts)
                 .Exclude(c => c.ZipPassword))
+            .ToListAsync(ct);
+
+    // Solo lectura, con proyección: la siembra de catálogos no necesita (ni debe traer) el resto.
+    public Task<List<Case>> ListCatalogSourcesAsync(string officerDni, CancellationToken ct = default) =>
+        _col.Find(c => c.Officer.Dni == officerDni)
+            .SortBy(c => c.CreatedAt)
+            .Project<Case>(Builders<Case>.Projection
+                .Include(c => c.NombreTribunal)
+                .Include(c => c.ParteDenunciante)
+                .Include(c => c.ParteDenunciada)
+                .Include(c => c.NombreProponente)
+                .Include(c => c.ProfesionProponente)
+                .Include(c => c.TipoDispositivo)
+                .Include(c => c.CreatedAt))
             .ToListAsync(ct);
 
     public async Task<Case?> FindByIdAsync(string id, CancellationToken ct = default) =>
@@ -152,6 +173,10 @@ public sealed class CaseRepository : ICaseRepository
             u = u.Set(c => c.Device.Imei, d.Imei);
         if (d.Observaciones is not null)
             u = u.Set(c => c.Observaciones, d.Observaciones);
+        // IntegrantesTribunal ya viene derivado de la lista cuando la hay (CaseFields.From).
+        u = d.Integrantes is not null
+            ? u.Set(c => c.Integrantes, d.Integrantes.ToList())
+            : u.Unset(c => c.Integrantes);
 
         var res = await _col.UpdateOneAsync(Editable(id), u, cancellationToken: ct);
         return res.MatchedCount > 0;

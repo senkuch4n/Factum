@@ -77,3 +77,14 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-01 — Usuario pide 6 correcciones al formulario del paso 2. Alta `formulario-caso-catalogos` (no_afinada en backlog; afinado adelantado), lanzado `afinador`.
 - 2026-10-01 — `implementer-frontend` (grabación) done -> progress/impl_frontend_grabacion-camara-duplicada.md. HU → en_revision, lanzado `reviewer`.
 - 2026-10-01 — `reviewer` APROBADA -> progress/review_grabacion-camara-duplicada.md. HU → aprobada, commit (sin el Mock:true local del agente).
+- 2026-10-01 — `afinador` done -> docs/hu-formulario-caso-catalogos.md (11 dudas). HU → afinada_pendiente_validacion, esperando al usuario.
+- 2026-10-01 — Usuario valida D1–D11 A. Fix de fecha (1 línea) commiteado aparte en feat/formulario-caso-catalogos. HU → en_arquitectura, lanzado `architect`.
+- 2026-10-01 — `architect` done -> Refactorizaciones/formulario-caso-catalogos.md (D1–D15). Usuario confirma DP1 A. verify → arquitectura_lista → implementando; lanzados implementer-backend y implementer-frontend (opus) en paralelo.
+- 2026-10-01 — Usuario dejó docs/informe_modelo.pdf (plantilla genérica de informe financiero, se toma el estilo) y docs/Logo_del_estudio (JPEG con datos del estudio). Ambos excluidos de git. Alta `informe-diseno-modelo` (no_afinada; afinado adelantado), lanzado `afinador`.
+- 2026-10-01 — `afinador` done -> docs/hu-informe-diseno-modelo.md (11 dudas). HU → afinada_pendiente_validacion, esperando al usuario. Necesita del usuario: isotipo PNG transparente (D4) y si hay reglas de formato del tribunal (D1).
+- 2026-10-01 — Usuario valida D1–D11 de informe-diseno-modelo (recomendadas). Isotipo pendiente → fallback. SDD adelantada con `architect` (queda validada en backlog).
+- 2026-10-01 — `implementer-backend` (formulario) done -> progress/impl_backend_formulario-caso-catalogos.md. Esperando frontend.
+- 2026-10-01 — `architect` done -> Refactorizaciones/informe-diseno-modelo.md; usuario confirma DP1–DP3 A. Queda validada hasta que cierre formulario-caso-catalogos.
+- 2026-10-01 — Usuario re-activa MODO AUTÓNOMO (/goal): cerrar formulario-caso-catalogos e informe-diseno-modelo.
+- 2026-10-01 — `implementer-frontend` (formulario) done -> progress/impl_frontend_formulario-caso-catalogos.md. HU → en_revision, lanzado `reviewer`.
+- 2026-10-01 — `reviewer` APROBADA -> progress/review_formulario-caso-catalogos.md. formulario → aprobada, commit. Rama feat/informe-diseno-modelo; informe → implementando, lanzado `implementer-backend`.

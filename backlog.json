@@ -314,7 +314,7 @@
     {
       "id": "formulario-caso-catalogos",
       "titulo": "Formulario del caso: catálogos editables (tribunal/destinatario, partes, profesiones, tipos de dispositivo), integrantes como lista y fix de desborde en Fecha de intervención",
-      "estado": "no_afinada",
+      "estado": "aprobada",
       "creada": "2026-10-01T00:00:00-03:00",
       "actualizada": "2026-10-01",
       "intentos_revision": 0,
@@ -329,9 +329,31 @@
         "reviewer_model": "sonnet",
         "skill": null,
         "rama": "feat/formulario-caso-catalogos",
-        "fase": "afinado"
+        "fase": "cerrada"
       },
-      "notas": "Pedido del usuario 2026-10-01 (correcciones al formulario del paso 2): (1) tribunal muy variable (tribunal, fiscalía, persona…) → editable/agregable/borrable; (2) integrantes como array en vez de 'integrante 1/2'; (3) bug: Fecha de intervención se desborda; (4) partes agregables/editables/eliminables y que se guarden para reutilizar entre inspecciones; (5) idem profesiones; (6) idem tipos de dispositivo. Afinado ADELANTADO mientras grabacion-camara-duplicada se implementa."
+      "notas": "Pedido del usuario 2026-10-01 (correcciones al formulario del paso 2): (1) tribunal muy variable (tribunal, fiscalía, persona…) → editable/agregable/borrable; (2) integrantes como array en vez de 'integrante 1/2'; (3) bug: Fecha de intervención se desborda; (4) partes agregables/editables/eliminables y que se guarden para reutilizar entre inspecciones; (5) idem profesiones; (6) idem tipos de dispositivo. Afinado ADELANTADO mientras grabacion-camara-duplicada se implementa. Validada por el usuario 2026-10-01: D1–D11 A. D10 A: fix del desborde de Fecha de intervención (icon Calendar de Prime → CalendarIcon de lucide) commiteado aparte fuera del arnés; la HU queda con catálogos + integrantes. Rama feat/formulario-caso-catalogos desde feat/grabacion-camara-duplicada. SDD lista: D1–D15 recomendadas; DP1 A ('e' ante /i/) confirmada por el usuario. Reviewer APROBADA 2026-10-01 (0 rechazos)."
+    },
+    {
+      "id": "informe-diseno-modelo",
+      "titulo": "Rediseño visual del informe pericial siguiendo docs/informe_modelo.pdf, con el logo del estudio",
+      "estado": "implementando",
+      "creada": "2026-10-01T00:00:00-03:00",
+      "actualizada": "2026-10-01",
+      "intentos_revision": 0,
+      "toca": {
+        "backend": true,
+        "frontend": false,
+        "agent_ui": false
+      },
+      "asignacion": {
+        "backend_model": "opus",
+        "frontend_model": "opus",
+        "reviewer_model": "sonnet",
+        "skill": null,
+        "rama": "feat/informe-diseno-modelo",
+        "fase": "implementacion"
+      },
+      "notas": "Pedido del usuario 2026-10-01: usar docs/informe_modelo.pdf como modelo de informe y el logo del estudio (docs/Logo_del_estudio, JPEG 1408x768 fondo azul oscuro con datos del estudio). Ambos excluidos de git (.git/info/exclude / .gitignore); el modelo es una plantilla genérica (informe financiero de farmacia): se toma el estilo, no el contenido. Encadenar después de formulario-caso-catalogos (ambas tocan ReportService). Afinado ADELANTADO. Validada por el usuario 2026-10-01: D1–D11 recomendadas. Isotipo pendiente (fallback texto). SDD adelantada; espera turno tras formulario-caso-catalogos. SDD lista: 15 decisiones recomendadas; DP1–DP3 A confirmadas por el usuario. 2026-10-01: implementando en feat/informe-diseno-modelo (desde formulario-caso-catalogos)."
     }
   ]
 }

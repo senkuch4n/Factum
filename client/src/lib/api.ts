@@ -33,9 +33,10 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+/** `fetch` al backend con el token y el `Content-Type` JSON. */
+function send(path: string, options: RequestInit): Promise<Response> {
   const token = getToken();
-  const res = await fetch(`${BACKEND_URL}${path}`, {
+  return fetch(`${BACKEND_URL}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -43,16 +44,46 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       ...options.headers,
     },
   });
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    const serverMessage = typeof body?.error === "string" && body.error.trim() ? (body.error as string) : null;
-    const missing = Array.isArray(body?.missing) ? (body.missing as string[]) : undefined;
-    // `message` igual que antes: el `error` del body, o el statusText si el body
-    // no era JSON, o "HTTP <status>" como último recurso.
-    const fallback = body === null ? res.statusText : body?.error;
-    throw new ApiError(serverMessage ?? (fallback || `HTTP ${res.status}`), res.status, missing, serverMessage);
-  }
+}
+
+/** `ApiError` a partir de una respuesta no-OK (`{ error, missing }` del backend). */
+async function toApiError(res: Response): Promise<ApiError> {
+  const body = await res.json().catch(() => null);
+  const serverMessage = typeof body?.error === "string" && body.error.trim() ? (body.error as string) : null;
+  const missing = Array.isArray(body?.missing) ? (body.missing as string[]) : undefined;
+  // `message` igual que antes: el `error` del body, o el statusText si el body
+  // no era JSON, o "HTTP <status>" como último recurso.
+  const fallback = body === null ? res.statusText : body?.error;
+  return new ApiError(serverMessage ?? (fallback || `HTTP ${res.status}`), res.status, missing, serverMessage);
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await send(path, options);
+  if (!res.ok) throw await toApiError(res);
   return res.json();
+}
+
+/** Como `request`, para respuestas `204` sin body (no lee el body si salió bien). */
+async function requestNoContent(path: string, options: RequestInit = {}): Promise<void> {
+  const res = await send(path, options);
+  if (!res.ok) throw await toApiError(res);
+}
+
+/* ── Catálogos de sugerencias del perito (formulario-caso-catalogos) ── */
+
+/** Ids de catálogo: son literalmente las claves de `catalogs` en `GET /api/catalogs`. */
+export type CatalogId = "destinatarios" | "partes" | "profesiones" | "tipos_dispositivo";
+
+export interface CatalogEntry {
+  id: string;
+  value: string;
+  use_count: number;
+  /** ISO UTC. */
+  last_used_at: string;
+}
+
+export interface CatalogsResponse {
+  catalogs: Record<CatalogId, CatalogEntry[]>;
 }
 
 export interface User {
@@ -128,7 +159,13 @@ export interface CaseDataRequest {
   nombre_tribunal: string;
   organismo_tribunal: string;
   sala_tribunal: string;
-  integrantes_tribunal: string;
+  /**
+   * Texto libre de integrantes (clientes viejos). El cliente nuevo no lo manda:
+   * manda `integrantes` y el servidor deriva este texto.
+   */
+  integrantes_tribunal?: string;
+  /** Integrantes en orden, ya recortados y sin vacíos. Si viene, el servidor ignora `integrantes_tribunal`. */
+  integrantes?: string[];
   tipo_causa: string;
   caratula: string;
   parte_denunciante: string;
@@ -172,7 +209,10 @@ export interface Case {
   nombre_tribunal: string;
   organismo_tribunal: string;
   sala_tribunal: string;
+  /** Frase de integrantes. Cuando `integrantes` no es null, es la derivada por el servidor ("A, B y C"). */
   integrantes_tribunal: string;
+  /** Integrantes como lista. `null`/ausente = caso guardado antes de formulario-caso-catalogos. */
+  integrantes?: string[] | null;
   tipo_causa: string;
   caratula: string;
   parte_denunciante: string;
@@ -247,6 +287,27 @@ export const api = {
 
   async getCase(id: string): Promise<{ cas: Case; files: unknown[] }> {
     return request(`/api/cases/${id}`);
+  },
+
+  /** Catálogos de sugerencias del perito (las cuatro claves siempre). La primera vez los siembra el servidor. */
+  async getCatalogs(): Promise<CatalogsResponse> {
+    return request<CatalogsResponse>("/api/catalogs");
+  },
+
+  /** Corrige un valor del catálogo. 409 si choca con otro valor equivalente. No cambia ningún caso. */
+  async updateCatalogEntry(catalog: CatalogId, id: string, value: string): Promise<CatalogEntry> {
+    return request<CatalogEntry>(
+      `/api/catalogs/${encodeURIComponent(catalog)}/entries/${encodeURIComponent(id)}`,
+      { method: "PUT", body: JSON.stringify({ value }) },
+    );
+  },
+
+  /** Quita un valor del catálogo (204). No cambia ningún caso. */
+  async deleteCatalogEntry(catalog: CatalogId, id: string): Promise<void> {
+    return requestNoContent(
+      `/api/catalogs/${encodeURIComponent(catalog)}/entries/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    );
   },
 
   async getProfile(): Promise<ExpertProfile> {

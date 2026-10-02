@@ -11,23 +11,36 @@ public sealed record CaseFields(
     string TipoCausa, string Caratula, string ParteDenunciante, string ParteDenunciada,
     string ObjetoCausa, string AmbitoCausa, string FechaIntervencion,
     string NombreProponente, string ProfesionProponente, string MatriculaProponente,
-    string TipoDispositivo, string LineaDispositivo, string? Observaciones)
+    string TipoDispositivo, string LineaDispositivo, string? Observaciones,
+    // null = el request no trajo la lista (cliente viejo): vale IntegrantesTribunal tal cual.
+    // No null = lista limpia (sin vacíos, en orden) e IntegrantesTribunal = Join(lista).
+    IReadOnlyList<string>? Integrantes = null)
 {
-    public static CaseFields From(CreateCaseRequest r) => new(
-        C(r.NroReferencia), C(r.NombreDenunciante), C(r.DniDenunciante),
-        C(r.NombreTribunal), C(r.OrganismoTribunal), C(r.SalaTribunal), C(r.IntegrantesTribunal),
-        C(r.TipoCausa), C(r.Caratula), C(r.ParteDenunciante), C(r.ParteDenunciada),
-        C(r.ObjetoCausa), C(r.AmbitoCausa), C(r.FechaIntervencion),
-        C(r.NombreProponente), C(r.ProfesionProponente), C(r.MatriculaProponente),
-        C(r.TipoDispositivo), C(r.LineaDispositivo), r.Observaciones?.Trim());
+    public static CaseFields From(CreateCaseRequest r)
+    {
+        var integrantes = r.Integrantes is null ? null : IntegrantesFormatter.Clean(r.Integrantes);
+        return new(
+            C(r.NroReferencia), C(r.NombreDenunciante), C(r.DniDenunciante),
+            C(r.NombreTribunal), C(r.OrganismoTribunal), C(r.SalaTribunal),
+            integrantes is null ? C(r.IntegrantesTribunal) : IntegrantesFormatter.Join(integrantes),
+            C(r.TipoCausa), C(r.Caratula), C(r.ParteDenunciante), C(r.ParteDenunciada),
+            C(r.ObjetoCausa), C(r.AmbitoCausa), C(r.FechaIntervencion),
+            C(r.NombreProponente), C(r.ProfesionProponente), C(r.MatriculaProponente),
+            C(r.TipoDispositivo), C(r.LineaDispositivo), r.Observaciones?.Trim(), integrantes);
+    }
 
-    public static CaseFields From(UpdateCaseRequest r) => new(
-        C(r.NroReferencia), C(r.NombreDenunciante), C(r.DniDenunciante),
-        C(r.NombreTribunal), C(r.OrganismoTribunal), C(r.SalaTribunal), C(r.IntegrantesTribunal),
-        C(r.TipoCausa), C(r.Caratula), C(r.ParteDenunciante), C(r.ParteDenunciada),
-        C(r.ObjetoCausa), C(r.AmbitoCausa), C(r.FechaIntervencion),
-        C(r.NombreProponente), C(r.ProfesionProponente), C(r.MatriculaProponente),
-        C(r.TipoDispositivo), C(r.LineaDispositivo), r.Observaciones?.Trim());
+    public static CaseFields From(UpdateCaseRequest r)
+    {
+        var integrantes = r.Integrantes is null ? null : IntegrantesFormatter.Clean(r.Integrantes);
+        return new(
+            C(r.NroReferencia), C(r.NombreDenunciante), C(r.DniDenunciante),
+            C(r.NombreTribunal), C(r.OrganismoTribunal), C(r.SalaTribunal),
+            integrantes is null ? C(r.IntegrantesTribunal) : IntegrantesFormatter.Join(integrantes),
+            C(r.TipoCausa), C(r.Caratula), C(r.ParteDenunciante), C(r.ParteDenunciada),
+            C(r.ObjetoCausa), C(r.AmbitoCausa), C(r.FechaIntervencion),
+            C(r.NombreProponente), C(r.ProfesionProponente), C(r.MatriculaProponente),
+            C(r.TipoDispositivo), C(r.LineaDispositivo), r.Observaciones?.Trim(), integrantes);
+    }
 
     private static string C(string? s) => (s ?? string.Empty).Trim();
 }
@@ -49,6 +62,8 @@ public static class CaseValidation
     public const int MaxText = 20_000;
     public const int MaxProfileText = 150;
     public const int MaxMatricula = 60;
+    public const int MaxIntegrantes = 20;
+    public const string TooManyIntegrantesMessage = "Se pueden cargar hasta 20 integrantes";
     public const string ManualImei = "INGRESAR_MANUALMENTE";
     public const string MissingMessage = "Faltan datos obligatorios";
 
@@ -85,14 +100,15 @@ public static class CaseValidation
 
     public static ValidationOutcome ValidateCaseData(CaseFields f, string imei)
     {
-        var lengthError = CheckLengths(
+        var lengthError = ValidateIntegrantes(f) ?? CheckLengths(
             ("nro_referencia", f.NroReferencia, MaxLine),
             ("nombre_denunciante", f.NombreDenunciante, MaxLine),
             ("dni_denunciante", f.DniDenunciante, MaxLine),
             ("nombre_tribunal", f.NombreTribunal, MaxLine),
             ("organismo_tribunal", f.OrganismoTribunal, MaxLine),
             ("sala_tribunal", f.SalaTribunal, MaxLine),
-            ("integrantes_tribunal", f.IntegrantesTribunal, MaxLong),
+            // Con lista, el texto es derivado y queda exento del límite de 500 (D6).
+            ("integrantes_tribunal", f.Integrantes is null ? f.IntegrantesTribunal : string.Empty, MaxLong),
             ("tipo_causa", f.TipoCausa, MaxLine),
             ("caratula", f.Caratula, MaxLong),
             ("parte_denunciante", f.ParteDenunciante, MaxLine),
@@ -110,6 +126,16 @@ public static class CaseValidation
             ("observaciones", f.Observaciones ?? string.Empty, MaxText));
 
         return new ValidationOutcome(MissingCaseFields(f, imei), lengthError);
+    }
+
+    // Lista de integrantes: hasta 20 ítems de hasta 300 caracteres cada uno (D6).
+    private static string? ValidateIntegrantes(CaseFields f)
+    {
+        if (f.Integrantes is null) return null;
+        if (f.Integrantes.Count > MaxIntegrantes) return TooManyIntegrantesMessage;
+        foreach (var item in f.Integrantes)
+            if (item.Length > MaxLine) return TooLong("integrantes", MaxLine);
+        return null;
     }
 
     private static List<string> MissingCaseFields(CaseFields f, string imei)
@@ -143,7 +169,7 @@ public static class CaseValidation
             cas.ParteDenunciante.Trim(), cas.ParteDenunciada.Trim(), cas.ObjetoCausa.Trim(),
             cas.AmbitoCausa.Trim(), cas.FechaIntervencion.Trim(), cas.NombreProponente.Trim(),
             cas.ProfesionProponente.Trim(), cas.MatriculaProponente.Trim(), cas.TipoDispositivo.Trim(),
-            cas.LineaDispositivo.Trim(), null);
+            cas.LineaDispositivo.Trim(), null, Integrantes: null);
         missing.AddRange(MissingCaseFields(f, cas.Device.Imei.Trim()));
 
         var t = cas.ReportTexts;

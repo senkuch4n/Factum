@@ -95,3 +95,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementer-frontend opus, reviewer sonnet. 0 rechazos.
 - **Rama:** `feat/grabacion-camara-duplicada` (encadenada sobre `feat/rediseno-cierre-legacy`).
 - **Pendiente:** prueba manual (grabar con cámara externa, adjuntar varios archivos de una vez, ir al paso 2 y volver, borrar y confirmar que no se sube).
+
+## formulario-caso-catalogos — APROBADA (2026-10-01)
+
+- **Qué:** catálogos por perito en MongoDB (colección nueva, índice único perito+catálogo+clave normalizada; `CatalogsController`) para destinatario (ex "Tribunal"), partes (compartido por denunciante/denunciada/proponente), profesiones y tipos de dispositivo: alta automática al guardar un caso, editar/borrar desde el campo (`CatalogAutoComplete`, `CatalogManageDialog`), siembra inicial leyendo los casos del perito (solo lectura). Integrantes como lista (`IntegrantesField`) con tratamiento por fila; el backend sigue escribiendo `integrantes_tribunal` como "A, B y C" ("e" ante /i/) y los casos viejos se muestran como una fila. Snapshot: editar el catálogo no cambia casos. Fix aparte (commit previo): desborde de "Fecha de intervención".
+- **Decisiones:** HU D1–D11 A (usuario); SDD D1–D15 recomendadas, DP1 A (usuario).
+- **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos. 48 tests backend OK.
+- **Rama:** `feat/formulario-caso-catalogos` (encadenada sobre `feat/grabacion-camara-duplicada`).
+- **Pendiente:** reiniciar el backend para tomar los endpoints nuevos; prueba manual e2e con Mongo real (SDD §11) y vista a 375 px en ambos temas.

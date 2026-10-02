@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "primereact/button";
 import { Calendar } from "primereact/calendar";
 import type { CalendarPassThroughOptions } from "primereact/calendar";
@@ -8,7 +8,7 @@ import { InputText } from "primereact/inputtext";
 import { Tag } from "primereact/tag";
 import {
   ChevronRight, ArrowLeft,
-  Hash, User, FileText, Landmark, Building2, Scale, Users, Calendar as CalendarIcon,
+  Hash, User, FileText, Landmark, Building2, Scale, Calendar as CalendarIcon,
   MapPin, UserCheck, Briefcase, BadgeCheck, Smartphone, Phone,
   ArrowRight, CheckCircle2, ScanLine, Usb,
 } from "lucide-react";
@@ -18,7 +18,9 @@ import {
   CASE_FORM_FOCUS_ORDER, CASE_REQUIRED_KEYS, PROFILE_REQUIRED_KEYS,
   MAX_LEN_LINE, MAX_LEN_LONG, caseFieldId, errorKeyToFieldId,
 } from "@/lib/pericial";
-import type { CaseFormData, ExpertProfile, ProfileFormData } from "@/types";
+import { CATALOG_LABELS } from "@/lib/catalogs";
+import { useCatalogs } from "@/hooks/useCatalogs";
+import type { CaseFormData, CatalogId, ExpertProfile, IntegranteRow, ProfileFormData } from "@/types";
 import { PhoneFrame } from "./PhoneFrame";
 import { SpecRow } from "./SpecRow";
 import { FormField, describedBy } from "./FormField";
@@ -26,6 +28,11 @@ import { ExpertProfileCard } from "./ExpertProfileCard";
 import { FxBanner } from "@/components/feedback/FxBanner";
 import { StepHeader } from "@/components/wizard/StepHeader";
 import { StepActions } from "@/components/wizard/StepActions";
+import {
+  CatalogAutoComplete, CatalogManageButton, type CatalogManageTarget, type CatalogStatus,
+} from "@/components/form/CatalogAutoComplete";
+import { CatalogManageDialog } from "@/components/form/CatalogManageDialog";
+import { IntegrantesField } from "@/components/form/IntegrantesField";
 
 const FADE_IN = "motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]";
 
@@ -65,9 +72,14 @@ function calendarPt(aria: { describedBy?: string; invalid: boolean }): CalendarP
 /* ── Types ─────────────────────────────────────────────────── */
 type SectionId = "perfil" | "actuacion" | "partes" | "equipo";
 
+/** Claves de texto del formulario que se renderizan con `renderField`. */
+type TextFieldKey = Exclude<keyof CaseFormData, "imeiOverride" | "integrantes">;
+
 interface FieldDef {
-  key: Exclude<keyof CaseFormData, "imeiOverride">;
+  key: TextFieldKey;
   label: string;
+  /** Texto chico junto a la etiqueta (por defecto "· opcional" en los no obligatorios). */
+  sublabel?: string;
   icon: React.ElementType;
   required?: boolean;
   placeholder?: string;
@@ -76,14 +88,21 @@ interface FieldDef {
   type?: "text" | "date";
   inputMode?: "text" | "numeric" | "tel";
   wide?: boolean;
+  /** Campo con sugerencias del catálogo del perito (formulario-caso-catalogos). */
+  catalog?: CatalogId;
 }
 
-const ACTUACION: FieldDef[] = [
-  { key: "nombre_tribunal",      label: "Tribunal",                    icon: Landmark,  required: true, placeholder: "Nombre del tribunal…" },
+/** Actuación hasta los integrantes (que van con `IntegrantesField`, entre las dos mitades). */
+const ACTUACION_A: FieldDef[] = [
+  // Etiqueta "Destinatario (tribunal, fiscalía, persona…)" (D3): el paréntesis va como
+  // sublabel (minúscula, más compacto) para que en media columna no ocupe tres líneas.
+  { key: "nombre_tribunal",      label: "Destinatario", sublabel: "(tribunal, fiscalía, persona…)", icon: Landmark, required: true, placeholder: "Tribunal, fiscalía o persona…", catalog: "destinatarios" },
   { key: "organismo_tribunal",   label: "Organismo",                   icon: Building2, placeholder: "Organismo del que depende…" },
   { key: "sala_tribunal",        label: "Sala",                        icon: Landmark,  hint: "Ej.: Sala II" },
   { key: "tipo_causa",           label: "Tipo de causa",               icon: Scale,     required: true, hint: "Ej.: disciplinaria, civil, penal" },
-  { key: "integrantes_tribunal", label: "Integrantes",                 icon: Users,     hint: "Ej.: Dres. Nombre Apellido y Nombre Apellido", maxLength: MAX_LEN_LONG, wide: true },
+];
+
+const ACTUACION_B: FieldDef[] = [
   { key: "nro_referencia",       label: "Número de causa / expediente", icon: Hash,     required: true, placeholder: "Ej.: 1234/2026" },
   { key: "fecha_intervencion",   label: "Fecha de intervención",       icon: CalendarIcon, required: true, type: "date" },
   { key: "caratula",             label: "Carátula",                    icon: FileText,  required: true, placeholder: "Carátula completa de la causa…", maxLength: MAX_LEN_LONG, wide: true },
@@ -91,23 +110,26 @@ const ACTUACION: FieldDef[] = [
   { key: "ambito_causa",         label: "Ámbito",                      icon: MapPin },
 ];
 
+const ACTUACION: FieldDef[] = [...ACTUACION_A, ...ACTUACION_B];
+
 const PARTES: FieldDef[] = [
-  { key: "parte_denunciante",    label: "Parte denunciante",           icon: User,      required: true },
-  { key: "parte_denunciada",     label: "Parte denunciada",            icon: User,      required: true, hint: "Incluí el artículo si corresponde: «el Sr. …», «las Dras. …»" },
-  { key: "nombre_proponente",    label: "Nombre de quien propone",     icon: UserCheck, required: true, wide: true },
-  { key: "profesion_proponente", label: "Profesión de quien propone",  icon: Briefcase },
+  { key: "parte_denunciante",    label: "Parte denunciante",           icon: User,      required: true, catalog: "partes" },
+  { key: "parte_denunciada",     label: "Parte denunciada",            icon: User,      required: true, hint: "Incluí el artículo si corresponde: «el Sr. …», «las Dras. …»", catalog: "partes" },
+  { key: "nombre_proponente",    label: "Nombre de quien propone",     icon: UserCheck, required: true, wide: true, catalog: "partes" },
+  { key: "profesion_proponente", label: "Profesión de quien propone",  icon: Briefcase, catalog: "profesiones" },
   { key: "matricula_proponente", label: "Matrícula de quien propone",  icon: BadgeCheck },
 ];
 
 const EQUIPO: FieldDef[] = [
   { key: "nombre_denunciante",   label: "Titular del dispositivo",     icon: User,       required: true, placeholder: "Apellido y nombre completo…" },
   { key: "dni_denunciante",      label: "DNI del titular",             icon: Hash,       inputMode: "numeric", maxLength: 20 },
-  { key: "tipo_dispositivo",     label: "Tipo de dispositivo",         icon: Smartphone, required: true },
+  { key: "tipo_dispositivo",     label: "Tipo de dispositivo",         icon: Smartphone, required: true, catalog: "tipos_dispositivo" },
   { key: "linea_dispositivo",    label: "Línea",                       icon: Phone,      inputMode: "tel", placeholder: "Número de línea…" },
 ];
 
 const SECTION_OF: Record<string, SectionId> = {
   ...Object.fromEntries(ACTUACION.map(f => [f.key, "actuacion"])),
+  integrantes: "actuacion",
   ...Object.fromEntries(PARTES.map(f => [f.key, "partes"])),
   ...Object.fromEntries(EQUIPO.map(f => [f.key, "equipo"])),
   imei: "equipo",
@@ -120,6 +142,7 @@ function sectionOfErrorKey(key: string): SectionId {
 function sectionOfFieldId(id: string): SectionId {
   if (id.startsWith("profile-")) return "perfil";
   if (id === "case-imei") return "equipo";
+  if (id.startsWith("case-integrante")) return "actuacion";
   return SECTION_OF[id.replace(/^case-/, "")] ?? "actuacion";
 }
 
@@ -262,10 +285,26 @@ export function CaseFormStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusFieldId]);
 
-  function set<K extends keyof CaseFormData>(key: K, value: string, errorKey: string = key) {
+  function set(key: TextFieldKey | "imeiOverride", value: string, errorKey: string = key) {
     onChange({ ...form, [key]: value });
     if (errors[errorKey]) onClearError(errorKey);
   }
+
+  function setIntegrantes(rows: IntegranteRow[]) {
+    onChange({ ...form, integrantes: rows });
+  }
+
+  // ── Catálogos de sugerencias (se cargan cada vez que se monta el paso) ──
+  const cat = useCatalogs();
+  const catalogStatus: CatalogStatus = cat.loading ? "loading" : cat.error ? "error" : "ready";
+  // `manage` = diálogo abierto (con la fila pedida). El catálogo vive aparte y se
+  // conserva al cerrar, para que el título no cambie durante la animación de salida.
+  const [manage, setManage] = useState<{ target?: CatalogManageTarget } | null>(null);
+  const [manageCatalog, setManageCatalog] = useState<CatalogId>("destinatarios");
+  const openManage = useCallback((catalog: CatalogId, target?: CatalogManageTarget) => {
+    setManageCatalog(catalog);
+    setManage({ target });
+  }, []);
 
   function renderField(f: FieldDef) {
     const id = caseFieldId(f.key);
@@ -278,12 +317,35 @@ export function CaseFormStep({
           id={id}
           icon={f.icon}
           label={f.label}
-          sublabel={f.required ? undefined : "· opcional"}
+          sublabel={f.sublabel ?? (f.required ? undefined : "· opcional")}
           hint={f.hint}
           error={error}
           required={f.required}
+          labelAside={f.catalog && catalogStatus === "ready" ? (
+            <CatalogManageButton
+              catalogLabel={CATALOG_LABELS[f.catalog]}
+              onClick={() => openManage(f.catalog!)}
+            />
+          ) : undefined}
         >
-          {f.type === "date" ? (
+          {f.catalog ? (
+            <CatalogAutoComplete
+              id={id}
+              name={f.key}
+              value={value}
+              onChange={v => set(f.key, v)}
+              entries={cat.catalogs[f.catalog]}
+              catalog={f.catalog}
+              catalogLabel={CATALOG_LABELS[f.catalog]}
+              status={catalogStatus}
+              invalid={!!error}
+              ariaDescribedBy={ariaDescribedBy}
+              required={f.required}
+              maxLength={f.maxLength ?? MAX_LEN_LINE}
+              placeholder={f.placeholder}
+              onManage={target => openManage(f.catalog!, target)}
+            />
+          ) : f.type === "date" ? (
             <Calendar
               inputId={id}
               name={f.key}
@@ -418,6 +480,10 @@ export function CaseFormStep({
             }
           />
 
+          {cat.error && (
+            <p role="status" className="m-0 text-xs text-fx-text-3">No se pudieron cargar tus sugerencias</p>
+          )}
+
           <ExpertProfileCard
             profile={profile}
             loading={profileLoading}
@@ -431,7 +497,11 @@ export function CaseFormStep({
 
           <FormSection id="actuacion" title="Actuación" open={open.actuacion}
             onToggle={() => setOpen(o => ({ ...o, actuacion: !o.actuacion }))}>
-            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">{ACTUACION.map(renderField)}</div>
+            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+              {ACTUACION_A.map(renderField)}
+              <IntegrantesField rows={form.integrantes} onChange={setIntegrantes} />
+              {ACTUACION_B.map(renderField)}
+            </div>
           </FormSection>
 
           <FormSection id="partes" title="Partes" open={open.partes}
@@ -510,6 +580,16 @@ export function CaseFormStep({
           </StepActions>
         </div>
       </div>
+
+      <CatalogManageDialog
+        visible={manage !== null}
+        catalogLabel={CATALOG_LABELS[manageCatalog]}
+        entries={cat.catalogs[manageCatalog]}
+        initialTarget={manage?.target}
+        onHide={() => setManage(null)}
+        onUpdate={(id, value) => cat.update(manageCatalog, id, value)}
+        onRemove={id => cat.remove(manageCatalog, id)}
+      />
     </div>
   );
 }

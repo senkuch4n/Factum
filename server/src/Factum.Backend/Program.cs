@@ -106,6 +106,7 @@ builder.Services.AddSingleton<IStorageService, StorageService>();
 builder.Services.AddSingleton<IBrandingService, BrandingService>();
 builder.Services.AddSingleton<IReportSettings, ReportSettings>();
 builder.Services.AddSingleton<IExpertProfileRepository, ExpertProfileRepository>();
+builder.Services.AddSingleton<ICatalogRepository, CatalogRepository>();
 
 // ── Auth provider (dev o external según AuthSettingsResolver) ─────────────────
 if (authSettings.Mode == AuthModes.External)
@@ -122,6 +123,7 @@ builder.Services.AddSingleton<IAuthService, AuthService>();
 // ── Servicios de negocio ──────────────────────────────────────────────────────
 builder.Services.AddSingleton<IReportService, ReportService>();
 builder.Services.AddScoped<IExpertProfileService, ExpertProfileService>();
+builder.Services.AddScoped<Factum.Backend.Services.Catalogs.ICatalogService, Factum.Backend.Services.Catalogs.CatalogService>();
 builder.Services.AddScoped<ICaseService, CaseService>();
 // Soporte (Faro) opcional: apagado no se instancia ningún HttpClient hacia Faro.
 if (supportSettings.Enabled)

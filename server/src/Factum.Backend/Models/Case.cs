@@ -34,6 +34,13 @@ public sealed class Case
     public string OrganismoTribunal { get; set; } = string.Empty;
     public string SalaTribunal { get; set; } = string.Empty;
     public string IntegrantesTribunal { get; set; } = string.Empty;
+    /// <summary>
+    /// Integrantes como lista ordenada (formulario-caso-catalogos). null = caso guardado antes de
+    /// esta HU (o por un cliente que no manda la lista): vale solo IntegrantesTribunal.
+    /// Cuando no es null, IntegrantesTribunal es la frase derivada (IntegrantesFormatter.Join).
+    /// Anulable y sin default: un documento viejo sin el campo deserializa null (no hay migración).
+    /// </summary>
+    public List<string>? Integrantes { get; set; }
     public string TipoCausa { get; set; } = string.Empty;
     public string Caratula { get; set; } = string.Empty;
     public string ParteDenunciante { get; set; } = string.Empty;

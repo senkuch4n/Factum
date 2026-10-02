@@ -5,7 +5,8 @@
  * perfil, checklist del paso "Generar" y precarga del formulario.
  */
 
-import type { Case, CaseFormData, ProfileFormData, ReportTextsInput } from "@/types";
+import type { Case, CaseDataRequest, CaseFormData, IntegranteRow, ProfileFormData, ReportTextsInput } from "@/types";
+import { cleanCatalogValue, normalizeCatalogKey } from "@/lib/catalogs";
 
 /* ── Claves de `missing` (§6.4) ─────────────────────────────────────── */
 
@@ -62,7 +63,7 @@ export const PROFILE_MESSAGES: Record<ProfileRequiredKey, string> = {
 };
 
 export const CASE_MESSAGES: Record<CaseRequiredKey | "imei", string> = {
-  nombre_tribunal: "Ingresá el tribunal",
+  nombre_tribunal: "Ingresá el destinatario",
   tipo_causa: "Ingresá el tipo de causa",
   nro_referencia: "Ingresá el número de causa",
   caratula: "Ingresá la carátula",
@@ -95,7 +96,7 @@ export const EMPTY_CASE_FORM: CaseFormData = {
   nombre_tribunal: "",
   organismo_tribunal: "",
   sala_tribunal: "",
-  integrantes_tribunal: "",
+  integrantes: [],
   tipo_causa: "",
   caratula: "",
   parte_denunciante: "",
@@ -220,7 +221,7 @@ export interface MissingRequirement {
 const REQUIREMENT_META: Record<MissingKey, Omit<MissingRequirement, "key">> = {
   perfil:                  { label: "Tus datos de perito",        step: 2, fieldId: profileFieldId("nombre") },
   perito:                  { label: "Tus datos de perito",        step: 2, fieldId: profileFieldId("nombre") },
-  nombre_tribunal:         { label: "Tribunal",                   step: 2, fieldId: caseFieldId("nombre_tribunal") },
+  nombre_tribunal:         { label: "Destinatario",               step: 2, fieldId: caseFieldId("nombre_tribunal") },
   tipo_causa:              { label: "Tipo de causa",              step: 2, fieldId: caseFieldId("tipo_causa") },
   nro_referencia:          { label: "Número de causa / expediente", step: 2, fieldId: caseFieldId("nro_referencia") },
   caratula:                { label: "Carátula",                   step: 2, fieldId: caseFieldId("caratula") },
@@ -275,7 +276,7 @@ export function prefillFromLastCase(historyCases: Case[]): Partial<CaseFormData>
     nombre_tribunal: last.nombre_tribunal ?? "",
     organismo_tribunal: last.organismo_tribunal ?? "",
     sala_tribunal: last.sala_tribunal ?? "",
-    integrantes_tribunal: last.integrantes_tribunal ?? "",
+    integrantes: integrantesFromCase(last).map(v => newIntegranteRow(v)),
     tipo_causa: last.tipo_causa ?? "",
     nombre_proponente: last.nombre_proponente ?? "",
     profesion_proponente: last.profesion_proponente ?? "",
@@ -283,23 +284,90 @@ export function prefillFromLastCase(historyCases: Case[]): Partial<CaseFormData>
   };
 }
 
+/** Claves de texto del formulario (todas menos la lista de integrantes). */
+type CaseTextKey = Exclude<keyof CaseFormData, "integrantes">;
+
 /** Formulario a partir de un caso existente (modo edición). */
 export function caseToForm(cas: Case): CaseFormData {
-  const f = { ...EMPTY_CASE_FORM };
+  const f: CaseFormData = { ...EMPTY_CASE_FORM, integrantes: integrantesFromCase(cas).map(v => newIntegranteRow(v)) };
   for (const k of Object.keys(EMPTY_CASE_FORM) as (keyof CaseFormData)[]) {
-    if (k === "imeiOverride") continue;
+    if (k === "imeiOverride" || k === "integrantes") continue;
     const v = (cas as unknown as Record<string, unknown>)[k];
     if (typeof v === "string") f[k] = v;
   }
   return f;
 }
 
-/** Cuerpo de `POST`/`PUT /api/cases` (sin `device`), con los valores recortados. */
-export function formToCaseRequest(form: CaseFormData) {
-  const { imeiOverride: _imei, ...rest } = form;
-  const out = {} as Omit<CaseFormData, "imeiOverride">;
-  for (const k of Object.keys(rest) as (keyof typeof rest)[]) out[k] = rest[k].trim();
-  return out;
+/**
+ * Cuerpo de `POST`/`PUT /api/cases` (sin `device`), con los valores recortados.
+ * Los integrantes viajan como lista (sin filas vacías); `integrantes_tribunal`
+ * no se manda: lo deriva el servidor.
+ */
+export function formToCaseRequest(form: CaseFormData): CaseDataRequest {
+  const out = {} as Record<Exclude<CaseTextKey, "imeiOverride">, string>;
+  for (const k of Object.keys(form) as (keyof CaseFormData)[]) {
+    if (k === "imeiOverride" || k === "integrantes") continue;
+    out[k] = form[k].trim();
+  }
+  return { ...out, integrantes: cleanIntegrantes(form.integrantes.map(r => r.value)) };
+}
+
+/* ── Integrantes como lista (formulario-caso-catalogos, SDD §4.2 y §4.3) ── */
+
+let integranteSeq = 0;
+
+/**
+ * Fila nueva con una `key` estable. Contador de módulo y no
+ * `crypto.randomUUID`, que no existe fuera de contexto seguro (http por IP).
+ */
+export function newIntegranteRow(value = ""): IntegranteRow {
+  integranteSeq += 1;
+  return { key: `int-${integranteSeq}`, value };
+}
+
+/**
+ * Valores limpios (trim + espacios colapsados) y sin vacíos, en orden. Igual
+ * que `IntegrantesFormatter.Clean` del servidor: así la vista previa coincide
+ * letra por letra con la frase que deriva el servidor.
+ */
+export function cleanIntegrantes(values: string[]): string[] {
+  return values.map(v => cleanCatalogValue(v)).filter(Boolean);
+}
+
+/**
+ * Conector final: " e " si el último integrante (en minúsculas y sin tildes)
+ * empieza con sonido /i/ ("i…", o "hi" + no vocal / nada); " y " si no (D5, DP1 A).
+ * "Ignacio" e "Hilda" → " e "; "Hielo" → " y ".
+ */
+function finalConnector(last: string): string {
+  const k = normalizeCatalogKey(last);
+  if (k.startsWith("i")) return " e ";
+  if (k.startsWith("hi") && !/^[aeiou]/.test(k.slice(2))) return " e ";
+  return " y ";
+}
+
+/**
+ * Frase de integrantes: "A", "A y B", "A, B y C". Idéntica a
+ * `IntegrantesFormatter.Join` del servidor (que es la que usa el informe);
+ * acá se usa para la vista previa. La entrada ya viene limpia.
+ */
+export function joinIntegrantes(items: string[]): string {
+  if (items.length === 0) return "";
+  if (items.length === 1) return items[0];
+  const last = items[items.length - 1];
+  return items.slice(0, -1).join(", ") + finalConnector(last) + last;
+}
+
+/**
+ * Integrantes de un caso para mostrar como filas. Si la lista es coherente
+ * con el texto derivado → la lista. Si no (caso viejo, o un backend viejo
+ * reescribió solo el texto) → una fila con el texto, tal cual.
+ */
+export function integrantesFromCase(cas: Pick<Case, "integrantes" | "integrantes_tribunal">): string[] {
+  const text = (cas.integrantes_tribunal ?? "").trim();
+  const list = Array.isArray(cas.integrantes) ? cleanIntegrantes(cas.integrantes) : null;
+  if (list && joinIntegrantes(list) === text) return list;
+  return text ? [text] : [];
 }
 
 /* ── Capturas que admiten rol (mismo criterio que `EvidenceClassifier.Screenshot`) ── */

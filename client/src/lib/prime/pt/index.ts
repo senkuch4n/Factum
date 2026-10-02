@@ -1,4 +1,5 @@
 import type { PrimeReactPTOptions } from "primereact/api";
+import { autocomplete } from "./autocomplete";
 import { button } from "./button";
 import { calendar } from "./calendar";
 import { checkbox } from "./checkbox";
@@ -44,4 +45,5 @@ export const fxPassThrough: PrimeReactPTOptions = {
   dropdown,
   progressbar,
   checkbox,
+  autocomplete,
 };

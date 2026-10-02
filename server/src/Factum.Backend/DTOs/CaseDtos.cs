@@ -28,7 +28,10 @@ public sealed record CreateCaseRequest(
     string? MatriculaProponente = null,
     string? TipoDispositivo = null,
     string? LineaDispositivo = null,
-    DeviceInfoDto? Device = null
+    DeviceInfoDto? Device = null,
+    // Lista ordenada de integrantes (formulario-caso-catalogos). Si viene (no null), el servidor
+    // deriva integrantes_tribunal de la lista e ignora el que mande el request.
+    List<string>? Integrantes = null
 );
 
 /// <summary>PUT /api/cases/{id}: los campos de la causa sin <c>device</c>, más <c>imei</c>.</summary>
@@ -53,7 +56,10 @@ public sealed record UpdateCaseRequest(
     string? MatriculaProponente = null,
     string? TipoDispositivo = null,
     string? LineaDispositivo = null,
-    string? Imei = null
+    string? Imei = null,
+    // Ídem CreateCaseRequest. Ausente o null = cliente viejo: vale integrantes_tribunal y se
+    // hace $unset de Integrantes.
+    List<string>? Integrantes = null
 );
 
 public sealed record DeviceInfoDto(

@@ -2,7 +2,7 @@ export type {
   User, Case, DeviceInput, PublicConfig,
   PeritoSnapshot, ReportTexts, ReportTextsInput, CaptureRole, CaptureRoleValue,
   ExpertProfile, ExpertProfileRequest, CaseDataRequest, FileSource, Tratamiento,
-  AuthMode,
+  AuthMode, CatalogId, CatalogEntry, CatalogsResponse,
 } from "@/lib/api";
 export type { Device, AgentEvent, AgentFile, VideoVariant } from "@/lib/agent";
 
@@ -17,8 +17,18 @@ export interface CapturedFile {
 }
 
 /**
+ * Una fila de integrante del paso 2. `key` es estable (React y foco al
+ * reordenar); no viaja al servidor.
+ */
+export interface IntegranteRow {
+  key: string;
+  value: string;
+}
+
+/**
  * Estado del paso "Causa". Las claves son las del JSON del caso (snake_case),
- * así los errores mapean 1:1 con el `missing` del servidor.
+ * así los errores mapean 1:1 con el `missing` del servidor. Todas son texto
+ * salvo `integrantes` (lista de filas).
  */
 export interface CaseFormData {
   nro_referencia: string;
@@ -27,7 +37,8 @@ export interface CaseFormData {
   nombre_tribunal: string;
   organismo_tribunal: string;
   sala_tribunal: string;
-  integrantes_tribunal: string;
+  /** Viaja como `integrantes` (valores recortados, sin filas vacías). */
+  integrantes: IntegranteRow[];
   tipo_causa: string;
   caratula: string;
   parte_denunciante: string;

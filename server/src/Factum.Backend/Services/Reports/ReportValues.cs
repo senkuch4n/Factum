@@ -72,6 +72,10 @@ public static class ReportValues
 
         var tribunal = cas.NombreTribunal.Trim();
         var sala = cas.SalaTribunal.Trim();
+        // {fraseIntegracion} sale del TEXTO IntegrantesTribunal, no de la lista Integrantes
+        // (formulario-caso-catalogos, SDD §6): en un caso guardado con lista, el servidor lo
+        // deriva con IntegrantesFormatter.Join en la misma escritura; en un caso viejo es el texto
+        // de siempre. Así los casos viejos y un rollback generan el mismo informe.
         var integrantes = cas.IntegrantesTribunal.Trim();
 
         var proponente = new StringBuilder(cas.NombreProponente.Trim());
