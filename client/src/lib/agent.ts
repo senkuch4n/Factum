@@ -6,6 +6,19 @@
 export const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:8765";
 export function agentFileURL(filename: string) { return `${AGENT_URL}/files/${filename}`; }
 
+/** Mensaje cuando `fetch` ni siquiera llega a Tatana (agente cerrado o puerto ocupado). */
+const AGENT_UNREACHABLE = "No se pudo conectar con Tatana. Revisá que esté abierto en esta PC.";
+
+/**
+ * Lee `{ error }` de una respuesta no-2xx de Tatana (contrato de la SDD
+ * grabacion-android-windows §5.1); si no viene o no es texto, usa `fallback`.
+ */
+async function readAgentError(res: Response, fallback: string): Promise<Error> {
+  const data = (await res.json().catch(() => null)) as { error?: unknown } | null;
+  const msg = data && typeof data.error === "string" && data.error.trim() ? data.error.trim() : fallback;
+  return new Error(msg);
+}
+
 export interface Device {
   serial: string;
   state: string;
@@ -127,22 +140,32 @@ export const agent = {
     iosMode?: "video_only" | "with_mic" | "on_device" | "airplay",
     androidWithMic?: boolean,
   ): Promise<{ filename: string }> {
-    const res = await fetch(`${AGENT_URL}/devices/${serial}/record/start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        android_version: androidVersion, platform, ios_mode: iosMode,
-        android_with_mic: androidWithMic,
-      }),
-    });
-    if (!res.ok) throw new Error("Error iniciando grabación");
+    let res: Response;
+    try {
+      res = await fetch(`${AGENT_URL}/devices/${serial}/record/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          android_version: androidVersion, platform, ios_mode: iosMode,
+          android_with_mic: androidWithMic,
+        }),
+      });
+    } catch {
+      throw new Error(AGENT_UNREACHABLE);
+    }
+    if (!res.ok) throw await readAgentError(res, "Error iniciando grabación");
     return res.json();
   },
 
   async stopRecording(serial: string, platform: "android" | "ios" = "android"): Promise<{ filename: string; url: string }> {
     const url = `${AGENT_URL}/devices/${serial}/record/stop${platform === "ios" ? "?platform=ios" : ""}`;
-    const res = await fetch(url, { method: "POST" });
-    if (!res.ok) throw new Error("Error deteniendo grabación");
+    let res: Response;
+    try {
+      res = await fetch(url, { method: "POST" });
+    } catch {
+      throw new Error(AGENT_UNREACHABLE);
+    }
+    if (!res.ok) throw await readAgentError(res, "Error deteniendo grabación");
     return res.json();
   },
 

@@ -29,8 +29,12 @@ export function useRecording(
     if (isRecording) {
       setLoad("stopRecord", true);
       try {
-        const stopped = await agent.stopRecording(device.serial, platform).catch(() => null);
+        const stopped = await agent.stopRecording(device.serial, platform);
         if (stopped?.filename) addFile(stopped.filename);
+      } catch (e) {
+        // El agente ya limpió su estado: reintentar el stop no sirve, así que
+        // igual se sale del modo grabación (abajo) y se avisa el motivo real.
+        onError(`No se pudo guardar la grabación: ${e instanceof Error ? e.message : "error desconocido"}`);
       } finally {
         setLoad("stopRecord", false);
       }

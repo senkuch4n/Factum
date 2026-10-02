@@ -508,6 +508,50 @@
         "fase": "cerrada"
       },
       "notas": "Bug preexistente detectado por el reviewer de instalacion-poca-ram (2026-10-02): CasesController.UploadFile lee Request.Body sin tocar MaxRequestBodySize; el default de Kestrel (30.000.000 bytes) rechaza grabaciones/videos > ~28 MB. Alta por pedido del usuario. Rama encadenada sobre feat/instalacion-poca-ram (PR #3 abierto). Validada 2026-10-02: D1–D12 A (usuario). Incluye fix de path traversal en filename (D11). SDD lista: DT1–DT17 recomendadas (DT13/DT15 informativas; endpoint extra upload-check). Reviewer APROBADA 2026-10-02 (0 rechazos)."
+    },
+    {
+      "id": "grabacion-android-windows",
+      "titulo": "La grabación de pantalla de Android no funciona en Windows (scrcpy fuera del paquete y no encontrado)",
+      "estado": "aprobada",
+      "creada": "2026-10-02T00:00:00-03:00",
+      "actualizada": "2026-10-02",
+      "intentos_revision": 0,
+      "toca": {
+        "backend": true,
+        "frontend": true,
+        "agent_ui": false
+      },
+      "asignacion": {
+        "backend_model": "opus",
+        "frontend_model": "opus",
+        "reviewer_model": "sonnet",
+        "skill": null,
+        "rama": "feat/grabacion-android-windows",
+        "fase": "cerrada"
+      },
+      "notas": "Bug reportado por el usuario 2026-10-02 tras instalar la v1.0.0 en la PC del estudio: grabar la pantalla de Android no funciona. Diagnóstico del orquestador: (1) armar-tatana-portable.sh no incluye scrcpy; (2) AdbService.FindScrcpy solo busca PATH/Homebrew y en Windows busca 'scrcpy' sin .exe; idem ffmpeg del modo con micrófono de Android (no mira tools/ffmpeg como IosService). Riesgo extra: dos adb distintos (platform-tools vs scrcpy). Entra en la 1.1.0. Rama encadenada sobre feat/subida-archivos-grandes (PR #4 abierto). Validada 2026-10-02: D1–D10 a, D11–D12 b; paquete 1.1.0. SDD lista: 14 DP recomendadas; DP6 A y DP14 'no por ahora' (usuario). Reviewer APROBADA 2026-10-02 (0 rechazos)."
+    },
+    {
+      "id": "ios-herramientas-windows",
+      "titulo": "iOS en Windows: rutas de herramientas rotas (video_only vía script Python, foto, ffprobe, etc.) en el portátil de Tatana",
+      "estado": "no_afinada",
+      "creada": "2026-10-02T00:00:00-03:00",
+      "actualizada": "2026-10-02",
+      "intentos_revision": 0,
+      "toca": {
+        "backend": true,
+        "frontend": false,
+        "agent_ui": false
+      },
+      "asignacion": {
+        "backend_model": "opus",
+        "frontend_model": "opus",
+        "reviewer_model": "sonnet",
+        "skill": null,
+        "rama": "feat/ios-herramientas-windows",
+        "fase": "afinado"
+      },
+      "notas": "Desprendida de grabacion-android-windows (D11 b, 2026-10-02). Ver docs/hu-grabacion-android-windows.md (hallazgos de otros binarios no encontrados en Windows). Incluye también AirPlay sin uxplay en Windows."
     }
   ]
 }

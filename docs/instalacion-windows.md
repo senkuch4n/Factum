@@ -367,6 +367,21 @@ aviso del firewall.
 **modo real**. Si dice **modo simulado (mock = true)**: **no usar para peritajes** y avisar
 al proveedor.
 
+Debajo, en **Herramientas de Tatana**, el diagnóstico lista `adb`, `scrcpy` (grabación de
+pantalla de Android), `ffmpeg` y `python`, cada una con **OK** (versión y ruta) o **FALTA**.
+Todas tienen que estar en OK, con su ruta dentro de la carpeta de Tatana (`tools\`). Si alguna
+dice **FALTA** (por ejemplo `scrcpy: FALTA`), se arregla con **"Actualizar Factum"** usando el
+paquete del proveedor. Si dice *"Esta versión de Tatana no informa sus herramientas"*, Tatana
+es anterior a la 1.1.0: también se arregla con "Actualizar Factum".
+
+**Micrófono de la PC** (grabar Android "con mic de PC"): Tatana usa el primer micrófono que
+lista Windows. Si toma uno que no es, se puede fijar con `"Agent": { "MicDevice": "<nombre>" }`
+en un `appsettings.Local.json` junto a `Factum.Agent.exe` (en
+`%LOCALAPPDATA%\Programs\Tatana`); el nombre exacto sale de
+`tools\ffmpeg\ffmpeg.exe -hide_banner -list_devices true -f dshow -i dummy` (usar el nombre que
+aparece entre comillas antes de `(audio)`, por ejemplo `Micrófono (Realtek(R) Audio)`, y
+reiniciar Tatana).
+
 ## 9. Prueba de humo (después de instalar)
 
 1. Abrí Factum con el acceso del Escritorio e ingresá con tu DNI.
@@ -477,7 +492,12 @@ deploy/windows/armar-paquete.sh --version 1.0.0
   compila emulado: puede tardar más de 10 minutos), descarga `mongo:7.0.x` (el tag exacto sale
   de `deploy/windows/docker-compose.yml`), y verifica que el `.tar` traiga solo amd64.
 - Arma Tatana con `deploy/windows/armar-tatana-portable.sh` (descarga ~300 MB: adb, Python
-  embebido + pymobiledevice3, ffmpeg) o usa uno ya armado con `--tatana-zip <ruta>`.
+  embebido + pymobiledevice3, ffmpeg y **scrcpy (versión fija, verificada por SHA-256)**) o
+  usa uno ya armado con `--tatana-zip <ruta>`. scrcpy va en `tools\scrcpy\` sin su `adb.exe`
+  propio (Tatana usa el de `tools\platform-tools`), con su `LICENSE.txt` y un
+  `THIRD-PARTY-NOTICES.txt`. Para actualizar scrcpy se cambian juntas `SCRCPY_VERSION` y
+  `SCRCPY_WIN64_SHA256` al principio del script. Al final, el script verifica el contenido del
+  zip y corta si falta algo o si viaja el adb de scrcpy.
 - Deja `deploy/windows/dist/Factum-Instalacion-vX.Y.Z/` y su `.zip` (con `SHA256SUMS.txt`,
   verificable con `shasum -a 256 -c`). `dist/` está en `.gitignore`.
 

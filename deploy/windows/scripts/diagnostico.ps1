@@ -139,6 +139,13 @@ try {
         Write-Host ('  version=' + (Get-PropiedadSegura $ht 'version') + '  ios_available=' + (Get-PropiedadSegura $ht 'ios_available'))
     }
     Test-TatanaReal $ht | Out-Null
+    $lineasTools = @(Get-LineasHerramientasTatana $ht)
+    if ($lineasTools.Count -gt 0) {
+        Write-Host '  Herramientas de Tatana:'
+        foreach ($l in $lineasTools) {
+            if ($l.Ok) { Write-Ok $l.Texto } else { Write-Falla $l.Texto }
+        }
+    }
 
     Write-Titulo 'Disco'
     try {

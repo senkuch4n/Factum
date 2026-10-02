@@ -33,33 +33,10 @@ public interface IIosService
 // el tunnel abierto y captura frames continuamente → pipe PNG → ffmpeg H.264 MP4.
 public sealed class IosService : IIosService
 {
-    // Resuelve un binario externo primero relativo al exe (tools/{toolDirName}/…, el patrón
-    // que ya usa el build portable de Windows para python-embed), y si no está ahí cae a
-    // PATH y a las rutas típicas de Homebrew. `winName` puede ser null si el binario no
-    // tiene build de Windows (ej. qvh, que el upstream abandonó en esa plataforma).
-    private static string[] BuildToolCandidates(string toolDirName, string unixName, string? winName = null)
-    {
-        var exeName = OperatingSystem.IsWindows() ? (winName ?? unixName) : unixName;
-        var portable = Path.Combine(AppContext.BaseDirectory, "tools", toolDirName, exeName);
-        List<string> candidates = [portable, unixName];
-        if (winName is not null) candidates.Add(winName);
-        candidates.Add($"/opt/homebrew/bin/{unixName}");
-        candidates.Add($"/usr/local/bin/{unixName}");
-        return [.. candidates];
-    }
-
-    private static readonly string[] FfmpegPaths = BuildToolCandidates("ffmpeg", "ffmpeg", "ffmpeg.exe");
-
-    private static readonly string[] FfprobePaths =
-        ["ffprobe", "/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe"];
-
-    private static readonly string[] RifePaths =
-        ["rife-ncnn-vulkan", "/opt/homebrew/bin/rife-ncnn-vulkan", "/usr/local/bin/rife-ncnn-vulkan"];
-
-    // qvh (danielpaulus/quicktime_video_hack, MIT) reimplementa el protocolo de espejado de
-    // pantalla por USB que usa QuickTime/com.apple.cmio.iOSScreenCaptureAssistant — no
-    // requiere Developer Mode. Sin binario de Windows: el upstream abandonó ese port.
-    private static readonly string[] QvhPaths = BuildToolCandidates("qvh", "qvh");
+    // Las herramientas externas (ffmpeg, ffprobe, qvh, uxplay, rife) se resuelven con el helper
+    // común ToolResolver: tools/<dir>/<exe> junto al exe → PATH → Homebrew (solo fuera de
+    // Windows). qvh (danielpaulus/quicktime_video_hack, MIT) reimplementa el protocolo de
+    // espejado por USB de QuickTime y no tiene binario de Windows (el upstream abandonó ese port).
 
     // python candidates — se elige el primero que tenga pymobiledevice3.
     // Primero el modo portátil ("Tatana Portable"): un Python embebido con
@@ -81,6 +58,7 @@ public sealed class IosService : IIosService
     }
 
     private readonly bool _mock;
+    private readonly string? _micDevice;
     private readonly ILogger<IosService> _log;
     private readonly AgentWebSocketHub _hub;
     private readonly IFileStorageService _storage;
@@ -95,8 +73,9 @@ public sealed class IosService : IIosService
     public IosService(IOptions<AgentOptions> opts, ILogger<IosService> log, AgentWebSocketHub hub,
         IFileStorageService storage)
     {
-        _mock    = opts.Value.Mock;
-        _log     = log;
+        _mock      = opts.Value.Mock;
+        _micDevice = opts.Value.MicDevice;
+        _log       = log;
         _hub     = hub;
         _storage = storage;
     }
@@ -117,9 +96,8 @@ public sealed class IosService : IIosService
         public readonly object FramesLock = new();
         public CancellationTokenSource? BurstCts;
         public Task? BurstTask;
-        // audio (with_mic → PC microphone via ffmpeg)
-        public Process? AudioProc;
-        public string? AudioPath;
+        // audio (with_mic → micrófono de la PC vía ffmpeg, MicCapture)
+        public MicCapture? Mic;
         // on_device
         public List<string> ExistingDCIMFiles = [];
         // airplay
@@ -354,7 +332,7 @@ asyncio.run(main(sys.argv[1]))
 
     private async Task<string> TakeUsbScreenshotAsync(string udid, string outputPath, CancellationToken ct)
     {
-        var qvh = FindBinary(QvhPaths)
+        var qvh = FindBinary(AgentTools.Qvh)
             ?? throw new InvalidOperationException(
                 "qvh no encontrado. Instalar: https://github.com/danielpaulus/quicktime_video_hack");
 
@@ -377,7 +355,7 @@ asyncio.run(main(sys.argv[1]))
             if (!File.Exists(tmpH264) || new FileInfo(tmpH264).Length == 0)
                 throw new InvalidOperationException("qvh no generó stream de video (¿cable USB conectado?)");
 
-            var ffmpeg = FindBinary(FfmpegPaths) ?? "ffmpeg";
+            var ffmpeg = FindBinary(AgentTools.Ffmpeg) ?? "ffmpeg";
             var r = await ProcessRunner.RunAsync(ffmpeg,
                 $"-y -f h264 -i \"{tmpH264}\" -frames:v 1 \"{outputPath}\"", ct);
             if (!r.Success)
@@ -401,7 +379,7 @@ asyncio.run(main(sys.argv[1]))
 
     private async Task<string> TakeAirplayScreenshotAsync(string outputPath, CancellationToken ct)
     {
-        var uxplay = FindBinary(UxplayPaths)
+        var uxplay = FindBinary(AgentTools.Uxplay)
             ?? throw new InvalidOperationException(
                 "uxplay no encontrado. Instalá: brew install uxplay");
 
@@ -436,7 +414,7 @@ asyncio.run(main(sys.argv[1]))
             await Task.Delay(TimeSpan.FromSeconds(1.5), ct);
             await GracefulStopAsync(proc, TimeSpan.FromSeconds(15), ct);
 
-            var ffmpeg = FindBinary(FfmpegPaths) ?? "ffmpeg";
+            var ffmpeg = FindBinary(AgentTools.Ffmpeg) ?? "ffmpeg";
             // -sseof -1: toma un frame cerca del final, evitando el primer frame (a veces
             // negro/incompleto mientras el handshake RAOP todavía está estabilizándose).
             var r = await ProcessRunner.RunAsync(ffmpeg,
@@ -503,7 +481,7 @@ asyncio.run(main(sys.argv[1]))
             if (_session is not null)
                 throw new InvalidOperationException("Hay una grabación activa — terminala antes de espejar para capturas.");
 
-            var uxplay = FindBinary(UxplayPaths)
+            var uxplay = FindBinary(AgentTools.Uxplay)
                 ?? throw new InvalidOperationException("uxplay no encontrado. Instalá: brew install uxplay");
 
             var receiverName = $"Factum-{Guid.NewGuid().ToString("N")[..6]}";
@@ -620,7 +598,7 @@ asyncio.run(main(sys.argv[1]))
             }
             var mp4 = candidates[0];
 
-            var ffmpeg = FindBinary(FfmpegPaths) ?? "ffmpeg";
+            var ffmpeg = FindBinary(AgentTools.Ffmpeg) ?? "ffmpeg";
             foreach (var elapsed in marks)
             {
                 var path = _storage.NewFilePath("screenshot", "png");
@@ -698,13 +676,13 @@ asyncio.run(main(sys.argv[1]))
             // DVT recorder: captura de pantalla continua vía com.apple.instruments.server.services.screenshot
             if (await TryStartDvtRecorderAsync(session, ct))
             {
-                if (mode == "with_mic") StartAudio(session);
+                if (mode == "with_mic") await StartAudioAsync(session, ct);
                 return;
             }
 
             _log.LogWarning("DVT recorder falló; fallback a burst screenshots");
             StartBurst(session, udid);
-            if (mode == "with_mic") StartAudio(session);
+            if (mode == "with_mic") await StartAudioAsync(session, ct);
         }
         finally { _recordLock.Release(); }
     }
@@ -740,21 +718,23 @@ asyncio.run(main(sys.argv[1]))
                 }
                 else
                 {
+                    // with_mic: el mic se detiene antes que el recorder (SDD §6.4).
+                    if (session.Mode == "with_mic") await StopAudioAsync(session);
+
                     // SIGTERM al Python DVT recorder → espera a que cierre ffmpeg → MP4 listo
                     await StopDvtRecorderAsync(session, ct);
 
                     // with_mic: mux audio PC en el MP4
-                    if (session.Mode == "with_mic")
-                    {
-                        StopAudio(session);
-                        if (session.AudioPath is not null && File.Exists(session.OutputPath))
-                            await MuxAudioIntoVideoAsync(session.OutputPath, session.AudioPath, ct);
-                    }
+                    if (session.Mode == "with_mic" && session.Mic is { } mic &&
+                        File.Exists(mic.AudioPath) && File.Exists(session.OutputPath))
+                        await MuxAudioIntoVideoAsync(session.OutputPath, mic.AudioPath, ct);
                 }
             }
             else
             {
-                // Burst fallback (incluye mux de audio si with_mic)
+                // Burst fallback (incluye mux de audio si with_mic). Antes el mic nunca se
+                // detenía en este camino y el ffmpeg final leía un audio a medio escribir.
+                if (session.Mode == "with_mic") await StopAudioAsync(session);
                 await StopBurstAsync(session, ct);
             }
 
@@ -947,14 +927,12 @@ asyncio.run(main())
     //       Usamos espera fija de 3 s para verificar que el proceso no crasheó.
     // Nota: DYLD_LIBRARY_PATH requerido para que uxplay encuentre las libs de Homebrew GLib.
 
-    private static readonly string[] UxplayPaths = BuildToolCandidates("uxplay", "uxplay", "uxplay.exe");
-
     private static readonly string GlibDyldPath =
         "/opt/homebrew/lib:/opt/homebrew/opt/gstreamer/lib:/opt/homebrew/opt/glib/lib";
 
     private async Task<bool> TryStartAirplayRecorderAsync(IosSession session, CancellationToken ct)
     {
-        var uxplay = FindBinary(UxplayPaths);
+        var uxplay = FindBinary(AgentTools.Uxplay);
         if (uxplay is null)
         {
             _log.LogWarning("uxplay no encontrado. Compilar desde: https://github.com/FDH2/UxPlay");
@@ -1051,7 +1029,7 @@ asyncio.run(main())
     // audio que llega antes de lo esperado. Corrige ambos casos sin re-encodear video.
     private async Task FixAirplaySyncAsync(string mp4Path, CancellationToken ct)
     {
-        var ffmpeg = FindBinary(FfmpegPaths);
+        var ffmpeg = FindBinary(AgentTools.Ffmpeg);
         if (ffmpeg is null)
         {
             _log.LogWarning("ffmpeg no encontrado — omitiendo corrección A/V sync de AirPlay");
@@ -1113,14 +1091,14 @@ asyncio.run(main())
         lock (session.FramesLock) frames = [..session.Frames];
         if (frames.Count == 0) { _log.LogWarning("iOS burst: sin frames"); return; }
 
-        if (session.Mode == "with_mic" && session.AudioPath is not null)
+        if (session.Mode == "with_mic" && session.Mic is { } mic && File.Exists(mic.AudioPath))
         {
-            var ffmpeg = FindBinary(FfmpegPaths) ?? "ffmpeg";
+            var ffmpeg = FindBinary(AgentTools.Ffmpeg) ?? "ffmpeg";
             var listPath = session.OutputPath + ".txt";
             await WriteConcatListAsync(frames, listPath);
             var r = await ProcessRunner.RunAsync(ffmpeg,
                 $"-y -f concat -safe 0 -i \"{listPath}\" " +
-                $"-i \"{session.AudioPath}\" " +
+                $"-i \"{mic.AudioPath}\" " +
                 $"-vf scale=trunc(iw/2)*2:trunc(ih/2)*2 " +
                 $"-c:v libx264 -c:a aac -pix_fmt yuv420p -shortest \"{session.OutputPath}\"", ct);
             try { File.Delete(listPath); } catch { }
@@ -1128,7 +1106,7 @@ asyncio.run(main())
         }
         else
         {
-            var ffmpeg   = FindBinary(FfmpegPaths) ?? "ffmpeg";
+            var ffmpeg   = FindBinary(AgentTools.Ffmpeg) ?? "ffmpeg";
             var listPath = session.OutputPath + ".txt";
             await WriteConcatListAsync(frames, listPath);
             var r = await ProcessRunner.RunAsync(ffmpeg,
@@ -1156,7 +1134,7 @@ asyncio.run(main())
     // Re-mux video (ya codificado) + audio capturado por mic → reemplaza el archivo de video.
     private async Task MuxAudioIntoVideoAsync(string videoPath, string audioPath, CancellationToken ct)
     {
-        var ffmpeg = FindBinary(FfmpegPaths) ?? "ffmpeg";
+        var ffmpeg = FindBinary(AgentTools.Ffmpeg) ?? "ffmpeg";
         var tmp    = videoPath + ".mux.mp4";
         var r = await ProcessRunner.RunAsync(ffmpeg,
             $"-y -i \"{videoPath}\" -i \"{audioPath}\" " +
@@ -1169,49 +1147,25 @@ asyncio.run(main())
 
     // ── Audio capture (with_mic — micrófono del PC) ───────────────────────────
 
-    private void StartAudio(IosSession session)
+    // DP7: comparte MicCapture con Android, pero ante una falla solo se loguea (como antes): el
+    // modo with_mic de iOS no se puede probar en esta HU y no debe dejar de grabar el video.
+    private async Task StartAudioAsync(IosSession session, CancellationToken ct)
     {
-        var audioPath = Path.Combine(session.DataDir, $"ios_audio_{session.SessionId}.m4a");
-        var ffmpeg    = FindBinary(FfmpegPaths) ?? "ffmpeg";
-        var inputArgs = OperatingSystem.IsWindows()  ? "-f wasapi -i default" :
-                        OperatingSystem.IsMacOS()    ? "-f avfoundation -i :0" :
-                                                       "-f alsa -i default";
-        var proc = Process.Start(new ProcessStartInfo
-        {
-            FileName  = ffmpeg,
-            Arguments = $"-y {inputArgs} -c:a aac -b:a 128k \"{audioPath}\"",
-            RedirectStandardOutput = true,
-            RedirectStandardError  = true,
-            UseShellExecute = false,
-            CreateNoWindow  = true,
-        });
-        if (proc is null) { _log.LogWarning("No se pudo iniciar captura de audio (mic)"); return; }
-        session.AudioProc = proc;
-        session.AudioPath = audioPath;
-        _log.LogInformation("Captura de audio (mic) iniciada");
-    }
-
-    private void StopAudio(IosSession session)
-    {
-        if (session.AudioProc is null || session.AudioProc.HasExited) return;
+        var audioPath = Path.Combine(session.DataDir, $"ios_audio_{session.SessionId}.mka");
         try
         {
-            if (OperatingSystem.IsWindows())
-            {
-                session.AudioProc.Kill();
-            }
-            else
-            {
-                using var sigint = Process.Start(new ProcessStartInfo
-                {
-                    FileName = "kill", Arguments = $"-2 {session.AudioProc.Id}",
-                    UseShellExecute = false, CreateNoWindow = true,
-                });
-                sigint?.WaitForExit();
-            }
-            session.AudioProc.WaitForExit();
+            session.Mic = await MicCapture.StartAsync(audioPath, _micDevice, _log, ct);
+            _log.LogInformation("Captura de audio (mic) iniciada");
         }
-        catch { }
+        catch (Exception ex)
+        {
+            _log.LogWarning("No se pudo iniciar captura de audio (mic): {Error}", ex.Message);
+        }
+    }
+
+    private static async Task StopAudioAsync(IosSession session)
+    {
+        if (session.Mic is not null) await session.Mic.StopAsync();
     }
 
     // ── On-device recording ───────────────────────────────────────────────────
@@ -1283,7 +1237,7 @@ asyncio.run(main())
     {
         var stem   = Path.GetFileNameWithoutExtension(videoPath);
         var dir    = Path.GetDirectoryName(videoPath)!;
-        var ffmpeg = FindBinary(FfmpegPaths) ?? "ffmpeg";
+        var ffmpeg = FindBinary(AgentTools.Ffmpeg) ?? "ffmpeg";
 
         // 1. minterpolate blend (~2s) — frame blending simple
         var blendPath = Path.Combine(dir, stem + "_blend.mp4");
@@ -1332,7 +1286,7 @@ asyncio.run(main())
         else _log.LogWarning("Interpolación MCI falló: {E}", r.Stderr);
 
         // 3. RIFE (si rife-ncnn-vulkan está instalado)
-        var rife = FindBinary(RifePaths);
+        var rife = FindBinary(AgentTools.Rife);
         if (rife is not null)
             await RunRifeInterpolationAsync(videoPath, stem, dir, ffmpeg, rife);
     }
@@ -1386,16 +1340,7 @@ asyncio.run(main())
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static string? FindBinary(string[] candidates) =>
-        candidates.FirstOrDefault(p =>
-            p.Contains('/') ? File.Exists(p) : IsOnPath(p));
-
-    private static bool IsOnPath(string exe)
-    {
-        var sep   = OperatingSystem.IsWindows() ? ';' : ':';
-        var paths = Environment.GetEnvironmentVariable("PATH")?.Split(sep) ?? [];
-        return paths.Any(dir => File.Exists(Path.Combine(dir, exe)));
-    }
+    private static string? FindBinary(ToolSpec s) => ToolResolver.Find(s)?.Path;
 
     private static string FriendlyModel(string pt) => pt switch
     {

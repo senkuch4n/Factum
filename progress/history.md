@@ -160,3 +160,11 @@ commits, modelos usados, intentos de revisión y lo que quedó pendiente.
 - **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos. 406 tests backend.
 - **Rama:** `feat/subida-archivos-grandes` (encadenada sobre `feat/instalacion-poca-ram`). Incluye también el fix `653a282` de `armar-paquete.sh` (fuera del arnés).
 - **Pendiente:** prueba manual con un video real grande (413/507/409, cancelar) en la PC del estudio.
+
+## grabacion-android-windows — APROBADA (2026-10-02)
+
+- **Qué:** la grabación de pantalla de Android funciona en Windows. El portátil de Tatana incluye scrcpy 4.1 (versión fija + SHA-256, sin su adb, con LICENSE) en `tools/scrcpy/`, lanzado con `ADB` apuntando al adb de platform-tools. `ToolResolver` común (tools/ junto al exe → PATH con `.exe`/PATHEXT → Homebrew) para Adb e iOS. Cierre limpio en Windows con `CTRL_C_EVENT` (`WindowsConsoleSignal`/`ProcessStop`, timeout y fallback Kill + remux). Micrófono de la PC en Windows con ffmpeg `dshow` (`MicCapture`) y error claro si falla (DP6). `/health` con bloque `tools` (`ToolInventory`) y "Diagnóstico de Factum" lo muestra; `actualizar.ps1` cierra el adb de Tatana. La web muestra el motivo real del error de Tatana. Proyecto de tests nuevo `server/tests/Factum.Agent.Tests` (33 tests).
+- **Decisiones:** HU D1–D10 a, D11–D12 b (usuario); SDD recomendadas, DP6 A y DP14 "no por ahora" (usuario).
+- **Modelos:** afinador/architect (sesión), implementers opus, reviewer sonnet. 0 rechazos.
+- **Rama:** `feat/grabacion-android-windows` (encadenada sobre `feat/subida-archivos-grandes`).
+- **Pendiente:** prueba manual en la PC del estudio (guion en `progress/impl_backend_grabacion-android-windows.md`), en especial R1: que `AttachConsole` cierre scrcpy limpio y el MKV tenga duración; HU `ios-herramientas-windows`; avisos de licencia del resto de binarios (DP14, no por ahora).

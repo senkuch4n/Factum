@@ -7,15 +7,20 @@ namespace Factum.Agent.Controllers;
 
 [ApiController]
 [Route("/")]
-public sealed class HealthController(IOptions<AgentOptions> opts, IIosService ios) : ControllerBase
+public sealed class HealthController(IOptions<AgentOptions> opts, IIosService ios,
+    ToolInventory inventory) : ControllerBase
 {
+    // tools: adb/scrcpy/ffmpeg/python con found/source/path/version (SDD grabacion-android-windows
+    // §4.2). La resolución es real también en mock. Sincrónico e instantáneo: las versiones salen
+    // de un caché que se llena en segundo plano.
     [HttpGet("health")]
     public IActionResult Health() => Ok(new
     {
         status = "ok",
         version = "2.0.0",
         mock = opts.Value.Mock,
-        ios_available = ios.IsAvailable
+        ios_available = ios.IsAvailable,
+        tools = inventory.Snapshot(),
     });
 
     // El client (que sí tiene el JWT del fiscal) usa esto para reenviar la
