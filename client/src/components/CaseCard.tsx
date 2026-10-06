@@ -9,6 +9,7 @@ import {
 import { agent } from "@/lib/agent";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { ZipLocalActions } from "./ZipLocalActions";
+import { ZipCompatNotice } from "./ZipCompatNotice";
 import type { Case } from "@/lib/api";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -128,6 +129,7 @@ export function CaseCard({ cas, onResume }: { cas: Case; onResume: (c: Case) => 
                 <Shield className="w-3.5 h-3.5" aria-hidden="true" /> Paquete del informe
               </p>
               {isEncrypted && <ZipPasswordRow caseId={cas.id} />}
+              {isEncrypted && <ZipCompatNotice />}
               {cas.zip_hash && (
                 <HashRow
                   icon={<Hash className="w-3.5 h-3.5 shrink-0 mt-0.5 text-fx-text-3" aria-hidden="true" />}

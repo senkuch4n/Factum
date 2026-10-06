@@ -3,13 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "primereact/button";
 import {
-  Archive, FileText, Key, Hash, RotateCcw, ShieldCheck, CheckCircle2, Lock, HardDrive, Server, Download, CloudAlert,
+  Archive, FileText, Key, Hash, RotateCcw, ShieldCheck, CheckCircle2, HardDrive, Server, Download, CloudAlert,
 } from "lucide-react";
 import { api, type EvidenceStorage, type ZipLocation } from "@/lib/api";
 import { agent } from "@/lib/agent";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { FxBanner } from "@/components/feedback/FxBanner";
 import { ZipLocalActions } from "@/components/ZipLocalActions";
+import { ZipCompatNotice } from "@/components/ZipCompatNotice";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/feedback/CopyButton";
 import { FX_BUTTON_PRIMARY, FX_BUTTON_SECONDARY } from "@/lib/prime/pt/shared";
@@ -137,6 +138,9 @@ function ServerResult({ caseNumber, zipFile, pdfFile, password, encrypted, hash,
         </ul>
       </section>
 
+      {/* Entre la contraseña y la descarga: donde el oficial va a abrir el ZIP. */}
+      {encrypted && <ZipCompatNotice id="result-zip-compat" className={FADE_IN} />}
+
       <div className={cn("grid grid-cols-1 gap-3 sm:grid-cols-2", FADE_IN)}>
         <a
           href={downloadURL(zipFile)}
@@ -157,17 +161,6 @@ function ServerResult({ caseNumber, zipFile, pdfFile, password, encrypted, hash,
           <span className="text-xs font-normal opacity-90">Informe pericial (.docx)</span>
         </a>
 
-        {encrypted && (
-          <p
-            id="result-zip-compat"
-            className="m-0 flex items-start gap-2 text-left text-xs leading-relaxed text-fx-text-3 sm:col-span-2"
-          >
-            <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            <span>
-              Cifrado AES-256. Se abre con 7-Zip o WinRAR (Windows) y con Keka o The Unarchiver (macOS). El Explorador de Windows y la Utilidad de Archivo de macOS no lo abren.
-            </span>
-          </p>
-        )}
       </div>
 
       <Button
@@ -296,17 +289,11 @@ function AgentResult({
             </DataRow>
           </dl>
 
+          {/* Justo antes de "Mostrar en carpeta" / "Guardar una copia…". */}
+          {encrypted && <ZipCompatNotice />}
+
           {sameHost && state === "final" && (
             <ZipLocalActions caseId={caseId} caseRef={caseRef} zipFilename={zipFile} />
-          )}
-
-          {encrypted && (
-            <p className="m-0 flex items-start gap-2 text-xs leading-relaxed text-fx-text-3">
-              <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              <span>
-                Cifrado AES-256. Se abre con 7-Zip o WinRAR (Windows) y con Keka o The Unarchiver (macOS). El Explorador de Windows y la Utilidad de Archivo de macOS no lo abren.
-              </span>
-            </p>
           )}
         </section>
       </div>
