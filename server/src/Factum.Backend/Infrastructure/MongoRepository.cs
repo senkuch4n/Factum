@@ -1,5 +1,6 @@
 using Factum.Backend.Models;
 using Microsoft.Extensions.Options;
+using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace Factum.Backend.Infrastructure;
@@ -33,6 +34,12 @@ public interface ICaseRepository
     /// proyectados a los campos que alimentan catálogos + CreatedAt.
     /// </summary>
     Task<List<Case>> ListCatalogSourcesAsync(string officerDni, CancellationToken ct = default);
+
+    /// <summary>
+    /// SOLO LECTURA (abm-clientes §4.5, D9). Cantidad de casos por <c>Officer.Dni</c> para los DNIs
+    /// dados; los que no tienen casos no vienen. Una sola agregación $match/$project/$group.
+    /// </summary>
+    Task<Dictionary<string, long>> CountByOfficerDnisAsync(IReadOnlyCollection<string> dnis, CancellationToken ct = default);
 
     // ── zip-local-informe-servidor (§5.2-§5.6) ───────────────────────────────
 
@@ -135,6 +142,26 @@ public sealed class CaseRepository : ICaseRepository
 
     public async Task<Case?> FindByIdAsync(string id, CancellationToken ct = default) =>
         await _col.Find(c => c.Id == id).FirstOrDefaultAsync(ct);
+
+    // SOLO LECTURA: $match por el índice de Officer.Dni, $project solo de ese campo (sin _id, para que
+    // el índice cubra la consulta) y $group con $sum: 1. Sin $out/$merge ni ninguna etapa que escriba.
+    public async Task<Dictionary<string, long>> CountByOfficerDnisAsync(IReadOnlyCollection<string> dnis,
+        CancellationToken ct = default)
+    {
+        var result = new Dictionary<string, long>(StringComparer.Ordinal);
+        if (dnis.Count == 0) return result;
+
+        var docs = await _col.Aggregate()
+            .Match(Builders<Case>.Filter.In(c => c.Officer.Dni, dnis))
+            .Project(new BsonDocument { { "_id", 0 }, { "Officer.Dni", 1 } })
+            .Group(new BsonDocument { { "_id", "$Officer.Dni" }, { "n", new BsonDocument("$sum", 1) } })
+            .ToListAsync(ct);
+        foreach (var d in docs)
+        {
+            if (d["_id"].IsString) result[d["_id"].AsString] = d["n"].ToInt64();
+        }
+        return result;
+    }
 
     public Task InsertAsync(Case cas, CancellationToken ct = default) =>
         _col.InsertOneAsync(cas, cancellationToken: ct);

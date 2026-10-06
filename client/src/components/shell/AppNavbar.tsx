@@ -2,10 +2,12 @@
 
 import { useCallback, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { UserMenu } from "@/components/UserMenu";
 import { ExpertProfileDialog } from "@/components/ExpertProfileDialog";
 import { ChangePasswordDialog } from "@/components/password/ChangePasswordDialog";
 import { useAuthMode } from "@/hooks/useAuthMode";
+import type { UserRole } from "@/lib/api";
 import { ThemeSwitch } from "./ThemeSwitch";
 
 interface AppNavbarProps {
@@ -13,7 +15,8 @@ interface AppNavbarProps {
   center?: React.ReactNode;
   /** Acciones de la página (AgentChip, CTA). */
   actions?: React.ReactNode;
-  user?: { name: string; sigla: string; dni: string } | null;
+  /** `role` habilita "Administrar cuentas" (superadmin en modo `local`). */
+  user?: { name: string; sigla: string; dni: string; role?: UserRole } | null;
   /** Si hay `user` y `onLogout`, se renderiza UserMenu al final. */
   onLogout?: () => void;
   /** Default false: cada página decide si muestra el cambio de tema (el dashboard y el showcase lo muestran). */
@@ -55,10 +58,14 @@ export function AppNavbar({
   const showUserMenu = !!user && !!onLogout;
   const [profileOpen, setProfileOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
-  // El cambio de contraseña solo existe en modo `local`.
-  const canChangePassword = useAuthMode().mode === "local";
+  const router = useRouter();
+  // El cambio de contraseña y el panel de cuentas solo existen en modo `local`.
+  const mode = useAuthMode().mode;
+  const canChangePassword = mode === "local";
+  const canAdmin = user?.role === "superadmin" && mode === "local";
   const openProfile = useCallback(() => setProfileOpen(true), []);
   const openPassword = useCallback(() => setPasswordOpen(true), []);
+  const openAdmin = useCallback(() => router.push("/admin/cuentas"), [router]);
 
   return (
     <header className="sticky top-0 z-fx-nav h-14 shrink-0 border-b border-fx-border bg-fx-nav-bg shadow-fx-1">
@@ -94,6 +101,7 @@ export function AppNavbar({
               onLogout={onLogout}
               onOpenProfile={openProfile}
               onChangePassword={canChangePassword ? openPassword : undefined}
+              onOpenAdmin={canAdmin ? openAdmin : undefined}
             />
           )}
         </div>

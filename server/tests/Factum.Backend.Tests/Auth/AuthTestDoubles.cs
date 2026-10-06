@@ -108,16 +108,16 @@ public sealed class InMemoryUserRepository : IUserRepository
     }
 
     public Task<int> IncrementFailedLoginAsync(string id, DateTime now, CancellationToken ct = default) =>
-        Task.FromResult(Write(id, u => { u.FailedLoginCount++; u.UpdatedAt = now; return u.FailedLoginCount; }, 0));
+        Task.FromResult(Write(id, u => { u.FailedLoginCount++; return u.FailedLoginCount; }, 0));
 
     public Task LockAsync(string id, DateTime until, DateTime now, CancellationToken ct = default) =>
-        Task.FromResult(Write(id, u => { u.LockedUntil = until; u.FailedLoginCount = 0; u.UpdatedAt = now; return true; }, false));
+        Task.FromResult(Write(id, u => { u.LockedUntil = until; u.FailedLoginCount = 0; return true; }, false));
 
     public Task RegisterSuccessfulLoginAsync(string id, DateTime now, CancellationToken ct = default) =>
         Task.FromResult(Write(id, u => { u.FailedLoginCount = 0; u.LockedUntil = null; u.LastLoginAt = now; return true; }, false));
 
     public Task UpdatePasswordHashAsync(string id, string hash, DateTime now, CancellationToken ct = default) =>
-        Task.FromResult(Write(id, u => { u.PasswordHash = hash; u.UpdatedAt = now; return true; }, false));
+        Task.FromResult(Write(id, u => { u.PasswordHash = hash; return true; }, false));
 
     public Task<bool> SetPasswordAsync(string id, string hash, bool mustChange, DateTime changedAt, CancellationToken ct = default) =>
         Task.FromResult(Write(id, u =>
@@ -131,21 +131,80 @@ public sealed class InMemoryUserRepository : IUserRepository
             return true;
         }, false));
 
-    public Task<bool> SetStatusAsync(string id, string status, string? byDni, DateTime now, CancellationToken ct = default) =>
+    // ── abm-clientes §4.4: misma semántica condicional que Mongo ─────────────
+
+    public Task<UserAccount?> FindAdminViewByIdAsync(string id, CancellationToken ct = default)
+    {
+        Touch();
+        lock (_lock)
+        {
+            if (!_docs.TryGetValue(id, out var u)) return Task.FromResult<UserAccount?>(null);
+            var c = Clone(u);
+            c.PasswordHash = string.Empty;
+            c.LastEmergencyResetHash = null;
+            return Task.FromResult<UserAccount?>(c);
+        }
+    }
+
+    public Task<long> CountOtherActiveSuperadminsAsync(string excludedId, CancellationToken ct = default)
+    {
+        Touch();
+        lock (_lock)
+            return Task.FromResult((long)_docs.Values.Count(u =>
+                u.Id != excludedId && u.Role == UserRoles.Superadmin && u.Status == UserStatuses.Activo));
+    }
+
+    public Task<bool> SuspendIfActiveAsync(string id, string byDni, string? reason, DateTime now, CancellationToken ct = default) =>
         Task.FromResult(Write(id, u =>
         {
-            u.Status = status;
-            if (status == UserStatuses.Suspendido) { u.SuspendedAt = now; u.SuspendedBy = byDni; }
-            else { u.SuspendedAt = null; u.SuspendedBy = null; }
+            if (u.Status != UserStatuses.Activo) return false;
+            u.Status = UserStatuses.Suspendido;
+            u.SuspendedAt = now;
+            u.SuspendedBy = byDni;
+            u.SuspensionReason = reason;
             u.UpdatedAt = now;
             return true;
         }, false));
 
-    public Task<bool> UpdateProfileAsync(string id, string name, string sigla, DateTime now, CancellationToken ct = default) =>
-        Task.FromResult(Write(id, u => { u.Name = name; u.Sigla = sigla; u.UpdatedAt = now; return true; }, false));
+    public Task<bool> ReactivateIfSuspendedAsync(string id, DateTime now, CancellationToken ct = default) =>
+        Task.FromResult(Write(id, u =>
+        {
+            if (u.Status != UserStatuses.Suspendido) return false;
+            u.Status = UserStatuses.Activo;
+            u.SuspendedAt = null;
+            u.SuspendedBy = null;
+            u.SuspensionReason = null;
+            u.UpdatedAt = now;
+            return true;
+        }, false));
 
-    public Task<bool> UnlockAsync(string id, DateTime now, CancellationToken ct = default) =>
-        Task.FromResult(Write(id, u => { u.FailedLoginCount = 0; u.LockedUntil = null; u.UpdatedAt = now; return true; }, false));
+    public int EditableWrites { get; private set; }
+
+    public Task<bool> UpdateEditableFieldsIfUnchangedAsync(string id, AccountEditableFields fields,
+        DateTime expectedUpdatedAt, DateTime now, CancellationToken ct = default) =>
+        Task.FromResult(Write(id, u =>
+        {
+            if (u.UpdatedAt != expectedUpdatedAt) return false;
+            EditableWrites++;
+            u.Name = fields.Name;
+            u.Sigla = fields.Sigla;
+            u.ContactPhone = fields.ContactPhone;
+            u.ContactEmail = fields.ContactEmail;
+            u.Organization = fields.Organization;
+            u.Notes = fields.Notes;
+            u.UpdatedAt = now;
+            return true;
+        }, false));
+
+    public Task<bool> UnlockIfLockedAsync(string id, DateTime now, CancellationToken ct = default) =>
+        Task.FromResult(Write(id, u =>
+        {
+            if (u.LockedUntil is not { } until || until <= now) return false;
+            u.FailedLoginCount = 0;
+            u.LockedUntil = null;
+            u.UpdatedAt = now;
+            return true;
+        }, false));
 
     public Task<bool> ApplyEmergencyResetAsync(string id, string hash, string markerHash, DateTime changedAt,
         CancellationToken ct = default) =>
@@ -160,6 +219,7 @@ public sealed class InMemoryUserRepository : IUserRepository
             u.Status = UserStatuses.Activo;
             u.SuspendedAt = null;
             u.SuspendedBy = null;
+            u.SuspensionReason = null;
             u.UpdatedAt = changedAt;
             return true;
         }, false));
@@ -184,6 +244,11 @@ public sealed class InMemoryUserRepository : IUserRepository
         SuspendedBy = u.SuspendedBy,
         LastLoginAt = u.LastLoginAt,
         LastEmergencyResetHash = u.LastEmergencyResetHash,
+        ContactPhone = u.ContactPhone,
+        ContactEmail = u.ContactEmail,
+        Organization = u.Organization,
+        Notes = u.Notes,
+        SuspensionReason = u.SuspensionReason,
     };
 }
 

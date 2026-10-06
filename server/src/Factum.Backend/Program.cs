@@ -133,6 +133,14 @@ builder.Services.AddSingleton<IUserRepository, UserRepository>();
 builder.Services.AddSingleton<ISessionValidator, SessionValidator>();
 builder.Services.AddSingleton<IUserAccountService, UserAccountService>();
 builder.Services.AddSingleton<LocalUserBootstrapper>();
+// abm-clientes §6.9: panel de cuentas. Se registran siempre; los repositorios no conectan hasta el
+// primer uso, así que en dev/external no crean nada.
+builder.Services.AddSingleton<IUserAdminEventRepository, UserAdminEventRepository>();
+builder.Services.AddSingleton<IAdminLockRepository, AdminLockRepository>();
+builder.Services.AddSingleton<Factum.Backend.Services.Admin.ITemporaryPasswordGenerator,
+    Factum.Backend.Services.Admin.TemporaryPasswordGenerator>();
+builder.Services.AddSingleton<Factum.Backend.Services.Admin.IUserAdminService,
+    Factum.Backend.Services.Admin.UserAdminService>();
 if (authSettings.Mode == AuthModes.External)
 {
     builder.Services.AddHttpClient<IAuthProvider, ExternalHttpAuthProvider>(c =>
@@ -208,8 +216,12 @@ foreach (var warning in authSettings.Warnings.Concat(supportSettings.Warnings))
 
 // usuarios-locales §7.2: índices de users, superadmins iniciales, reset de emergencia y chequeo de
 // que haya al menos un superadmin activo. Si falla (Mongo caído, sin superadmins), no arranca.
+// abm-clientes §4.2: índice de la auditoría del panel, solo en local (si falla, tampoco arranca).
 if (authSettings.Mode == AuthModes.Local)
+{
     await app.Services.GetRequiredService<LocalUserBootstrapper>().RunAsync(CancellationToken.None);
+    await app.Services.GetRequiredService<IUserAdminEventRepository>().EnsureIndexesAsync(CancellationToken.None);
+}
 
 // Branding se carga una sola vez; resolverlo acá hace que sus warnings (logo inválido,
 // textos truncados) salgan en el log de arranque y no en el primer request.

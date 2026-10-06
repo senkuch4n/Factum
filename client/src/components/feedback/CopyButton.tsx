@@ -12,6 +12,8 @@ interface Props {
   text: string;
   /** Nombre accesible con contexto, p. ej. "Copiar contraseña del ZIP". */
   label: string;
+  /** Texto visible del botón (default "Copiar"). */
+  buttonLabel?: string;
   className?: string;
 }
 
@@ -26,7 +28,7 @@ const FEEDBACK_MS = 2000;
  * "No se pudo copiar": el texto que acompaña al botón tiene que quedar
  * seleccionable (`select-all`) para copiarlo a mano.
  */
-export function CopyButton({ text, label, className }: Props) {
+export function CopyButton({ text, label, buttonLabel = "Copiar", className }: Props) {
   const [state, setState] = useState<CopyState>("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -69,7 +71,7 @@ export function CopyButton({ text, label, className }: Props) {
             aria-hidden="true"
           />
         }
-        label="Copiar"
+        label={buttonLabel}
         aria-label={label}
         onClick={handleCopy}
       />

@@ -59,8 +59,13 @@ export interface ApiErrorBody {
   missing_images?: string[];
   /** `request_too_large`. */
   max_bytes?: number;
-  /** Errores de `change-password` (usuarios-locales §5.3): campo al que pertenece el error. */
-  field?: ChangePasswordField;
+  /**
+   * Campo al que pertenece el error: `change-password` (usuarios-locales §5.3)
+   * o el panel de cuentas (abm-clientes §8.1).
+   */
+  field?: ChangePasswordField | AdminUserField;
+  /** `dni_taken` del alta de cuentas (abm-clientes §8.1): id de la cuenta que ya tiene ese DNI. */
+  existing_user_id?: string;
 }
 
 /* ── Corte de sesión (usuarios-locales §9.1) ── */
@@ -256,6 +261,76 @@ export interface ChangePasswordRequest {
 
 /** Valores posibles de `field` en los errores de `change-password`. */
 export type ChangePasswordField = keyof ChangePasswordRequest;
+
+/* ── Administración de cuentas (abm-clientes, SDD §8.1) ── */
+
+export type AdminUserStatus = "activo" | "suspendido";
+export type AdminAction = "create" | "update" | "suspend" | "reactivate" | "reset_password" | "unlock";
+export type AdminUserField =
+  | "dni" | "name" | "sigla" | "contact_phone" | "contact_email" | "organization" | "notes"
+  | "reason" | "expected_updated_at";
+export type AdminErrorCode =
+  | "validation_failed" | "user_not_found" | "dni_taken" | "stale_update" | "cannot_act_on_self"
+  | "last_superadmin" | "invalid_state" | "operation_busy" | "not_available" | "superadmin_required";
+
+/** Cuenta para el panel. Nunca trae hashes. Las fechas son ISO UTC. */
+export interface AdminUser {
+  id: string;
+  dni: string;
+  name: string;
+  sigla: string;
+  role: UserRole;
+  status: AdminUserStatus;
+  must_change_password: boolean;
+  /** Solo si el bloqueo está vigente (lo resuelve el servidor). */
+  locked_until: string | null;
+  last_login_at: string | null;
+  created_at: string;
+  /** DNI o `"bootstrap"`. */
+  created_by: string | null;
+  created_by_name: string | null;
+  /** Token del control optimista (D11): se reenvía tal cual en `expected_updated_at`. */
+  updated_at: string;
+  suspended_at: string | null;
+  suspended_by: string | null;
+  suspended_by_name: string | null;
+  suspension_reason: string | null;
+  contact_phone: string;
+  contact_email: string;
+  organization: string;
+  notes: string;
+  case_count: number;
+}
+
+export interface AdminCreateUserRequest {
+  dni: string;
+  name: string;
+  sigla: string;
+  contact_phone: string;
+  contact_email: string;
+  organization: string;
+  notes: string;
+}
+
+export interface AdminUpdateUserRequest extends Omit<AdminCreateUserRequest, "dni"> {
+  expected_updated_at: string;
+}
+
+export interface AdminUserChange { field: string; from: string | null; to: string | null; }
+
+export interface AdminUserEvent {
+  id: string;
+  at: string;
+  actor_dni: string;
+  actor_name: string;
+  action: AdminAction;
+  changes: AdminUserChange[];
+  reason: string | null;
+  ip: string | null;
+}
+
+/** Respuesta del alta y del reset: la temporal solo viaja acá (D7). */
+export interface AdminUserWithPassword { user: AdminUser; temporary_password: string; }
 
 export type CaptureRoleValue = "imei_modelo" | "nombre_dispositivo";
 export type Tratamiento = "suscripto" | "suscripta";
@@ -573,6 +648,73 @@ export const api = {
     });
     localStorage.setItem("factum_token", data.token);
     return data;
+  },
+
+  /* ── Administración de cuentas (abm-clientes §8.1; solo superadmin en modo `local`) ── */
+
+  async adminListUsers(): Promise<AdminUser[]> {
+    const data = await requestSafe<{ users: AdminUser[] }>("/api/admin/users");
+    return data.users;
+  },
+
+  async adminGetUser(id: string): Promise<AdminUser> {
+    const data = await requestSafe<{ user: AdminUser }>(`/api/admin/users/${encodeURIComponent(id)}`);
+    return data.user;
+  },
+
+  /** Alta de un cliente (el rol siempre es `cliente`, D3). Devuelve la temporal una sola vez. */
+  async adminCreateUser(body: AdminCreateUserRequest): Promise<AdminUserWithPassword> {
+    return requestSafe<AdminUserWithPassword>("/api/admin/users", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  async adminUpdateUser(id: string, body: AdminUpdateUserRequest): Promise<{ user: AdminUser; changed: boolean }> {
+    return requestSafe<{ user: AdminUser; changed: boolean }>(`/api/admin/users/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+  },
+
+  async adminSuspendUser(id: string, reason?: string): Promise<AdminUser> {
+    const data = await requestSafe<{ user: AdminUser }>(`/api/admin/users/${encodeURIComponent(id)}/suspend`, {
+      method: "POST",
+      body: JSON.stringify(reason ? { reason } : {}),
+    });
+    return data.user;
+  },
+
+  async adminReactivateUser(id: string): Promise<AdminUser> {
+    const data = await requestSafe<{ user: AdminUser }>(`/api/admin/users/${encodeURIComponent(id)}/reactivate`, {
+      method: "POST",
+      body: "{}",
+    });
+    return data.user;
+  },
+
+  async adminResetPassword(id: string): Promise<AdminUserWithPassword> {
+    return requestSafe<AdminUserWithPassword>(`/api/admin/users/${encodeURIComponent(id)}/reset-password`, {
+      method: "POST",
+      body: "{}",
+    });
+  },
+
+  async adminUnlockUser(id: string): Promise<AdminUser> {
+    const data = await requestSafe<{ user: AdminUser }>(`/api/admin/users/${encodeURIComponent(id)}/unlock`, {
+      method: "POST",
+      body: "{}",
+    });
+    return data.user;
+  },
+
+  async adminListUserEvents(
+    id: string, offset: number, limit = 20,
+  ): Promise<{ events: AdminUserEvent[]; has_more: boolean }> {
+    const qs = `offset=${encodeURIComponent(String(offset))}&limit=${encodeURIComponent(String(limit))}`;
+    return requestSafe<{ events: AdminUserEvent[]; has_more: boolean }>(
+      `/api/admin/users/${encodeURIComponent(id)}/events?${qs}`,
+    );
   },
 
   async createCase(data: CaseDataRequest & { device: DeviceInput }): Promise<Case> {

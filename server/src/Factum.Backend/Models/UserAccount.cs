@@ -50,4 +50,16 @@ public sealed class UserAccount
     public DateTime? LastLoginAt { get; set; }
     /// <summary>Marca hasheada del último <c>Auth:Local:ResetSuperadmin</c> aplicado (§7.2).</summary>
     public string? LastEmergencyResetHash { get; set; }
+
+    // ── abm-clientes §4.1 (D1, D10): faltan en los documentos previos → defaults de C# ──
+    /// <summary>Teléfono de contacto (opcional, D1).</summary>
+    public string ContactPhone { get; set; } = string.Empty;
+    /// <summary>Email de contacto (opcional, D1). Factum no le manda mails.</summary>
+    public string ContactEmail { get; set; } = string.Empty;
+    /// <summary>Estudio, fuerza o razón social (opcional, ≤ 120).</summary>
+    public string Organization { get; set; } = string.Empty;
+    /// <summary>Notas internas de los superadmins (≤ 1000). Nunca sale en <c>UserDto</c> ni en <c>/me</c>.</summary>
+    public string Notes { get; set; } = string.Empty;
+    /// <summary>Motivo de la suspensión vigente (≤ 300, D10/T6). $unset al reactivar. El cliente no lo ve.</summary>
+    public string? SuspensionReason { get; set; }
 }

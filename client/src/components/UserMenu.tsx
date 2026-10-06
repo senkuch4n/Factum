@@ -3,7 +3,7 @@
 import { useId, useMemo, useRef, useState } from "react";
 import { Menu } from "primereact/menu";
 import type { MenuItem } from "primereact/menuitem";
-import { KeyRound, LogOut, UserCog } from "lucide-react";
+import { KeyRound, LogOut, UserCog, Users } from "lucide-react";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { hasRealSigla } from "@/lib/format";
 
@@ -14,6 +14,8 @@ interface Props {
   onOpenProfile?: () => void;
   /** Abre el diálogo "Cambiar contraseña" (solo modo `local`). */
   onChangePassword?: () => void;
+  /** Lleva al panel "Administrar cuentas" (solo superadmin en modo `local`). Sin la prop, no hay ítem. */
+  onOpenAdmin?: () => void;
 }
 
 /**
@@ -22,7 +24,7 @@ interface Props {
  * ítems informativos `disabled`) y el foco que vuelve al disparador los
  * resuelve Prime.
  */
-export function UserMenu({ user, onLogout, onOpenProfile, onChangePassword }: Props) {
+export function UserMenu({ user, onLogout, onOpenProfile, onChangePassword, onOpenAdmin }: Props) {
   const menuRef = useRef<Menu>(null);
   const [open, setOpen] = useState(false);
   const menuId = `user-menu-${useId().replace(/:/g, "")}`;
@@ -72,6 +74,13 @@ export function UserMenu({ user, onLogout, onOpenProfile, onChangePassword }: Pr
       },
       ...orgItem,
       { separator: true },
+      ...(onOpenAdmin
+        ? [{
+            label: "Administrar cuentas",
+            icon: <Users className="h-4 w-4" aria-hidden="true" />,
+            command: () => onOpenAdmin(),
+          }]
+        : []),
       ...(onOpenProfile
         ? [{
             label: "Mi perfil de perito",
@@ -93,7 +102,7 @@ export function UserMenu({ user, onLogout, onOpenProfile, onChangePassword }: Pr
         command: () => onLogout(),
       },
     ];
-  }, [user, onLogout, onOpenProfile, onChangePassword, organizationName, organizationLogoSrc, orgLogoFailed]);
+  }, [user, onLogout, onOpenProfile, onChangePassword, onOpenAdmin, organizationName, organizationLogoSrc, orgLogoFailed]);
 
   if (!user) return null;
 
