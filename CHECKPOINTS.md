@@ -5,8 +5,9 @@
 
 ## C1 — El arnés está sano
 
-- [ ] `backlog.json` es válido y tiene como mucho 1 HU en estado activo
-      (`afinando`, `en_arquitectura`, `implementando`, `en_revision`).
+- [ ] La HU tiene su issue en el Project "Factum – HU" con Fase `en_revision`
+      (`node ops/harness/hu.mjs ver N`) y la rama es `feat/<slug>` salida de
+      `develop`.
 - [ ] `./ops/harness/verify.sh` termina con exit code 0.
 
 ## C2 — La HU tiene su cadena de documentos completa

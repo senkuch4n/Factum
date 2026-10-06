@@ -64,7 +64,7 @@ electron-vite + React), según diga la SDD. No tocás `server/`.
 - ❌ **Nunca corras `next build` en `client/` del checkout principal**: pisa
   la carpeta `.next` del `npm run dev` del usuario. Si hace falta verificar el
   build, hacelo en un `git worktree` en el scratchpad y borralo al terminar.
-- ❌ No toques `backlog.json` ni `progress/current.md`.
+- ❌ No muevas tarjetas del Project "Factum – HU" (ni `ops/harness/hu.mjs`) ni toques `progress/sesiones/`.
 - ❌ No inventes nombres de campo distintos a los del Contrato compartido.
 
 ## Comunicación con el orquestador

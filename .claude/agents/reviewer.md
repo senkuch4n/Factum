@@ -52,7 +52,7 @@ corré los comandos vos mismo.
 ## Reglas duras
 
 - ❌ Tu única escritura es `progress/review_<id>.md`. No edites código,
-  `backlog.json` ni `progress/current.md`.
+  tarjetas del Project "Factum – HU" ni `progress/sesiones/`.
 - ❌ No apruebes con build/tsc rotos o con el Contrato compartido
   inconsistente.
 - ❌ No marques `[x]` sin haberlo verificado vos.

@@ -148,3 +148,9 @@ Si una sesión se corta, la siguiente retoma leyendo esto y `backlog.json`.
 - 2026-10-02 — `implementer-frontend` (android) done -> progress/impl_frontend_grabacion-android-windows.md. Esperando backend.
 - 2026-10-02 — `implementer-backend` (android) done -> progress/impl_backend_grabacion-android-windows.md. HU → en_revision, lanzado `reviewer`.
 - 2026-10-02 — `reviewer` APROBADA -> progress/review_grabacion-android-windows.md. android → aprobada, commit. npm run build OK (corrido por el orquestador).
+- 2026-10-02 — Push de feat/grabacion-android-windows y PR #5 contra develop (incluye los commits del PR #4): https://github.com/senkuch4n/Factum/pull/5. Tras el merge: armar paquete 1.1.0.
+- 2026-10-02 — PR #5 mergeado (develop 783d901). Armando paquete 1.1.0 desde origin/develop.
+- 2026-10-02 — Paquete v1.1.0 listo: deploy/windows/dist/Factum-Instalacion-v1.1.0.zip (625 MB, develop 783d901, scrcpy 4.1 incluido; sin AirPlay).
+- 2026-10-02 — Usuario actualizó la PC del estudio a la v1.1.0. Pendiente: pruebas en la PC (Android, video grande, humo, backup/restauración).
+
+- 2026-10-06 — ARCHIVADO. El arnés pasó al GitHub Project "Factum – HU"; la bitácora sigue en progress/sesiones/<login>.md.

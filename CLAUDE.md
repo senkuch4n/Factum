@@ -4,19 +4,30 @@
 
 En este repo actuás **siempre** como orquestador del arnés descrito en
 `AGENTS.md` (sección "Arnés de orquestación RDD/SDD"). Tu trabajo es leer,
-decidir, lanzar subagentes y actualizar `backlog.json` — nunca implementar
+decidir, lanzar subagentes y mover la HU en el Project "Factum – HU" con
+`ops/harness/hu.mjs` — nunca implementar
 código vos mismo, salvo lo señalado en "Cuándo NO aplica".
 
 ### Protocolo de arranque (primera tarea de cada sesión)
 
 1. Leé `AGENTS.md` (sección del arnés) si no lo hiciste ya en esta sesión.
-2. Leé `progress/current.md` — si hay una HU en curso, retomá desde ahí en
-   vez de asumir que no pasó nada.
-3. Leé `backlog.json` — identificá la HU activa (si hay) y su `estado`.
-4. Si vas a declarar algo `aprobada`/`arquitectura_lista`/cerrar sesión,
+2. Averiguá quién sos en GitHub (`gh api user --jq .login`) y leé
+   `progress/sesiones/<login>.md` (si no existe, crealo) — si hay una HU en
+   curso, retomá desde ahí en vez de asumir que no pasó nada.
+3. Corré `node ops/harness/hu.mjs ver` — identificá la HU activa de esta
+   persona (asignada a su login, en fase activa) y su `Fase`. Las HU
+   asignadas a otros no se tocan.
+4. Si el usuario quiere arrancar una HU nueva: `hu.mjs tomar N`, crear
+   `feat/<slug>` desde `develop` actualizado (`git fetch && git switch -c
+   feat/<slug> origin/develop`) y recién ahí `hu.mjs fase N afinando`.
+5. Si vas a declarar algo `aprobada`/`arquitectura_lista`/cerrar sesión,
    corré `./ops/harness/verify.sh` primero.
 
-### Máquina de estados (una HU activa a la vez)
+### Máquina de estados (una HU activa por persona)
+
+Cada fila "→ estado" se aplica con `node ops/harness/hu.mjs fase N <estado>`
+(mueve Fase y columna juntas). Anotá cada evento en
+`progress/sesiones/<login>.md`.
 
 | Estado | Quién actúa | Qué lanza el orquestador |
 |---|---|---|
@@ -27,15 +38,16 @@ código vos mismo, salvo lo señalado en "Cuándo NO aplica".
 | `en_arquitectura` → `arquitectura_lista` | `architect` | — (esperar su reporte; las decisiones que necesiten al usuario se le preguntan antes de implementar) |
 | `arquitectura_lista` | orquestador | `implementer-backend` y/o `implementer-frontend`, **siempre en Opus 5.5** (`model: "opus"`) |
 | `implementando` | implementadores | esperar `done`/`blocked` de cada uno antes de avanzar |
-| `en_revision` | subagente `reviewer` (`model: "sonnet"`) | leer `progress/review_<id>.md`, actualizar `backlog.json` |
-| `en_revision` → `aprobada` | orquestador | avisar al usuario con lo que tiene que probar a mano, mover resumen a `progress/history.md` |
-| `en_revision` → `rechazada_reintentando` | orquestador | relanzar el implementador que corresponda con el feedback del reviewer (máx. 2 veces, contador en `backlog.json`) |
+| `en_revision` | subagente `reviewer` (`model: "sonnet"`) | leer `progress/review_<id>.md`, cambiar la Fase |
+| `en_revision` → `aprobada` | orquestador | avisar al usuario con lo que tiene que probar a mano; tras su OK, commit + push de `feat/<slug>`, PR contra `develop` con `Closes #N`, y resumen de cierre con `hu.mjs comentar N` |
+| `en_revision` → `rechazada_reintentando` | orquestador | relanzar el implementador que corresponda con el feedback del reviewer (máx. 2 veces; `hu.mjs fase N rechazada_reintentando` cuenta y bloquea solo al 3er rechazo) |
 | 3er rechazo | orquestador | `bloqueada` — parar y avisar al usuario, no reintentar más |
 
 Se puede **adelantar** el afinado o la SDD de la HU siguiente mientras otra
-se implementa (son de solo lectura sobre el código), pero en `backlog.json`
+se implementa (son de solo lectura sobre el código), pero en el Project
 la adelantada queda en `validada`/`afinada_pendiente_validacion` para
-respetar "una activa a la vez".
+respetar "una activa por persona". Nunca adelantes una HU asignada a otra
+persona.
 
 ### Regla anti-teléfono-descompuesto
 
@@ -52,13 +64,13 @@ o de una HU larga si ya está en disco.
   toca (`client/` y/o `agent-ui/`).
 - A cualquier implementador que toque la base: la regla dura de datos de
   desarrollo de `AGENTS.md`.
-- A todos: no tocar `backlog.json` ni `progress/current.md`.
+- A todos: no mover tarjetas del Project ni tocar `progress/sesiones/`.
 
 ### Cuándo NO aplica este rol
 
 - Preguntas conceptuales, exploración del repo o conversaciones de diseño →
   respondé directo, sin arnés.
-- Cambios administrativos del propio arnés (`backlog.json`, `progress/*.md`,
+- Cambios administrativos del propio arnés (Project, `progress/*.md`,
   `docs/`, `Refactorizaciones/`, `skills/`) → los editás vos mismo.
 - Tareas puntuales fuera del flujo de HU (un typo, una config) → convención
   normal de `AGENTS.md`, sin pasar por el backlog. Si parece chica pero toca

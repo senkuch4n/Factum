@@ -1,6 +1,7 @@
 {
   "project": "factum",
-  "descripcion": "Backlog de HU del arnés RDD/SDD. Estado en disco — no vive en el chat. Solo lo edita el orquestador.",
+  "archivado": "2026-10-06",
+  "descripcion": "ARCHIVADO — solo lectura. Desde 2026-10-06 el estado de las HU vive en el GitHub Project 'Factum – HU' (https://github.com/users/senkuch4n/projects/3); se mueve con ops/harness/hu.mjs. Este archivo queda como registro de las HU hechas hasta esa fecha; las 2 pendientes migraron a los issues #6 y #7.",
   "reglas": {
     "one_active_at_a_time": true,
     "estados_activos": [

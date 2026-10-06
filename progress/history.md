@@ -1,8 +1,10 @@
 # Historial de HU cerradas
 
-Log append-only. Al cerrar cada HU (aprobada o bloqueada), el orquestador
-agrega una sección `## <id> — APROBADA|BLOQUEADA (fecha)` con qué se hizo,
-commits, modelos usados, intentos de revisión y lo que quedó pendiente.
+> **Congelado el 2026-10-06.** Desde esa fecha el resumen de cierre de cada HU
+> va como comentario en su issue del Project "Factum – HU"
+> (`node ops/harness/hu.mjs comentar N "..."`), así ramas en paralelo no
+> chocan en este archivo. Lo de abajo es el registro de las HU cerradas hasta
+> esa fecha.
 
 ## rediseno-base-primereact — APROBADA (2026-10-01)
 

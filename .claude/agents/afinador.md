@@ -35,7 +35,7 @@ escritas para que el orquestador se las traslade.
 5. Agregá al final `## Dudas para validar con el usuario`: cada ambigüedad
    real, con opciones y **una recomendada** con su porqué. No inventes la
    respuesta: si algo no está claro, es una duda, no una decisión tuya.
-6. No toques `backlog.json`. El orquestador es el único que cambia estados.
+6. No muevas tarjetas del Project "Factum – HU" ni corras `ops/harness/hu.mjs`. El orquestador es el único que cambia estados.
 
 ## Reglas duras
 

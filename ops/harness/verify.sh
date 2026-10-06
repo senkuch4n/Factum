@@ -21,49 +21,26 @@ fi
 cd "$REPO_ROOT" || exit 1
 
 echo "── 1. Archivos base del arnés ──────────────────────────"
-for f in AGENTS.md CLAUDE.md backlog.json progress/current.md progress/history.md CHECKPOINTS.md skills/CATALOGO.md; do
+for f in AGENTS.md CLAUDE.md CHECKPOINTS.md skills/CATALOGO.md .mcp.json ops/harness/hu.mjs .github/ISSUE_TEMPLATE/hu.yml; do
   if [ -f "$f" ]; then ok "Existe $f"; else fail "Falta archivo base: $f"; fi
 done
 
 echo ""
-echo "── 2. Validando backlog.json ───────────────────────────"
-node -e '
-const fs = require("fs");
-try {
-  const data = JSON.parse(fs.readFileSync("backlog.json", "utf8"));
-  const activos = data.reglas.estados_activos;
-  const enCurso = data.features.filter(f => activos.includes(f.estado));
-  if (enCurso.length > 1) {
-    console.log("[FAIL]  Hay " + enCurso.length + " HU activas a la vez (máximo 1): " + enCurso.map(f => f.id).join(", "));
-    process.exit(1);
-  }
-  for (const f of data.features) {
-    if (!f.id || !f.estado) {
-      console.log("[FAIL]  HU sin id/estado: " + JSON.stringify(f));
-      process.exit(1);
-    }
-    if (!data.reglas.valid_status.includes(f.estado)) {
-      console.log("[FAIL]  Estado inválido en HU " + f.id + ": " + f.estado);
-      process.exit(1);
-    }
-    if ((f.intentos_revision || 0) > data.reglas.max_intentos_revision && f.estado !== "bloqueada" && f.estado !== "aprobada") {
-      console.log("[FAIL]  HU " + f.id + " superó el tope de reintentos y no está bloqueada");
-      process.exit(1);
-    }
-  }
-  const ids = data.features.map(f => f.id);
-  const dup = ids.filter((id, i) => ids.indexOf(id) !== i);
-  if (dup.length) {
-    console.log("[FAIL]  IDs de HU duplicados: " + [...new Set(dup)].join(", "));
-    process.exit(1);
-  }
-  console.log("[OK]    backlog.json válido (" + data.features.length + " HU, " + enCurso.length + " activa)");
-} catch (e) {
-  console.log("[FAIL]  backlog.json inválido: " + e.message);
-  process.exit(1);
-}
-'
-if [ $? -ne 0 ]; then EXIT_CODE=1; fi
+echo "── 2. Estado de HU (GitHub Project) ────────────────────"
+# El estado vive en el Project "Factum – HU" y lo mantiene ops/harness/hu.mjs
+# (una activa por persona, tope de reintentos). Acá solo se chequea lo local,
+# sin red, para que el hook Stop sea rápido.
+if git diff --quiet HEAD -- backlog.json 2>/dev/null; then
+  ok "backlog.json archivado sin cambios"
+else
+  fail "backlog.json está archivado (solo lectura) y tiene cambios: el estado se cambia con ops/harness/hu.mjs"
+fi
+if node --check ops/harness/hu.mjs 2>/dev/null; then ok "hu.mjs parsea"; else fail "ops/harness/hu.mjs tiene errores de sintaxis"; fi
+RAMA="$(git branch --show-current)"
+case "$RAMA" in
+  feat/*|fix/*|develop|main) ok "Rama actual: $RAMA" ;;
+  *) warn "Rama '$RAMA' no sigue feat/<slug> o fix/<slug>" ;;
+esac
 
 echo ""
 echo "── 3. Build / type-check (solo lados con cambios sin commitear) ─"
