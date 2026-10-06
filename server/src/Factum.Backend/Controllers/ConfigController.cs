@@ -9,7 +9,8 @@ namespace Factum.Backend.Controllers;
 
 /// <summary>
 /// Configuración pública (sin autenticación): la usa el login antes de que exista un token.
-/// Expone el nombre y el logo de la organización y si la integración de soporte está habilitada
+/// Expone el nombre y el logo del default de la instalación (la <c>Branding</c> de appsettings: login y
+/// fallback de las cuentas sin marca propia, marca-por-cliente D4/D6; la marca de cada cuenta NO sale de acá) y si la integración de soporte está habilitada
 /// (<c>support_enabled</c>) y si el ZIP de evidencia se cifra (<c>encrypt_zip</c>); <c>ContactLines</c> y la config de soporte no salen de acá.
 /// </summary>
 [ApiController]

@@ -11,6 +11,8 @@ public static class UserAdminActions
     public const string Reactivate = "reactivate";
     public const string ResetPassword = "reset_password";
     public const string Unlock = "unlock";
+    /// <summary>marca-por-cliente §4.2: guardado con cambios de la marca del informe de una cuenta.</summary>
+    public const string UpdateBranding = "update_branding";
 }
 
 /// <summary>
@@ -32,7 +34,7 @@ public sealed class UserAdminEvent
     public string TargetName { get; set; } = "";
     /// <summary><see cref="UserAdminActions"/>.</summary>
     public string Action { get; set; } = "";
-    /// <summary>Vacía salvo <c>create</c>/<c>update</c>.</summary>
+    /// <summary>Vacía salvo <c>create</c>/<c>update</c>/<c>update_branding</c>.</summary>
     public List<UserAdminChange> Changes { get; set; } = [];
     /// <summary>Solo <c>suspend</c> (D10).</summary>
     public string? Reason { get; set; }

@@ -63,7 +63,13 @@ export interface ApiErrorBody {
    * Campo al que pertenece el error: `change-password` (usuarios-locales §5.3)
    * o el panel de cuentas (abm-clientes §8.1).
    */
-  field?: ChangePasswordField | AdminUserField;
+  field?: ChangePasswordField | AdminUserField | BrandingField;
+  /** Índice de `contact_lines` en el array enviado (marca-por-cliente §8.1). */
+  index?: number;
+  /** Contraste del color rechazado, truncado a 1 decimal (marca-por-cliente §5). */
+  contrast?: number;
+  /** Contraste mínimo exigido (4.5). */
+  min_contrast?: number;
   /** `dni_taken` del alta de cuentas (abm-clientes §8.1): id de la cuenta que ya tiene ese DNI. */
   existing_user_id?: string;
 }
@@ -216,6 +222,27 @@ async function requestNoContent(path: string, options: RequestInit = {}): Promis
   if (!res.ok) throw await toApiError(res);
 }
 
+/**
+ * Envío `multipart/form-data` con el token, sin `Content-Type` manual (lo pone
+ * el navegador con el boundary). Red caída → `ApiError(SERVER_UNREACHABLE, 0)`.
+ */
+async function sendMultipart<T>(path: string, method: "POST" | "PUT", form: FormData): Promise<T> {
+  const token = getToken();
+  let res: Response;
+  try {
+    res = await fetch(`${BACKEND_URL}${path}`, {
+      method,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+      cache: "no-store",
+    });
+  } catch {
+    throw new ApiError(SERVER_UNREACHABLE, 0, undefined, null);
+  }
+  if (!res.ok) throw await toApiError(res);
+  return res.json() as Promise<T>;
+}
+
 /* ── Catálogos de sugerencias del perito (formulario-caso-catalogos) ── */
 
 /** Ids de catálogo: son literalmente las claves de `catalogs` en `GET /api/catalogs`. */
@@ -265,7 +292,8 @@ export type ChangePasswordField = keyof ChangePasswordRequest;
 /* ── Administración de cuentas (abm-clientes, SDD §8.1) ── */
 
 export type AdminUserStatus = "activo" | "suspendido";
-export type AdminAction = "create" | "update" | "suspend" | "reactivate" | "reset_password" | "unlock";
+export type AdminAction =
+  | "create" | "update" | "suspend" | "reactivate" | "reset_password" | "unlock" | "update_branding";
 export type AdminUserField =
   | "dni" | "name" | "sigla" | "contact_phone" | "contact_email" | "organization" | "notes"
   | "reason" | "expected_updated_at";
@@ -331,6 +359,63 @@ export interface AdminUserEvent {
 
 /** Respuesta del alta y del reset: la temporal solo viaja acá (D7). */
 export interface AdminUserWithPassword { user: AdminUser; temporary_password: string; }
+
+/* ── Marca del informe por cuenta (marca-por-cliente, SDD §8.1) ── */
+
+export type BrandingImageKind = "logo" | "isotype";
+export type BrandingImageAction = "keep" | "replace" | "remove";
+
+export interface BrandingImage {
+  /** Ruta relativa al backend, con ?v=<version>. Se pide con Authorization (blob). */
+  url: string;
+  content_type: "image/png" | "image/jpeg";
+  width: number;
+  height: number;
+  size: number;
+  /** 12 hex del SHA-256. */
+  version: string;
+}
+
+export interface AccountBranding {
+  /** false = la cuenta nunca guardó marca: sus informes usan la de la instalación (D4). */
+  exists: boolean;
+  /** "" = sin nombre. */
+  organization_name: string;
+  contact_lines: string[];
+  /** "#RRGGBB" mayúsculas, null = verde de Factum. */
+  primary_color: string | null;
+  /** null = tinte de Factum. */
+  accent_color: string | null;
+  logo: BrandingImage | null;
+  isotype: BrandingImage | null;
+  /** ISO UTC (ms); token optimista. */
+  updated_at: string | null;
+  /** DNI. */
+  updated_by: string | null;
+  /** Solo con exists=false, en modo local y si users.organization tiene valor (D10). */
+  suggested_organization_name: string | null;
+}
+
+/** Parte `metadata` (JSON) del PUT multipart. Archivos en las partes `logo` / `isotype`. */
+export interface BrandingSaveMetadata {
+  organization_name: string;
+  contact_lines: string[];
+  /** "#RRGGBB" o "" (= Factum). */
+  primary_color: string;
+  accent_color: string;
+  logo_action: BrandingImageAction;
+  isotype_action: BrandingImageAction;
+  /** updated_at tal como vino; null si exists=false. */
+  expected_updated_at: string | null;
+}
+
+export interface AccountBrandingSaveResponse { branding: AccountBranding; changed: boolean; }
+
+export type BrandingField =
+  | "metadata" | "organization_name" | "contact_lines" | "primary_color" | "accent_color" | "logo" | "isotype";
+export type BrandingErrorCode =
+  | "validation_failed" | "stale_update" | "request_too_large" | "image_not_found"
+  | "user_not_found" | "not_available" | "superadmin_required";
 
 export type CaptureRoleValue = "imei_modelo" | "nombre_dispositivo";
 export type Tratamiento = "suscripto" | "suscripta";
@@ -715,6 +800,48 @@ export const api = {
     return requestSafe<{ events: AdminUserEvent[]; has_more: boolean }>(
       `/api/admin/users/${encodeURIComponent(id)}/events?${qs}`,
     );
+  },
+
+  /* ── Marca del informe (marca-por-cliente §8.2) ── */
+
+  /** Marca de la cuenta logueada (el DNI sale de la sesión). */
+  async getMyBranding(): Promise<AccountBranding> {
+    const data = await requestSafe<{ branding: AccountBranding }>("/api/branding", { cache: "no-store" });
+    return data.branding;
+  },
+
+  /** `multipart/form-data`: `metadata` (JSON) + `logo?` / `isotype?`. */
+  async saveMyBranding(form: FormData): Promise<AccountBrandingSaveResponse> {
+    return sendMultipart<AccountBrandingSaveResponse>("/api/branding", "PUT", form);
+  },
+
+  async adminGetBranding(id: string): Promise<AccountBranding> {
+    const data = await requestSafe<{ branding: AccountBranding }>(
+      `/api/admin/users/${encodeURIComponent(id)}/branding`, { cache: "no-store" },
+    );
+    return data.branding;
+  },
+
+  async adminSaveBranding(id: string, form: FormData): Promise<AccountBrandingSaveResponse> {
+    return sendMultipart<AccountBrandingSaveResponse>(`/api/admin/users/${encodeURIComponent(id)}/branding`, "PUT", form);
+  },
+
+  /**
+   * Bytes de una imagen de marca (logo o isotipo) como `Blob`. `url` es la del
+   * DTO (propia o del panel), relativa al backend. Con `Authorization`, nunca
+   * con `?token=` (DT4).
+   */
+  async getBrandingImage(url: string, signal?: AbortSignal): Promise<Blob> {
+    const token = getToken();
+    let res: Response;
+    try {
+      res = await fetch(`${BACKEND_URL}${url}`, { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal });
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      throw new ApiError(SERVER_UNREACHABLE, 0, undefined, null);
+    }
+    if (!res.ok) throw await toApiError(res);
+    return res.blob();
   },
 
   async createCase(data: CaseDataRequest & { device: DeviceInput }): Promise<Case> {

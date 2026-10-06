@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { UserMenu } from "@/components/UserMenu";
 import { ExpertProfileDialog } from "@/components/ExpertProfileDialog";
 import { ChangePasswordDialog } from "@/components/password/ChangePasswordDialog";
+import { BrandingDialog } from "@/components/branding/BrandingDialog";
 import { useAuthMode } from "@/hooks/useAuthMode";
 import type { UserRole } from "@/lib/api";
 import { ThemeSwitch } from "./ThemeSwitch";
@@ -24,6 +25,8 @@ interface AppNavbarProps {
   /** Si viene, la marca es un <Link>; si no, es estática. */
   brandHref?: string;
 }
+
+const SELF_TARGET = { kind: "self" } as const;
 
 /* Logo "Sello": horizontal (marca + "Factum" en trazos) desde sm; en móvil,
    solo la marca. Las imágenes son decorativas: el nombre accesible lo pone
@@ -58,6 +61,7 @@ export function AppNavbar({
   const showUserMenu = !!user && !!onLogout;
   const [profileOpen, setProfileOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [brandingOpen, setBrandingOpen] = useState(false);
   const router = useRouter();
   // El cambio de contraseña y el panel de cuentas solo existen en modo `local`.
   const mode = useAuthMode().mode;
@@ -65,6 +69,7 @@ export function AppNavbar({
   const canAdmin = user?.role === "superadmin" && mode === "local";
   const openProfile = useCallback(() => setProfileOpen(true), []);
   const openPassword = useCallback(() => setPasswordOpen(true), []);
+  const openBranding = useCallback(() => setBrandingOpen(true), []);
   const openAdmin = useCallback(() => router.push("/admin/cuentas"), [router]);
 
   return (
@@ -100,6 +105,7 @@ export function AppNavbar({
               user={user}
               onLogout={onLogout}
               onOpenProfile={openProfile}
+              onOpenBranding={openBranding}
               onChangePassword={canChangePassword ? openPassword : undefined}
               onOpenAdmin={canAdmin ? openAdmin : undefined}
             />
@@ -107,6 +113,9 @@ export function AppNavbar({
         </div>
       </div>
       {showUserMenu && <ExpertProfileDialog visible={profileOpen} onHide={() => setProfileOpen(false)} />}
+      {showUserMenu && (
+        <BrandingDialog visible={brandingOpen} onHide={() => setBrandingOpen(false)} target={SELF_TARGET} />
+      )}
       {showUserMenu && canChangePassword && (
         <ChangePasswordDialog visible={passwordOpen} onHide={() => setPasswordOpen(false)} dni={user.dni} />
       )}

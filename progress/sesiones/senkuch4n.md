@@ -42,3 +42,13 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-06 — #12 implementer-backend done -> progress/impl_backend_abm-clientes.md. en_revision; lanzado reviewer (sonnet).
 - 2026-10-06 — #12 reviewer APROBADA -> progress/review_abm-clientes.md. Fase aprobada; esperando prueba manual.
 - 2026-10-06 — #12 prueba manual OK del usuario (panel completo). Commit + push + PR.
+- 2026-10-06 — #12 cerrada: PR contra develop + resumen de cierre en el issue.
+- 2026-10-06 — PR #16 mergeado. #13 marca-por-cliente tomada, rama feat/marca-por-cliente, afinando; lanzado afinador.
+- 2026-10-06 — #13 afinador done -> docs/hu-marca-por-cliente.md (13 dudas); afinada_pendiente_validacion.
+- 2026-10-06 — #13 validada (todas las recomendadas; D1=C). en_arquitectura; lanzado architect.
+- 2026-10-06 — #13 architect done -> Refactorizaciones/marca-por-cliente.md con 1 decisión pendiente (DP1); preguntando.
+- 2026-10-06 — #13 DP1 = A. implementando; lanzados implementer-backend y implementer-frontend (opus).
+- 2026-10-06 — #13 implementer-frontend done -> progress/impl_frontend_marca-por-cliente.md. Esperando backend.
+- 2026-10-06 — #13 implementer-backend done -> progress/impl_backend_marca-por-cliente.md. en_revision; lanzado reviewer (sonnet).
+- 2026-10-06 — #13 reviewer APROBADA -> progress/review_marca-por-cliente.md. Fase aprobada; esperando prueba manual.
+- 2026-10-06 — #13 OK del usuario. Commit + push + PR.
