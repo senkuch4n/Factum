@@ -57,6 +57,12 @@ if (storageSettings.MaxUploadBytes <= 0)
     configErrors.Add("Storage:MaxUploadBytes tiene que ser mayor que 0");
 if (storageSettings.MinFreeBytes < 0)
     configErrors.Add("Storage:MinFreeBytes tiene que ser mayor o igual que 0");
+// zip-local-informe-servidor §4.1: tope de generate/finish y orígenes CORS permitidos.
+var reportSettingsRaw = builder.Configuration.GetSection("Report").Get<ReportOptions>() ?? new ReportOptions();
+if (reportSettingsRaw.MaxGenerateUploadBytes <= 0)
+    configErrors.Add("Report:MaxGenerateUploadBytes tiene que ser mayor que 0");
+var (corsOrigins, corsErrors) = CorsOrigins.Parse(builder.Configuration);
+configErrors.AddRange(corsErrors);
 if (configErrors.Count > 0)
     throw new InvalidOperationException(
         "Configuración inválida, el backend no arranca:" + string.Concat(configErrors.Select(e => "\n  - " + e)));
@@ -90,9 +96,11 @@ builder.Services.AddAuthentication("FactumBearerScheme")
         "FactumBearerScheme", _ => { });
 builder.Services.AddAuthorization();
 
-// ── CORS ──────────────────────────────────────────────────────────────────────
+// ── CORS (zip-local-informe-servidor §5.9) ────────────────────────────────────
+// Solo los orígenes de Cors:AllowedOrigins (default: el front local). Sin credenciales: el token
+// viaja en el header Authorization.
 builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
-    p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+    p.WithOrigins([.. corsOrigins]).AllowAnyHeader().AllowAnyMethod()));
 
 // ── IP real del fiscal cuando el backend corre detrás de un reverse proxy ────
 // (nginx, ingress, etc.) — sin esto, la auditoría del agente vería la IP del
@@ -171,6 +179,7 @@ builder.Services.AddSwaggerGen(c =>
 var app = builder.Build();
 
 app.Logger.LogInformation("Auth: modo {Mode}", authSettings.Mode);
+app.Logger.LogInformation("CORS: orígenes permitidos {Lista}", string.Join(", ", corsOrigins));
 if (authSettings.ExternalLoginUri is { } loginUri)
     app.Logger.LogInformation("Auth: login externo en {Url}",
         loginUri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped));
@@ -191,13 +200,15 @@ app.Services.GetRequiredService<IReportSettings>();
 {
     var storage = app.Services.GetRequiredService<IStorageService>();
     var orphans = storage.CleanupOrphanUploads();
+    // zip-local-informe-servidor §5.8: capturas de generaciones que no llegaron al finally.
+    var orphanGenerations = storage.CleanupOrphanGenerations();
     var storageOpts = app.Services.GetRequiredService<IOptions<StorageOptions>>().Value;
     var free = storage.GetAvailableFreeBytes();
     app.Logger.LogInformation(
-        "Subidas: tope {Max}, margen libre {MinFree}, espacio libre en {DataDirectory}: {Free} (temporales huérfanos borrados: {N})",
+        "Subidas: tope {Max}, margen libre {MinFree}, espacio libre en {DataDirectory}: {Free} (temporales huérfanos borrados: {N}; generaciones huérfanas borradas: {G})",
         EvidenceUpload.FormatBytes(storageOpts.MaxUploadBytes), EvidenceUpload.FormatBytes(storageOpts.MinFreeBytes),
         Path.GetFullPath(storageOpts.DataDirectory), free is { } f ? EvidenceUpload.FormatBytes(f) : "desconocido",
-        orphans);
+        orphans, orphanGenerations);
 }
 
 app.UseForwardedHeaders();

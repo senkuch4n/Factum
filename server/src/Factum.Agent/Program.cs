@@ -69,9 +69,22 @@ builder.Services.AddControllers().AddJsonOptions(o =>
     o.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
 });
 
-// ── CORS: permite cualquier origen (el agente es local, no tiene auth) ─────────
-builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
-    p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+// ── Orígenes permitidos (zip-local-informe-servidor §6.1) ─────────────────────
+// Reemplaza al CORS "*": solo el front configurado puede llamar a Tatana desde un navegador, y
+// cualquier request con otro Origin (incluido el WebSocket) se rechaza con 403 del lado del
+// servidor. Se valida al arrancar, como Agent:BindAddress.
+var (allowedOrigins, originErrors) = OriginPolicy.Parse(
+    builder.Configuration.GetSection("Agent:AllowedOrigins").Get<string[]>());
+if (originErrors.Count > 0)
+    throw new InvalidOperationException(
+        "Configuración inválida, Tatana no arranca:" + string.Concat(originErrors.Select(e => "\n  - " + e)));
+{
+    var limits = builder.Configuration.GetSection("Agent").Get<AgentOptions>() ?? new AgentOptions();
+    if (limits.MaxUploadBytes <= 0)
+        throw new InvalidOperationException("Agent:MaxUploadBytes tiene que ser mayor que 0");
+    if (limits.MinFreeBytes < 0)
+        throw new InvalidOperationException("Agent:MinFreeBytes tiene que ser mayor o igual que 0");
+}
 
 // ── Servicios ─────────────────────────────────────────────────────────────────
 builder.Services.AddSingleton<IAdbService, AdbService>();
@@ -80,6 +93,11 @@ builder.Services.AddSingleton<IWebcamService, WebcamService>();
 builder.Services.AddSingleton<IFileStorageService, FileStorageService>();
 builder.Services.AddSingleton<AgentWebSocketHub>();
 builder.Services.AddSingleton<ToolInventory>();
+// zip-local-informe-servidor: carpeta de trabajo del caso y ZIP en la PC del perito.
+builder.Services.AddSingleton<IAgentDiskProbe, DriveInfoAgentDiskProbe>();
+builder.Services.AddSingleton<ICaseEvidenceStore, CaseEvidenceStore>();
+builder.Services.AddSingleton<ICaseZipService, CaseZipService>();
+builder.Services.AddSingleton<IFolderReveal, FolderReveal>();
 
 // ── Puerto y dirección de escucha (CLI > config > default) ───────────────────
 var port = builder.Configuration.GetValue<int>("Agent:Port", 8765);
@@ -112,14 +130,33 @@ builder.WebHost.UseUrls(listenUrl);
 
 var app = builder.Build();
 
-// CORS: headers escritos ANTES de next() y envueltos en try/catch para que si
-// una excepción escapa el pipeline (ej: fallo de DI), no llegue a Kestrel
-// (Kestrel haría Reset() del response borrando los headers ya escritos).
+// Guarda de origen + CORS (§6.1). Los headers se escriben ANTES de next() y el resto va en
+// try/catch: si una excepción escapa el pipeline (ej: fallo de DI) no llega a Kestrel, que haría
+// Reset() del response y borraría los headers ya escritos.
 app.Use(async (ctx, next) =>
 {
-    ctx.Response.Headers["Access-Control-Allow-Origin"] = "*";
-    ctx.Response.Headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH";
-    ctx.Response.Headers["Access-Control-Allow-Headers"] = "*";
+    var hasOrigin = ctx.Request.Headers.TryGetValue("Origin", out var originValues);
+    if (hasOrigin)
+    {
+        var origin = originValues.ToString();
+        if (!OriginPolicy.IsAllowed(origin, allowedOrigins))
+        {
+            // Sin headers CORS: el navegador tampoco puede leer la respuesta. Vale para OPTIONS y /ws.
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await ctx.Response.WriteAsJsonAsync(new { error = "Origen no permitido", code = AgentErrorCodes.OriginNotAllowed });
+            return;
+        }
+        ctx.Response.Headers["Access-Control-Allow-Origin"] = origin;
+        ctx.Response.Headers.Append("Vary", "Origin");
+        ctx.Response.Headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS";
+        ctx.Response.Headers["Access-Control-Allow-Headers"] = "Content-Type";
+        ctx.Response.Headers["Access-Control-Max-Age"] = "600";
+        // Private Network Access (esquema anterior a Local Network Access, §9.3).
+        if (ctx.Request.Method == "OPTIONS" &&
+            string.Equals(ctx.Request.Headers["Access-Control-Request-Private-Network"], "true",
+                StringComparison.OrdinalIgnoreCase))
+            ctx.Response.Headers["Access-Control-Allow-Private-Network"] = "true";
+    }
 
     if (ctx.Request.Method == "OPTIONS")
     {
@@ -138,7 +175,6 @@ app.Use(async (ctx, next) =>
     }
 });
 
-app.UseCors();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(25) });
 app.MapControllers();
 
@@ -149,6 +185,20 @@ var ios = app.Services.GetRequiredService<IIosService>();
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
 // Valores efectivos (config + appsettings.Local.json + CLI), no solo el flag --mock.
 var agentOptions = app.Services.GetRequiredService<IOptions<AgentOptions>>().Value;
+
+// §4.2: carpetas efectivas y orígenes; aviso si el ZIP caería en OneDrive/iCloud (DP4).
+{
+    var zipDir = app.Services.GetRequiredService<ICaseZipService>().EvidenceDirectory;
+    var store = app.Services.GetRequiredService<ICaseEvidenceStore>();
+    var orphanUploads = store.CleanupOrphanUploads();
+    logger.LogInformation(
+        "Evidencia: carpeta de trabajo {DataDirectory}/cases, ZIP en {EvidenceDirectory}; orígenes permitidos {Lista} (temporales huérfanos borrados: {N})",
+        store.DataDirectory, zipDir, string.Join(", ", allowedOrigins), orphanUploads);
+    if (AgentFileNames.IsSyncedFolder(zipDir))
+        logger.LogWarning(
+            "La carpeta de evidencia {Ruta} está dentro de una carpeta sincronizada con la nube; el ZIP se subiría a ese servicio. Configurá Agent:EvidenceDirectory fuera de OneDrive/iCloud.",
+            zipDir);
+}
 
 if (exposedToNetwork)
     logger.LogWarning(

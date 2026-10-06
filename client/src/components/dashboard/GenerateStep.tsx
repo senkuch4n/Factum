@@ -6,10 +6,12 @@ import { Tag } from "primereact/tag";
 import {
   ArrowLeft, FileCheck2, ShieldCheck, Shield, User,
   FileText, Video, ImageIcon, Paperclip, Check, Lock, Fingerprint, FolderClosed,
-  AlertTriangle, ArrowRight, Archive,
+  AlertTriangle, ArrowRight, Archive, HardDrive, CheckCircle2, Circle, Loader2, Server,
 } from "lucide-react";
 import type { Case, CapturedFile } from "@/types";
-import { agentFileURL } from "@/lib/agent";
+import { agent, agentFileURL, type ZipProgress } from "@/lib/agent";
+import { formatBytesPair } from "@/lib/format";
+import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { describeMissing, getMissingRequirements, type MissingRequirement } from "@/lib/pericial";
 import { useReportImages } from "@/lib/report-images";
@@ -26,7 +28,26 @@ interface Props {
   onGenerate: () => void;
   /** Lleva al paso del dato que falta y enfoca su campo. */
   onGoToField: (step: number, fieldId: string) => void;
+  /**
+   * Flujo agent (zip-local-informe-servidor §7.7): por qué no se puede generar
+   * desde esta PC (Tatana caído/viejo u otra PC). Bloquea el botón.
+   */
+  agentBlocker?: string | null;
+  /** Progreso de la generación en dos tramos (solo flujo agent). */
+  progress?: GenerateProgress | null;
 }
+
+/** Tramo actual de la generación del flujo agent y, en el primero, el avance del ZIP (WS). */
+export interface GenerateProgress {
+  stage: "zip" | "report";
+  zip?: ZipProgress | null;
+}
+
+const ZIP_PHASE_LABEL: Record<ZipProgress["phase"], string> = {
+  hashing: "Verificando la evidencia",
+  zipping: "Armando el ZIP",
+  verifying: "Verificando el ZIP",
+};
 
 const isVideo = (n: string) => /\.(mp4|mkv|mov|avi)$/i.test(n);
 const isImage = (n: string) => /\.(png|jpe?g|webp|gif|bmp|heic)$/i.test(n);
@@ -38,7 +59,7 @@ const isCapture = (n: string) => !isIdentity(n) && (n.includes("screenshot") || 
 const BLOCK_TITLE = "m-0 text-fx-label uppercase text-fx-text-2";
 
 /* ── Miniatura con fallback a ícono (mismo criterio que el Paso 3). ── */
-function Thumb({ name, kind }: { name: string; kind: "image" | "video" | "doc" }) {
+function Thumb({ name, kind, url }: { name: string; kind: "image" | "video" | "doc"; url: string }) {
   const [errored, setErrored] = useState(false);
   const showImg = kind === "image" && !errored;
   return (
@@ -48,7 +69,7 @@ function Thumb({ name, kind }: { name: string; kind: "image" | "video" | "doc" }
     >
       {showImg ? (
         <img
-          src={agentFileURL(name)}
+          src={url}
           alt={name}
           className="h-full w-full object-cover"
           onError={() => setErrored(true)}
@@ -73,8 +94,8 @@ function Thumb({ name, kind }: { name: string; kind: "image" | "video" | "doc" }
 
 /* ── Confirmación de una identidad (perito / titular) con su foto. ── */
 function IdentityConfirm({
-  label, role, icon: Icon, file,
-}: { label: string; role: string; icon: React.ElementType; file?: CapturedFile }) {
+  label, role, icon: Icon, file, urlOf,
+}: { label: string; role: string; icon: React.ElementType; file?: CapturedFile; urlOf: (f: CapturedFile) => string }) {
   const [errored, setErrored] = useState(false);
   const showImg = !!file && !errored;
   return (
@@ -82,7 +103,7 @@ function IdentityConfirm({
       <div className="relative h-11 w-11 shrink-0">
         {showImg ? (
           <img
-            src={agentFileURL(file!.name)}
+            src={urlOf(file!)}
             alt={label}
             className="h-full w-full rounded-full border border-fx-border object-cover"
             onError={() => setErrored(true)}
@@ -112,8 +133,8 @@ function IdentityConfirm({
 
 /* ── Grupo de evidencia — título + conteo + fila de miniaturas. ── */
 function EvidenceGroup({
-  title, icon: Icon, items, kind,
-}: { title: string; icon: React.ElementType; items: CapturedFile[]; kind: "image" | "video" | "doc" }) {
+  title, icon: Icon, items, kind, urlOf,
+}: { title: string; icon: React.ElementType; items: CapturedFile[]; kind: "image" | "video" | "doc"; urlOf: (f: CapturedFile) => string }) {
   if (items.length === 0) return null;
   return (
     <div>
@@ -123,18 +144,27 @@ function EvidenceGroup({
         <span className="text-fx-text-3">· {items.length}</span>
       </p>
       <div className="flex flex-wrap gap-2">
-        {items.map(f => <Thumb key={f.name} name={f.name} kind={kind} />)}
+        {items.map(f => <Thumb key={f.name} name={f.name} kind={kind} url={urlOf(f)} />)}
       </div>
     </div>
   );
 }
 
-export function GenerateStep({ currentCase, files, loading, serverMissing = [], onBack, onGenerate, onGoToField }: Props) {
+export function GenerateStep({
+  currentCase, files, loading, serverMissing = [], onBack, onGenerate, onGoToField,
+  agentBlocker = null, progress = null,
+}: Props) {
   // Solo se promete cifrado si el backend lo tiene activo (`encrypt_zip`).
   const { encryptZip } = usePublicConfig();
+  const agentMode = currentCase.evidence_storage === "agent";
+  const identity = useAgentIdentity();
+  const sameHost = !agentMode ? null : identity.status === "loading" ? null : identity.isSameHost(currentCase);
+  // Miniaturas: guardado en la carpeta del caso (flujo agent) o raíz de Tatana.
+  const urlOf = (f: CapturedFile) =>
+    agentMode && f.storedInCase ? agent.caseFileURL(currentCase.id, f.name) : agentFileURL(f.name);
   // Capturas insertadas en los textos que ya no están disponibles (editor-imagenes-informe, §7.8).
   // Mientras carga o si falla, no suma nada: el 400 del servidor entra por `serverMissing`.
-  const reportImages = useReportImages(currentCase.id);
+  const reportImages = useReportImages(currentCase.id, { source: agentMode ? "agent" : "server", sameHost });
   const missing: MissingRequirement[] = [
     ...getMissingRequirements(currentCase, { reportImages: reportImages.status === "ready" ? reportImages.images : null }),
   ];
@@ -142,7 +172,7 @@ export function GenerateStep({ currentCase, files, loading, serverMissing = [], 
     const m = describeMissing(k);
     if (m && !missing.some(x => x.label === m.label)) missing.push(m);
   });
-  const blocked = missing.length > 0;
+  const blocked = missing.length > 0 || !!agentBlocker;
 
   const fiscalFile      = files.find(f => isFuncionario(f.name));
   const denuncianteFile = files.find(f => isDenunciante(f.name));
@@ -171,6 +201,9 @@ export function GenerateStep({ currentCase, files, loading, serverMissing = [], 
       : { icon: Archive, text: "ZIP de evidencia con hash SHA-256 verificable" },
     { icon: Fingerprint, text: "Hash SHA-256 calculado por cada archivo" },
     { icon: FileText, text: "Informe pericial en Word con la tabla de valores hash" },
+    ...(agentMode
+      ? [{ icon: HardDrive, text: "El ZIP queda en esta PC; al servidor solo va el informe" }]
+      : []),
   ];
 
   return (
@@ -180,8 +213,22 @@ export function GenerateStep({ currentCase, files, loading, serverMissing = [], 
         description="Confirmá que esté toda la evidencia. Al generar, el caso queda cerrado para edición."
       />
 
+      {/* ── Requisito "Tatana en esta PC" (flujo agent): no es un campo, no navega ── */}
+      {agentBlocker && (
+        <section
+          aria-labelledby="generate-agent-title"
+          className="rounded-fx-lg border border-fx-warning bg-fx-warning-soft p-4 sm:p-5 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]"
+        >
+          <h3 id="generate-agent-title" className="m-0 flex items-center gap-2 text-fx-body-sm font-semibold text-fx-text">
+            <HardDrive className="h-4 w-4 shrink-0 text-fx-warning" aria-hidden="true" />
+            Tatana disponible en esta PC
+          </h3>
+          <p className="m-0 mt-1.5 text-fx-body-sm text-fx-text-2">{agentBlocker}</p>
+        </section>
+      )}
+
       {/* ── Obligatorios que faltan: cada uno lleva al campo ── */}
-      {blocked && (
+      {missing.length > 0 && (
         <section
           aria-labelledby="generate-missing-title"
           className="rounded-fx-lg border border-fx-warning bg-fx-warning-soft p-4 sm:p-5 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]"
@@ -234,8 +281,8 @@ export function GenerateStep({ currentCase, files, loading, serverMissing = [], 
       <section aria-labelledby="generate-identity-title">
         <h3 id="generate-identity-title" className={`${BLOCK_TITLE} mb-2`}>Identificación · opcional</h3>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <IdentityConfirm label="Perito" role="Quien realiza la inspección" icon={Shield} file={fiscalFile} />
-          <IdentityConfirm label="Titular del dispositivo" role="Titular" icon={User} file={denuncianteFile} />
+          <IdentityConfirm label="Perito" role="Quien realiza la inspección" icon={Shield} file={fiscalFile} urlOf={urlOf} />
+          <IdentityConfirm label="Titular del dispositivo" role="Titular" icon={User} file={denuncianteFile} urlOf={urlOf} />
         </div>
       </section>
 
@@ -251,9 +298,9 @@ export function GenerateStep({ currentCase, files, loading, serverMissing = [], 
           </div>
         ) : (
           <div className="space-y-3 rounded-fx-lg border border-fx-border bg-fx-surface-1 p-3.5">
-            <EvidenceGroup title="Capturas de pantalla" icon={ImageIcon} items={captures} kind="image" />
-            <EvidenceGroup title="Grabaciones" icon={Video} items={videos} kind="video" />
-            <EvidenceGroup title="Adjuntos" icon={Paperclip} items={attachments} kind="doc" />
+            <EvidenceGroup title="Capturas de pantalla" icon={ImageIcon} items={captures} kind="image" urlOf={urlOf} />
+            <EvidenceGroup title="Grabaciones" icon={Video} items={videos} kind="video" urlOf={urlOf} />
+            <EvidenceGroup title="Adjuntos" icon={Paperclip} items={attachments} kind="doc" urlOf={urlOf} />
           </div>
         )}
       </section>
@@ -282,6 +329,9 @@ export function GenerateStep({ currentCase, files, loading, serverMissing = [], 
         )}
       </section>
 
+      {/* ── Progreso en dos tramos (flujo agent) ── */}
+      {agentMode && loading && progress && <GenerateStages progress={progress} />}
+
       {/* ── Acciones ── */}
       <StepActions>
         <Button
@@ -299,13 +349,17 @@ export function GenerateStep({ currentCase, files, loading, serverMissing = [], 
           icon={<FileCheck2 className="h-5 w-5" aria-hidden="true" />}
           loading={loading}
           disabled={loading || blocked}
-          aria-describedby={blocked ? "generate-missing-title" : undefined}
+          aria-describedby={missing.length > 0 ? "generate-missing-title" : agentBlocker ? "generate-agent-title" : undefined}
           onClick={onGenerate}
           className="w-full sm:flex-1 min-h-11"
         />
       </StepActions>
       <span className="sr-only" role="status" aria-live="polite">
-        {loading ? "Generando informe pericial, esperá…" : ""}
+        {loading
+          ? agentMode && progress
+            ? progress.stage === "zip" ? "Paso 1 de 2: armando y verificando el ZIP en esta PC…" : "Paso 2 de 2: generando el informe en el servidor…"
+            : "Generando informe pericial, esperá…"
+          : ""}
       </span>
 
       <p className="m-0 flex items-center justify-center gap-1.5 text-xs text-fx-text-3">
@@ -313,5 +367,74 @@ export function GenerateStep({ currentCase, files, loading, serverMissing = [], 
         Una vez generado, el caso queda cerrado para edición
       </p>
     </div>
+  );
+}
+
+/* ── Tramos de la generación del flujo agent (SDD §7.7). Sin animación decorativa:
+      solo el spinner del tramo en curso y la barra real del ZIP. ── */
+function GenerateStages({ progress }: { progress: GenerateProgress }) {
+  const zip = progress.zip;
+  const known = !!zip && zip.total_bytes > 0;
+  const ratio = known ? Math.min(1, zip!.done_bytes / zip!.total_bytes) : 0;
+  const stages = [
+    { id: "zip" as const, icon: HardDrive, label: "Armando y verificando el ZIP en esta PC…" },
+    { id: "report" as const, icon: Server, label: "Generando el informe en el servidor…" },
+  ];
+  const currentIdx = stages.findIndex(s => s.id === progress.stage);
+  return (
+    <section
+      aria-labelledby="generate-progress-title"
+      aria-busy="true"
+      className="rounded-fx-lg border border-fx-border bg-fx-surface-2 p-4 sm:p-5"
+    >
+      <h3 id="generate-progress-title" className={BLOCK_TITLE}>Generando · paso {currentIdx + 1} de 2</h3>
+      <ol className="m-0 mt-3 list-none space-y-3 p-0">
+        {stages.map((s, i) => {
+          const done = i < currentIdx;
+          const current = i === currentIdx;
+          const StateIcon = done ? CheckCircle2 : current ? Loader2 : Circle;
+          return (
+            <li key={s.id} aria-current={current ? "step" : undefined} className="flex items-start gap-2.5">
+              <StateIcon
+                className={`mt-0.5 h-4 w-4 shrink-0 ${done ? "text-fx-success" : current ? "text-fx-accent-text motion-safe:animate-spin" : "text-fx-text-3"}`}
+                aria-hidden="true"
+              />
+              <div className="min-w-0 flex-1">
+                <p className={`m-0 flex items-center gap-1.5 text-fx-body-sm ${current ? "font-semibold text-fx-text" : "text-fx-text-2"}`}>
+                  <s.icon className="h-3.5 w-3.5 shrink-0 text-fx-text-3" aria-hidden="true" />
+                  {s.label}
+                  {done && <span className="sr-only"> (listo)</span>}
+                </p>
+                {current && s.id === "zip" && zip && (
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-baseline justify-between gap-3 text-xs text-fx-text-2">
+                      <span>{ZIP_PHASE_LABEL[zip.phase]}</span>
+                      {known && <span className="tabular-nums">{formatBytesPair(zip.done_bytes, zip.total_bytes)}</span>}
+                    </div>
+                    <div
+                      role="progressbar"
+                      aria-label={ZIP_PHASE_LABEL[zip.phase]}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={known ? Math.round(ratio * 100) : undefined}
+                      className="relative h-1.5 w-full overflow-hidden rounded-full bg-fx-surface-3"
+                    >
+                      {known ? (
+                        <span
+                          className="absolute inset-0 origin-left rounded-full bg-fx-accent motion-safe:transition-transform motion-safe:duration-fx-base motion-safe:ease-fx"
+                          style={{ transform: `scaleX(${ratio})` }}
+                        />
+                      ) : (
+                        <span className="absolute inset-y-0 left-0 w-2/5 rounded-full bg-fx-accent motion-safe:animate-[fx-indeterminate_1.4s_var(--fx-ease-out)_infinite] motion-reduce:w-full motion-reduce:opacity-40" />
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }

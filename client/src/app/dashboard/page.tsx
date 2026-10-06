@@ -4,8 +4,12 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import { Loader2, Plus, Play, ChevronRight, ArrowLeft, Smartphone, HelpCircle, LifeBuoy } from "lucide-react";
 import { Button } from "primereact/button";
-import { api, ApiError, type DeviceInput } from "@/lib/api";
-import { agent } from "@/lib/agent";
+import { api, ApiError, type DeviceInput, type ZipLocation } from "@/lib/api";
+import { agent, AgentError, type ZipProgress } from "@/lib/agent";
+import { agentErrorMessage, agentStatusMessage } from "@/lib/agent-messages";
+import { useAgentIdentity, ensureAgentIdentity, isSameHostFor } from "@/hooks/useAgentIdentity";
+import { syncedFolderMessage } from "@/components/ResultStep";
+import type { GenerateProgress } from "@/components/dashboard/GenerateStep";
 import type { Device, AgentEvent, Case, CaseFormData, ProfileFormData } from "@/types";
 import {
   CASE_MESSAGES, EMPTY_CASE_FORM, PROFILE_REQUIRED_KEYS, PROFILE_MESSAGES,
@@ -17,7 +21,7 @@ import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { ReportStep } from "@/components/ReportStep";
 import { useAuth } from "@/hooks/useAuth";
 import { useAgentConnection } from "@/hooks/useAgentConnection";
-import { useFileManager } from "@/hooks/useFileManager";
+import { useFileManager, storageOf } from "@/hooks/useFileManager";
 import { useRecording } from "@/hooks/useRecording";
 import { useAirplayShotSession } from "@/hooks/useAirplayShotSession";
 import { AgentChip } from "@/components/dashboard/AgentChip";
@@ -81,7 +85,16 @@ export default function Dashboard() {
   const [caseErrors, setCaseErr] = useState<Record<string, string>>({});
   const [focusErrorsTick, setFocusErrorsTick] = useState(0);
   const [currentCase, setCase] = useState<Case | null>(null);
-  const [result, setResult] = useState<{ zip: string; pdf: string; password: string | null; encrypted: boolean; hash: string; reportHash: string } | null>(null);
+  const [result, setResult] = useState<{
+    zip: string; pdf: string; password: string | null; encrypted: boolean; hash: string; reportHash: string;
+    // Flujo agent (zip-local-informe-servidor §7.7)
+    zipLocation?: ZipLocation | null;
+    zipState?: "final" | "pending" | "unknown";
+    deleteFiles?: string[];
+  } | null>(null);
+  // Progreso de la generación en dos tramos (flujo agent).
+  const [generateProgress, setGenerateProgress] = useState<GenerateProgress | null>(null);
+  const generatingCaseRef = useRef<string | null>(null);
   // Campo a enfocar al llegar a un paso (enlaces del checklist de "Generar").
   const [focusFieldId, setFocusFieldId] = useState<string | null>(null);
   const [generateMissing, setGenerateMissing] = useState<string[]>([]);
@@ -117,9 +130,52 @@ export default function Dashboard() {
   const {
     files, loading: fileLoading, videoVariants, pendingVariantFiles, pendingBlobs, localBlobs,
     addFile, addVideoVariant, markPendingVariant,
-    removeFile, setCaptureRole, handlePhotoBlob, handleUploadAndContinue, clearFiles,
+    removeFile, setCaptureRole, handlePhotoBlob, handleUploadAndContinueLegacy, clearFiles,
     uploadProgress, uploadStates, uploadNotice, dismissUploadNotice, cancelUpload,
+    storageMode, saveBusy, bindCase, handleSaveAndContinue, restoreCaseEvidence, cancelSave,
   } = useFileManager();
+
+  // ── Evidencia en esta PC (zip-local-informe-servidor) ────────────
+  const identity = useAgentIdentity();
+  // El guardado automático (DP1 A) queda atado al caso abierto y a su flujo.
+  const currentCaseId = currentCase?.id ?? null;
+  const currentStorage = storageOf(currentCase);
+  useEffect(() => {
+    if (!currentCaseId || !currentStorage) { bindCase(null); return; }
+    bindCase({
+      id: currentCaseId,
+      storage: currentStorage,
+      onError: msg => setGlobal(msg),
+      onEvidence: res => setCase(c => (c && c.id === currentCaseId
+        ? { ...c, evidence: res.evidence, evidence_host: res.evidence_host }
+        : c)),
+      onRolesSaved: roles => setCase(c => (c && c.id === currentCaseId ? { ...c, capture_roles: roles } : c)),
+    });
+  }, [currentCaseId, currentStorage, bindCase]);
+
+  /** Motivo por el que no se puede capturar/generar desde esta PC (flujo agent), o `null`. */
+  const agentLock = useMemo<{ tone: "warn" | "error"; message: string } | null>(() => {
+    if (!currentCase || currentStorage !== "agent") return null;
+    if (identity.status === "loading") return null;
+    if (identity.status === "offline" || identity.status === "outdated") {
+      return { tone: "error", message: agentStatusMessage(identity.status) };
+    }
+    const hasManifest = (currentCase.evidence?.length ?? 0) > 0;
+    if (hasManifest && !isSameHostFor(identity, currentCase)) {
+      return {
+        tone: "warn",
+        message: `La evidencia de este caso está en la PC ${currentCase.evidence_host?.hostname ?? "donde se capturó"}. Seguilo desde esa PC para capturar o generar.`,
+      };
+    }
+    return null;
+  }, [currentCase, currentStorage, identity]);
+
+  // Aviso de OneDrive/iCloud (DP4) en el paso 3: una vez por sesión.
+  const [syncWarningDismissed, setSyncWarningDismissed] = useState(false);
+  const syncWarning = currentStorage === "agent" && !syncWarningDismissed
+    && identity.status === "online" && identity.info?.evidence_directory_synced
+    ? syncedFolderMessage(identity.info.evidence_directory ?? "")
+    : null;
 
   const {
     isRecording, disconnectedDuringRecord, deviceOffline,
@@ -174,11 +230,21 @@ export default function Dashboard() {
       const f = (event.data as { filename: string }).filename;
       if (f && stepRef.current !== 2) addFile(f);
     }
+    if (event.type === "zip_progress") {
+      const d = event.data as unknown as ZipProgress;
+      if (d.case_id && d.case_id === generatingCaseRef.current) {
+        setGenerateProgress(p => (p && p.stage === "zip" ? { ...p, zip: d } : p));
+      }
+    }
     if (event.type === "airplay_shot_connected") handleShotConnected();
     if (event.type === "airplay_shot_timeout") handleShotTimeout(msg => setGlobal(msg));
   }, [addFile, addVideoVariant, markPendingVariant, setRecording, setDiscoRec, setDeviceOffline, setAirplayName, isRecordingRef, handleShotConnected, handleShotTimeout]);
 
   const { agentOnline, devices, loadingDev, refreshDevices } = useAgentConnection(handleWsEvent);
+
+  // Tatana se cerró o se volvió a abrir: se revalida la identidad (estado de los avisos del paso 3/5).
+  const refreshIdentity = identity.refresh;
+  useEffect(() => { void refreshIdentity(); }, [agentOnline, refreshIdentity]);
 
   // ── Auto-detect resume device ─────────────────────────────────────
   useEffect(() => {
@@ -343,6 +409,7 @@ export default function Dashboard() {
 
   async function handleGenerate() {
     if (!currentCase) return;
+    if (storageOf(currentCase) === "agent") { await handleGenerateAgent(); return; }
     setLoad("generate", true); setGlobal("");
     setGenerateMissing([]);
     try {
@@ -357,20 +424,123 @@ export default function Dashboard() {
     finally { setLoad("generate", false); }
   }
 
+  /**
+   * Generación del flujo agent en 3 etapas (SDD §5.5-§5.6, §7.7): `prepare` en el
+   * backend → ZIP verificado en Tatana → `finish` con las capturas del informe →
+   * commit del ZIP. Ante un error, se descarta el ZIP provisorio.
+   */
+  async function handleGenerateAgent() {
+    const cas = currentCase;
+    if (!cas) return;
+    setGlobal(""); setGenerateMissing([]);
+
+    // 1. Sin Tatana, desactualizado u otra PC: mensaje sin llamar al backend. El caso no cambia.
+    const id = await ensureAgentIdentity(true);
+    if (id.status === "offline" || id.status === "outdated" || !id.info) {
+      setGlobal(agentStatusMessage(id.status === "outdated" ? "outdated" : "offline"));
+      return;
+    }
+    if (!isSameHostFor(id, cas)) {
+      setGlobal(`La evidencia está en la PC ${cas.evidence_host?.hostname ?? "donde se capturó"}; generalo desde ahí.`);
+      return;
+    }
+
+    setLoad("generate", true);
+    generatingCaseRef.current = cas.id;
+    setGenerateProgress({ stage: "zip", zip: null });
+    let prep: Awaited<ReturnType<typeof api.prepareGeneration>> | null = null;
+    let zipBuilt = false;
+    try {
+      // 2. Etapa 1: validación + intento (no cambia el status).
+      prep = await api.prepareGeneration(cas.id, { hostname: id.info.hostname });
+
+      // 3. Tramo 1: ZIP en esta PC.
+      const zip = await agent.buildZip(cas.id, {
+        case_ref: prep.case_ref, zip_filename: prep.zip_filename, password: prep.password, files: prep.files,
+      });
+      zipBuilt = true;
+
+      // 4. Tramo 2: capturas que embebe el informe + metadata, en una sola request.
+      setGenerateProgress({ stage: "report" });
+      const form = new FormData();
+      const metadata = {
+        generation_id: prep.generation_id,
+        zip_filename: zip.zip_filename,
+        zip_hash: zip.zip_hash,
+        zip_size: zip.zip_size,
+        encrypted: zip.encrypted,
+        zip_location: { hostname: zip.hostname, directory: zip.directory, path: zip.zip_path },
+        files: zip.files,
+      };
+      form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+      for (const name of prep.report_images) {
+        const blob = await agent.getCaseFileBlob(cas.id, name);
+        form.append("images", blob, name);
+      }
+      const res = await api.finishGeneration(cas.id, form);
+
+      // 5. Commit: si falla, no es un error de la generación (se completa después).
+      let zipState: "final" | "pending" = "final";
+      try {
+        await agent.commitZip(cas.id, {
+          case_ref: prep.case_ref, zip_filename: zip.zip_filename, zip_hash: zip.zip_hash,
+          delete_files: prep.files.map(f => f.filename),
+        });
+      } catch {
+        zipState = "pending";
+      }
+      setResult({
+        zip: res.files.zip, pdf: res.files.pdf, password: res.password,
+        encrypted: res.case.zip_encrypted === true, hash: res.zip_hash, reportHash: res.report_hash,
+        zipLocation: res.zip_location ?? res.case.zip_location ?? metadata.zip_location,
+        zipState, deleteFiles: prep.files.map(f => f.filename),
+      });
+      setCase(res.case);
+      go(6);
+    } catch (e) {
+      // 6. Descarte del ZIP provisorio (best effort) y mensaje accionable.
+      // También si el armado falló a mitad: DELETE es idempotente (204 aunque no haya nada).
+      if (prep) agent.discardPendingZip(cas.id, prep.case_ref, prep.zip_filename).catch(() => {});
+      if (e instanceof AgentError) {
+        setGlobal(agentErrorMessage(e, { action: "generate" }));
+      } else if (e instanceof ApiError) {
+        if (e.missing?.length) setGenerateMissing(e.missing);
+        if (e.code === "manifest_mismatch" || e.code === "generation_stale") {
+          setGlobal("La evidencia del caso cambió mientras se generaba; volvé a intentar.");
+        } else if (e.code === "evidence_on_other_pc") {
+          setGlobal(`La evidencia está en la PC ${e.body?.evidence_hostname ?? cas.evidence_host?.hostname ?? "donde se capturó"}; generalo desde ahí.`);
+        } else {
+          setGlobal(e.message);
+        }
+        // Si el backend ya marcó el caso en "error" (falla al armar el DOCX), se recarga.
+        if (zipBuilt) api.getCase(cas.id).then(r => setCase(c => (c && c.id === cas.id ? r.cas : c))).catch(() => {});
+      } else {
+        setGlobal("No se pudo generar el caso. Reintentá.");
+      }
+    } finally {
+      generatingCaseRef.current = null;
+      setGenerateProgress(null);
+      setLoad("generate", false);
+    }
+  }
+
   function resetWizard(opts: { keepMode?: boolean } = {}) {
     clearFiles(); resetRecording(); resetShotSession();
     setStep(1); setDir(1);
     setSelDevice(null); setCase(null); setResult(null);
     setCaseForm(EMPTY_CASE_FORM); setCaseErr({}); setStatus(""); setGlobal("");
     setIsResuming(false); setFocusFieldId(null); setGenerateMissing([]);
+    setSyncWarningDismissed(false);
     if (!opts.keepMode) { loadHistory(); setMode("history"); }
   }
 
   // Salir del wizard: en pasos con evidencia en curso (2–5) pedimos confirmación,
-  // porque los archivos capturados no se guardan en el servidor.
+  // porque lo que no se guardó se pierde. En el flujo agent, sin pendientes, se sale directo.
   const [exitConfirm, setExitConfirm] = useState(false);
   function attemptExitWizard() {
-    if (step >= 2 && step <= 5) setExitConfirm(true);
+    const inProgress = step >= 2 && step <= 5;
+    const nothingPending = currentStorage === "agent" && !saveBusy && files.every(f => f.uploaded);
+    if (inProgress && !nothingPending) setExitConfirm(true);
     else resetWizard();
   }
 
@@ -417,6 +587,20 @@ export default function Dashboard() {
     setDir(1); setStep(legacy ? 2 : 3); setStatus(""); setGlobal("");
     setIsResuming(true); setMode("wizard");
     setResumePending(null); setResumeConnected(false);
+
+    // Flujo agent (requisito 1 de D8): la bandeja sale del manifiesto fresco y de
+    // la carpeta del caso en Tatana; así un borrador con videos sobrevive a una recarga.
+    if (storageOf(cas) === "agent") {
+      bindCase({ id: cas.id, storage: "agent" });
+      api.getCase(cas.id)
+        .then(({ cas: fresh }) => {
+          setCase(c => (c && c.id === fresh.id ? fresh : c));
+          return restoreCaseEvidence(fresh);
+        })
+        .catch(e => setGlobal(e instanceof ApiError && e.status > 0
+          ? e.message
+          : "No se pudo recuperar la evidencia del caso. Revisá la conexión con el servidor y reintentá."));
+    }
   }
 
   function handleResume(cas: Case) {
@@ -472,7 +656,7 @@ export default function Dashboard() {
         onOpenChange={setExitConfirm}
         onConfirm={() => resetWizard()}
         title="¿Salir de la inspección?"
-        description="Los archivos capturados no se guardan en el servidor. Si salís ahora, se pierden."
+        description="Lo que no se guardó en esta PC se va a perder."
         confirmLabel="Salir sin guardar"
         cancelLabel="Seguir acá"
       />
@@ -671,8 +855,17 @@ export default function Dashboard() {
                   <FxBanner tone="info" icon={<Play className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}>
                     <p className="m-0 font-semibold">Retomando inspección · {currentCase.nro_referencia}</p>
                     <p className="m-0 mt-0.5 text-xs font-normal leading-relaxed text-fx-text-2">
-                      {currentCase.device.manufacturer} {currentCase.device.model} — los archivos de evidencia no se almacenan en el servidor.
-                      Reconectá el dispositivo para capturar nueva evidencia y volver a generar el informe.
+                      {currentStorage === "agent" ? (
+                        <>
+                          {currentCase.device.manufacturer} {currentCase.device.model} — la evidencia guardada en esta PC se recupera de la carpeta del caso.
+                          Reconectá el dispositivo para capturar más evidencia.
+                        </>
+                      ) : (
+                        <>
+                          {currentCase.device.manufacturer} {currentCase.device.model} — los archivos de evidencia no se almacenan en el servidor.
+                          Reconectá el dispositivo para capturar nueva evidencia y volver a generar el informe.
+                        </>
+                      )}
                     </p>
                   </FxBanner>
                 )}
@@ -764,8 +957,17 @@ export default function Dashboard() {
                                 onError: setGlobal,
                               })}
                               onUploadAndContinue={() =>
-                                handleUploadAndContinue(currentCase!, () => go(4), setGlobal, setStatus, handleCaptureRolesSaved)
+                                currentStorage === "agent"
+                                  ? handleSaveAndContinue(currentCase!, () => go(4), setGlobal, setStatus, handleCaptureRolesSaved)
+                                  : handleUploadAndContinueLegacy(currentCase!, () => go(4), setGlobal, setStatus, handleCaptureRolesSaved)
                               }
+                              caseId={currentCase?.id}
+                              storageMode={storageMode}
+                              saveBusy={saveBusy}
+                              evidenceLock={agentLock}
+                              syncWarning={syncWarning}
+                              onDismissSyncWarning={() => setSyncWarningDismissed(true)}
+                              onContinueWithoutSaving={() => go(4)}
                               loading={loading}
                               deviceOffline={deviceOffline}
                               disconnectedDuringRecord={disconnectedDuringRecord}
@@ -775,7 +977,18 @@ export default function Dashboard() {
                                 handleToggleRecord(selDevice, setGlobal);
                               }}
                               onDismissDisconnect={() => setDiscoRec(false)}
-                              onRemoveFile={removeFile}
+                              onRemoveFile={name => {
+                                void removeFile(name, {
+                                  caseId: currentCase?.id,
+                                  onError: setGlobal,
+                                  onEvidence: res => setCase(c => (c ? {
+                                    ...c,
+                                    evidence: res.evidence,
+                                    evidence_host: res.evidence_host,
+                                    capture_roles: c.capture_roles.filter(r => r.filename !== name),
+                                  } : c)),
+                                });
+                              }}
                               onAttachLocalFile={(blob, filename) => handlePhotoBlob(blob, filename)}
                               localBlobs={localBlobs}
                               onDeviceFilesAdded={files => files.forEach(f => addFile(f.filename, f.sourcePath))}
@@ -795,7 +1008,7 @@ export default function Dashboard() {
                               uploadProgress={uploadProgress}
                               uploadStates={uploadStates}
                               uploadNotice={uploadNotice}
-                              onCancelUpload={cancelUpload}
+                              onCancelUpload={currentStorage === "agent" ? cancelSave : cancelUpload}
                               onDismissUploadNotice={dismissUploadNotice}
                             />
                           )}
@@ -808,6 +1021,8 @@ export default function Dashboard() {
                               onSaved={texts => setCase(c => (c ? { ...c, report_texts: texts } : c))}
                               onBack={() => go(3)}
                               onContinue={() => go(5)}
+                              evidenceStorage={currentStorage}
+                              evidenceCase={currentCase}
                             />
                           )}
 
@@ -820,6 +1035,8 @@ export default function Dashboard() {
                               onBack={() => go(4)}
                               onGenerate={handleGenerate}
                               onGoToField={goToField}
+                              agentBlocker={agentLock?.message ?? null}
+                              progress={generateProgress}
                             />
                           )}
 
@@ -835,6 +1052,12 @@ export default function Dashboard() {
                               caseId={currentCase.id}
                               backendURL={BACKEND_URL}
                               onNewCase={() => resetWizard()}
+                              evidenceStorage={currentStorage}
+                              zipLocation={result.zipLocation ?? currentCase.zip_location ?? null}
+                              caseRef={currentCase.nro_referencia}
+                              zipState={result.zipState ?? "unknown"}
+                              sameHost={isSameHostFor(identity, currentCase)}
+                              pendingDeleteFiles={result.deleteFiles}
                             />
                           )}
                         </div>

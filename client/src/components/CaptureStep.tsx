@@ -9,10 +9,12 @@ import {
   RotateCcw, Mic, MicOff, FolderOpen,
   AlertTriangle, Paperclip, Trash2, Smartphone, WifiOff, Loader2, Wifi,
   Shield, User, Check, ChevronRight, Tag as TagIcon, Info, Minus, ArrowRight,
+  HardDrive, AlertCircle, CloudAlert,
 } from "lucide-react";
 import type { CaptureRole, CaptureRoleValue } from "@/lib/api";
 import { CAPTURE_ROLES_FIELD_ID, isRoleEligible } from "@/lib/pericial";
-import type { VideoVariant } from "@/lib/agent";
+import { agent, type VideoVariant } from "@/lib/agent";
+import type { EvidenceStorage } from "@/lib/api";
 import { FOCUS_RING } from "@/lib/prime/pt/shared";
 import { cn } from "@/lib/utils";
 import { WebcamCaptureModal } from "./WebcamCaptureModal";
@@ -100,6 +102,23 @@ interface Props {
   uploadNotice?: UploadMessage | null;
   onCancelUpload?: () => void;
   onDismissUploadNotice?: () => void;
+  // ── Evidencia en esta PC (zip-local-informe-servidor §7.7) ──
+  /** Id del caso: arma las URLs de la carpeta del caso en Tatana. */
+  caseId?: string;
+  /** Flujo del caso; `agent` cambia textos, URLs y estados de la bandeja. */
+  storageMode?: EvidenceStorage | null;
+  /** Guardado automático en curso: no se puede quitar nada mientras tanto. */
+  saveBusy?: boolean;
+  /**
+   * Captura bloqueada (otra PC o Tatana caído/desactualizado): banner con el
+   * motivo y controles deshabilitados. "Continuar" sigue habilitado.
+   */
+  evidenceLock?: { tone: "warn" | "error"; message: string } | null;
+  /** Aviso de carpeta del ZIP sincronizada con la nube (DP4), una vez por sesión. */
+  syncWarning?: string | null;
+  onDismissSyncWarning?: () => void;
+  /** Con la captura bloqueada: pasar al paso 4 sin guardar nada. */
+  onContinueWithoutSaving?: () => void;
 }
 
 export function CaptureStep({
@@ -125,8 +144,17 @@ export function CaptureStep({
   androidWithMic = false, onToggleAndroidWithMic,
   uploading = false, uploadProgress = null, uploadStates = NO_UPLOAD_STATES, uploadNotice = null,
   onCancelUpload, onDismissUploadNotice,
+  caseId, storageMode = null, saveBusy = false, evidenceLock = null,
+  syncWarning = null, onDismissSyncWarning, onContinueWithoutSaving,
 }: Props) {
   const isIOS = platform === "ios";
+  const agentMode = storageMode === "agent";
+  // Captura deshabilitada durante el envío o con la evidencia en otra PC / Tatana caído.
+  const captureBlocked = uploading || !!evidenceLock;
+  // Quitar: además, nunca durante un guardado automático (el archivo podría estar moviéndose).
+  const removeBlocked = uploading || saveBusy || !!evidenceLock;
+  /** URL de la carpeta del caso en Tatana para un archivo ya guardado (flujo agent). */
+  const caseURL = (f: CapturedFile) => (agentMode && f.storedInCase && caseId ? agent.caseFileURL(caseId, f.name) : undefined);
   const [lightbox, setLightbox]     = useState<string | null>(null);
   const [webcamTarget, setWebcam]   = useState<"funcionario" | "denunciante" | null>(null);
   const [cameraRecordOpen, setCameraRecordOpen] = useState(false);
@@ -163,7 +191,13 @@ export function CaptureStep({
         url: lb.url, sizeBytes: lb.size, originalName: lb.originalName, remoteFile: f,
       });
     } else {
-      galleryItems.push({ kind: t as GKind, key: f.name, name: f.name, sourcePath: f.sourcePath, remoteFile: f });
+      // Retomado de la carpeta del caso: un archivo del navegador (cámara, adjunto)
+      // ya no tiene Blob; su tipo sale de la extensión.
+      const kind: GKind = t === "other" && f.storedInCase ? localKindOf("", f.name) : (t as GKind);
+      galleryItems.push({
+        kind, key: f.name, name: f.name, sourcePath: f.sourcePath, remoteFile: f,
+        url: caseURL(f), sizeBytes: f.storedInCase ? f.size : undefined,
+      });
     }
   });
   const totalItems = galleryItems.length;
@@ -201,13 +235,19 @@ export function CaptureStep({
   }, [totalItems]);
 
   function removeItem(item: GItem) {
-    if (uploading) return;
+    if (removeBlocked) return;
     onRemoveFile?.(item.name);
   }
 
   /** Estado de envío de un ítem: subido (en el caso), subiendo/error (esta tanda) o pendiente. */
   function uploadStateOf(item: GItem): TrayUploadState {
-    if (item.remoteFile?.uploaded) return "uploaded";
+    const f = item.remoteFile;
+    if (agentMode) {
+      if (f?.uploaded) return f.availability === "missing" ? "missing" : "stored";
+      const s = uploadStates[item.name];
+      return s === "uploading" ? "saving" : s === "error" ? "save_error" : "pending";
+    }
+    if (f?.uploaded) return "uploaded";
     return uploadStates[item.name] ?? "pending";
   }
 
@@ -239,7 +279,7 @@ export function CaptureStep({
     });
   }
 
-  const recordBtnDisabled = !!loading.startRecord || !!loading.stopRecord || !!deviceOffline || uploading;
+  const recordBtnDisabled = !!loading.startRecord || !!loading.stopRecord || !!deviceOffline || captureBlocked;
   const recordBusy = !!loading.startRecord || !!loading.stopRecord;
 
   return (
@@ -274,14 +314,39 @@ export function CaptureStep({
 
       {/* ── Input de archivos oculto ── */}
       <input ref={fileInputRef} type="file" multiple accept="image/*,video/*,audio/*" className="hidden"
-        disabled={uploading}
-        onChange={e => { if (!uploading && e.target.files?.length) processFiles(e.target.files); e.target.value = ""; }} />
+        disabled={captureBlocked}
+        onChange={e => { if (!captureBlocked && e.target.files?.length) processFiles(e.target.files); e.target.value = ""; }} />
 
       <StepHeader
         title="Captura de evidencia"
-        description="Capturá la pantalla, grabá o adjuntá archivos del celular. Cada archivo se guarda con su hash."
+        description={agentMode
+          ? "Capturá la pantalla, grabá o adjuntá archivos del celular. Cada archivo se guarda en esta PC con su hash apenas se captura."
+          : "Capturá la pantalla, grabá o adjuntá archivos del celular. Cada archivo se guarda con su hash."}
         className="mb-6"
       />
+
+      {/* ── Evidencia en otra PC / Tatana caído: el motivo, antes que nada ── */}
+      {evidenceLock && (
+        <FxBanner
+          tone={evidenceLock.tone}
+          className="mb-4"
+          icon={evidenceLock.tone === "error"
+            ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            : <HardDrive className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+        >
+          {evidenceLock.message}
+        </FxBanner>
+      )}
+      {syncWarning && (
+        <FxBanner
+          tone="warn"
+          className="mb-4"
+          onClose={onDismissSyncWarning}
+          icon={<CloudAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+        >
+          {syncWarning}
+        </FxBanner>
+      )}
 
       {/* ══ Identificación — fila full-width ═══════════════════════ */}
       <section aria-labelledby="capture-identity-title" className="fx-card mb-6 p-4 sm:p-5">
@@ -296,10 +361,11 @@ export function CaptureStep({
             <IdentityCard label="Perito" role="Quien realiza la inspección" icon={Shield}
               done={hasFuncionario}
               blobURL={fotoFunc ? localBlobs[fotoFunc.name]?.url : undefined}
+              fileURL={fotoFunc ? caseURL(fotoFunc) : undefined}
               agentFilename={fotoFunc?.name}
               onCapture={() => setWebcam("funcionario")}
               loading={!!loading.photo}
-              disabled={uploading} />
+              disabled={captureBlocked} />
           </li>
           <li>
             <IdentityCard label="Titular del dispositivo" role="Titular" icon={User}
@@ -307,10 +373,11 @@ export function CaptureStep({
               dni={titularDni || undefined}
               done={hasDenunciante}
               blobURL={fotoDen ? localBlobs[fotoDen.name]?.url : undefined}
+              fileURL={fotoDen ? caseURL(fotoDen) : undefined}
               agentFilename={fotoDen?.name}
               onCapture={() => setWebcam("denunciante")}
               loading={!!loading.photo}
-              disabled={uploading} />
+              disabled={captureBlocked} />
           </li>
         </ul>
       </section>
@@ -387,7 +454,7 @@ export function CaptureStep({
               <button
                 type="button"
                 onClick={onScreenshot}
-                disabled={!!loading.screenshot || !!deviceOffline || uploading}
+                disabled={!!loading.screenshot || !!deviceOffline || captureBlocked}
                 aria-busy={!!loading.screenshot || undefined}
                 className={cn(TILE, TILE_IDLE)}
               >
@@ -433,7 +500,7 @@ export function CaptureStep({
                 label="Espejar para capturas"
                 onClick={onStartAirplayShot}
                 loading={!!loading.shotStart}
-                disabled={!!deviceOffline || isRecording || uploading}
+                disabled={!!deviceOffline || isRecording || captureBlocked}
                 className="w-full min-h-11 sm:min-h-0" />
             )}
             {isIOS && airplayShotActive && !airplayShotConnected && (
@@ -452,7 +519,7 @@ export function CaptureStep({
                 <Button type="button" size="small"
                   icon={<Camera className="h-3.5 w-3.5" aria-hidden="true" />}
                   label={`Marcar captura${airplayShotMarksCount > 0 ? ` (${airplayShotMarksCount})` : ""}`}
-                  onClick={onMarkAirplayShot} loading={!!loading.shotMark} disabled={uploading} className="w-full min-h-11 sm:min-h-0" />
+                  onClick={onMarkAirplayShot} loading={!!loading.shotMark} disabled={captureBlocked} className="w-full min-h-11 sm:min-h-0" />
                 <Button type="button" severity="secondary" size="small"
                   icon={<WifiOff className="h-3.5 w-3.5" aria-hidden="true" />}
                   label="Finalizar espejado"
@@ -468,7 +535,7 @@ export function CaptureStep({
                   inputId="capture-android-mic"
                   checked={androidWithMic}
                   onChange={e => onToggleAndroidWithMic?.(!!e.checked)}
-                  disabled={uploading}
+                  disabled={captureBlocked}
                   icon={<Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden="true" />}
                   aria-describedby="capture-android-mic-hint"
                   className="mt-0.5"
@@ -511,7 +578,7 @@ export function CaptureStep({
                     icon={<Camera className="h-3.5 w-3.5" aria-hidden="true" />}
                     label="Filmar con cámara externa"
                     onClick={() => setCameraRecordOpen(true)}
-                    disabled={!!deviceOffline || uploading}
+                    disabled={!!deviceOffline || captureBlocked}
                     aria-haspopup="dialog"
                     className="w-full min-h-11 sm:min-h-0" />
                   {!isIOS && (
@@ -519,7 +586,7 @@ export function CaptureStep({
                       icon={<FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />}
                       label="Explorar archivos del celular"
                       onClick={() => setExplorerOpen(true)}
-                      disabled={!!deviceOffline || !deviceSerial || uploading}
+                      disabled={!!deviceOffline || !deviceSerial || captureBlocked}
                       aria-haspopup="dialog"
                       className="w-full min-h-11 sm:min-h-0" />
                   )}
@@ -576,7 +643,7 @@ export function CaptureStep({
                         total={screenItems.length}
                         role={roleByName.get(item.name)}
                         uploadState={uploadStateOf(item)}
-                        removeDisabled={uploading}
+                        removeDisabled={removeBlocked}
                         onSelect={() => setSelectedKey(item.key)}
                         onRemove={() => removeItem(item)}
                       />
@@ -602,7 +669,7 @@ export function CaptureStep({
                           active={item.key === selected?.key}
                           sizeMB={sizeMB}
                           uploadState={uploadStateOf(item)}
-                          removeDisabled={uploading}
+                          removeDisabled={removeBlocked}
                           onSelect={() => setSelectedKey(item.key)}
                           onRemove={() => removeItem(item)}
                         />
@@ -617,19 +684,19 @@ export function CaptureStep({
           {/* ── Zona para adjuntar (click o arrastrar) ── */}
           <div
             className="shrink-0"
-            onDragOver={e => { e.preventDefault(); if (!uploading) setIsDragging(true); }}
+            onDragOver={e => { e.preventDefault(); if (!captureBlocked) setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
             onDrop={e => {
               e.preventDefault();
               setIsDragging(false);
-              if (uploading) return;
+              if (captureBlocked) return;
               if (e.dataTransfer.files.length) processFiles(e.dataTransfer.files);
             }}
           >
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
+              disabled={captureBlocked}
               className={cn(
                 "group block w-full rounded-fx-xl border-2 border-dashed p-5 text-center transition-colors duration-fx-fast ease-fx",
                 "disabled:cursor-not-allowed disabled:opacity-50",
@@ -713,10 +780,11 @@ export function CaptureStep({
               <div className="w-full">
                 <VideoCard
                   file={selected.remoteFile!}
+                  originalURL={selected.url}
                   variants={videoVariants[selected.name] ?? []}
                   isPending={pendingVariantFiles.has(selected.name)}
                   onRemove={() => removeItem(selected)}
-                  removeDisabled={uploading}
+                  removeDisabled={removeBlocked}
                 />
               </div>
             ) : (
@@ -736,6 +804,15 @@ export function CaptureStep({
                   return (
                     <div className="mx-auto flex w-full max-w-[420px] flex-wrap items-center gap-2">
                       <Tag severity="secondary" icon={<m.Icon className="h-3 w-3" aria-hidden="true" />} value={m.label} />
+                      {agentMode && selected.remoteFile?.uploaded && (
+                        selected.remoteFile.availability === "missing" ? (
+                          <Tag severity="warning" icon={<AlertCircle className="h-3 w-3" aria-hidden="true" />} value="No está en esta PC" />
+                        ) : (
+                          <span title={selected.remoteFile.sha256 ? `SHA-256 ${selected.remoteFile.sha256}` : undefined}>
+                            <Tag severity="success" icon={<HardDrive className="h-3 w-3" aria-hidden="true" />} value="En esta PC" />
+                          </span>
+                        )
+                      )}
                       {selected.kind === "screenshot" && isRoleEligible(selected.name) && onSetCaptureRole && (
                         <CaptureRoleMenu
                           filename={selected.name}
@@ -763,7 +840,7 @@ export function CaptureStep({
                         icon={<Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
                         aria-label={`Eliminar ${selected.originalName ?? selected.name}`}
                         onClick={() => removeItem(selected)}
-                        disabled={uploading} />
+                        disabled={removeBlocked} />
                     </div>
                   );
                 })()}
@@ -774,29 +851,57 @@ export function CaptureStep({
       </div>
 
       {/* ── Envío en curso: progreso real + cancelar; aviso de cancelación ── */}
-      <UploadLiveRegion progress={uploading ? uploadProgress : null} />
-      {(uploadNotice || (uploading && uploadProgress)) && (
+      {/* Flujo agent: el guardado automático también muestra el panel (copias de
+          archivos del navegador); el flujo viejo, solo durante el envío. */}
+      <UploadLiveRegion progress={uploading || agentMode ? uploadProgress : null} target={agentMode ? "agent" : "server"} />
+      {(uploadNotice || ((uploading || agentMode) && uploadProgress)) && (
         <div className="mt-6 space-y-3">
           {uploadNotice && (
             <FxBanner tone="info" onClose={onDismissUploadNotice}>{uploadNotice.text}</FxBanner>
           )}
-          {uploading && uploadProgress && (
-            <UploadProgressPanel progress={uploadProgress} onCancel={() => onCancelUpload?.()} />
+          {(uploading || agentMode) && uploadProgress && (
+            <UploadProgressPanel
+              progress={uploadProgress}
+              target={agentMode ? "agent" : "server"}
+              onCancel={() => onCancelUpload?.()}
+            />
           )}
         </div>
       )}
 
       {/* ── Botonera del paso ── */}
       <StepActions className="mt-6 border-t border-fx-border pt-5">
-        <Button
-          type="button"
-          size="large"
-          icon={<UploadCloud className="h-4 w-4" aria-hidden="true" />}
-          label={loading.upload ? "Enviando…" : "Enviar evidencia y continuar"}
-          loading={!!loading.upload}
-          onClick={onUploadAndContinue}
-          className="w-full min-h-11 sm:ml-auto sm:w-auto sm:flex-none"
-        />
+        {evidenceLock && agentMode ? (
+          <Button
+            type="button"
+            size="large"
+            icon={<ArrowRight className="h-4 w-4" aria-hidden="true" />}
+            iconPos="right"
+            label="Continuar"
+            onClick={onContinueWithoutSaving}
+            className="w-full min-h-11 sm:ml-auto sm:w-auto sm:flex-none"
+          />
+        ) : agentMode ? (
+          <Button
+            type="button"
+            size="large"
+            icon={<HardDrive className="h-4 w-4" aria-hidden="true" />}
+            label={loading.upload ? "Guardando…" : "Guardar evidencia en esta PC y continuar"}
+            loading={!!loading.upload}
+            onClick={onUploadAndContinue}
+            className="w-full min-h-11 sm:ml-auto sm:w-auto sm:flex-none"
+          />
+        ) : (
+          <Button
+            type="button"
+            size="large"
+            icon={<UploadCloud className="h-4 w-4" aria-hidden="true" />}
+            label={loading.upload ? "Enviando…" : "Enviar evidencia y continuar"}
+            loading={!!loading.upload}
+            onClick={onUploadAndContinue}
+            className="w-full min-h-11 sm:ml-auto sm:w-auto sm:flex-none"
+          />
+        )}
       </StepActions>
     </>
   );

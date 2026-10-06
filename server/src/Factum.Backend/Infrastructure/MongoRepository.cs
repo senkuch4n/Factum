@@ -33,6 +33,38 @@ public interface ICaseRepository
     /// proyectados a los campos que alimentan catálogos + CreatedAt.
     /// </summary>
     Task<List<Case>> ListCatalogSourcesAsync(string officerDni, CancellationToken ct = default);
+
+    // ── zip-local-informe-servidor (§5.2-§5.6) ───────────────────────────────
+
+    /// <summary>
+    /// $set de <c>Evidence</c>, <c>EvidenceHost</c>, <c>EvidenceStorage = "agent"</c> y
+    /// <c>FileSources</c>, solo si el caso sigue editable y no es del flujo "server". false si no matcheó.
+    /// </summary>
+    Task<bool> RegisterEvidenceAsync(string id, List<EvidenceItem> evidence, EvidenceHost host,
+        List<FileSource> fileSources, CancellationToken ct = default);
+
+    /// <summary>
+    /// $pull del ítem de <c>Evidence</c>, de su <c>CaptureRoles</c> y de su <c>FileSources</c>; si
+    /// el manifiesto queda vacío, $unset de <c>EvidenceHost</c>. Mismo filtro que el registro.
+    /// </summary>
+    Task<bool> RemoveEvidenceAsync(string id, string filename, CancellationToken ct = default);
+
+    /// <summary>Abre (o pisa) el intento de generación, solo si el caso sigue editable.</summary>
+    Task<bool> SetPendingGenerationAsync(string id, PendingGeneration pending, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>Status = Generating</c> solo si el caso sigue editable y el intento abierto es
+    /// <paramref name="generationId"/>. false si no matcheó (otro intento o ya no editable).
+    /// </summary>
+    Task<bool> TryMarkGeneratingAsync(string id, string generationId, CancellationToken ct = default);
+
+    /// <summary>Cierra una generación del flujo agent: <c>Completed</c> + metadatos del ZIP y del DOCX, $unset del intento.</summary>
+    Task CompleteAgentGenerationAsync(string id, DateTime generatedAt, string? zipPassword,
+        string zipHash, string zipFilename, string pdfFilename, string reportHash, ZipLocation zipLocation,
+        CancellationToken ct = default);
+
+    /// <summary><c>Status = Error</c> y $unset del intento (hace falta un <c>prepare</c> nuevo).</summary>
+    Task MarkAgentGenerationFailedAsync(string id, CancellationToken ct = default);
 }
 
 /// <summary>Valores ya normalizados (trim) de un PUT /api/cases/{id}.</summary>
@@ -83,7 +115,8 @@ public sealed class CaseRepository : ICaseRepository
             .SortByDescending(c => c.CreatedAt)
             .Project<Case>(Builders<Case>.Projection
                 .Exclude(c => c.ReportTexts)
-                .Exclude(c => c.ZipPassword))
+                .Exclude(c => c.ZipPassword)
+                .Exclude(c => c.PendingGeneration))
             .ToListAsync(ct);
 
     // Solo lectura, con proyección: la siembra de catálogos no necesita (ni debe traer) el resto.
@@ -188,6 +221,86 @@ public sealed class CaseRepository : ICaseRepository
             Builders<Case>.Update.Set(c => c.ReportTexts, texts), cancellationToken: ct);
         return res.MatchedCount > 0;
     }
+
+    // ── zip-local-informe-servidor ───────────────────────────────────────────
+
+    // $ne también matchea los documentos sin el campo (borradores viejos sin evidencia en el servidor).
+    private static FilterDefinition<Case> EditableAgent(string id) =>
+        Editable(id) & Builders<Case>.Filter.Ne(c => c.EvidenceStorage, EvidenceStorages.Server);
+
+    public async Task<bool> RegisterEvidenceAsync(string id, List<EvidenceItem> evidence, EvidenceHost host,
+        List<FileSource> fileSources, CancellationToken ct = default)
+    {
+        var res = await _col.UpdateOneAsync(EditableAgent(id),
+            Builders<Case>.Update
+                .Set(c => c.Evidence, evidence)
+                .Set(c => c.EvidenceHost, host)
+                .Set(c => c.EvidenceStorage, EvidenceStorages.Agent)
+                .Set(c => c.FileSources, fileSources),
+            cancellationToken: ct);
+        return res.MatchedCount > 0;
+    }
+
+    public async Task<bool> RemoveEvidenceAsync(string id, string filename, CancellationToken ct = default)
+    {
+        var res = await _col.UpdateOneAsync(EditableAgent(id),
+            Builders<Case>.Update
+                .PullFilter(c => c.Evidence, e => e.Filename == filename)
+                .PullFilter(c => c.CaptureRoles, r => r.Filename == filename)
+                .PullFilter(c => c.FileSources, s => s.Filename == filename),
+            cancellationToken: ct);
+        if (res.MatchedCount == 0) return false;
+
+        // Segundo paso atómico por sí mismo: solo si el manifiesto quedó vacío.
+        await _col.UpdateOneAsync(
+            EditableAgent(id) & Builders<Case>.Filter.Size(c => c.Evidence, 0),
+            Builders<Case>.Update.Unset(c => c.EvidenceHost),
+            cancellationToken: ct);
+        return true;
+    }
+
+    public async Task<bool> SetPendingGenerationAsync(string id, PendingGeneration pending,
+        CancellationToken ct = default)
+    {
+        var res = await _col.UpdateOneAsync(Editable(id),
+            Builders<Case>.Update.Set(c => c.PendingGeneration, pending), cancellationToken: ct);
+        return res.MatchedCount > 0;
+    }
+
+    public async Task<bool> TryMarkGeneratingAsync(string id, string generationId, CancellationToken ct = default)
+    {
+        var res = await _col.UpdateOneAsync(
+            Editable(id) & Builders<Case>.Filter.Eq(c => c.PendingGeneration!.Id, generationId),
+            Builders<Case>.Update.Set(c => c.Status, CaseStatus.Generating), cancellationToken: ct);
+        return res.MatchedCount > 0;
+    }
+
+    public Task CompleteAgentGenerationAsync(string id, DateTime generatedAt, string? zipPassword,
+        string zipHash, string zipFilename, string pdfFilename, string reportHash, ZipLocation zipLocation,
+        CancellationToken ct = default) =>
+        _col.UpdateOneAsync(
+            Builders<Case>.Filter.Eq(c => c.Id, id) & Builders<Case>.Filter.Eq(c => c.Status, CaseStatus.Generating),
+            Builders<Case>.Update
+                .Set(c => c.Status, CaseStatus.Completed)
+                .Set(c => c.GeneratedAt, generatedAt)
+                .Set(c => c.ZipPassword, zipPassword)
+                .Set(c => c.ZipEncrypted, zipPassword is not null)
+                .Set(c => c.ZipEncryption, zipPassword is not null ? "aes256-ae2" : null)
+                .Set(c => c.ZipHash, zipHash)
+                .Set(c => c.ZipFilename, zipFilename)
+                .Set(c => c.PdfFilename, pdfFilename)
+                .Set(c => c.ReportHash, reportHash)
+                .Set(c => c.ZipLocation, zipLocation)
+                .Unset(c => c.PendingGeneration),
+            cancellationToken: ct);
+
+    public Task MarkAgentGenerationFailedAsync(string id, CancellationToken ct = default) =>
+        _col.UpdateOneAsync(
+            c => c.Id == id,
+            Builders<Case>.Update
+                .Set(c => c.Status, CaseStatus.Error)
+                .Unset(c => c.PendingGeneration),
+            cancellationToken: ct);
 
     public async Task<List<CaptureRole>?> UpsertCaptureRolesAsync(string id,
         IReadOnlyList<(string Filename, string? Role)> roles, CancellationToken ct = default)

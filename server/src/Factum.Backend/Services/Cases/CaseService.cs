@@ -50,9 +50,29 @@ public interface ICaseService
     /// </summary>
     Task<Result<(Stream Content, string ContentType)>> GetReportImagePreviewAsync(string id, string filename,
         string officerDni, CancellationToken ct = default);
+
+    // ── zip-local-informe-servidor (§5.2, §5.3, §5.5, §5.6) ─────────────────
+    // Ninguno lanza: los rechazos traen Details con code (EvidenceErrorCodes).
+
+    /// <summary>Registra (upsert por nombre) archivos ya guardados en Tatana (PUT …/evidence).</summary>
+    Task<Result<EvidenceResponse>> RegisterEvidenceAsync(string id, RegisterEvidenceRequest request,
+        string officerDni, CancellationToken ct = default);
+    /// <summary>Saca un archivo del manifiesto (DELETE …/evidence/{filename}). No toca Tatana.</summary>
+    Task<Result<EvidenceResponse>> DeleteEvidenceAsync(string id, string filename, string officerDni,
+        CancellationToken ct = default);
+    /// <summary>Valida contra el manifiesto y abre un intento de generación (no cambia el Status).</summary>
+    Task<Result<PrepareGenerationResponse>> PrepareGenerationAsync(string id, PrepareGenerationRequest request,
+        string officerDni, CancellationToken ct = default);
+    /// <summary>
+    /// Cierra la generación con el ZIP ya armado en Tatana: lee el multipart en streaming, arma el
+    /// DOCX con las capturas en <c>.generate-tmp/&lt;gid&gt;/</c> (que siempre se borra) y marca el
+    /// caso <c>completed</c>.
+    /// </summary>
+    Task<Result<GenerateResponse>> FinishGenerationAsync(string id, string officerDni, string? contentType,
+        Stream body, CancellationToken ct = default);
 }
 
-public sealed class CaseService : ICaseService
+public sealed partial class CaseService : ICaseService
 {
     public const string NotEditableMessage = "El caso ya fue generado y no se puede editar";
     public const string LegacyCaseMessage =
@@ -65,13 +85,15 @@ public sealed class CaseService : ICaseService
     private readonly IReportSettings _reportSettings;
     private readonly ICatalogService _catalogs;
     private readonly StorageOptions _storageOptions;
+    private readonly ReportOptions _reportOptions;
     private readonly ILogger<CaseService> _log;
 
     public CaseService(ICaseRepository repo, IStorageService storage, IReportService reports,
         IExpertProfileService profiles, IReportSettings reportSettings, ICatalogService catalogs,
-        IOptions<StorageOptions> storageOptions, ILogger<CaseService> log)
+        IOptions<StorageOptions> storageOptions, IOptions<ReportOptions> reportOptions, ILogger<CaseService> log)
     {
         _storageOptions = storageOptions.Value;
+        _reportOptions = reportOptions.Value;
         _catalogs = catalogs;
         _repo = repo;
         _storage = storage;
@@ -81,18 +103,32 @@ public sealed class CaseService : ICaseService
         _log = log;
     }
 
-    public Task<List<Case>> ListAsync(string officerDni, CancellationToken ct = default) =>
-        _repo.ListByOfficerAsync(officerDni, ct);
+    public async Task<List<Case>> ListAsync(string officerDni, CancellationToken ct = default)
+    {
+        var cases = await _repo.ListByOfficerAsync(officerDni, ct);
+        foreach (var cas in cases) ResolveStorage(cas);
+        return cases;
+    }
 
-    // Caso del dueño, o el error que corresponde (404 / 403).
+    // Caso del dueño, o el error que corresponde (404 / 403). Con EvidenceStorage resuelto.
     private async Task<(Case? Case, Result<T>? Error)> LoadOwnedAsync<T>(string id, string officerDni,
         CancellationToken ct)
     {
         var cas = await _repo.FindByIdAsync(id, ct);
         if (cas is null) return (null, Result.NotFound<T>());
         if (cas.Officer.Dni != officerDni) return (null, Result.Forbidden<T>());
-        return (cas, null);
+        return (ResolveStorage(cas), null);
     }
+
+    // zip-local-informe-servidor §3.2: completa EvidenceStorage EN MEMORIA (el repositorio nunca
+    // hace Replace, así que esto no se persiste). Solo lee el disco y no crea la carpeta del caso.
+    private Case ResolveStorage(Case cas)
+    {
+        cas.EvidenceStorage = EvidenceManifest.ResolveStorage(cas, _storage.HasEvidenceFiles);
+        return cas;
+    }
+
+    private static bool IsAgent(Case cas) => cas.EvidenceStorage == EvidenceStorages.Agent;
 
     private static bool IsEditable(Case cas) =>
         cas.Status is not (CaseStatus.Generating or CaseStatus.Completed);
@@ -102,6 +138,9 @@ public sealed class CaseService : ICaseService
     {
         var (cas, error) = await LoadOwnedAsync<(Case, List<FileInfoDto>)>(id, officerDni, ct);
         if (cas is null) return error!;
+
+        // Flujo agent: los archivos son el manifiesto (no hay evidencia en el servidor).
+        if (IsAgent(cas)) return Result.Ok((cas, EvidenceManifest.ToFileInfos(cas)));
 
         var files = await _storage.ListFilesAsync(cas.Id);
         return Result.Ok((cas, MergeSources(files, cas)));
@@ -164,7 +203,9 @@ public sealed class CaseService : ICaseService
                 OsVersion = d.OsVersion ?? string.Empty,
             } : new DeviceInfo(),
             Status = CaseStatus.Draft,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            // zip-local-informe-servidor (D8): todo caso nuevo guarda la evidencia en la PC del perito.
+            EvidenceStorage = EvidenceStorages.Agent,
         };
 
         _storage.CaseDir(cas.Id);
@@ -212,7 +253,7 @@ public sealed class CaseService : ICaseService
         if (!await _repo.UpdateCaseDataAsync(id, update, ct))
             return Result.Conflict<Case>(NotEditableMessage);
 
-        var saved = (await _repo.FindByIdAsync(id, ct))!;
+        var saved = ResolveStorage((await _repo.FindByIdAsync(id, ct))!);
         // Solo los campos que cambiaron respecto de `cas` (leído antes del update, D12). Best-effort.
         await _catalogs.RecordUsageAsync(officer.Dni, CatalogLogic.ValuesForUpdate(saved, cas), ct);
         return Result.Ok(saved);
@@ -226,7 +267,9 @@ public sealed class CaseService : ICaseService
         var (cas, error) = await LoadOwnedAsync<ReportTextsDto>(id, officerDni, ct);
         if (cas is null) return error!;
 
-        var files = MergeSources(await _storage.ListFilesAsync(id), cas);
+        var files = IsAgent(cas)
+            ? EvidenceManifest.ToFileInfos(cas)
+            : MergeSources(await _storage.ListFilesAsync(id), cas);
         return Result.Ok(ReportValues.RenderDefaults(cas, _reportSettings, files));
     }
 
@@ -272,8 +315,13 @@ public sealed class CaseService : ICaseService
         if (!IsEditable(cas)) return Result.Conflict<List<CaptureRole>>(NotEditableMessage);
 
         var items = request.CaptureRoles ?? [];
-        var caseDir = _storage.CaseDir(id);
+        var agent = IsAgent(cas);
+        // Flujo agent: se valida contra el manifiesto, sin tocar el disco del servidor.
+        var caseDir = agent ? null : _storage.CaseDir(id);
         var sources = cas.FileSources.Select(s => s.Filename).ToHashSet(StringComparer.Ordinal);
+        if (agent)
+            foreach (var e in cas.Evidence)
+                if (!string.IsNullOrEmpty(e.SourcePath)) sources.Add(e.Filename);
         var changes = new List<(string Filename, string? Role)>();
 
         foreach (var item in items)
@@ -290,7 +338,20 @@ public sealed class CaseService : ICaseService
                 filename is "." or "..")
                 return Result.Invalid<List<CaptureRole>>("Nombre de archivo inválido");
 
-            var path = Path.Combine(caseDir, filename);
+            if (agent)
+            {
+                var registered = cas.Evidence.FirstOrDefault(e => e.Filename == filename);
+                if (registered is null)
+                    return Result.Invalid<List<CaptureRole>>($"El archivo {filename} no existe en el caso");
+                if (EvidenceClassifier.Classify(filename, sources.Contains(filename)) != EvidenceClass.Screenshot)
+                    return Result.Invalid<List<CaptureRole>>($"El archivo {filename} no es una captura de pantalla");
+                if (registered.Size <= 0)
+                    return Result.Invalid<List<CaptureRole>>($"El archivo {filename} está vacío");
+                changes.Add((filename, role));
+                continue;
+            }
+
+            var path = Path.Combine(caseDir!, filename);
             if (!File.Exists(path))
                 return Result.Invalid<List<CaptureRole>>($"El archivo {filename} no existe en el caso");
             if (EvidenceClassifier.Classify(filename, sources.Contains(filename)) != EvidenceClass.Screenshot)
@@ -330,6 +391,11 @@ public sealed class CaseService : ICaseService
 
         var (cas, error) = await LoadOwnedAsync<T>(id, officerDni, ct);
         if (cas is null) return (null, error);
+
+        // zip-local-informe-servidor §5.4: un caso agent no recibe evidencia en el servidor.
+        if (IsAgent(cas))
+            return (null, UploadFail<T>(ErrorKind.Conflict, EvidenceManifest.EvidenceOnAgentMessage,
+                EvidenceErrorCodes.EvidenceOnAgent));
 
         if (!IsEditable(cas))
             return (null, UploadFail<T>(ErrorKind.Conflict, NotEditableMessage, UploadErrorCodes.CaseNotEditable));
@@ -456,6 +522,7 @@ public sealed class CaseService : ICaseService
     {
         var (cas, error) = await LoadOwnedAsync<List<FileInfoDto>>(id, officerDni, ct);
         if (cas is null) return error!;
+        if (IsAgent(cas)) return Result.Ok(EvidenceManifest.ToFileInfos(cas));
 
         var files = await _storage.ListFilesAsync(id);
         return Result.Ok(MergeSources(files, cas));
@@ -479,6 +546,11 @@ public sealed class CaseService : ICaseService
     {
         var (cas, error) = await LoadOwnedAsync<GenerateResponse>(id, officerDni, ct);
         if (cas is null) return error!;
+
+        // zip-local-informe-servidor §5.4: el flujo agent genera con prepare/finish.
+        if (IsAgent(cas))
+            return UploadFail<GenerateResponse>(ErrorKind.Conflict, EvidenceManifest.EvidenceOnAgentMessage,
+                EvidenceErrorCodes.EvidenceOnAgent);
 
         // Un caso ya generado no se regenera: su ZIP y su informe quedan como están.
         if (cas.Status == CaseStatus.Completed)
@@ -525,7 +597,7 @@ public sealed class CaseService : ICaseService
                 result.ZipEncryption, result.ZipHash, result.ZipFilename, result.PdfFilename,
                 result.ReportHash, ct);
 
-            cas = (await _repo.FindByIdAsync(id, ct))!;
+            cas = ResolveStorage((await _repo.FindByIdAsync(id, ct))!);
             return Result.Ok(new GenerateResponse(
                 cas, result.ZipHash, result.Password,
                 new FilesDto(result.ZipFilename, result.PdfFilename), result.ReportHash));
@@ -567,9 +639,20 @@ public sealed class CaseService : ICaseService
         var (cas, error) = await LoadOwnedAsync<List<ReportImageDto>>(id, officerDni, ct);
         if (cas is null) return error!;
 
-        var caseDir = _storage.CaseDir(id);
         var roles = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var r in cas.CaptureRoles) roles[r.Filename] = r.Role;
+
+        // Flujo agent (§5.4): del manifiesto. Sin dimensiones (los bytes están en Tatana); el
+        // cliente cruza "available" con lo que tiene la carpeta del caso.
+        if (IsAgent(cas))
+            return Result.Ok(cas.Evidence
+                .Where(e => ReportImageRef.IsInsertableName(e.Filename))
+                .OrderBy(e => e.Filename, StringComparer.Ordinal)
+                .Select(e => new ReportImageDto(e.Filename, e.Size, roles.GetValueOrDefault(e.Filename),
+                    e.Size > 0, null, null))
+                .ToList());
+
+        var caseDir = _storage.CaseDir(id);
 
         var images = (await _storage.ListFilesAsync(id))
             .Where(f => ReportImageRef.IsInsertableName(f.Name))

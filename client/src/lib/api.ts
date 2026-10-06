@@ -3,7 +3,7 @@
  */
 
 import { agent } from "./agent";
-import type { UploadCheckResponse, UploadedFileInfo, UploadErrorBody, UploadErrorCode } from "@/types";
+import type { EvidenceErrorCode, UploadCheckResponse, UploadedFileInfo, UploadErrorBody, UploadErrorCode } from "@/types";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
@@ -25,14 +25,43 @@ export class ApiError extends Error {
   status: number;
   missing?: string[];
   serverMessage: string | null;
-  constructor(message: string, status: number, missing?: string[], serverMessage: string | null = null) {
+  /** `code` del cuerpo de error (zip-local-informe-servidor §5.1), o `null`. */
+  code: string | null;
+  /** Cuerpo de error tal cual vino (JSON), o `null`. */
+  body: ApiErrorBody | null;
+  constructor(
+    message: string, status: number, missing?: string[], serverMessage: string | null = null,
+    body: ApiErrorBody | null = null,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.missing = missing;
     this.serverMessage = serverMessage;
+    this.body = body;
+    this.code = typeof body?.code === "string" ? body.code : null;
   }
 }
+
+/** Cuerpo de error del backend: claves literales en snake_case. */
+export interface ApiErrorBody {
+  error?: string;
+  code?: EvidenceErrorCode | UploadErrorCode | string;
+  missing?: string[];
+  /** `evidence_on_other_pc`. */
+  evidence_hostname?: string;
+  /** `invalid_manifest`, `image_hash_mismatch`. */
+  filename?: string;
+  /** `manifest_mismatch`. */
+  mismatched?: string[];
+  /** `missing_images`. */
+  missing_images?: string[];
+  /** `request_too_large`. */
+  max_bytes?: number;
+}
+
+/** Texto cuando el backend no responde (nunca "Failed to fetch"). */
+export const SERVER_UNREACHABLE = "No se pudo conectar con el servidor de Factum. Revisá la conexión y reintentá.";
 
 /**
  * Error de las rutas de subida (`upload-check` y `POST …/files`).
@@ -52,7 +81,7 @@ export class UploadError extends ApiError {
       kind === "aborted" ? "Envío cancelado"
       : kind === "network" ? "Se cortó la conexión con el servidor"
       : "El servidor rechazó el archivo";
-    super(serverMessage ?? fallback, kind === "http" ? status : 0, undefined, serverMessage);
+    super(serverMessage ?? fallback, kind === "http" ? status : 0, undefined, serverMessage, body);
     this.name = "UploadError";
     this.kind = kind;
     this.code = body?.code ?? null;
@@ -90,7 +119,23 @@ async function toApiError(res: Response): Promise<ApiError> {
   // `message` igual que antes: el `error` del body, o el statusText si el body
   // no era JSON, o "HTTP <status>" como último recurso.
   const fallback = body === null ? res.statusText : body?.error;
-  return new ApiError(serverMessage ?? (fallback || `HTTP ${res.status}`), res.status, missing, serverMessage);
+  const errBody = body && typeof body === "object" ? (body as ApiErrorBody) : null;
+  return new ApiError(serverMessage ?? (fallback || `HTTP ${res.status}`), res.status, missing, serverMessage, errBody);
+}
+
+/**
+ * Como `request`, pero una falla de red (backend caído, CORS) llega como
+ * `ApiError` con `status` 0 y `SERVER_UNREACHABLE`. Lo usan las rutas nuevas.
+ */
+async function requestSafe<T>(path: string, options: RequestInit = {}): Promise<T> {
+  let res: Response;
+  try {
+    res = await send(path, options);
+  } catch {
+    throw new ApiError(SERVER_UNREACHABLE, 0, undefined, null);
+  }
+  if (!res.ok) throw await toApiError(res);
+  return res.json();
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -245,6 +290,89 @@ export interface CaseDataRequest {
   linea_dispositivo: string;
 }
 
+/* ── Evidencia en la PC del perito (zip-local-informe-servidor, SDD §8.1) ── */
+
+/** Flujo del caso (D8): `agent` = evidencia en Tatana; `server` = flujo viejo. */
+export type EvidenceStorage = "agent" | "server";
+
+/** Ítem del manifiesto de evidencia (`Case.evidence`). */
+export interface EvidenceItem {
+  filename: string;
+  size: number;
+  sha256: string;
+  source_path: string | null;
+  registered_at: string;
+}
+
+/** PC donde está la evidencia del caso (`Case.evidence_host`). */
+export interface EvidenceHost {
+  hostname: string;
+  os_user: string;
+  agent_version: string;
+  case_directory: string;
+  registered_at: string;
+}
+
+/** Dónde quedó el ZIP (`Case.zip_location`). */
+export interface ZipLocation {
+  hostname: string;
+  directory: string;
+  path: string;
+}
+
+/** Archivo del manifiesto en `prepare`, `zip` y `finish`. */
+export interface ManifestFile {
+  filename: string;
+  size: number;
+  sha256: string;
+}
+
+/** Body de `PUT /api/cases/{id}/evidence`. */
+export interface RegisterEvidenceRequest {
+  host: { hostname: string; os_user: string; agent_version: string; case_directory: string };
+  items: { filename: string; size: number; sha256: string; source_path: string | null }[];
+}
+
+/** Respuesta de registrar y de borrar evidencia. */
+export interface EvidenceResponse {
+  evidence: EvidenceItem[];
+  evidence_host: EvidenceHost | null;
+}
+
+/** Respuesta de `POST /api/cases/{id}/generate/prepare`. */
+export interface PrepareGenerationResponse {
+  generation_id: string;
+  zip_filename: string;
+  case_ref: string;
+  password: string | null;
+  encrypted: boolean;
+  files: ManifestFile[];
+  report_images: string[];
+}
+
+/** Parte `metadata` de `POST /api/cases/{id}/generate/finish`. */
+export interface FinishGenerationMetadata {
+  generation_id: string;
+  zip_filename: string;
+  zip_hash: string;
+  zip_size: number;
+  encrypted: boolean;
+  zip_location: ZipLocation;
+  files: ManifestFile[];
+}
+
+/** Respuesta de `generate` (flujo viejo) y de `generate/finish`. */
+export interface GenerateResult {
+  case: Case;
+  zip_hash: string;
+  report_hash: string;
+  /** Contraseña del ZIP (una sola vez); `null` si el ZIP se generó sin cifrar. */
+  password: string | null;
+  files: { zip: string; pdf: string };
+  /** Solo en el flujo `agent`. */
+  zip_location?: ZipLocation | null;
+}
+
 export interface Case {
   id: string;
   nro_referencia: string;
@@ -294,6 +422,15 @@ export interface Case {
   report_texts: ReportTexts | null;
   capture_roles: CaptureRole[];
   report_hash: string | null;
+  /**
+   * Flujo resuelto por el backend (siempre presente desde zip-local-informe-servidor).
+   * Si falta (backend anterior), el cliente lo trata como `"server"`: flujo de hoy.
+   */
+  evidence_storage?: EvidenceStorage;
+  /** Manifiesto del flujo `agent` (`[]` en los demás). */
+  evidence?: EvidenceItem[];
+  evidence_host?: EvidenceHost | null;
+  zip_location?: ZipLocation | null;
 }
 
 /** Config pública del backend (`GET /api/config/public`, sin auth). */
@@ -499,15 +636,47 @@ export const api = {
     return request("/api/cases");
   },
 
-  async generateCase(caseId: string): Promise<{
-    case: Case;
-    zip_hash: string;
-    report_hash: string;
-    /** Contraseña del ZIP (una sola vez); `null` si el ZIP se generó sin cifrar. */
-    password: string | null;
-    files: { zip: string; pdf: string };
-  }> {
+  async generateCase(caseId: string): Promise<GenerateResult> {
     return request(`/api/cases/${caseId}/generate`, { method: "POST" });
+  },
+
+  /* ── Flujo `agent` (zip-local-informe-servidor, SDD §5.2-§5.6) ── */
+
+  /** Registra (upsert por nombre) archivos ya guardados en la carpeta del caso de Tatana. */
+  async registerEvidence(caseId: string, body: RegisterEvidenceRequest): Promise<EvidenceResponse> {
+    return requestSafe<EvidenceResponse>(`/api/cases/${caseId}/evidence`, { method: "PUT", body: JSON.stringify(body) });
+  },
+
+  /** Saca un archivo del manifiesto (y su rol). El archivo en la PC lo borra el cliente después. */
+  async deleteEvidence(caseId: string, filename: string): Promise<EvidenceResponse> {
+    return requestSafe<EvidenceResponse>(`/api/cases/${caseId}/evidence/${encodeURIComponent(filename)}`, { method: "DELETE" });
+  },
+
+  /** Etapa 1: valida el caso contra el manifiesto y abre el intento. No cambia el `status`. */
+  async prepareGeneration(caseId: string, body: { hostname: string }): Promise<PrepareGenerationResponse> {
+    return requestSafe<PrepareGenerationResponse>(`/api/cases/${caseId}/generate/prepare`, {
+      method: "POST", body: JSON.stringify(body),
+    });
+  },
+
+  /**
+   * Etapa 3: `multipart/form-data` con `metadata` (JSON) + las `images`.
+   * Sin `Content-Type` manual: lo pone el navegador con el boundary.
+   */
+  async finishGeneration(caseId: string, form: FormData): Promise<GenerateResult> {
+    const token = getToken();
+    let res: Response;
+    try {
+      res = await fetch(`${BACKEND_URL}/api/cases/${caseId}/generate/finish`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+    } catch {
+      throw new ApiError(SERVER_UNREACHABLE, 0, undefined, null);
+    }
+    if (!res.ok) throw await toApiError(res);
+    return res.json();
   },
 
   /**

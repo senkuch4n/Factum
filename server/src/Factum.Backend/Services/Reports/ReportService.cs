@@ -25,10 +25,26 @@ public sealed record ReportResult(
     string? Password, bool ZipEncrypted, string? ZipEncryption,
     string PdfPath, string PdfFilename, string ReportHash);
 
+/// <summary>
+/// Resultado de <see cref="IReportService.GenerateReportAsync"/> (zip-local-informe-servidor
+/// §5.7): solo el DOCX. <c>PdfPath</c>/<c>PdfFilename</c> conservan el nombre histórico.
+/// </summary>
+public sealed record ReportOnlyResult(string PdfPath, string PdfFilename, string ReportHash);
+
 public interface IReportService
 {
     Task<ReportResult> GenerateAsync(Case cas, List<FileInfoDto> files, string caseDir,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Flujo "evidencia en la PC del perito" (zip-local-informe-servidor §5.7): arma SOLO el DOCX
+    /// en <paramref name="outputDir"/>, con la tabla de hashes de <paramref name="hashes"/> (el
+    /// manifiesto) y las capturas leídas de <paramref name="imagesDir"/>. No escribe ni toca ningún
+    /// ZIP. Ante una excepción borra el DOCX de este intento y relanza.
+    /// </summary>
+    Task<ReportOnlyResult> GenerateReportAsync(Case cas, List<FileInfoDto> evidence,
+        IReadOnlyDictionary<string, string> hashes, string imagesDir, string outputDir,
+        string zipFilename, string zipHash, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -79,12 +95,16 @@ public sealed class ReportService : IReportService
 
     // ── Flujo D10 (§7.1) ──────────────────────────────────────────────────────
 
+    /// <summary>Nombre del ZIP de evidencia del caso (los dos flujos).</summary>
+    internal static string ZipFilenameFor(Case cas) =>
+        $"evidencia_{Sanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}")}.zip";
+
     public async Task<ReportResult> GenerateAsync(Case cas, List<FileInfoDto> files,
         string caseDir, CancellationToken ct = default)
     {
         var safeName = Sanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}");
         var docxPath = Path.Combine(caseDir, $"informe_pericial_{safeName}.docx");
-        var zipFilename = $"evidencia_{safeName}.zip";
+        var zipFilename = ZipFilenameFor(cas);
         var zipPath = Path.Combine(caseDir, zipFilename);
 
         // 1. Restos de un intento anterior fallido (con los nombres de ESTE caso): si no se
@@ -130,7 +150,8 @@ public sealed class ReportService : IReportService
 
             // 7. DOCX con el hash del ZIP en la tabla. 8. Hash del DOCX ya cerrado (el informe no
             // puede contener su propio hash: lo muestran ResultStep y CaseCard).
-            await GenerateDocxAsync(cas, evidence, hashes, docxPath, caseDir, zipFilename, zipHash,
+            // Flujo viejo: las imágenes y la salida son la misma carpeta del caso.
+            await GenerateDocxAsync(cas, evidence, hashes, docxPath, imagesDir: caseDir, zipFilename, zipHash,
                 branding.Current, ct);
             reportHash = await Sha256Async(docxPath);
         }
@@ -161,6 +182,51 @@ public sealed class ReportService : IReportService
             ZipEncrypted: password is not null,
             ZipEncryption: password is null ? null : EvidenceZip.EncryptionAes256Ae2,
             docxPath, Path.GetFileName(docxPath), reportHash);
+    }
+
+    // ── Flujo agent (zip-local-informe-servidor §5.7) ───────────────────────
+
+    public async Task<ReportOnlyResult> GenerateReportAsync(Case cas, List<FileInfoDto> evidence,
+        IReadOnlyDictionary<string, string> hashes, string imagesDir, string outputDir,
+        string zipFilename, string zipHash, CancellationToken ct = default)
+    {
+        var safeName = Sanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}");
+        var docxPath = Path.Combine(outputDir, $"informe_pericial_{safeName}.docx");
+
+        // 1. Restos de un intento anterior con los nombres de ESTE caso. Ningún evidencia_*.zip.
+        foreach (var stale in new[]
+                 {
+                     docxPath, Path.ChangeExtension(docxPath, ".pdf"),
+                     Path.Combine(outputDir, $"informe_forense_{safeName}.docx"),
+                     Path.Combine(outputDir, $"informe_forense_{safeName}.pdf"),
+                 })
+            if (File.Exists(stale)) File.Delete(stale);
+
+        // 2. Evidencia en orden ordinal (tabla y anexo).
+        var ordered = evidence
+            .Where(f => !IsGeneratedArtifact(f.Name))
+            .OrderBy(f => f.Name, StringComparer.Ordinal)
+            .ToList();
+
+        try
+        {
+            // 3. DOCX con las capturas de imagesDir y los hashes del manifiesto. 4. Hash del DOCX.
+            await GenerateDocxAsync(cas, ordered, hashes, docxPath, imagesDir, zipFilename, zipHash,
+                branding.Current, ct);
+            var reportHash = await Sha256Async(docxPath);
+            return new ReportOnlyResult(docxPath, Path.GetFileName(docxPath), reportHash);
+        }
+        catch
+        {
+            // 5. Solo el DOCX de este intento.
+            try { if (File.Exists(docxPath)) File.Delete(docxPath); }
+            catch (Exception cleanupEx)
+            {
+                logger.LogWarning(cleanupEx, "No se pudo borrar {File} tras un error de generación",
+                    Path.GetFileName(docxPath));
+            }
+            throw;
+        }
     }
 
     // ── DOCX (Anexo B, pasadas B-R0 a B-R9, más B-R2b de informe-diseno-modelo) ─
@@ -210,8 +276,10 @@ public sealed class ReportService : IReportService
     private const string ContainerCaptionColor = "3D444C";
     private const string BodyFont = "Arial";
 
+    // imagesDir: carpeta de donde se leen las capturas (la del caso en el flujo viejo; la
+    // temporal .generate-tmp/<id>/ en el flujo agent). outputPath puede estar en otra carpeta.
     private Task GenerateDocxAsync(Case cas, List<FileInfoDto> files,
-        Dictionary<string, string> hashes, string outputPath, string caseDir,
+        IReadOnlyDictionary<string, string> hashes, string outputPath, string imagesDir,
         string zipFilename, string zipHash, BrandingSnapshot brand, CancellationToken ct)
     {
         return Task.Run(() =>
@@ -252,7 +320,7 @@ public sealed class ReportService : IReportService
             var shots = files
                 .Where(f => EvidenceClassifier.Classify(f.Name, sources.Contains(f.Name)) == EvidenceClass.Screenshot)
                 .Select(f => f.Name)
-                .Where(n => IsUsableImage(Path.Combine(caseDir, n)))
+                .Where(n => IsUsableImage(Path.Combine(imagesDir, n)))
                 .ToList();
             var imeiShots = shots.Where(n => roles.GetValueOrDefault(n) == CaptureRole.ImeiModelo).ToList();
             var nameShots = shots.Where(n => roles.GetValueOrDefault(n) == CaptureRole.NombreDispositivo).ToList();
@@ -344,19 +412,19 @@ public sealed class ReportService : IReportService
                             m => values.TryGetValue(m.Value, out var v) ? v : null);
 
             // B-R7: imágenes con pie de foto.
-            ReplaceWithImages(mainPart, body, "{capturasImeiModelo}", caseDir, imeiShots,
+            ReplaceWithImages(mainPart, body, "{capturasImeiModelo}", imagesDir, imeiShots,
                 IdentShotMaxW, IdentShotMaxH,
                 (_, name) => $"Captura de identificación (IMEI y modelo) – {name}", ref drawId);
-            ReplaceWithImages(mainPart, body, "{capturasNombreDispositivo}", caseDir, nameShots,
+            ReplaceWithImages(mainPart, body, "{capturasNombreDispositivo}", imagesDir, nameShots,
                 IdentShotMaxW, IdentShotMaxH,
                 (_, name) => $"Captura de identificación (nombre del dispositivo) – {name}", ref drawId);
-            ReplaceWithImages(mainPart, body, "{anexoCapturas}", caseDir, annexShots,
+            ReplaceWithImages(mainPart, body, "{anexoCapturas}", imagesDir, annexShots,
                 AnnexShotMaxW, AnnexShotMaxH,
                 (n, name) => $"Figura {n} – {name}", ref drawId);
 
             // B-R7b (editor-imagenes-informe §6.5): capturas dentro de las secciones, numeradas
             // con la misma lista del anexo y reutilizando su ImagePart.
-            InsertBodyImages(mainPart, body, bodyImages, caseDir, annexShots, roles, hashes, resolved, ref drawId);
+            InsertBodyImages(mainPart, body, bodyImages, imagesDir, annexShots, roles, hashes, resolved, ref drawId);
 
             // B-R8: atribución obligatoria "Realizado con Factum" en el pie de todas las
             // páginas — se inyecta por código para que ninguna plantilla la pueda sacar.
@@ -485,7 +553,7 @@ public sealed class ReportService : IReportService
 
     // ── B-R5: tabla de hashes (§7.5) ─────────────────────────────────────────
 
-    private void FillHashTable(Body body, List<FileInfoDto> files, Dictionary<string, string> hashes,
+    private void FillHashTable(Body body, List<FileInfoDto> files, IReadOnlyDictionary<string, string> hashes,
         string zipFilename, string zipHash, string tint, HashSet<Paragraph> resolved)
     {
         var model = body.Descendants<TableRow>()
@@ -1366,7 +1434,7 @@ public sealed class ReportService : IReportService
         return Convert.ToHexStringLower(await sha.ComputeHashAsync(fs));
     }
 
-    private static string GeneratePassword()
+    internal static string GeneratePassword()
     {
         const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         return string.Create(16, chars, (span, c) =>

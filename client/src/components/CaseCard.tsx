@@ -4,8 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "primereact/button";
 import {
   ChevronDown, FileText, Archive, Key, Hash,
-  Smartphone, Calendar, Clock, FolderOpen, Shield, Play, Eye, Loader2, AlertCircle, Info,
+  Smartphone, Calendar, Clock, FolderOpen, Shield, Play, Eye, Loader2, AlertCircle, Info, HardDrive,
 } from "lucide-react";
+import { agent } from "@/lib/agent";
+import { useAgentIdentity } from "@/hooks/useAgentIdentity";
+import { ZipLocalActions } from "./ZipLocalActions";
 import type { Case } from "@/lib/api";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -28,6 +31,13 @@ export function CaseCard({ cas, onResume }: { cas: Case; onResume: (c: Case) => 
   // Solo `=== true` es "cifrado" (casos viejos no traen el campo).
   const isEncrypted = cas.zip_encrypted === true;
   const detailId = `case-${cas.id}-detail`;
+  // Flujo agent (zip-local-informe-servidor §7.7): el ZIP no está en el servidor.
+  const agentFlow = cas.evidence_storage === "agent";
+  const identity = useAgentIdentity();
+  const sameHost = agentFlow && identity.isSameHost(cas);
+  const draftHost = agentFlow && isDraft && cas.evidence_host?.hostname && identity.status === "online" && !sameHost
+    ? cas.evidence_host.hostname
+    : null;
 
   const fields: { label: string; value: string; full?: boolean }[] = [
     { label: "Perito",      value: cas.perito?.nombre ?? cas.officer.name },
@@ -64,6 +74,7 @@ export function CaseCard({ cas, onResume }: { cas: Case; onResume: (c: Case) => 
           <span className="flex items-center gap-2 flex-wrap">
             <span className="text-fx-body-sm font-semibold text-fx-text">{cas.nro_referencia}</span>
             <StatusBadge status={cas.status} />
+            {draftHost && <EvidenceHostChip hostname={draftHost} />}
           </span>
           <span className="block mt-0.5 text-xs text-fx-text-2 truncate">
             {cas.caratula || cas.nombre_denunciante}
@@ -133,7 +144,9 @@ export function CaseCard({ cas, onResume }: { cas: Case; onResume: (c: Case) => 
                   value={cas.report_hash}
                 />
               )}
-              {(cas.zip_filename || cas.pdf_filename) && (
+              {agentFlow ? (
+                <AgentZipBlock cas={cas} sameHost={sameHost} isEncrypted={isEncrypted} />
+              ) : (cas.zip_filename || cas.pdf_filename) && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                   {cas.zip_filename && (
                     <a href={dlURL(cas.zip_filename)} className={cn(FX_BUTTON_PRIMARY, "min-h-11")}>
@@ -148,7 +161,7 @@ export function CaseCard({ cas, onResume }: { cas: Case; onResume: (c: Case) => 
                   )}
                 </div>
               )}
-              {!isEncrypted && cas.zip_filename && (
+              {!agentFlow && !isEncrypted && cas.zip_filename && (
                 <p className="flex items-center gap-1.5 text-xs text-fx-text-3">
                   <Info className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> Este ZIP se generó sin cifrar
                 </p>
@@ -158,6 +171,87 @@ export function CaseCard({ cas, onResume }: { cas: Case; onResume: (c: Case) => 
         </div>
       )}
     </li>
+  );
+}
+
+/** Chip "Evidencia en {hostname}" para un borrador cuya evidencia está en otra PC. */
+export function EvidenceHostChip({ hostname }: { hostname: string }) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 rounded-fx-sm border border-fx-border bg-fx-surface-2 px-1.5 py-px text-[11px] font-medium text-fx-text-2">
+      <HardDrive className="h-3 w-3 shrink-0" aria-hidden="true" />
+      <span className="truncate">Evidencia en <span translate="no">{hostname}</span></span>
+    </span>
+  );
+}
+
+/**
+ * ZIP de un caso `agent` en el historial: dónde quedó, acciones si es esta PC y
+ * auto-commit de un ZIP pendiente con el hash registrado (sin borrar sueltos:
+ * la lista no está a mano). El informe se sigue bajando del servidor.
+ */
+function AgentZipBlock({ cas, sameHost, isEncrypted }: { cas: Case; sameHost: boolean; isEncrypted: boolean }) {
+  const loc = cas.zip_location;
+  const zipName = cas.zip_filename;
+  const [zipState, setZipState] = useState<"checking" | "final" | "none" | "unknown">(sameHost ? "checking" : "unknown");
+
+  useEffect(() => {
+    if (!sameHost || !zipName) return;
+    let alive = true;
+    setZipState("checking");
+    (async () => {
+      try {
+        const st = await agent.zipStatus(cas.id, cas.nro_referencia, zipName);
+        if (st.state === "pending" && st.pending_hash && st.pending_hash === cas.zip_hash) {
+          await agent.commitZip(cas.id, { case_ref: cas.nro_referencia, zip_filename: zipName, zip_hash: cas.zip_hash, delete_files: [] });
+          if (alive) setZipState("final");
+        } else if (alive) {
+          setZipState(st.state === "final" ? "final" : "none");
+        }
+      } catch {
+        if (alive) setZipState("unknown");
+      }
+    })();
+    return () => { alive = false; };
+  }, [sameHost, cas.id, cas.nro_referencia, cas.zip_hash, zipName]);
+
+  return (
+    <div className="space-y-3 pt-1">
+      {loc && (
+        <div className="flex items-start gap-2.5">
+          <HardDrive className="w-3.5 h-3.5 shrink-0 mt-0.5 text-fx-text-3" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="text-fx-label uppercase text-fx-text-3">ZIP de evidencia</p>
+            <p className="mt-1 text-xs text-fx-text-2 break-all">
+              Guardado en <span translate="no" className="font-semibold text-fx-text">{loc.hostname}</span>
+              {" · "}<span translate="no" className="font-mono select-all">{loc.path}</span>
+            </p>
+          </div>
+        </div>
+      )}
+      {sameHost && zipName && zipState === "final" && (
+        <ZipLocalActions caseId={cas.id} caseRef={cas.nro_referencia} zipFilename={zipName} />
+      )}
+      {sameHost && zipState === "checking" && (
+        <p role="status" className="flex items-center gap-1.5 text-xs text-fx-text-3">
+          <Loader2 className="w-3.5 h-3.5 shrink-0 motion-safe:animate-spin" aria-hidden="true" /> Buscando el ZIP en esta PC…
+        </p>
+      )}
+      {sameHost && zipState === "none" && (
+        <p className="flex items-center gap-1.5 text-xs text-fx-warning">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> El ZIP ya no está en esta carpeta
+        </p>
+      )}
+      {cas.pdf_filename && (
+        <a href={api.downloadURL(cas.id, cas.pdf_filename)} className={cn(FX_BUTTON_SECONDARY, "min-h-11 w-full")}>
+          <FileText className="w-4 h-4" aria-hidden="true" /> Informe Word
+        </a>
+      )}
+      {!isEncrypted && zipName && (
+        <p className="flex items-center gap-1.5 text-xs text-fx-text-3">
+          <Info className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> Este ZIP se generó sin cifrar
+        </p>
+      )}
+    </div>
   );
 }
 

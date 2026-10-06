@@ -1,8 +1,15 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { Button } from "primereact/button";
-import { Archive, FileText, Key, Hash, RotateCcw, ShieldCheck, CheckCircle2, Lock } from "lucide-react";
-import { api } from "@/lib/api";
+import {
+  Archive, FileText, Key, Hash, RotateCcw, ShieldCheck, CheckCircle2, Lock, HardDrive, Server, Download, CloudAlert,
+} from "lucide-react";
+import { api, type EvidenceStorage, type ZipLocation } from "@/lib/api";
+import { agent } from "@/lib/agent";
+import { useAgentIdentity } from "@/hooks/useAgentIdentity";
+import { FxBanner } from "@/components/feedback/FxBanner";
+import { ZipLocalActions } from "@/components/ZipLocalActions";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/feedback/CopyButton";
 import { FX_BUTTON_PRIMARY, FX_BUTTON_SECONDARY } from "@/lib/prime/pt/shared";
@@ -40,10 +47,28 @@ interface Props {
   caseId: string;
   backendURL: string;
   onNewCase: () => void;
+  // ── Flujo agent (zip-local-informe-servidor §7.7) ──
+  /** `server` (o sin dato) = igual que antes de la HU, con el ZIP del servidor. */
+  evidenceStorage?: EvidenceStorage | null;
+  zipLocation?: ZipLocation | null;
+  /** `nro_referencia` (Tatana recalcula la carpeta `<causa>_<id8>` con esto). */
+  caseRef?: string;
+  /** `pending`: el commit en Tatana falló; se reintenta al montar. */
+  zipState?: "final" | "pending" | "unknown";
+  /** Tatana de esta PC es la PC del ZIP. */
+  sameHost?: boolean;
+  /** Archivos sueltos a borrar al completar el commit pendiente (D12). */
+  pendingDeleteFiles?: string[];
 }
 
 /** Paso 6: cierre sobrio con los datos de la entrega y las descargas. */
-export function ResultStep({ caseNumber, zipFile, pdfFile, password, encrypted, hash, reportHash, caseId, onNewCase }: Props) {
+export function ResultStep(props: Props) {
+  if (props.evidenceStorage === "agent") return <AgentResult {...props} />;
+  return <ServerResult {...props} />;
+}
+
+/** Flujo `server` (casos viejos): igual que antes de zip-local-informe-servidor. */
+function ServerResult({ caseNumber, zipFile, pdfFile, password, encrypted, hash, reportHash, caseId, onNewCase }: Props) {
   const downloadURL = (file: string) => api.downloadURL(caseId, file);
   // Solo se muestra si el ZIP salió cifrado y vino la contraseña.
   const zipPassword = encrypted && password ? password : null;
@@ -156,4 +181,150 @@ export function ResultStep({ caseNumber, zipFile, pdfFile, password, encrypted, 
       />
     </div>
   );
+}
+
+const BLOCK = "space-y-3 rounded-fx-lg border border-fx-border bg-fx-surface-2 p-4 text-left sm:p-5";
+const BLOCK_TITLE = "m-0 flex items-center gap-1.5 text-fx-label uppercase text-fx-text-2";
+
+/**
+ * Flujo `agent`: dos bloques separados (SDD §7.7). **Informe** se descarga del
+ * servidor; **Evidencia ZIP** quedó en esta PC (o en la PC indicada).
+ */
+function AgentResult({
+  caseNumber, zipFile, pdfFile, password, encrypted, hash, reportHash, caseId, onNewCase,
+  zipLocation, caseRef = caseNumber, zipState = "final", sameHost = false, pendingDeleteFiles = [],
+}: Props) {
+  const identity = useAgentIdentity();
+  const zipPassword = encrypted && password ? password : null;
+  const [state, setState] = useState(zipState);
+  const triedCommit = useRef(false);
+
+  // Auto-commit del ZIP pendiente (D-T2): el hash ya está registrado, mover es un rename.
+  useEffect(() => {
+    if (state !== "pending" || !sameHost || triedCommit.current) return;
+    triedCommit.current = true;
+    agent.commitZip(caseId, { case_ref: caseRef, zip_filename: zipFile, zip_hash: hash, delete_files: pendingDeleteFiles })
+      .then(() => setState("final"))
+      .catch(() => { /* queda el aviso; se completa al abrir el caso en esta PC */ });
+  }, [state, sameHost, caseId, caseRef, zipFile, hash, pendingDeleteFiles]);
+
+  const hostLabel = zipLocation?.hostname ?? "otra PC";
+  const synced = identity.status === "online" && identity.info?.evidence_directory_synced === true;
+  const evidenceDir = identity.info?.evidence_directory ?? zipLocation?.directory ?? "";
+
+  return (
+    <div className="space-y-6 text-center">
+      <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-fx-xl border border-fx-success bg-fx-success-soft motion-safe:animate-[fx-rise-in_var(--fx-dur-slow)_var(--fx-ease-out)_both]">
+        <ShieldCheck className="h-10 w-10 text-fx-success" strokeWidth={1.5} aria-hidden="true" />
+      </div>
+
+      <div className={FADE_IN}>
+        <h2 className="m-0 text-fx-h1 text-fx-text text-balance">¡Informe pericial generado!</h2>
+        <p className="m-0 mt-2 text-fx-body-sm text-fx-text-2 text-pretty">
+          El informe del caso <span className="font-semibold text-fx-text">{caseNumber}</span> quedó en el servidor
+          y el ZIP de evidencia, {sameHost ? "en esta PC" : <>en la PC <span translate="no" className="font-semibold text-fx-text">{hostLabel}</span></>}.
+        </p>
+      </div>
+
+      {synced && (
+        <FxBanner tone="warn" className="text-left" icon={<CloudAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}>
+          {syncedFolderMessage(evidenceDir)}
+        </FxBanner>
+      )}
+
+      {state === "pending" && (
+        <FxBanner tone="warn" className="text-left">
+          El ZIP quedó verificado en esta PC pero no se pudo mover a su carpeta final. Abrí este caso en esta PC con Tatana para completarlo.
+        </FxBanner>
+      )}
+
+      <div className={cn("grid grid-cols-1 gap-4", FADE_IN)}>
+        {/* ── Informe: servidor ── */}
+        <section aria-labelledby="result-report-title" className={BLOCK}>
+          <h3 id="result-report-title" className={BLOCK_TITLE}>
+            <Server className="h-3.5 w-3.5" aria-hidden="true" /> Informe · en el servidor
+          </h3>
+          <dl className="m-0 space-y-4">
+            <DataRow tile="bg-fx-surface-3 text-fx-text-2" icon={<FileText className="h-4 w-4" aria-hidden="true" />} term="Hash SHA-256 del informe (DOCX)">
+              <p translate="no" className="m-0 select-all break-all font-mono text-xs text-fx-text-2">{reportHash || "—"}</p>
+              <p className="m-0 mt-1 text-xs text-fx-text-3">
+                El informe no puede contener su propio hash: guardalo junto con la entrega.
+              </p>
+            </DataRow>
+          </dl>
+          <a href={api.downloadURL(caseId, pdfFile)} className={cn(FX_BUTTON_SECONDARY, "min-h-11 w-full sm:w-auto")}>
+            <Download className="h-4 w-4" aria-hidden="true" /> Descargar informe Word (.docx)
+          </a>
+        </section>
+
+        {/* ── Evidencia ZIP: esta PC ── */}
+        <section aria-labelledby="result-zip-title" className={BLOCK}>
+          <h3 id="result-zip-title" className={BLOCK_TITLE}>
+            <HardDrive className="h-3.5 w-3.5" aria-hidden="true" />
+            {sameHost ? "Evidencia ZIP · en esta PC" : <>Evidencia ZIP · en <span translate="no" className="normal-case">{hostLabel}</span></>}
+          </h3>
+          <dl className="m-0 space-y-4">
+            <DataRow tile="bg-fx-surface-3 text-fx-text-2" icon={<Archive className="h-4 w-4" aria-hidden="true" />} term="Archivo">
+              <p translate="no" className="m-0 break-all font-mono text-fx-body-sm font-semibold text-fx-text">{zipFile}</p>
+              {zipLocation?.path && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <span translate="no" className="min-w-0 select-all break-all font-mono text-xs text-fx-text-2">
+                    {!sameHost && <span className="font-sans">Guardado en {hostLabel} · </span>}{zipLocation.path}
+                  </span>
+                  <CopyButton text={zipLocation.path} label="Copiar la ruta del ZIP" />
+                </div>
+              )}
+            </DataRow>
+
+            {zipPassword && (
+              <DataRow tile="bg-fx-warning-soft text-fx-warning" icon={<Key className="h-4 w-4" aria-hidden="true" />} term="Contraseña del ZIP">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <span translate="no" className="select-all break-all font-mono text-fx-body font-bold text-fx-text">
+                    {zipPassword}
+                  </span>
+                  <CopyButton text={zipPassword} label="Copiar contraseña del ZIP" />
+                </div>
+                <p className="m-0 mt-1.5 text-xs text-fx-text-3">
+                  Sin esta contraseña la evidencia no se puede abrir. Entregala por un canal distinto al del ZIP (no en el mismo correo ni en el mismo pendrive).
+                </p>
+              </DataRow>
+            )}
+
+            <DataRow tile="bg-fx-surface-3 text-fx-text-2" icon={<Hash className="h-4 w-4" aria-hidden="true" />} term="Hash SHA-256 del ZIP de evidencia">
+              <p translate="no" className="m-0 select-all break-all font-mono text-xs text-fx-text-2">{hash}</p>
+              <p className="m-0 mt-1 text-xs text-fx-text-3">Es el que figura en el informe.</p>
+            </DataRow>
+          </dl>
+
+          {sameHost && state === "final" && (
+            <ZipLocalActions caseId={caseId} caseRef={caseRef} zipFilename={zipFile} />
+          )}
+
+          {encrypted && (
+            <p className="m-0 flex items-start gap-2 text-xs leading-relaxed text-fx-text-3">
+              <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span>
+                Cifrado AES-256. Se abre con 7-Zip o WinRAR (Windows) y con Keka o The Unarchiver (macOS). El Explorador de Windows y la Utilidad de Archivo de macOS no lo abren.
+              </span>
+            </p>
+          )}
+        </section>
+      </div>
+
+      <Button
+        type="button"
+        text
+        severity="secondary"
+        icon={<RotateCcw className="h-4 w-4" aria-hidden="true" />}
+        label="Iniciar nueva inspección"
+        onClick={onNewCase}
+        className={cn("w-full min-h-11", FADE_IN)}
+      />
+    </div>
+  );
+}
+
+/** Aviso de OneDrive/iCloud (DP4): no cambia la carpeta, solo avisa. */
+export function syncedFolderMessage(dir: string): string {
+  return `La carpeta de evidencia (${dir || "configurada en Tatana"}) está dentro de una carpeta sincronizada con la nube (OneDrive/iCloud): el ZIP se puede subir a ese servicio. Pedí que configuren Agent:EvidenceDirectory fuera de esa carpeta.`;
 }
