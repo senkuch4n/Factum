@@ -21,26 +21,54 @@ public interface IUserRepository
     Task<long> CountActiveSuperadminsAsync(CancellationToken ct = default);
     /// <summary><c>false</c> si ya hay una cuenta con ese DNI (DuplicateKey).</summary>
     Task<bool> TryInsertAsync(UserAccount user, CancellationToken ct = default);
-    /// <summary><c>$inc FailedLoginCount</c>; devuelve el valor nuevo (0 si no existe).</summary>
+    /// <summary><c>$inc FailedLoginCount</c>; devuelve el valor nuevo (0 si no existe). No toca <c>UpdatedAt</c> (abm-clientes T3).</summary>
     Task<int> IncrementFailedLoginAsync(string id, DateTime now, CancellationToken ct = default);
-    /// <summary><c>LockedUntil = until</c> y <c>FailedLoginCount = 0</c>.</summary>
+    /// <summary><c>LockedUntil = until</c> y <c>FailedLoginCount = 0</c>. No toca <c>UpdatedAt</c> (T3).</summary>
     Task LockAsync(string id, DateTime until, DateTime now, CancellationToken ct = default);
     /// <summary><c>FailedLoginCount = 0</c>, <c>LockedUntil = null</c>, <c>LastLoginAt = now</c>.</summary>
     Task RegisterSuccessfulLoginAsync(string id, DateTime now, CancellationToken ct = default);
-    /// <summary>Rehash: no toca <c>PasswordChangedAt</c> (no corta sesiones).</summary>
+    /// <summary>Rehash: no toca <c>PasswordChangedAt</c> (no corta sesiones) ni <c>UpdatedAt</c> (T3).</summary>
     Task UpdatePasswordHashAsync(string id, string hash, DateTime now, CancellationToken ct = default);
     /// <summary>
     /// Hash nuevo + <c>MustChangePassword</c> + <c>PasswordChangedAt</c> + desbloqueo. Cambio propio
     /// (<paramref name="mustChange"/> = false) y reset de #12 (true).
     /// </summary>
     Task<bool> SetPasswordAsync(string id, string hash, bool mustChange, DateTime changedAt, CancellationToken ct = default);
-    /// <summary>#12. Suspender pone <c>SuspendedAt</c>/<c>SuspendedBy</c>; reactivar les hace <c>$unset</c>.</summary>
-    Task<bool> SetStatusAsync(string id, string status, string? byDni, DateTime now, CancellationToken ct = default);
-    Task<bool> UpdateProfileAsync(string id, string name, string sigla, DateTime now, CancellationToken ct = default);
-    Task<bool> UnlockAsync(string id, DateTime now, CancellationToken ct = default);
+
+    // ── abm-clientes §4.4: escrituras condicionales del panel (las reglas viven en UserAdminService) ──
+
+    /// <summary>Sin <c>PasswordHash</c> ni <c>LastEmergencyResetHash</c> (proyección WithoutHashes). La usa el panel.</summary>
+    Task<UserAccount?> FindAdminViewByIdAsync(string id, CancellationToken ct = default);
+    /// <summary>Superadmins activos con <c>_id != excludedId</c>.</summary>
+    Task<long> CountOtherActiveSuperadminsAsync(string excludedId, CancellationToken ct = default);
+    /// <summary>
+    /// Filtro <c>{ _id, Status: "activo" }</c>. <c>$set</c> Status=suspendido, SuspendedAt, SuspendedBy,
+    /// SuspensionReason (o <c>$unset</c> si es null) y UpdatedAt. false si no matcheó.
+    /// </summary>
+    Task<bool> SuspendIfActiveAsync(string id, string byDni, string? reason, DateTime now, CancellationToken ct = default);
+    /// <summary>
+    /// Filtro <c>{ _id, Status: "suspendido" }</c>. Status=activo, <c>$unset</c> SuspendedAt/SuspendedBy/
+    /// SuspensionReason, UpdatedAt. false si no matcheó.
+    /// </summary>
+    Task<bool> ReactivateIfSuspendedAsync(string id, DateTime now, CancellationToken ct = default);
+    /// <summary>
+    /// Filtro <c>{ _id, UpdatedAt: expectedUpdatedAt }</c>. <c>$set</c> de los 6 campos editables + UpdatedAt.
+    /// false si no matcheó (otro cambio en el medio → stale_update).
+    /// </summary>
+    Task<bool> UpdateEditableFieldsIfUnchangedAsync(string id, AccountEditableFields fields,
+        DateTime expectedUpdatedAt, DateTime now, CancellationToken ct = default);
+    /// <summary>
+    /// Filtro <c>{ _id, LockedUntil: { $gt: now } }</c>. FailedLoginCount=0, LockedUntil=null, UpdatedAt.
+    /// false si no había bloqueo vigente.
+    /// </summary>
+    Task<bool> UnlockIfLockedAsync(string id, DateTime now, CancellationToken ct = default);
     /// <summary>Reset de emergencia (§7.2): hash + marca, debe cambiar, corta sesiones, desbloquea y reactiva.</summary>
     Task<bool> ApplyEmergencyResetAsync(string id, string hash, string markerHash, DateTime changedAt, CancellationToken ct = default);
 }
+
+/// <summary>Valores ya normalizados (trim) y validados por <c>AccountFieldRules</c> (abm-clientes §4.4).</summary>
+public sealed record AccountEditableFields(
+    string Name, string Sigla, string ContactPhone, string ContactEmail, string Organization, string Notes);
 
 public sealed class UserRepository : IUserRepository
 {
@@ -112,7 +140,7 @@ public sealed class UserRepository : IUserRepository
     public async Task<int> IncrementFailedLoginAsync(string id, DateTime now, CancellationToken ct = default)
     {
         var updated = await _col.FindOneAndUpdateAsync(ById(id),
-            Set.Inc(u => u.FailedLoginCount, 1).Set(u => u.UpdatedAt, now),
+            Set.Inc(u => u.FailedLoginCount, 1),
             new FindOneAndUpdateOptions<UserAccount>
             {
                 ReturnDocument = ReturnDocument.After,
@@ -123,7 +151,7 @@ public sealed class UserRepository : IUserRepository
 
     public Task LockAsync(string id, DateTime until, DateTime now, CancellationToken ct = default) =>
         _col.UpdateOneAsync(ById(id),
-            Set.Set(u => u.LockedUntil, until).Set(u => u.FailedLoginCount, 0).Set(u => u.UpdatedAt, now),
+            Set.Set(u => u.LockedUntil, until).Set(u => u.FailedLoginCount, 0),
             cancellationToken: ct);
 
     public Task RegisterSuccessfulLoginAsync(string id, DateTime now, CancellationToken ct = default) =>
@@ -133,7 +161,7 @@ public sealed class UserRepository : IUserRepository
 
     public Task UpdatePasswordHashAsync(string id, string hash, DateTime now, CancellationToken ct = default) =>
         _col.UpdateOneAsync(ById(id),
-            Set.Set(u => u.PasswordHash, hash).Set(u => u.UpdatedAt, now),
+            Set.Set(u => u.PasswordHash, hash),
             cancellationToken: ct);
 
     public async Task<bool> SetPasswordAsync(string id, string hash, bool mustChange, DateTime changedAt,
@@ -146,33 +174,6 @@ public sealed class UserRepository : IUserRepository
                 .Set(u => u.FailedLoginCount, 0)
                 .Set(u => u.LockedUntil, null)
                 .Set(u => u.UpdatedAt, changedAt),
-            cancellationToken: ct);
-        return r.MatchedCount > 0;
-    }
-
-    public async Task<bool> SetStatusAsync(string id, string status, string? byDni, DateTime now,
-        CancellationToken ct = default)
-    {
-        var update = status == UserStatuses.Suspendido
-            ? Set.Set(u => u.Status, status).Set(u => u.SuspendedAt, now).Set(u => u.SuspendedBy, byDni)
-            : Set.Set(u => u.Status, status).Unset(u => u.SuspendedAt).Unset(u => u.SuspendedBy);
-        var r = await _col.UpdateOneAsync(ById(id), update.Set(u => u.UpdatedAt, now), cancellationToken: ct);
-        return r.MatchedCount > 0;
-    }
-
-    public async Task<bool> UpdateProfileAsync(string id, string name, string sigla, DateTime now,
-        CancellationToken ct = default)
-    {
-        var r = await _col.UpdateOneAsync(ById(id),
-            Set.Set(u => u.Name, name).Set(u => u.Sigla, sigla).Set(u => u.UpdatedAt, now),
-            cancellationToken: ct);
-        return r.MatchedCount > 0;
-    }
-
-    public async Task<bool> UnlockAsync(string id, DateTime now, CancellationToken ct = default)
-    {
-        var r = await _col.UpdateOneAsync(ById(id),
-            Set.Set(u => u.FailedLoginCount, 0).Set(u => u.LockedUntil, null).Set(u => u.UpdatedAt, now),
             cancellationToken: ct);
         return r.MatchedCount > 0;
     }
@@ -190,7 +191,74 @@ public sealed class UserRepository : IUserRepository
                 .Set(u => u.Status, UserStatuses.Activo)
                 .Unset(u => u.SuspendedAt)
                 .Unset(u => u.SuspendedBy)
+                .Unset(u => u.SuspensionReason)
                 .Set(u => u.UpdatedAt, changedAt),
+            cancellationToken: ct);
+        return r.MatchedCount > 0;
+    }
+
+    // ── abm-clientes §4.4 ─────────────────────────────────────────────────────
+
+    public async Task<UserAccount?> FindAdminViewByIdAsync(string id, CancellationToken ct = default) =>
+        await _col.Find(ById(id)).Project<UserAccount>(WithoutHashes).FirstOrDefaultAsync(ct);
+
+    public Task<long> CountOtherActiveSuperadminsAsync(string excludedId, CancellationToken ct = default)
+    {
+        var f = Builders<UserAccount>.Filter;
+        return _col.CountDocumentsAsync(
+            f.Eq(u => u.Role, UserRoles.Superadmin) & f.Eq(u => u.Status, UserStatuses.Activo) &
+            f.Ne(u => u.Id, excludedId),
+            cancellationToken: ct);
+    }
+
+    public async Task<bool> SuspendIfActiveAsync(string id, string byDni, string? reason, DateTime now,
+        CancellationToken ct = default)
+    {
+        var f = Builders<UserAccount>.Filter;
+        var update = Set.Set(u => u.Status, UserStatuses.Suspendido)
+            .Set(u => u.SuspendedAt, now)
+            .Set(u => u.SuspendedBy, byDni)
+            .Set(u => u.UpdatedAt, now);
+        update = reason is null ? update.Unset(u => u.SuspensionReason) : update.Set(u => u.SuspensionReason, reason);
+        var r = await _col.UpdateOneAsync(ById(id) & f.Eq(u => u.Status, UserStatuses.Activo), update,
+            cancellationToken: ct);
+        return r.MatchedCount > 0;
+    }
+
+    public async Task<bool> ReactivateIfSuspendedAsync(string id, DateTime now, CancellationToken ct = default)
+    {
+        var f = Builders<UserAccount>.Filter;
+        var r = await _col.UpdateOneAsync(ById(id) & f.Eq(u => u.Status, UserStatuses.Suspendido),
+            Set.Set(u => u.Status, UserStatuses.Activo)
+                .Unset(u => u.SuspendedAt)
+                .Unset(u => u.SuspendedBy)
+                .Unset(u => u.SuspensionReason)
+                .Set(u => u.UpdatedAt, now),
+            cancellationToken: ct);
+        return r.MatchedCount > 0;
+    }
+
+    public async Task<bool> UpdateEditableFieldsIfUnchangedAsync(string id, AccountEditableFields fields,
+        DateTime expectedUpdatedAt, DateTime now, CancellationToken ct = default)
+    {
+        var f = Builders<UserAccount>.Filter;
+        var r = await _col.UpdateOneAsync(ById(id) & f.Eq(u => u.UpdatedAt, expectedUpdatedAt),
+            Set.Set(u => u.Name, fields.Name)
+                .Set(u => u.Sigla, fields.Sigla)
+                .Set(u => u.ContactPhone, fields.ContactPhone)
+                .Set(u => u.ContactEmail, fields.ContactEmail)
+                .Set(u => u.Organization, fields.Organization)
+                .Set(u => u.Notes, fields.Notes)
+                .Set(u => u.UpdatedAt, now),
+            cancellationToken: ct);
+        return r.MatchedCount > 0;
+    }
+
+    public async Task<bool> UnlockIfLockedAsync(string id, DateTime now, CancellationToken ct = default)
+    {
+        var f = Builders<UserAccount>.Filter;
+        var r = await _col.UpdateOneAsync(ById(id) & f.Gt(u => u.LockedUntil, now),
+            Set.Set(u => u.FailedLoginCount, 0).Set(u => u.LockedUntil, null).Set(u => u.UpdatedAt, now),
             cancellationToken: ct);
         return r.MatchedCount > 0;
     }

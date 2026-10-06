@@ -98,6 +98,8 @@ const FIELD_FALLBACKS: Record<string, string> = {
   invalid_current_password: PASSWORD_MESSAGES.invalid_current_password,
 };
 const VALID_FIELDS = new Set<string>(PASSWORD_FIELD_ORDER);
+/** `ApiErrorBody.field` también admite los campos del panel de cuentas (abm-clientes): acá solo valen los de la contraseña. */
+const isPasswordField = (f: string | undefined): f is ChangePasswordField => !!f && VALID_FIELDS.has(f);
 
 /** Traduce un error de `api.changePassword` a campo + mensaje (§8.2). */
 export function describeChangePasswordError(err: unknown): ChangePasswordErrorDescription {
@@ -107,7 +109,7 @@ export function describeChangePasswordError(err: unknown): ChangePasswordErrorDe
     const field = err.body?.field;
     if (code && FIELD_CODES.has(code)) {
       const target: ChangePasswordField =
-        field && VALID_FIELDS.has(field)
+        isPasswordField(field)
           ? field
           : code === "invalid_current_password"
             ? "current_password"

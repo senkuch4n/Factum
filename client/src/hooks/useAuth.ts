@@ -5,7 +5,12 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import type { User, Case } from "@/types";
 
-export function useAuth() {
+/**
+ * Sesión del usuario. `withHistory` (default `true`) carga el historial de
+ * casos; el panel de cuentas lo apaga porque no lo usa (abm-clientes §9.2).
+ */
+export function useAuth(options?: { withHistory?: boolean }) {
+  const withHistory = options?.withHistory ?? true;
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [historyCases, setHistory] = useState<Case[]>([]);
@@ -25,11 +30,11 @@ export function useAuth() {
         // Cambio obligatorio pendiente: sin historial (el backend respondería 403).
         if (u.must_change_password) { router.replace("/cambiar-contrasena"); return; }
         setUser(u);
-        loadHistory();
+        if (withHistory) loadHistory();
       })
       // Si fue un 401, el interceptor de lib/api.ts ya dejó el aviso para el login.
       .catch(() => router.push("/"));
-  }, [router, loadHistory]);
+  }, [router, loadHistory, withHistory]);
 
   function handleLogout() {
     api.logout();

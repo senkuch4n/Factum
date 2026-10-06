@@ -6,7 +6,10 @@ using Factum.Backend.Models;
 namespace Factum.Backend.Services.Auth;
 
 /// <summary>Datos de una cuenta nueva con contraseña temporal (bootstrap y, en #12, el ABM).</summary>
-public sealed record NewUserAccount(string Dni, string Name, string Sigla, string Role, string TemporaryPassword)
+/// <remarks>Los cuatro opcionales del final son del ABM (abm-clientes §6.1); <see cref="IUserAccountService.CreateAsync"/>
+/// los guarda con trim y <c>null</c> → <c>""</c>, sin validarlos (los valida <c>UserAdminService</c>).</remarks>
+public sealed record NewUserAccount(string Dni, string Name, string Sigla, string Role, string TemporaryPassword,
+    string ContactPhone = "", string ContactEmail = "", string Organization = "", string Notes = "")
 {
     public override string ToString() => $"NewUserAccount {{ Dni = {Dni}, Name = {Name}, Role = {Role} }}";
 }
@@ -126,6 +129,10 @@ public sealed class UserAccountService(
             CreatedAt = now,
             UpdatedAt = now,
             CreatedBy = createdBy,
+            ContactPhone = input.ContactPhone?.Trim() ?? string.Empty,
+            ContactEmail = input.ContactEmail?.Trim() ?? string.Empty,
+            Organization = input.Organization?.Trim() ?? string.Empty,
+            Notes = input.Notes?.Trim() ?? string.Empty,
         };
         if (!await users.TryInsertAsync(account, ct))
             return Result.Conflict<UserAccount>("Ya existe un usuario con ese DNI.");

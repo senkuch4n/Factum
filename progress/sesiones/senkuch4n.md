@@ -33,3 +33,12 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-06 — Incidente: el implementer-backend corrió pkill -f Factum.Backend y bajó el backend/Tatana de prueba manual del usuario (sin pérdida de datos). Avisado; reviewer instruido a no matar procesos ajenos.
 - 2026-10-06 — #6 reviewer APROBADA -> progress/review_usuarios-locales.md (Backend.Tests 552/552). Fase aprobada; esperando prueba manual del usuario.
 - 2026-10-06 — #6 prueba manual OK del usuario (local, cambio obligatorio, bloqueo, cambio voluntario, suspensión). Commit + push + PR.
+- 2026-10-06 — #6 cerrada: PR contra develop + resumen de cierre en el issue.
+- 2026-10-06 — PR #15 mergeado. #12 abm-clientes tomada, rama feat/abm-clientes desde develop, afinando; lanzado afinador.
+- 2026-10-06 — #12 afinador done -> docs/hu-abm-clientes.md (14 dudas); afinada_pendiente_validacion.
+- 2026-10-06 — #12 validada (todas las recomendadas). en_arquitectura; lanzado architect.
+- 2026-10-06 — #12 architect done -> Refactorizaciones/abm-clientes.md. implementando; lanzados implementer-backend y implementer-frontend (opus).
+- 2026-10-06 — #12 implementer-frontend done -> progress/impl_frontend_abm-clientes.md. Esperando backend.
+- 2026-10-06 — #12 implementer-backend done -> progress/impl_backend_abm-clientes.md. en_revision; lanzado reviewer (sonnet).
+- 2026-10-06 — #12 reviewer APROBADA -> progress/review_abm-clientes.md. Fase aprobada; esperando prueba manual.
+- 2026-10-06 — #12 prueba manual OK del usuario (panel completo). Commit + push + PR.
