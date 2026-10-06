@@ -33,9 +33,13 @@ public sealed class ExternalHttpAuthProvider : IAuthProvider
 
     public string Mode => AuthModes.External;
 
-    public async Task<Result<User>> AuthenticateAsync(string dni, string username, string password,
+    public async Task<Result<AuthenticatedUser>> AuthenticateAsync(string dni, string? username, string password,
         CancellationToken ct = default)
     {
+        // username dejó de ser [Required] en el DTO (en local no se manda): se valida acá.
+        if (string.IsNullOrEmpty(username))
+            return Result.Fail<AuthenticatedUser>("Usuario requerido");
+
         var body = new Dictionary<string, string>
         {
             [_opts.Request.DniField] = dni,
@@ -52,12 +56,12 @@ public sealed class ExternalHttpAuthProvider : IAuthProvider
         catch (HttpRequestException ex)
         {
             _logger.LogWarning("Login externo: no se pudo conectar ({Type}: {Message})", ex.GetType().Name, ex.Message);
-            return Result.Fail<User>(MsgUnavailable);
+            return Result.Fail<AuthenticatedUser>(MsgUnavailable);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             _logger.LogWarning("Login externo: timeout de {TimeoutSeconds}s", _opts.TimeoutSeconds);
-            return Result.Fail<User>(MsgUnavailable);
+            return Result.Fail<AuthenticatedUser>(MsgUnavailable);
         }
 
         using (response)
@@ -66,7 +70,7 @@ public sealed class ExternalHttpAuthProvider : IAuthProvider
             if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
                 _logger.LogInformation("Login externo rechazado ({Status})", status);
-                return Result.Fail<User>(MsgInvalid);
+                return Result.Fail<AuthenticatedUser>(MsgInvalid);
             }
 
             string text;
@@ -78,18 +82,18 @@ public sealed class ExternalHttpAuthProvider : IAuthProvider
                                        (ex is OperationCanceledException && !ct.IsCancellationRequested))
             {
                 _logger.LogWarning("Login externo: error leyendo la respuesta ({Status}, {Type})", status, ex.GetType().Name);
-                return Result.Fail<User>(MsgUnavailable);
+                return Result.Fail<AuthenticatedUser>(MsgUnavailable);
             }
 
             if (status >= 500)
             {
                 _logger.LogWarning("Login externo: el proveedor respondió {Status}: {Body}", status, Truncate(text));
-                return Result.Fail<User>(MsgUnavailable);
+                return Result.Fail<AuthenticatedUser>(MsgUnavailable);
             }
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Login externo: el proveedor respondió {Status}: {Body}", status, Truncate(text));
-                return Result.Fail<User>(MsgUnexpected);
+                return Result.Fail<AuthenticatedUser>(MsgUnexpected);
             }
 
             JsonDocument doc;
@@ -100,7 +104,7 @@ public sealed class ExternalHttpAuthProvider : IAuthProvider
             catch (JsonException)
             {
                 _logger.LogWarning("Login externo: respuesta no es un objeto JSON ({Status})", status);
-                return Result.Fail<User>(MsgUnexpected);
+                return Result.Fail<AuthenticatedUser>(MsgUnexpected);
             }
 
             using (doc)
@@ -109,7 +113,7 @@ public sealed class ExternalHttpAuthProvider : IAuthProvider
                 if (root.ValueKind != JsonValueKind.Object)
                 {
                     _logger.LogWarning("Login externo: respuesta no es un objeto JSON ({Status})", status);
-                    return Result.Fail<User>(MsgUnexpected);
+                    return Result.Fail<AuthenticatedUser>(MsgUnexpected);
                 }
 
                 var name = TryGetPath(root, _opts.Response.NameField, out var n) && n.ValueKind == JsonValueKind.String
@@ -118,7 +122,7 @@ public sealed class ExternalHttpAuthProvider : IAuthProvider
                 if (string.IsNullOrEmpty(name))
                 {
                     _logger.LogWarning("Login externo: la respuesta no trae '{NameField}'", _opts.Response.NameField);
-                    return Result.Fail<User>(MsgUnexpected);
+                    return Result.Fail<AuthenticatedUser>(MsgUnexpected);
                 }
 
                 var sigla = string.Empty;
@@ -133,7 +137,8 @@ public sealed class ExternalHttpAuthProvider : IAuthProvider
                     };
                 }
 
-                return Result.Ok(new User { Dni = dni, Name = name, Sigla = sigla });
+                return Result.Ok(new AuthenticatedUser(
+                    new User { Dni = dni, Name = name, Sigla = sigla }, UserRoles.Cliente, false, null));
             }
         }
     }

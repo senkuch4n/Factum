@@ -4,6 +4,7 @@
 
 import { agent } from "./agent";
 import type { EvidenceErrorCode, UploadCheckResponse, UploadedFileInfo, UploadErrorBody, UploadErrorCode } from "@/types";
+import { writeSessionNotice } from "./session-notice";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
@@ -58,6 +59,65 @@ export interface ApiErrorBody {
   missing_images?: string[];
   /** `request_too_large`. */
   max_bytes?: number;
+  /** Errores de `change-password` (usuarios-locales §5.3): campo al que pertenece el error. */
+  field?: ChangePasswordField;
+}
+
+/* ── Corte de sesión (usuarios-locales §9.1) ── */
+
+/** Evento global que escucha `SessionWatcher`. */
+export const AUTH_EVENT = "factum:auth";
+export type AuthEventDetail = { type: "session_ended" } | { type: "password_change_required" };
+
+/** Rutas cuyo 401 es un resultado del formulario, no una sesión que se cortó. */
+const AUTH_FAILURE_EXCLUDED = ["/api/auth/login", "/api/auth/mode"];
+
+/**
+ * Operaciones largas en curso (subida, generación, registro de evidencia).
+ * Si la sesión se corta mientras alguna corre, el aviso del login lo dice.
+ */
+let activeLongOps = 0;
+
+async function trackLongOp<T>(op: () => Promise<T>): Promise<T> {
+  activeLongOps++;
+  try {
+    return await op();
+  } finally {
+    activeLongOps--;
+  }
+}
+
+function dispatchAuthEvent(detail: AuthEventDetail) {
+  window.dispatchEvent(new CustomEvent<AuthEventDetail>(AUTH_EVENT, { detail }));
+}
+
+/**
+ * Interceptor de sesión: lo llaman `toApiError` y el XHR de `uploadFile`.
+ * - 401 con token y fuera de login/mode: borra el token, deja el aviso para
+ *   el login y avisa a `SessionWatcher` (que navega a `/`).
+ * - 403 `password_change_required`: avisa a `SessionWatcher` (→ `/cambiar-contrasena`).
+ * Se evalúa antes del `finally` de la operación que falló, así
+ * `activeLongOps > 0` incluye a esa misma operación.
+ */
+function notifyAuthFailure(status: number, body: ApiErrorBody | null, url: string) {
+  if (typeof window === "undefined") return;
+  const code = typeof body?.code === "string" ? body.code : null;
+  if (status === 401) {
+    if (!getToken()) return;
+    let path = url;
+    try { path = new URL(url, BACKEND_URL).pathname; } catch { /* url relativa o vacía */ }
+    if (AUTH_FAILURE_EXCLUDED.some(p => path.startsWith(p))) return;
+    localStorage.removeItem("factum_token");
+    writeSessionNotice({
+      reason: code === "account_suspended" ? "account_suspended" : "session_ended",
+      interrupted: activeLongOps > 0,
+    });
+    dispatchAuthEvent({ type: "session_ended" });
+    return;
+  }
+  if (status === 403 && code === "password_change_required") {
+    dispatchAuthEvent({ type: "password_change_required" });
+  }
 }
 
 /** Texto cuando el backend no responde (nunca "Failed to fetch"). */
@@ -120,6 +180,7 @@ async function toApiError(res: Response): Promise<ApiError> {
   // no era JSON, o "HTTP <status>" como último recurso.
   const fallback = body === null ? res.statusText : body?.error;
   const errBody = body && typeof body === "object" ? (body as ApiErrorBody) : null;
+  notifyAuthFailure(res.status, errBody, res.url);
   return new ApiError(serverMessage ?? (fallback || `HTTP ${res.status}`), res.status, missing, serverMessage, errBody);
 }
 
@@ -167,11 +228,34 @@ export interface CatalogsResponse {
   catalogs: Record<CatalogId, CatalogEntry[]>;
 }
 
+/* ── Autenticación (usuarios-locales, SDD §8.1) ── */
+
+export type UserRole = "superadmin" | "cliente";
+
 export interface User {
   dni: string;
   name: string;
   sigla: string;
+  role: UserRole;
+  must_change_password: boolean;
 }
+
+/** Respuesta de `GET /api/auth/mode` (anónimo). */
+export interface AuthModeInfo {
+  mode: AuthMode;
+  password_min_length: number;
+  password_max_length: number;
+}
+
+/** Body de `POST /api/auth/change-password`. */
+export interface ChangePasswordRequest {
+  current_password: string;
+  new_password: string;
+  new_password_confirmation: string;
+}
+
+/** Valores posibles de `field` en los errores de `change-password`. */
+export type ChangePasswordField = keyof ChangePasswordRequest;
 
 export type CaptureRoleValue = "imei_modelo" | "nombre_dispositivo";
 export type Tratamiento = "suscripto" | "suscripta";
@@ -445,7 +529,7 @@ export interface PublicConfig {
 }
 
 /** Modo de autenticación del backend (`GET /api/auth/mode`). */
-export type AuthMode = "dev" | "external";
+export type AuthMode = "dev" | "external" | "local";
 
 export interface DeviceInput {
   serial: string;
@@ -476,6 +560,19 @@ export const api = {
   async me(): Promise<User> {
     const data = await request<{ user: User }>("/api/auth/me");
     return data.user;
+  },
+
+  /**
+   * Cambio de contraseña propio (obligatorio o voluntario). Guarda el token
+   * nuevo: el anterior (y las otras sesiones) deja de valer.
+   */
+  async changePassword(body: ChangePasswordRequest): Promise<{ token: string; user: User }> {
+    const data = await requestSafe<{ token: string; user: User }>("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    localStorage.setItem("factum_token", data.token);
+    return data;
   },
 
   async createCase(data: CaseDataRequest & { device: DeviceInput }): Promise<Case> {
@@ -572,7 +669,7 @@ export const api = {
     opts: { sourcePath?: string; signal?: AbortSignal; onProgress?: (loaded: number, total: number) => void } = {},
   ): Promise<UploadedFileInfo> {
     const { sourcePath, signal, onProgress } = opts;
-    return new Promise<UploadedFileInfo>((resolve, reject) => {
+    return trackLongOp(() => new Promise<UploadedFileInfo>((resolve, reject) => {
       if (signal?.aborted) { reject(new UploadError("aborted")); return; }
       const params = new URLSearchParams({ filename });
       if (sourcePath) params.set("source_path", sourcePath);
@@ -594,14 +691,16 @@ export const api = {
           catch { reject(new UploadError("http", xhr.status, null)); }
           return;
         }
-        reject(new UploadError("http", xhr.status, parseUploadErrorBody(xhr.responseText)));
+        const errBody = parseUploadErrorBody(xhr.responseText);
+        notifyAuthFailure(xhr.status, errBody, xhr.responseURL);
+        reject(new UploadError("http", xhr.status, errBody));
       };
       xhr.onerror = () => { done(); reject(new UploadError("network")); };
       xhr.ontimeout = () => { done(); reject(new UploadError("network")); };
       xhr.onabort = () => { done(); reject(new UploadError("aborted")); };
       signal?.addEventListener("abort", onAbortSignal, { once: true });
       xhr.send(blob);
-    });
+    }));
   },
 
   /**
@@ -637,14 +736,15 @@ export const api = {
   },
 
   async generateCase(caseId: string): Promise<GenerateResult> {
-    return request(`/api/cases/${caseId}/generate`, { method: "POST" });
+    return trackLongOp(() => request<GenerateResult>(`/api/cases/${caseId}/generate`, { method: "POST" }));
   },
 
   /* ── Flujo `agent` (zip-local-informe-servidor, SDD §5.2-§5.6) ── */
 
   /** Registra (upsert por nombre) archivos ya guardados en la carpeta del caso de Tatana. */
   async registerEvidence(caseId: string, body: RegisterEvidenceRequest): Promise<EvidenceResponse> {
-    return requestSafe<EvidenceResponse>(`/api/cases/${caseId}/evidence`, { method: "PUT", body: JSON.stringify(body) });
+    return trackLongOp(() =>
+      requestSafe<EvidenceResponse>(`/api/cases/${caseId}/evidence`, { method: "PUT", body: JSON.stringify(body) }));
   },
 
   /** Saca un archivo del manifiesto (y su rol). El archivo en la PC lo borra el cliente después. */
@@ -654,9 +754,9 @@ export const api = {
 
   /** Etapa 1: valida el caso contra el manifiesto y abre el intento. No cambia el `status`. */
   async prepareGeneration(caseId: string, body: { hostname: string }): Promise<PrepareGenerationResponse> {
-    return requestSafe<PrepareGenerationResponse>(`/api/cases/${caseId}/generate/prepare`, {
+    return trackLongOp(() => requestSafe<PrepareGenerationResponse>(`/api/cases/${caseId}/generate/prepare`, {
       method: "POST", body: JSON.stringify(body),
-    });
+    }));
   },
 
   /**
@@ -664,19 +764,21 @@ export const api = {
    * Sin `Content-Type` manual: lo pone el navegador con el boundary.
    */
   async finishGeneration(caseId: string, form: FormData): Promise<GenerateResult> {
-    const token = getToken();
-    let res: Response;
-    try {
-      res = await fetch(`${BACKEND_URL}/api/cases/${caseId}/generate/finish`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: form,
-      });
-    } catch {
-      throw new ApiError(SERVER_UNREACHABLE, 0, undefined, null);
-    }
-    if (!res.ok) throw await toApiError(res);
-    return res.json();
+    return trackLongOp(async () => {
+      const token = getToken();
+      let res: Response;
+      try {
+        res = await fetch(`${BACKEND_URL}/api/cases/${caseId}/generate/finish`, {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: form,
+        });
+      } catch {
+        throw new ApiError(SERVER_UNREACHABLE, 0, undefined, null);
+      }
+      if (!res.ok) throw await toApiError(res);
+      return res.json() as Promise<GenerateResult>;
+    });
   },
 
   /**
@@ -704,9 +806,14 @@ export const api = {
     return `${BACKEND_URL}${path}`;
   },
 
+  /** Modo de autenticación + largos de la política (anónimo). */
+  async getAuthModeInfo(): Promise<AuthModeInfo> {
+    return request<AuthModeInfo>("/api/auth/mode");
+  },
+
   async getMode(): Promise<AuthMode> {
-    const data = await request<{ mode: AuthMode }>("/api/auth/mode");
-    return data.mode;
+    const info = await api.getAuthModeInfo();
+    return info.mode;
   },
 
   /** Reporta un problema de Factum como token de soporte (vía Faro). */

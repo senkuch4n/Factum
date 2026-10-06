@@ -3,7 +3,7 @@ export type {
   PeritoSnapshot, ReportTexts, ReportTextsInput, ReportTextFormat, ReportTextsRequest, ReportTextDefaults,
   CaptureRole, CaptureRoleValue, ReportImage,
   ExpertProfile, ExpertProfileRequest, CaseDataRequest, FileSource, Tratamiento,
-  AuthMode, CatalogId, CatalogEntry, CatalogsResponse,
+  AuthMode, AuthModeInfo, UserRole, ChangePasswordRequest, ChangePasswordField, CatalogId, CatalogEntry, CatalogsResponse,
   EvidenceStorage, EvidenceItem, EvidenceHost, ZipLocation, ManifestFile,
   RegisterEvidenceRequest, EvidenceResponse, PrepareGenerationResponse, FinishGenerationMetadata, GenerateResult,
 } from "@/lib/api";

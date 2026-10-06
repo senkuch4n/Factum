@@ -7,10 +7,11 @@ using Microsoft.Extensions.Options;
 
 namespace Factum.Backend.Controllers;
 
-// Lista fija de DNIs habilitados a leer la auditoría de uso del agente Tatana.
-// El modelo User no tiene un campo Role (viene tal cual del proveedor de identidad),
-// así que en vez de inventar un sistema de roles nuevo, el acceso de lectura se
-// resuelve con una lista de DNIs en config — ver appsettings.json "Audit".
+// Quién puede leer la auditoría de uso del agente Tatana (usuarios-locales D13):
+// los DNIs de Audit:AdminDnis (config, ver appsettings.json "Audit") y, en Auth:Mode=local,
+// cualquier cuenta con rol superadmin. El rol viaja en la sesión del request
+// (HttpContext.GetSession()), no en Models.User; en dev/external es siempre "cliente",
+// así que ahí sigue valiendo solo la lista.
 public sealed class AuditOptions
 {
     public List<string> AdminDnis { get; set; } = [];
@@ -61,7 +62,8 @@ public sealed class AgentAuditController(
         [FromQuery] DateTime? from, [FromQuery] DateTime? to,
         CancellationToken ct)
     {
-        if (!auditOpts.Value.AdminDnis.Contains(Officer.Dni))
+        if (!auditOpts.Value.AdminDnis.Contains(Officer.Dni) &&
+            HttpContext.GetSession().Role != UserRoles.Superadmin)
             return Forbid();
 
         var events = await repo.ListAsync(dni, caseId, from, to, ct);

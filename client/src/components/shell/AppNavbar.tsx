@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import { UserMenu } from "@/components/UserMenu";
 import { ExpertProfileDialog } from "@/components/ExpertProfileDialog";
+import { ChangePasswordDialog } from "@/components/password/ChangePasswordDialog";
+import { useAuthMode } from "@/hooks/useAuthMode";
 import { ThemeSwitch } from "./ThemeSwitch";
 
 interface AppNavbarProps {
@@ -52,6 +54,11 @@ export function AppNavbar({
 }: AppNavbarProps) {
   const showUserMenu = !!user && !!onLogout;
   const [profileOpen, setProfileOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  // El cambio de contraseña solo existe en modo `local`.
+  const canChangePassword = useAuthMode().mode === "local";
+  const openProfile = useCallback(() => setProfileOpen(true), []);
+  const openPassword = useCallback(() => setPasswordOpen(true), []);
 
   return (
     <header className="sticky top-0 z-fx-nav h-14 shrink-0 border-b border-fx-border bg-fx-nav-bg shadow-fx-1">
@@ -81,10 +88,20 @@ export function AppNavbar({
             <span aria-hidden="true" className="h-5 w-px shrink-0 bg-fx-border" />
           )}
           {showThemeSwitch && <ThemeSwitch />}
-          {showUserMenu && <UserMenu user={user} onLogout={onLogout} onOpenProfile={() => setProfileOpen(true)} />}
+          {showUserMenu && (
+            <UserMenu
+              user={user}
+              onLogout={onLogout}
+              onOpenProfile={openProfile}
+              onChangePassword={canChangePassword ? openPassword : undefined}
+            />
+          )}
         </div>
       </div>
       {showUserMenu && <ExpertProfileDialog visible={profileOpen} onHide={() => setProfileOpen(false)} />}
+      {showUserMenu && canChangePassword && (
+        <ChangePasswordDialog visible={passwordOpen} onHide={() => setPasswordOpen(false)} dni={user.dni} />
+      )}
     </header>
   );
 }

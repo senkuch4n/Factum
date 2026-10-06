@@ -21,7 +21,13 @@ export function useAuth() {
 
   useEffect(() => {
     api.me()
-      .then(u => { setUser(u); loadHistory(); })
+      .then(u => {
+        // Cambio obligatorio pendiente: sin historial (el backend respondería 403).
+        if (u.must_change_password) { router.replace("/cambiar-contrasena"); return; }
+        setUser(u);
+        loadHistory();
+      })
+      // Si fue un 401, el interceptor de lib/api.ts ya dejó el aviso para el login.
       .catch(() => router.push("/"));
   }, [router, loadHistory]);
 

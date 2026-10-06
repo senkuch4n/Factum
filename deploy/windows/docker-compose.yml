@@ -44,6 +44,9 @@ services:
       Jwt__Secret: ${FACTUM_JWT_SECRET:?Falta FACTUM_JWT_SECRET en config/.env}
       Jwt__ExpiryHours: ${FACTUM_JWT_EXPIRY_HOURS:-8}
       Auth__Mode: ${FACTUM_AUTH_MODE:-dev}
+      # dev fuera de Development exige el flag. Default true: las instalaciones ya hechas no
+      # tienen la variable en config\.env y tienen que seguir arrancando (usuarios-locales D1).
+      Auth__AllowDevOutsideDevelopment: ${FACTUM_AUTH_ALLOW_DEV:-true}
       Storage__DataDirectory: /data
       Integrations__Support__Enabled: "false"
     volumes:

@@ -1,4 +1,3 @@
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Factum.Backend.Infrastructure;
@@ -91,6 +90,8 @@ builder.Services.AddControllers().AddJsonOptions(o =>
 });
 
 // ── Auth (custom JWT scheme — valida el header y pone User en HttpContext.Items) ─
+// FactumBearerHandler (Infrastructure/) es el único handler: valida el JWT y, en Auth:Mode=local,
+// la cuenta en users en cada request (usuarios-locales §6.4).
 builder.Services.AddAuthentication("FactumBearerScheme")
     .AddScheme<AuthenticationSchemeOptions, FactumBearerHandler>(
         "FactumBearerScheme", _ => { });
@@ -123,11 +124,24 @@ builder.Services.AddSingleton<IReportSettings, ReportSettings>();
 builder.Services.AddSingleton<IExpertProfileRepository, ExpertProfileRepository>();
 builder.Services.AddSingleton<ICatalogRepository, CatalogRepository>();
 
-// ── Auth provider (dev o external según AuthSettingsResolver) ─────────────────
+// ── Auth provider (dev, external o local según AuthSettingsResolver) ──────────
+// usuarios-locales §7.1: el repositorio de users, la validación de sesión y las cuentas se
+// registran siempre (el handler pide ISessionValidator); en dev/external no tocan la base.
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
+builder.Services.AddSingleton<IUserRepository, UserRepository>();
+builder.Services.AddSingleton<ISessionValidator, SessionValidator>();
+builder.Services.AddSingleton<IUserAccountService, UserAccountService>();
+builder.Services.AddSingleton<LocalUserBootstrapper>();
 if (authSettings.Mode == AuthModes.External)
 {
     builder.Services.AddHttpClient<IAuthProvider, ExternalHttpAuthProvider>(c =>
         c.Timeout = TimeSpan.FromSeconds(authSettings.External!.TimeoutSeconds));
+}
+else if (authSettings.Mode == AuthModes.Local)
+{
+    builder.Services.AddSingleton(authSettings.Local!);
+    builder.Services.AddSingleton<IAuthProvider, LocalAuthProvider>();
 }
 else
 {
@@ -178,7 +192,9 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-app.Logger.LogInformation("Auth: modo {Mode}", authSettings.Mode);
+// En local, la línea de modo la escribe el bootstrapper, con la cantidad de superadmins activos.
+if (authSettings.Mode != AuthModes.Local)
+    app.Logger.LogInformation("Auth: modo {Mode}", authSettings.Mode);
 app.Logger.LogInformation("CORS: orígenes permitidos {Lista}", string.Join(", ", corsOrigins));
 if (authSettings.ExternalLoginUri is { } loginUri)
     app.Logger.LogInformation("Auth: login externo en {Url}",
@@ -189,6 +205,11 @@ else
     app.Logger.LogInformation("Soporte: deshabilitado");
 foreach (var warning in authSettings.Warnings.Concat(supportSettings.Warnings))
     app.Logger.LogWarning("{Warning}", warning);
+
+// usuarios-locales §7.2: índices de users, superadmins iniciales, reset de emergencia y chequeo de
+// que haya al menos un superadmin activo. Si falla (Mongo caído, sin superadmins), no arranca.
+if (authSettings.Mode == AuthModes.Local)
+    await app.Services.GetRequiredService<LocalUserBootstrapper>().RunAsync(CancellationToken.None);
 
 // Branding se carga una sola vez; resolverlo acá hace que sus warnings (logo inválido,
 // textos truncados) salgan en el log de arranque y no en el primer request.
@@ -215,6 +236,8 @@ app.UseForwardedHeaders();
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
+// usuarios-locales §6.5: con el cambio de contraseña pendiente, 403 password_change_required.
+app.UseMiddleware<PasswordChangeGateMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
@@ -230,42 +253,4 @@ app.MapGet("/health", () => Results.Ok(new
 }));
 
 app.MapControllers();
-app.Run();
-
-// ── Handler de autenticación custom ──────────────────────────────────────────
-public sealed class FactumBearerHandler(
-    IOptionsMonitor<AuthenticationSchemeOptions> options,
-    ILoggerFactory logger,
-    UrlEncoder encoder,
-    IAuthService authService)
-    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
-{
-    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
-    {
-        string? token = null;
-
-        if (Request.Headers.TryGetValue("Authorization", out var header) &&
-            header.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-        {
-            token = header.ToString()["Bearer ".Length..].Trim();
-        }
-        else if (Request.Query.TryGetValue("token", out var q))
-        {
-            token = q.ToString();
-        }
-
-        if (string.IsNullOrEmpty(token))
-            return Task.FromResult(AuthenticateResult.NoResult());
-
-        var user = authService.ValidateToken(token);
-        if (user is null)
-            return Task.FromResult(AuthenticateResult.Fail("Token inválido o expirado"));
-
-        Context.Items["User"] = user;
-        var identity = new System.Security.Claims.ClaimsIdentity("Bearer");
-        identity.AddClaim(new System.Security.Claims.Claim("dni", user.Dni));
-        var principal = new System.Security.Claims.ClaimsPrincipal(identity);
-        var ticket = new AuthenticationTicket(principal, Scheme.Name);
-        return Task.FromResult(AuthenticateResult.Success(ticket));
-    }
-}
+await app.RunAsync();

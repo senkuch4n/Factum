@@ -188,8 +188,10 @@ npm run package   # empaqueta la app instalable
 | Clave | Qué es |
 |---|---|
 | `MongoDb:ConnectionString` / `DatabaseName` | Conexión a Mongo |
-| `Jwt:Secret` / `ExpiryHours` | Firma y expiración del token de sesión |
-| `Auth:Mode` | `dev` (identidad simulada, default) o `external` (login real contra un proveedor HTTP externo). Sin distinguir mayúsculas; cualquier otro valor impide arrancar |
+| `Jwt:Secret` / `ExpiryHours` | Firma y expiración del token de sesión. Con `Auth:Mode=local` y fuera de `Development`, `Jwt:Secret` tiene que ser propio del despliegue (≥ 32 caracteres, no el valor del repo) o el backend no arranca |
+| `Auth:Mode` | `dev` (identidad simulada, default), `external` (login real contra un proveedor HTTP externo) o `local` (cuentas propias de Factum en la colección `users`; el modo del SaaS). Sin distinguir mayúsculas; cualquier otro valor impide arrancar |
+| `Auth:AllowDevOutsideDevelopment` | Env `Auth__AllowDevOutsideDevelopment`. `true` permite `Auth:Mode=dev` fuera de `Development` (solo para una instalación local aislada); default `false`: `dev` fuera de `Development` impide arrancar. En `Development` se ignora |
+| `Auth:Local:*` | Solo si `Auth:Mode=local`: política de contraseñas, bloqueo por intentos, superadmins iniciales y reset de emergencia — ver [Autenticación](#autenticación) |
 | `Auth:External:BaseUrl` / `LoginPath` / `TimeoutSeconds` | Solo si `Auth:Mode=external`. Se hace `POST {BaseUrl}{LoginPath}` (default `/auth/login`); timeout entre 1 y 120 s (default 10) |
 | `Auth:External:Request:DniField` / `UserField` / `PasswordField` | Nombres de los campos del body JSON que se manda al proveedor (default `dni` / `user` / `password`). Tienen que ser distintos |
 | `Auth:External:Response:NameField` / `SiglaField` | Campos que se leen de la respuesta (default `name` / `sigla`). Admiten rutas con puntos (`data.user.fullName`). `SiglaField` vacío = no se lee sigla |
@@ -201,7 +203,7 @@ npm run package   # empaqueta la app instalable
 | `Storage:DataDirectory` | Carpeta local donde se guardan los ZIP/PDF generados (dev) |
 | `Storage:MaxUploadBytes` | Env `Storage__MaxUploadBytes`. Tope de tamaño de un archivo de evidencia en `POST /api/cases/{id}/files` (solo ese endpoint; el resto sigue con el tope de 30 MB de Kestrel). Default `4294967296` (4 GB). Tiene que ser mayor que 0 o el backend no arranca |
 | `Storage:MinFreeBytes` | Env `Storage__MinFreeBytes`. Espacio libre que tiene que quedar en el disco de `DataDirectory` después de una subida; si no alcanza, la subida se rechaza con 507 antes de escribir. Default `1073741824` (1 GB). Tiene que ser mayor o igual que 0 o el backend no arranca |
-| `Audit:AdminDnis` | DNIs habilitados a leer `GET /api/agent-events` (auditoría de uso del agente) |
+| `Audit:AdminDnis` | DNIs habilitados a leer `GET /api/agent-events` (auditoría de uso del agente). En `Auth:Mode=local` también puede leerla cualquier superadmin |
 | `TatanaUpdates:ProjectId` / `ProjectRawBaseUrl` / `PrivateToken` | Proyecto de GitLab del que se espeja la última release de Tatana |
 | `TatanaUpdates:PublicBaseUrl` | URL pública de este backend — a la que apuntan el instalador Electron y el `.bat` portátil para actualizarse |
 | `Branding:OrganizationName` / `OrganizationLogo` / `OrganizationIsotype` / `ContactLines` / `PrimaryColor` / `AccentColor` | Identidad de la organización que emite los informes (nombre, logo, isotipo, contacto y colores del informe) — ver [Branding](#identidad-de-la-organización-branding). Vacío en el repo |
@@ -240,17 +242,24 @@ Las subidas en curso se escriben en `<DataDirectory>/.upload-tmp/` y recién al 
 
 ## Autenticación
 
-El login pide **DNI + usuario + contraseña**. El DNI identifica al usuario
-(si la integración de soporte está activa, es la misma identidad que usa Faro).
+El DNI identifica al usuario y es la llave de todos sus datos (casos, perfil de
+perito, catálogos; si la integración de soporte está activa, es la misma
+identidad que usa Faro). Hay tres modos (`Auth:Mode`):
 
-- **Modo `dev`** (default): cualquier DNI de 7-8 dígitos y cualquier
-  contraseña no vacía autentican. El nombre se arma a partir del usuario con
-  la convención `nombre.apellido` (ej: usuario `carlos.mendoza` → "Carlos
-  Mendoza"). No hace falta pre-registrar a nadie: el usuario se crea la
-  primera vez que loguea.
-  Si el backend corre con `Auth:Mode=dev` fuera de `Development`, avisa en el
-  log de arranque que acepta cualquier contraseña.
-- **Modo `external`**: valida contra un proveedor HTTP externo genérico
+- **Modo `local`** — el modo del SaaS: cuentas propias de Factum en la
+  colección `users` de MongoDB. El login pide **DNI + contraseña**. Detalle
+  abajo, en [Modo `local`](#modo-local-cuentas-propias).
+- **Modo `dev`** (default): el login pide **DNI + usuario + contraseña**;
+  cualquier DNI de 7-8 dígitos y cualquier contraseña no vacía autentican. El
+  nombre se arma a partir del usuario con la convención `nombre.apellido` (ej:
+  usuario `carlos.mendoza` → "Carlos Mendoza"). No hace falta pre-registrar a
+  nadie. **Fuera de `Development`, `dev` no arranca** salvo que se ponga
+  `Auth:AllowDevOutsideDevelopment=true` (env
+  `Auth__AllowDevOutsideDevelopment=true`), y aun así avisa en el log que acepta
+  cualquier contraseña. El `docker-compose.yml` de desarrollo y la instalación
+  Windows (`FACTUM_AUTH_ALLOW_DEV`, default `true`) ya traen el flag.
+- **Modo `external`**: el login pide **DNI + usuario + contraseña** y valida
+  contra un proveedor HTTP externo genérico
   (`POST {Auth:External:BaseUrl}{Auth:External:LoginPath}`). Los nombres de los
   campos del request y de la respuesta se configuran en
   `Auth:External:Request:*` / `Auth:External:Response:*` (la respuesta admite
@@ -260,9 +269,78 @@ El login pide **DNI + usuario + contraseña**. El DNI identifica al usuario
   autenticación respondió de forma inesperada." El detalle técnico va al log,
   nunca a la pantalla.
 
-Si `Auth:Mode` (o la config de `external`) es inválida, **el backend no
+Si `Auth:Mode` (o la config del modo elegido) es inválida, **el backend no
 arranca** y dice por qué, en vez de caer en `dev` sin avisar. El log de
-arranque muestra el modo y, en `external`, la URL de login efectiva.
+arranque muestra el modo y, en `external`, la URL de login efectiva; en
+`local`, la cantidad de superadmins activos.
+
+### Modo `local` (cuentas propias)
+
+- Cada cuenta tiene DNI (7-8 dígitos, único, no editable), nombre, rol
+  (`superadmin` o `cliente`) y estado (`activo` o `suspendido`). La contraseña
+  se guarda con PBKDF2-HMAC-SHA256 con sal; nunca se loguea ni sale por la API.
+- Toda cuenta nace con una **contraseña temporal** y en el primer ingreso hay
+  que cambiarla (pantalla "Cambiá tu contraseña"); hasta entonces la API
+  responde 403 `password_change_required` a todo lo demás. Desde el menú de
+  usuario se puede cambiar cuando se quiera. Cambiar la contraseña cierra las
+  demás sesiones abiertas de esa cuenta.
+- Después de `MaxFailedAttempts` contraseñas incorrectas seguidas, la cuenta se
+  bloquea `LockoutMinutes` minutos (429 `account_locked`).
+- Una cuenta **suspendida** no puede entrar y su sesión abierta se corta en el
+  próximo request (401 `account_suspended`).
+- Un DNI que ya tiene casos, perfil o catálogos y todavía no tiene cuenta no ve
+  nada hasta que se le crea; al crearla ve lo suyo sin migrar nada.
+
+| Clave | Default | Qué es |
+|---|---|---|
+| `Auth:Local:PasswordMinLength` | `10` | Largo mínimo de la contraseña (entre 8 y 64). El máximo es 128. La contraseña no puede contener el DNI ni repetir la actual |
+| `Auth:Local:MaxFailedAttempts` | `5` | Intentos fallidos seguidos antes de bloquear (entre 1 y 50) |
+| `Auth:Local:LockoutMinutes` | `15` | Minutos de bloqueo (entre 1 y 1440) |
+| `Auth:Local:BootstrapSuperadmins:<i>:Dni` / `Name` / `TemporaryPassword` | — | Superadmins iniciales. Se crean al arrancar **solo si no existen**; si ya existen no se modifican. La temporal tiene que cumplir el largo mínimo |
+| `Auth:Local:ResetSuperadmin:Dni` / `TemporaryPassword` | vacío | Reset de emergencia de un superadmin (van juntos; vacío = apagado) |
+| `Jwt:Secret` | — | Con `local`, propio del despliegue (≥ 32 caracteres, no el valor del repo); si no, fuera de `Development` el backend no arranca |
+
+Las contraseñas temporales van en variables de entorno o en
+`appsettings.Local.json` (ignorado por git), **nunca** en el `appsettings.json`
+versionado. Ningún mensaje de error ni log las muestra.
+
+**Superadmin inicial.** Si al arrancar en `local` no hay ningún superadmin
+activo, el backend no arranca y explica qué configurar. Ejemplo con variables
+de entorno (valores de ejemplo, cambialos):
+
+```bash
+Auth__Mode=local
+Jwt__Secret=<secreto-propio-de-al-menos-32-caracteres>
+Auth__Local__BootstrapSuperadmins__0__Dni=99000001
+Auth__Local__BootstrapSuperadmins__0__Name="Superadmin de ejemplo"
+Auth__Local__BootstrapSuperadmins__0__TemporaryPassword=cambiame-en-el-primer-ingreso
+# más superadmins: Auth__Local__BootstrapSuperadmins__1__Dni=…, …__1__Name=…, …__1__TemporaryPassword=…
+```
+
+El log dice `Superadmin inicial creado: DNI 99000001`. Con esa temporal se
+entra y se elige la contraseña definitiva. Después se puede sacar la temporal
+de la configuración (dejarla no hace nada: una cuenta existente no se toca).
+
+**Reset de emergencia** (un superadmin que se olvidó la contraseña):
+
+```bash
+Auth__Local__ResetSuperadmin__Dni=99000001
+Auth__Local__ResetSuperadmin__TemporaryPassword=otra-temporal-de-emergencia
+```
+
+Al arrancar, a ese superadmin se le pone esa contraseña temporal (con cambio
+obligatorio), se lo desbloquea, se lo reactiva si estaba suspendido y se cierran
+sus sesiones. Se aplica una sola vez por valor, pero **borralo de la
+configuración después de usarlo**: el log lo recuerda en cada arranque mientras
+siga cargado. Si el DNI no es de un superadmin, se ignora con un warning.
+
+**Suspender o reactivar a mano** (hasta que exista el panel de usuarios),
+con `mongosh` sobre la base de Factum:
+
+```js
+db.users.updateOne({ Dni: "30111222" }, { $set: { Status: "suspendido" } })  // suspender
+db.users.updateOne({ Dni: "30111222" }, { $set: { Status: "activo" } })      // reactivar
+```
 
 > Compatibilidad: `Auth:Mode=mpf` y `Auth:MpfBaseUrl`/`MpfLoginPath`/`MpfTimeoutSeconds`
 > se aceptan como legado, con un warning al arrancar.
@@ -581,7 +659,7 @@ el arranque del wizard reportan al backend quién (DNI), desde qué PC
 (hostname, IP, modo instalado/portátil) y para qué caso —
 `POST /api/agent-events`, colección Mongo `agent_events`. La lectura
 (`GET /api/agent-events`) está limitada a los DNIs en `Audit:AdminDnis`
-(`appsettings.json`) — no hay roles en el modelo de usuario todavía.
+(`appsettings.json`) y, en `Auth:Mode=local`, a los superadmins.
 
 ## Notas
 
