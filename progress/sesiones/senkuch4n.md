@@ -20,3 +20,7 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-06 — #9 reviewer APROBADA -> progress/review_zip-local-informe-servidor.md (Backend.Tests 452/452, Agent.Tests 138/138). Fase aprobada; esperando prueba manual del usuario antes de commit/PR.
 - 2026-10-06 — #9 prueba manual: 1,3,4,6 OK; 5 y 7 no probables en local; 8-9 pendientes. Punto 2 (ZIP no abre): ZIP real verificado con 7zz y la contraseña de Mongo -> abre OK (AES-256, 3 archivos). Probable Utilidad de Archivo de macOS; preguntado al usuario.
 - 2026-10-06 — #9 OK del usuario (ZIP abre con otra herramienta; la Utilidad de Compresión de macOS no soporta AES). Commit + push + PR contra develop.
+- 2026-10-06 — #9 cerrada: PR #10 contra develop, resumen de cierre comentado en el issue. Sin HU activa.
+- 2026-10-06 — PR #10 mergeado. Tarea chica fuera del backlog: fix/aviso-zip-aes (aviso 7-Zip/Keka más visible en el resultado), implementer-frontend + reviewer sin HU. #6: preguntado al usuario antes de cerrar (Auth dev sin contraseña en la nube).
+- 2026-10-06 — #6 usuarios-locales se mantiene (verificado: hoy no hay colección de usuarios ni hash de contraseñas; solo Auth dev/external). Propuesto orden: aviso ZIP -> #6 -> despliegue-nube.
+- 2026-10-06 — fix/aviso-zip-aes: reviewer APROBADA -> progress/review_aviso-zip-aes.md; commit + PR.
