@@ -48,7 +48,7 @@ tocás `client/` ni `agent-ui/` (eso lo hace `implementer-frontend`).
 - ❌ **Datos de desarrollo:** no borres ni modifiques documentos de negocio
   preexistentes en Mongo ni archivos de `Storage:DataDirectory`. Si una
   prueba escribe, limpia solo por los `_id` que insertó.
-- ❌ No toques `backlog.json` ni `progress/current.md`.
+- ❌ No muevas tarjetas del Project "Factum – HU" (ni `ops/harness/hu.mjs`) ni toques `progress/sesiones/`.
 - ❌ No inventes nombres de campo distintos a los del Contrato compartido.
 - ❌ Nunca apuntes a una base o servicio de producción.
 

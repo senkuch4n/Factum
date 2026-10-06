@@ -49,7 +49,7 @@ server".
 
 - ❌ No edites nada en `client/`, `agent-ui/` ni `server/`.
 - ❌ No escribas en la base ni borres archivos de `Storage` — solo inspección.
-- ❌ No toques `backlog.json`.
+- ❌ No muevas tarjetas del Project "Factum – HU" ni corras `ops/harness/hu.mjs`.
 - ✅ Si la HU es ambigua a nivel técnico, dejalo como pregunta explícita en el
   documento y devolvé `bloqueada` en vez de seguir.
 

@@ -66,17 +66,57 @@ TypeScript (`client/src/types/`) y el backend sus DTOs en C#
 - La SDD de cada HU que cruce los dos lados tiene una sección **Contrato
   compartido** con los nombres exactos.
 
-## Arnés de orquestación RDD/SDD (backlog.json + progress/)
+## Arnés de orquestación RDD/SDD (GitHub Project + progress/)
 
-Las HU nuevas pasan por un arnés con estado en disco (no en el chat), así una
-sesión nueva puede retomar exactamente donde quedó otra. Replicado desde
-Evidentia-GFD el 2026-10-01.
+Las HU pasan por un arnés con estado fuera del chat, así una sesión nueva
+(de cualquier integrante del equipo) puede retomar exactamente donde quedó
+otra. Replicado desde Evidentia-GFD el 2026-10-01; desde el 2026-10-06 el
+estado vive en un GitHub Project y varias personas trabajan HU en paralelo.
+
+**Kanban:** Project "Factum – HU" — https://github.com/users/senkuch4n/projects/3
+(privado, vinculado a `senkuch4n/Factum`). Cada HU es un issue con label `hu`.
+
+| Columna (Status) | Fase del arnés (campo `Fase`) |
+|---|---|
+| Backlog | `no_afinada` |
+| Afinando | `afinando` |
+| Por validar | `afinada_pendiente_validacion` |
+| Lista para dev | `validada`, `en_arquitectura`, `arquitectura_lista` |
+| En curso | `implementando`, `rechazada_reintentando` |
+| En revisión | `en_revision` |
+| Hecho | `aprobada` |
+| Bloqueada | `bloqueada` |
+
+Otros campos del Project: `Slug` (kebab-case, define nombres de archivos y
+rama), `Toca` (backend / client / agent-ui y combinaciones), `Reintentos`
+(rechazos del reviewer; tope 2). La columna **nunca se mueve a mano ni
+directo por MCP**: se cambia la Fase con `ops/harness/hu.mjs`, que actualiza
+las dos cosas juntas, cuenta reintentos y bloquea al tercer rechazo.
+
+**Una HU activa por persona** (no una global): fases activas = `afinando`,
+`en_arquitectura`, `implementando`, `rechazada_reintentando`, `en_revision`.
+`hu.mjs fase` se niega a activar una HU si alguno de sus asignados ya tiene
+otra activa, o si no tiene asignado.
+
+```bash
+node ops/harness/hu.mjs ver [N]                       # HU abiertas, o detalle de #N
+node ops/harness/hu.mjs alta <slug> "<título>" <toca>  # issue nuevo en Backlog
+node ops/harness/hu.mjs tomar N                       # asignarse #N
+node ops/harness/hu.mjs fase N <fase>                 # cambiar Fase + columna
+node ops/harness/hu.mjs comentar N "<texto>"          # comentario en el issue
+```
+
+**MCP de GitHub** (`.mcp.json`, servidor remoto oficial con toolsets
+`context,repos,issues,pull_requests,projects`): para leer issues/PRs, abrir
+PRs y comentar. Cada integrante necesita `gh` logueado con scope `project`
+(`gh auth refresh -h github.com -s project,read:project`, en una terminal
+interactiva) y `export GITHUB_PAT="$(gh auth token)"` en su shell.
 
 | Archivo / carpeta | Qué contiene | Quién lo escribe |
 |---|---|---|
-| `backlog.json` | Estado de cada HU (`no_afinada` → ... → `aprobada`/`bloqueada`), máx. 1 HU activa a la vez, tope de 2 reintentos de revisión | **Solo el orquestador** |
-| `progress/current.md` | Bitácora viva de la sesión en curso | Orquestador, en tiempo real |
-| `progress/history.md` | Log append-only de HU cerradas | Orquestador, al cerrar cada HU |
+| Project "Factum – HU" | Estado de cada HU, asignado, reintentos; resumen de cierre como comentario del issue | **Solo el orquestador**, vía `hu.mjs` |
+| `progress/sesiones/<login-github>.md` | Bitácora viva de las sesiones de esa persona (una línea por evento) | Orquestador de esa persona |
+| `backlog.json`, `progress/current.md`, `progress/history.md` | **Archivados** (solo lectura): estado y bitácora hasta el 2026-10-06 | — |
 | `progress/impl_backend_<id>.md`, `progress/impl_frontend_<id>.md` | Lo que hizo cada implementador: archivos tocados, verificación, bloqueos | Implementador correspondiente |
 | `progress/review_<id>.md` | Veredicto del reviewer | Subagente `reviewer` |
 | `docs/hu-<slug>.md` | RDD — Historia de Usuario (Contexto, Gherkin, Datos, UX, Fuera de alcance, Dudas) | Subagente `afinador`, validada por el usuario |
@@ -84,7 +124,9 @@ Evidentia-GFD el 2026-10-01.
 | `skills/CATALOGO.md` | Catálogo de skills seleccionables por HU | — |
 | `CHECKPOINTS.md` | Checklist objetiva que usa el reviewer | — |
 | `.claude/agents/{afinador,architect,implementer-backend,implementer-frontend,reviewer}.md` | Subagentes de Claude Code | — |
-| `ops/harness/verify.sh` | Verificación (build/tsc en los lados con cambios + chequeos de `backlog.json`); la corre el hook `Stop` | — |
+| `ops/harness/verify.sh` | Verificación (archivos base + build/tsc en los lados con cambios); la corre el hook `Stop` | — |
+| `ops/harness/hu.mjs` | Único camino para cambiar la Fase/columna de una HU en el Project | Lo corre el orquestador |
+| `.github/ISSUE_TEMPLATE/hu.yml` | Plantilla para dar de alta una HU desde la web (cae en Backlog) | — |
 
 **Regla anti-teléfono-descompuesto:** los subagentes escriben su resultado
 completo en el archivo que les corresponde y devuelven una sola línea de
@@ -124,13 +166,18 @@ HU + SDD + review son 4 o 5 subagentes para un cambio de tres líneas.
 - `main` = producción, `develop` = integración. **Nunca commitear directo a
   `main`** ni mergear una rama de HU a `main`: las ramas de HU van contra
   `develop`, y a `main` solo se promueve `develop`.
-- **Ramas de HU encadenadas, no en paralelo:** el estado del arnés vive en
-  archivos versionados, así que dos ramas de HU abiertas a la vez fragmentan
-  `backlog.json` y `progress/history.md`. Mientras haya una rama de HU sin
-  mergear, la siguiente sale de esa rama. Al pushear, si la base ya entró a
-  `develop`, se rebasa sobre `develop`.
-- Si hay que reconciliar dos `backlog.json`, se unen **por `id`** quedándose
-  con la versión de `actualizada` más reciente; nunca a mano.
+- **Ramas de HU en paralelo, desde `develop`** (desde 2026-10-06): cada HU
+  sale en `feat/<slug>` desde `develop` actualizado y cierra con un PR contra
+  `develop` cuyo cuerpo dice `Closes #N`. Como `develop` no es la rama por
+  defecto, el issue se cierra solo recién cuando `develop` se promueve a
+  `main`; mientras tanto la tarjeta queda en **Hecho**.
+- El estado ya no vive en archivos versionados, así que no hay nada que
+  reconciliar entre ramas. Los únicos archivos del arnés que se escriben son
+  por HU (`docs/hu-<slug>.md`, `Refactorizaciones/<slug>.md`,
+  `progress/impl_*_<slug>.md`, `progress/review_<slug>.md`) o por persona
+  (`progress/sesiones/<login>.md`).
+- Antes de abrir el PR, rebasar sobre `develop`; si dos HU tocan los mismos
+  archivos de código, el segundo PR resuelve el conflicto.
 - Un commit no mezcla trabajo de features no relacionadas: `git add` solo de
   los archivos de la tarea actual.
 - Cada agente se identifica en el trailer del commit
