@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { FlaskConical } from "lucide-react";
-import { api } from "@/lib/api";
+import { useAuthMode } from "@/hooks/useAuthMode";
 import { APP_VERSION } from "@/lib/version";
 
 /**
@@ -13,11 +12,7 @@ import { APP_VERSION } from "@/lib/version";
  * toasts. No es un landmark <footer>: ese queda para SiteFooter.
  */
 export function SystemStatusLine() {
-  const [devMode, setDevMode] = useState(false);
-
-  useEffect(() => {
-    api.getMode().then((m) => setDevMode(m === "dev")).catch(() => {});
-  }, []);
+  const devMode = useAuthMode().mode === "dev";
 
   return (
     <div

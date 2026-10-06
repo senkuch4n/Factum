@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import "@/lib/prime/locale-es";
 import { SystemStatusLine } from "./SystemStatusLine";
 import { FxToastProvider } from "./FxToastProvider";
+import { SessionWatcher } from "./SessionWatcher";
 
 /**
  * Configuración de PrimeReact, con identidad estable (fuera del componente):
@@ -27,7 +28,8 @@ const PRIME_VALUE: Partial<APIOptions> = {
 /**
  * Árbol de providers del cliente. `layout.tsx` sigue siendo server component
  * y solo monta esto. Orden: tema → PrimeReact → toast global de Prime
- * (`useFxToast`) → contenido + línea de estado del sistema.
+ * (`useFxToast`) → contenido + `SessionWatcher` (corte de sesión, sin UI) +
+ * línea de estado del sistema.
  */
 export function AppProviders({ children }: { children: React.ReactNode }) {
   return (
@@ -35,6 +37,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       <PrimeReactProvider value={PRIME_VALUE}>
         <FxToastProvider>
           {children}
+          <SessionWatcher />
           <SystemStatusLine />
         </FxToastProvider>
       </PrimeReactProvider>

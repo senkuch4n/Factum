@@ -8,10 +8,13 @@ import { Message } from "primereact/message";
 import { AlertCircle, AlertTriangle, Hash, Lock, ShieldCheck, User } from "lucide-react";
 import { api } from "@/lib/api";
 import { FxPassword } from "@/components/form/FxPassword";
+import { FxBanner } from "@/components/feedback/FxBanner";
+import { useAuthMode } from "@/hooks/useAuthMode";
+import { readAndClearSessionNotice, sessionNoticeText } from "@/lib/session-notice";
 import { AgentStatusChip } from "./AgentStatusChip";
 import {
   describeLoginError,
-  LOGIN_FIELD_ORDER,
+  loginFieldOrder,
   sanitizeDni,
   validateLogin,
   type LoginField,
@@ -21,14 +24,16 @@ import {
 
 type FocusTarget = LoginField | "submit";
 
-const LABEL = "mb-1.5 block text-fx-body-sm font-semibold text-fx-text-2";
-const FIELD_ICON =
+/* Exportados para los formularios de contraseña (components/password/*),
+   que repiten el mismo patrón visual y a11y del login. */
+export const LABEL = "mb-1.5 block text-fx-body-sm font-semibold text-fx-text-2";
+export const FIELD_ICON =
   "pointer-events-none absolute left-3.5 top-1/2 z-[1] h-4 w-4 -translate-y-1/2 text-fx-text-3 transition-colors duration-fx-fast ease-fx group-focus-within:text-fx-accent-text";
 /* `pl-10`: lugar para el ícono. Le gana al px-3 del pt global de inputtext
    porque ese pt reaplica la clase del consumidor al final. */
-const INPUT = "h-12 pl-10";
+export const INPUT = "h-12 pl-10";
 
-function FieldError({ id, message }: { id: string; message?: string }) {
+export function FieldError({ id, message }: { id: string; message?: string }) {
   if (!message) return null;
   return (
     <p id={id} className="mt-1.5 flex items-center gap-1.5 text-fx-body-sm text-fx-danger">
@@ -41,11 +46,17 @@ function FieldError({ id, message }: { id: string; message?: string }) {
 /**
  * Formulario de acceso. Valida en cliente (requeridos + DNI de 7 u 8
  * dígitos), traduce los errores a mensajes propios y deja el foco donde sirve
- * para reintentar. El envío es el de siempre: `api.login` guarda
- * `factum_token` y se navega a /dashboard.
+ * para reintentar. `api.login` guarda `factum_token` y se navega a
+ * /dashboard, o a /cambiar-contrasena si la cuenta tiene que cambiarla.
+ * "Usuario" solo se pide en `dev`/`external`; en `local` (o mientras el modo
+ * no llegó) son DNI + Contraseña.
  */
 export function LoginForm() {
   const router = useRouter();
+  const { mode } = useAuthMode();
+  const showUsername = mode === "dev" || mode === "external";
+  const isLocal = mode === "local";
+  const [notice, setNotice] = useState<string | null>(null);
   const [values, setValues] = useState<LoginValues>({ dni: "", username: "", password: "" });
   const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({});
   const [serverError, setServerError] = useState<string | null>(null);
@@ -58,6 +69,13 @@ export function LoginForm() {
   const dniRef = useRef<HTMLInputElement>(null);
   const usernameRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+
+  /* Aviso de sesión cortada (lo dejó lib/api.ts). Se lee y se borra una sola
+     vez; con StrictMode la segunda lectura da null y no pisa el estado. */
+  useEffect(() => {
+    const n = readAndClearSessionNotice();
+    if (n) setNotice(sessionNoticeText(n));
+  }, []);
 
   /* El foco se mueve después del render en que el botón se rehabilita: un
      botón disabled no recibe foco. */
@@ -89,8 +107,8 @@ export function LoginForm() {
     e.preventDefault();
     if (inFlight.current) return;
 
-    const errors = validateLogin(values);
-    const firstInvalid = LOGIN_FIELD_ORDER.find((f) => errors[f]);
+    const errors = validateLogin(values, { requireUsername: showUsername });
+    const firstInvalid = loginFieldOrder(showUsername).find((f) => errors[f]);
     if (firstInvalid) {
       setFieldErrors(errors);
       setServerError(null);
@@ -102,11 +120,13 @@ export function LoginForm() {
     setLoading(true);
     setServerError(null);
     try {
-      await api.login(values.dni, values.username, values.password);
+      // En `local` el backend ignora `username`: va vacío.
+      const { user } = await api.login(values.dni, showUsername ? values.username : "", values.password);
+      setNotice(null);
       // Sin resetear `loading`: el botón queda en "Verificando…" mientras navega.
-      router.push("/dashboard");
+      router.push(user.must_change_password ? "/cambiar-contrasena" : "/dashboard");
     } catch (err) {
-      const { kind, message } = describeLoginError(err);
+      const { kind, message } = describeLoginError(err, mode);
       setServerError(message);
       setLoading(false);
       inFlight.current = false;
@@ -131,7 +151,15 @@ export function LoginForm() {
     <div>
       <p className="text-fx-label uppercase text-fx-accent-text">Acceso</p>
       <h1 className="mt-2 text-fx-h1 text-fx-text">Iniciar sesión</h1>
-      <p className="mt-2 text-fx-body-sm text-fx-text-2">Ingresá con tus credenciales.</p>
+      <p className="mt-2 text-fx-body-sm text-fx-text-2">
+        {isLocal ? "Ingresá con tu DNI y tu contraseña." : "Ingresá con tus credenciales."}
+      </p>
+
+      {notice && (
+        <FxBanner tone="warn" className="mt-6" onClose={() => setNotice(null)}>
+          {notice}
+        </FxBanner>
+      )}
 
       <AgentStatusChip className="mt-6" />
 
@@ -145,7 +173,8 @@ export function LoginForm() {
               id="dni"
               name="dni"
               inputMode="numeric"
-              autoComplete="off"
+              // En `local` el DNI es el identificador: los gestores de contraseñas lo asocian.
+              autoComplete={isLocal ? "username" : "off"}
               placeholder="12345678"
               className={INPUT}
               value={values.dni}
@@ -156,27 +185,29 @@ export function LoginForm() {
           <FieldError id="dni-error" message={fieldErrors.dni} />
         </div>
 
-        <div>
-          <label htmlFor="username" className={LABEL}>Usuario</label>
-          <div className="group relative">
-            <User className={FIELD_ICON} aria-hidden="true" />
-            <InputText
-              ref={usernameRef}
-              id="username"
-              name="username"
-              autoComplete="username"
-              autoCapitalize="none"
-              spellCheck={false}
-              maxLength={50}
-              placeholder="jperez"
-              className={INPUT}
-              value={values.username}
-              onChange={(e) => update("username", e.target.value)}
-              {...fieldA11y("username")}
-            />
+        {showUsername && (
+          <div>
+            <label htmlFor="username" className={LABEL}>Usuario</label>
+            <div className="group relative">
+              <User className={FIELD_ICON} aria-hidden="true" />
+              <InputText
+                ref={usernameRef}
+                id="username"
+                name="username"
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
+                maxLength={50}
+                placeholder="jperez"
+                className={INPUT}
+                value={values.username}
+                onChange={(e) => update("username", e.target.value)}
+                {...fieldA11y("username")}
+              />
+            </div>
+            <FieldError id="username-error" message={fieldErrors.username} />
           </div>
-          <FieldError id="username-error" message={fieldErrors.username} />
-        </div>
+        )}
 
         <div>
           <label htmlFor="password" className={LABEL}>Contraseña</label>
@@ -214,6 +245,12 @@ export function LoginForm() {
           label={loading ? "Verificando credenciales…" : "Ingresar a Factum"}
           loading={loading}
         />
+
+        {isLocal && (
+          <p className="text-center text-fx-body-sm text-fx-text-2">
+            ¿Olvidaste tu contraseña? Pedile a Factum que te la restablezca.
+          </p>
+        )}
       </form>
     </div>
   );

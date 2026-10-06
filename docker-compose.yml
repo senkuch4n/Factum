@@ -28,6 +28,16 @@ services:
       - Jwt__Secret=factum-dev-secret-change-in-production
       - Jwt__ExpiryHours=8
       - Auth__Mode=dev
+      # Solo para este compose de desarrollo; un despliegue real usa Auth__Mode=local.
+      # (dev acepta cualquier contraseña y fuera de Development exige este flag.)
+      - Auth__AllowDevOutsideDevelopment=true
+      # Cuentas propias de Factum (ver README, "Autenticación"). local exige un Jwt__Secret
+      # propio (≥ 32 caracteres, no el del repo) y al menos un superadmin inicial:
+      # - Auth__Mode=local
+      # - Jwt__Secret=<secreto-propio-de-al-menos-32-caracteres>
+      # - Auth__Local__BootstrapSuperadmins__0__Dni=99000001
+      # - Auth__Local__BootstrapSuperadmins__0__Name=Superadmin de prueba
+      # - Auth__Local__BootstrapSuperadmins__0__TemporaryPassword=cambiame-en-el-primer-ingreso
       # Login real contra un proveedor HTTP externo (ver README, "Autenticación"):
       # - Auth__Mode=external
       # - Auth__External__BaseUrl=https://<proveedor>

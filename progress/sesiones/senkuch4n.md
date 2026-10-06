@@ -24,3 +24,12 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-06 — PR #10 mergeado. Tarea chica fuera del backlog: fix/aviso-zip-aes (aviso 7-Zip/Keka más visible en el resultado), implementer-frontend + reviewer sin HU. #6: preguntado al usuario antes de cerrar (Auth dev sin contraseña en la nube).
 - 2026-10-06 — #6 usuarios-locales se mantiene (verificado: hoy no hay colección de usuarios ni hash de contraseñas; solo Auth dev/external). Propuesto orden: aviso ZIP -> #6 -> despliegue-nube.
 - 2026-10-06 — fix/aviso-zip-aes: reviewer APROBADA -> progress/review_aviso-zip-aes.md; commit + PR.
+- 2026-10-06 — Plan SaaS aprobado: cliente = cuenta de usuario; solo superadmins (usuario + socio Leo) administran; contraseña temporal; baja = suspensión. #6 re-alcanzada; altas #12 abm-clientes, #13 marca-por-cliente, #14 despliegue-nube (errores intermitentes de GitHub, campos completados a mano). PR #11 mergeado. #6 tomada, rama feat/usuarios-locales, afinando; lanzado afinador.
+- 2026-10-06 — #6 afinador done -> docs/hu-usuarios-locales.md (15 dudas); afinada_pendiente_validacion.
+- 2026-10-06 — #6 validada (todas las recomendadas; D2 DNI + contraseña). en_arquitectura; lanzado architect.
+- 2026-10-06 — #6 architect done -> Refactorizaciones/usuarios-locales.md (sin decisiones pendientes). implementando; lanzados implementer-backend y implementer-frontend (opus).
+- 2026-10-06 — #6 implementer-frontend done -> progress/impl_frontend_usuarios-locales.md. Esperando backend.
+- 2026-10-06 — #6 implementer-backend done -> progress/impl_backend_usuarios-locales.md. en_revision; lanzado reviewer (sonnet).
+- 2026-10-06 — Incidente: el implementer-backend corrió pkill -f Factum.Backend y bajó el backend/Tatana de prueba manual del usuario (sin pérdida de datos). Avisado; reviewer instruido a no matar procesos ajenos.
+- 2026-10-06 — #6 reviewer APROBADA -> progress/review_usuarios-locales.md (Backend.Tests 552/552). Fase aprobada; esperando prueba manual del usuario.
+- 2026-10-06 — #6 prueba manual OK del usuario (local, cambio obligatorio, bloqueo, cambio voluntario, suspensión). Commit + push + PR.

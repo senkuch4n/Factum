@@ -5,6 +5,8 @@ public static class AuthModes
 {
     public const string Dev = "dev";
     public const string External = "external";
+    /// <summary>Cuentas propias de Factum en la colección <c>users</c> (usuarios-locales).</summary>
+    public const string Local = "local";
 }
 
 /// <summary>
