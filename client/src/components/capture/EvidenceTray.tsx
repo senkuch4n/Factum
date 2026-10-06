@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, Check, CheckCircle2, Loader2, Trash2 } from "lucide-react";
+import { AlertCircle, Check, CheckCircle2, HardDrive, Loader2, Trash2 } from "lucide-react";
 import type { CaptureRoleValue } from "@/lib/api";
 import { CAPTURE_ROLE_LABELS } from "@/lib/pericial";
 import { FOCUS_RING } from "@/lib/prime/pt/shared";
@@ -9,14 +9,29 @@ import { kindMeta, srcOf, type GItem } from "./gallery";
 import { MEDIA_SURFACE } from "./media";
 import { SafeImg } from "./StageScreen";
 
-/** Estado de envío de un ítem de la bandeja (derivado en CaptureStep). */
-export type TrayUploadState = "pending" | "uploading" | "uploaded" | "error";
+/**
+ * Estado de envío de un ítem de la bandeja (derivado en CaptureStep).
+ * `saving`/`stored`/`missing`/`save_error`: flujo agent (evidencia en esta PC).
+ */
+export type TrayUploadState =
+  | "pending" | "uploading" | "uploaded" | "error"
+  | "saving" | "stored" | "missing" | "save_error";
 
 const UPLOAD_STATE_TEXT: Record<TrayUploadState, string> = {
   pending: "pendiente de envío",
   uploading: "enviando",
   uploaded: "subido",
   error: "error al enviar",
+  saving: "guardando en esta PC",
+  stored: "en esta PC",
+  missing: "no está en esta PC",
+  save_error: "error al guardar en esta PC",
+};
+
+/** Texto corto visible del estado (chips): solo los estados del flujo agent que importan. */
+const VISIBLE_STATE_TEXT: Partial<Record<TrayUploadState, string>> = {
+  stored: "En esta PC",
+  missing: "No está en esta PC",
 };
 
 /** Sufijo del `aria-label` con el estado de envío (vacío si no hay estado). */
@@ -29,22 +44,29 @@ function uploadSuffix(state?: TrayUploadState) {
  * Indicador chico de envío: ícono + color, nunca solo color. Pendiente no
  * muestra nada. Decorativo: el estado ya va en el `aria-label` del ítem.
  */
-function UploadStateIcon({ state, className }: { state?: TrayUploadState; className?: string }) {
+function UploadStateIcon({ state, hash, className }: { state?: TrayUploadState; hash?: string; className?: string }) {
   if (!state || state === "pending") return null;
-  const Icon = state === "uploaded" ? CheckCircle2 : state === "uploading" ? Loader2 : AlertCircle;
+  const busy = state === "uploading" || state === "saving";
+  const Icon = state === "uploaded" ? CheckCircle2
+    : state === "stored" ? HardDrive
+    : busy ? Loader2
+    : AlertCircle;
+  // El hash abreviado va solo en el `title` (SDD §7.7): ayuda a cotejar sin ocupar lugar.
+  const title = state === "stored" && hash ? `${UPLOAD_STATE_TEXT[state]} · SHA-256 ${hash.slice(0, 8)}…` : UPLOAD_STATE_TEXT[state];
   return (
     <span
       aria-hidden="true"
-      title={UPLOAD_STATE_TEXT[state]}
+      title={title}
       className={cn(
         "flex shrink-0 items-center justify-center rounded-full",
-        state === "uploaded" && "text-fx-success",
-        state === "uploading" && "text-fx-accent-text",
-        state === "error" && "text-fx-danger",
+        (state === "uploaded" || state === "stored") && "text-fx-success",
+        busy && "text-fx-accent-text",
+        (state === "error" || state === "save_error") && "text-fx-danger",
+        state === "missing" && "text-fx-warning",
         className,
       )}
     >
-      <Icon className={cn("h-3.5 w-3.5", state === "uploading" && "motion-safe:animate-spin")} strokeWidth={2.5} aria-hidden="true" />
+      <Icon className={cn("h-3.5 w-3.5", busy && "motion-safe:animate-spin")} strokeWidth={2.5} aria-hidden="true" />
     </span>
   );
 }
@@ -103,6 +125,7 @@ export function EvidenceTrayTile({
       {uploadState && uploadState !== "pending" && (
         <UploadStateIcon
           state={uploadState}
+          hash={item.remoteFile?.sha256}
           className="pointer-events-none absolute left-1 top-1 h-5 w-5 bg-fx-surface-1 ring-1 ring-fx-border"
         />
       )}
@@ -174,7 +197,12 @@ export function AttachmentChip({
           )}
         </span>
         {sizeMB != null && <span className="shrink-0 tabular-nums text-fx-text-3">{sizeMB}&nbsp;MB</span>}
-        <UploadStateIcon state={uploadState} />
+        <UploadStateIcon state={uploadState} hash={item.remoteFile?.sha256} />
+        {uploadState && VISIBLE_STATE_TEXT[uploadState] && (
+          <span aria-hidden="true" className="shrink-0 whitespace-nowrap text-[11px] font-medium text-fx-text-2">
+            {VISIBLE_STATE_TEXT[uploadState]}
+          </span>
+        )}
       </button>
       <button
         type="button"

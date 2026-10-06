@@ -3,10 +3,11 @@
  * sin cambiar su lógica).
  */
 import { FileText, ImageIcon, Video, Volume2, type LucideIcon } from "lucide-react";
-import type { CaptureRoleValue } from "@/lib/api";
 import { agentFileURL } from "@/lib/agent";
+import type { CapturedFile } from "@/types";
 
-export interface CapturedFile { name: string; uploaded: boolean; sourcePath?: string; captureRole?: CaptureRoleValue; }
+/** Una sola definición en `@/types` (zip-local-informe-servidor F6); se reexporta por compatibilidad. */
+export type { CapturedFile };
 
 export function isVideo(name: string) { return /\.(mp4|mkv|mov)$/i.test(name); }
 export function fileType(name: string): "funcionario" | "denunciante" | "screenshot" | "video" | "other" {
@@ -72,4 +73,8 @@ export function kindMeta(kind: GKind): { label: string; Icon: LucideIcon } {
   }
 }
 
+/**
+ * URL de vista de un ítem. `CaptureStep` resuelve `url` (blob local o carpeta
+ * del caso en Tatana); sin `url`, el archivo sigue en la raíz de Tatana.
+ */
 export const srcOf = (item: GItem) => item.url ?? agentFileURL(item.name);

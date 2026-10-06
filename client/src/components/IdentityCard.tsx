@@ -14,17 +14,19 @@ import { Lightbox } from "./Lightbox";
  * captura a la derecha. Va dentro de un `<li>` de una lista con `divide-y`.
  */
 export function IdentityCard({
-  label, role, icon: Icon, name, dni, blobURL, agentFilename, onCapture, loading, done, disabled,
+  label, role, icon: Icon, name, dni, blobURL, agentFilename, fileURL, onCapture, loading, done, disabled,
 }: {
   label: string; role: string; icon: React.ElementType;
   name?: string; dni?: string;
   blobURL?: string; agentFilename?: string;
+  /** URL ya resuelta (carpeta del caso en Tatana, flujo agent); manda sobre `agentFilename`. */
+  fileURL?: string;
   onCapture: () => void; loading: boolean; done: boolean;
   /** Durante el envío de evidencia: no se puede tomar ni retomar la foto (verla sí). */
   disabled?: boolean;
 }) {
   const [lightbox, setLightbox] = useState(false);
-  const previewSrc = blobURL || (agentFilename ? agentFileURL(agentFilename) : undefined);
+  const previewSrc = blobURL || fileURL || (agentFilename ? agentFileURL(agentFilename) : undefined);
   const showPhoto = done && !!previewSrc;
 
   const subtitle = name

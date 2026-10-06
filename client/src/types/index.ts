@@ -4,9 +4,15 @@ export type {
   CaptureRole, CaptureRoleValue, ReportImage,
   ExpertProfile, ExpertProfileRequest, CaseDataRequest, FileSource, Tratamiento,
   AuthMode, CatalogId, CatalogEntry, CatalogsResponse,
+  EvidenceStorage, EvidenceItem, EvidenceHost, ZipLocation, ManifestFile,
+  RegisterEvidenceRequest, EvidenceResponse, PrepareGenerationResponse, FinishGenerationMetadata, GenerateResult,
 } from "@/lib/api";
-export type { Device, AgentEvent, AgentFile, VideoVariant } from "@/lib/agent";
+export type { Device, AgentEvent, AgentFile, VideoVariant, AgentInfo } from "@/lib/agent";
 
+/**
+ * Archivo de la bandeja del paso 3 (única definición: `capture/gallery.ts` la
+ * reexporta). `uploaded` = registrado en el expediente, en los dos flujos.
+ */
 export interface CapturedFile {
   name: string;
   uploaded: boolean;
@@ -15,7 +21,19 @@ export interface CapturedFile {
   sourcePath?: string;
   /** Marca local de la captura (se persiste en `capture_roles` del caso). */
   captureRole?: "imei_modelo" | "nombre_dispositivo";
+  /** Guardado en la carpeta del caso de Tatana (flujo agent). */
+  storedInCase?: boolean;
+  sha256?: string;
+  size?: number;
+  /** "missing": está en el manifiesto pero no en este Tatana (otra PC o borrado). */
+  availability?: "here" | "missing";
 }
+
+/** `code` de los errores nuevos del backend (zip-local-informe-servidor §5.1). */
+export type EvidenceErrorCode =
+  | "evidence_on_agent" | "evidence_on_server" | "evidence_on_other_pc" | "case_not_editable"
+  | "invalid_manifest" | "no_evidence" | "generation_stale" | "manifest_mismatch" | "missing_images"
+  | "image_hash_mismatch" | "invalid_zip_info" | "request_too_large";
 
 /**
  * Una fila de integrante del paso 2. `key` es estable (React y foco al
@@ -97,7 +115,8 @@ export interface UploadErrorBody {
   received_bytes?: number;
 }
 
-export type UploadPhase = "checking" | "preparing" | "uploading" | "finishing";
+/** `copying`/`hashing`/`registering`: guardado en la PC (flujo agent). */
+export type UploadPhase = "checking" | "preparing" | "uploading" | "finishing" | "copying" | "hashing" | "registering";
 export type FileUploadState = "uploading" | "error";
 
 export interface UploadProgress {

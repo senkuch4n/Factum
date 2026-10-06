@@ -3,6 +3,7 @@ using Factum.Backend.DTOs;
 using Factum.Backend.Infrastructure;
 using Factum.Backend.Models;
 using Factum.Backend.Services.Cases;
+using Factum.Backend.Services.Reports;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -16,7 +17,8 @@ namespace Factum.Backend.Controllers;
 [Route("api/cases")]
 [Authorize]
 [Produces("application/json")]
-public sealed class CasesController(ICaseService caseService, IOptions<StorageOptions> storage) : ControllerBase
+public sealed class CasesController(ICaseService caseService, IOptions<StorageOptions> storage,
+    IOptions<ReportOptions> reportOptions) : ControllerBase
 {
     private User Officer => (User)HttpContext.Items["User"]!;
 
@@ -151,6 +153,78 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
     public async Task<IActionResult> Generate(string id, CancellationToken ct)
     {
         var result = await caseService.GenerateAsync(id, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    // ── zip-local-informe-servidor (§5.2, §5.3, §5.5, §5.6) ─────────────────
+
+    // Registra archivos ya guardados en la carpeta del caso de Tatana (manifiesto, sin bytes).
+    [HttpPut("{id}/evidence")]
+    [ProducesResponseType<EvidenceResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> RegisterEvidence(string id, [FromBody] RegisterEvidenceRequest request,
+        CancellationToken ct)
+    {
+        var result = await caseService.RegisterEvidenceAsync(id, request, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    [HttpDelete("{id}/evidence/{filename}")]
+    [ProducesResponseType<EvidenceResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> DeleteEvidence(string id, string filename, CancellationToken ct)
+    {
+        var result = await caseService.DeleteEvidenceAsync(id, filename, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    // Etapa 1 de 3: valida contra el manifiesto y abre el intento (devuelve la contraseña del ZIP
+    // que arma Tatana). No cambia el Status.
+    [HttpPost("{id}/generate/prepare")]
+    [ProducesResponseType<PrepareGenerationResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> PrepareGeneration(string id, [FromBody] PrepareGenerationRequest request,
+        CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store";
+        var result = await caseService.PrepareGenerationAsync(id, request, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    // Etapa 3 de 3: multipart (metadata + capturas del informe) leído en streaming, sin IFormFile
+    // (D-T6). El tope del cuerpo se fija antes de leer nada.
+    [HttpPost("{id}/generate/finish")]
+    [DisableFormValueModelBinding]
+    [ProducesResponseType<GenerateResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status413PayloadTooLarge)]
+    public async Task<IActionResult> FinishGeneration(string id, CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store";
+        var max = reportOptions.Value.MaxGenerateUploadBytes;
+        var bodySize = HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
+        if (bodySize is { IsReadOnly: false }) bodySize.MaxRequestBodySize = max;
+        if (Request.ContentLength is { } length && length > max)
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, new Dictionary<string, object?>
+            {
+                ["error"] = EvidenceManifest.RequestTooLargeMessage(max),
+                ["code"] = EvidenceErrorCodes.RequestTooLarge,
+                ["max_bytes"] = max,
+            });
+
+        var result = await caseService.FinishGenerationAsync(id, Officer.Dni, Request.ContentType, Request.Body, ct);
         return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
     }
 

@@ -20,6 +20,13 @@ public sealed class ReportOptions
     /// </summary>
     public bool EncryptZip { get; set; } = true;
 
+    /// <summary>
+    /// Tope del cuerpo de <c>POST /api/cases/{id}/generate/finish</c> (metadata + capturas que el
+    /// informe embebe; zip-local-informe-servidor §4.1). Default 256 MiB; tiene que ser &gt; 0.
+    /// Variable de entorno: <c>Report__MaxGenerateUploadBytes</c>.
+    /// </summary>
+    public long MaxGenerateUploadBytes { get; set; } = 256L * 1024 * 1024;
+
     /// <summary>Reemplazo por estudio de los textos por defecto. Vacío = default versionado.</summary>
     public ReportDefaultTextsOptions DefaultTexts { get; set; } = new();
 }

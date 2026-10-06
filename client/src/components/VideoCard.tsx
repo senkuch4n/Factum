@@ -7,14 +7,18 @@ import { Loader2, Play, Trash2 } from "lucide-react";
 import type { VideoVariant } from "@/lib/agent";
 import { agentFileURL } from "@/lib/agent";
 import { MEDIA_SURFACE } from "./capture/media";
-
-interface CapturedFile { name: string; uploaded: boolean; sourcePath?: string; }
+import type { CapturedFile } from "@/types";
 
 /** Reproductor de una grabación del agente con sus versiones (original + variantes). */
 export function VideoCard({
-  file, variants, isPending, onRemove, removeDisabled,
+  file, variants, isPending, onRemove, removeDisabled, originalURL,
 }: {
   file: CapturedFile;
+  /**
+   * URL del "Original". Guardado en la carpeta del caso (flujo agent), sale de
+   * ahí; si no, de la raíz de Tatana. Las variantes siguen siempre en la raíz.
+   */
+  originalURL?: string;
   variants: VideoVariant[];
   isPending: boolean;
   onRemove: () => void;
@@ -24,7 +28,7 @@ export function VideoCard({
   const [activeTab, setActiveTab] = useState("original");
 
   const allTabs = [
-    { id: "original", label: "Original", url: agentFileURL(file.name) },
+    { id: "original", label: "Original", url: originalURL ?? agentFileURL(file.name) },
     ...variants.map(v => ({ id: v.label, url: agentFileURL(v.filename), label: v.label })),
   ];
   const current = allTabs.find(t => t.id === activeTab) ?? allTabs[0];

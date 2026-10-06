@@ -5,11 +5,14 @@ import type { Editor } from "@tiptap/core";
 import dynamic from "next/dynamic";
 import { Button } from "primereact/button";
 import {
-  AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, ClipboardList, FileText, Loader2, Undo2,
+  AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, ClipboardList, FileText, HardDrive, Loader2, RefreshCw, Undo2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { EMPTY_REPORT_TEXTS, MAX_LEN_TEXT, REPORT_SECTION_LABELS, reportFieldId } from "@/lib/pericial";
 import { ReportImagePreviewCache, useReportImages } from "@/lib/report-images";
+import { agentStatusMessage } from "@/lib/agent-messages";
+import { useAgentIdentity } from "@/hooks/useAgentIdentity";
+import type { Case, EvidenceStorage } from "@/lib/api";
 import { REPORT_TEXT_FORMAT, plainToMarkdown } from "@/lib/report-markdown";
 import type { ReportTexts, ReportTextsInput } from "@/types";
 import { FormField } from "./FormField";
@@ -82,13 +85,19 @@ interface Props {
   onSaved: (texts: ReportTexts) => void;
   onBack: () => void;
   onContinue: () => void;
+  /** Flujo del caso: con `agent`, las vistas previas salen de Tatana (zip-local-informe-servidor §7.5). */
+  evidenceStorage?: EvidenceStorage | null;
+  /** PC de la evidencia del caso (para saber si es esta). */
+  evidenceCase?: Pick<Case, "evidence_host" | "zip_location">;
 }
 
 /**
  * Paso 4 "Informe": los textos largos del informe pericial, con autoguardado
  * en el servidor (`PUT /api/cases/{id}/report-texts`).
  */
-export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onBack, onContinue }: Props) {
+export function ReportStep({
+  caseId, focusFieldId, onFocusConsumed, onSaved, onBack, onContinue, evidenceStorage = null, evidenceCase,
+}: Props) {
   const [texts, setTexts] = useState<ReportTextsInput>(EMPTY_REPORT_TEXTS);
   const [state, setState] = useState<SaveState>("loading");
   const [loadError, setLoadError] = useState("");
@@ -104,9 +113,28 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
   useEffect(() => { onSavedRef.current = onSaved; }, [onSaved]);
 
   /* ── Capturas del caso para insertar en los textos (editor-imagenes-informe, SDD §7.7) ── */
-  const reportImages = useReportImages(caseId);
+  const agentSource = evidenceStorage === "agent";
+  const identity = useAgentIdentity();
+  const sameHost = !agentSource ? null
+    : identity.status === "loading" ? null
+    : identity.isSameHost(evidenceCase ?? {});
+  const reportImages = useReportImages(caseId, { source: agentSource ? "agent" : "server", sameHost });
   // Una caché de vistas previas por visita al paso, compartida por las 8 secciones y el selector.
-  const previewCache = useMemo(() => new ReportImagePreviewCache(caseId), [caseId]);
+  const previewCache = useMemo(
+    () => new ReportImagePreviewCache(caseId, agentSource ? "agent" : "server"),
+    [caseId, agentSource],
+  );
+  // Aviso único arriba (§7.5): otra PC o Tatana sin responder.
+  const otherHost = evidenceCase?.evidence_host?.hostname;
+  const imagesNotice = agentSource && reportImages.agentUnavailable
+    ? identity.status === "online" && otherHost && !sameHost
+      ? `Las capturas de este caso están en la PC ${otherHost}.`
+      : agentStatusMessage(identity.status === "outdated" ? "outdated" : "offline")
+    : null;
+  const retryImages = useCallback(() => {
+    void identity.refresh().finally(() => reportImages.reload());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identity.refresh, reportImages.reload]);
   useEffect(() => () => previewCache.dispose(), [previewCache]);
   const [picker, setPicker] = useState<PickerState | null>(null);
 
@@ -302,6 +330,24 @@ export function ReportStep({ caseId, focusFieldId, onFocusConsumed, onSaved, onB
         description="Cada sección va al informe pericial tal como la escribas. Los cambios se guardan solos."
         aside={<SaveIndicator state={state} onRetry={() => { void save(); }} />}
       />
+
+      {imagesNotice && (
+        <FxBanner tone="warn" icon={<HardDrive className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}>
+          <p className="m-0">{imagesNotice}</p>
+          <p className="m-0 mt-0.5 text-xs font-normal text-fx-text-2">
+            Podés seguir escribiendo; las imágenes se muestran como no disponibles.
+          </p>
+          <Button
+            type="button"
+            severity="secondary"
+            size="small"
+            icon={<RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />}
+            label="Reintentar"
+            onClick={retryImages}
+            className="mt-2 min-h-11 sm:min-h-0"
+          />
+        </FxBanner>
+      )}
 
       {state === "load-error" ? (
         <FxBanner tone="error">

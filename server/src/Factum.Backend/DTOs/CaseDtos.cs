@@ -119,7 +119,12 @@ public sealed record GenerateResponse(
     /// <summary>Contraseña del ZIP (única vez que viaja junto al caso); null si no se cifró.</summary>
     string? Password,
     FilesDto Files,
-    string ReportHash
+    string ReportHash,
+    /// <summary>
+    /// zip-local-informe-servidor: dónde quedó el ZIP en la PC del perito (flujo agent). null en
+    /// el flujo viejo (el ZIP se descarga del servidor).
+    /// </summary>
+    ZipLocation? ZipLocation = null
 );
 
 public sealed record FilesDto(string Zip, string Pdf);

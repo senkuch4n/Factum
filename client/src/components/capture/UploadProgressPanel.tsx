@@ -1,16 +1,28 @@
 "use client";
 
 import { Button } from "primereact/button";
-import { Loader2, UploadCloud, X } from "lucide-react";
+import { HardDrive, Loader2, UploadCloud, X } from "lucide-react";
 import { formatBytes, formatBytesPair } from "@/lib/format";
 import type { UploadPhase, UploadProgress } from "@/types";
 
-export const UPLOAD_PHASE_LABELS: Record<UploadPhase, string> = {
+export const UPLOAD_PHASE_LABELS = {
   checking: "Verificando espacio…",
   preparing: "Preparando desde el agente…",
   uploading: "Subiendo al servidor…",
   finishing: "Verificando en el servidor…",
-};
+  // Flujo agent (zip-local-informe-servidor §7.7): guardado en esta PC.
+  checking_agent: "Verificando espacio en esta PC…",
+  copying: "Copiando al caso…",
+  hashing: "Calculando hash…",
+  registering: "Registrando en el expediente…",
+} as Record<UploadPhase | "checking_agent", string>;
+
+/** Dónde se guarda: `server` = envío al servidor (flujo viejo); `agent` = carpeta del caso en esta PC. */
+export type UploadTarget = "server" | "agent";
+
+function phaseLabel(phase: UploadPhase, target: UploadTarget) {
+  return target === "agent" && phase === "checking" ? UPLOAD_PHASE_LABELS.checking_agent : UPLOAD_PHASE_LABELS[phase];
+}
 
 /**
  * Panel del envío de evidencia (subida-archivos-grandes, SDD §6.7): archivo
@@ -18,14 +30,18 @@ export const UPLOAD_PHASE_LABELS: Record<UploadPhase, string> = {
  * con `transform` (no `width`) y solo con motion-safe. Los anuncios para
  * lector de pantalla los hace `UploadLiveRegion`, montada siempre aparte.
  */
-export function UploadProgressPanel({ progress, onCancel }: { progress: UploadProgress; onCancel: () => void }) {
+export function UploadProgressPanel({
+  progress, onCancel, target = "server",
+}: { progress: UploadProgress; onCancel: () => void; target?: UploadTarget }) {
   const { index, total, name, phase, loaded, totalBytes } = progress;
+  const agentTarget = target === "agent";
+  const TitleIcon = agentTarget ? HardDrive : UploadCloud;
   const known = totalBytes != null && totalBytes > 0;
   const pct = known ? Math.min(100, Math.round((loaded / totalBytes) * 100)) : null;
   const ratio = known ? Math.min(1, loaded / totalBytes) : 0;
   const valueText = known
     ? formatBytesPair(loaded, totalBytes).replace(" / ", " de ")
-    : loaded > 0 ? `${formatBytes(loaded)} recibidos` : UPLOAD_PHASE_LABELS[phase];
+    : loaded > 0 ? `${formatBytes(loaded)} recibidos` : phaseLabel(phase, target);
   const sent = index - 1;
 
   return (
@@ -37,11 +53,11 @@ export function UploadProgressPanel({ progress, onCancel }: { progress: UploadPr
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           <h3 id="upload-progress-title" className="m-0 flex items-center gap-2 text-fx-body-sm font-semibold text-fx-text">
-            <UploadCloud className="h-4 w-4 shrink-0 text-fx-accent-text" aria-hidden="true" />
-            <span className="tabular-nums">Enviando {index} de {total}</span>
+            <TitleIcon className="h-4 w-4 shrink-0 text-fx-accent-text" aria-hidden="true" />
+            <span className="tabular-nums">{agentTarget ? "Guardando" : "Enviando"} {index} de {total}</span>
           </h3>
           <p className="m-0 mt-0.5 text-xs text-fx-text-3 tabular-nums">
-            {sent} de {total} enviados
+            {agentTarget ? `${sent} de ${total} guardados en esta PC` : `${sent} de ${total} enviados`}
           </p>
         </div>
         <Button
@@ -50,7 +66,7 @@ export function UploadProgressPanel({ progress, onCancel }: { progress: UploadPr
           severity="secondary"
           size="small"
           icon={<X className="h-3.5 w-3.5" aria-hidden="true" />}
-          label="Cancelar envío"
+          label={agentTarget ? "Cancelar" : "Cancelar envío"}
           onClick={onCancel}
           className="min-h-11 w-full sm:w-auto"
         />
@@ -87,7 +103,7 @@ export function UploadProgressPanel({ progress, onCancel }: { progress: UploadPr
 
       <p className="m-0 flex items-center gap-1.5 text-xs text-fx-text-2">
         <Loader2 className="h-3 w-3 shrink-0 motion-safe:animate-spin" aria-hidden="true" />
-        {UPLOAD_PHASE_LABELS[phase]}
+        {phaseLabel(phase, target)}
       </p>
     </section>
   );
@@ -98,9 +114,9 @@ export function UploadProgressPanel({ progress, onCancel }: { progress: UploadPr
  * el lector anuncia el primer cambio) y su texto solo cambia con el archivo o
  * la fase, nunca con cada porcentaje.
  */
-export function UploadLiveRegion({ progress }: { progress: UploadProgress | null }) {
+export function UploadLiveRegion({ progress, target = "server" }: { progress: UploadProgress | null; target?: UploadTarget }) {
   const text = progress
-    ? `Enviando ${progress.index} de ${progress.total}: ${progress.name}. ${UPLOAD_PHASE_LABELS[progress.phase]}`
+    ? `${target === "agent" ? "Guardando" : "Enviando"} ${progress.index} de ${progress.total}: ${progress.name}. ${phaseLabel(progress.phase, target)}`
     : "";
   return (
     <div aria-live="polite" aria-atomic="true" className="sr-only">

@@ -10,6 +10,13 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { ApiError, api, type ReportImage } from "@/lib/api";
+import { AgentError, agent } from "@/lib/agent";
+
+/**
+ * De dónde salen las vistas previas (zip-local-informe-servidor §7.5):
+ * `server` = carpeta del caso en el backend (flujo viejo); `agent` = Tatana.
+ */
+export type ReportImageSource = "server" | "agent";
 
 /* ── Listado ─────────────────────────────────────────────────────────── */
 
@@ -20,27 +27,62 @@ export interface ReportImagesState {
   images: ReportImage[] | null;
   status: ReportImagesStatus;
   reload: () => void;
+  /**
+   * Solo con `source: "agent"`: `true` si las capturas no se pueden ver desde
+   * acá (otra PC o Tatana no responde). Todas quedan `available: false`.
+   */
+  agentUnavailable: boolean;
 }
 
+export interface ReportImagesOptions {
+  source?: ReportImageSource;
+  /** Con `agent`: si este Tatana es la PC del caso. `null` = todavía no se sabe (sigue "cargando"). */
+  sameHost?: boolean | null;
+}
+
+type ListResult = { key: string; images: ReportImage[] | null; status: ReportImagesStatus; agentUnavailable: boolean };
+
 /** Listado de capturas insertables del caso (orden del servidor, sin reordenar). */
-export function useReportImages(caseId: string | null | undefined): ReportImagesState {
-  const [result, setResult] = useState<{ key: string; images: ReportImage[] | null; status: ReportImagesStatus } | null>(null);
+export function useReportImages(caseId: string | null | undefined, opts: ReportImagesOptions = {}): ReportImagesState {
+  const source = opts.source ?? "server";
+  const sameHost = opts.sameHost ?? null;
+  const [result, setResult] = useState<ListResult | null>(null);
   const [nonce, setNonce] = useState(0);
-  const key = `${caseId ?? ""}#${nonce}`;
+  const key = `${caseId ?? ""}#${nonce}#${source}#${String(sameHost)}`;
 
   useEffect(() => {
     if (!caseId) return;
+    if (source === "agent" && sameHost === null) return; // identidad de la PC todavía cargando
     let alive = true;
-    api.listReportImages(caseId)
-      .then(r => { if (alive) setResult({ key, images: Array.isArray(r.images) ? r.images : [], status: "ready" }); })
-      .catch(() => { if (alive) setResult({ key, images: null, status: "error" }); });
+    (async () => {
+      const r = await api.listReportImages(caseId);
+      let images = Array.isArray(r.images) ? r.images : [];
+      let agentUnavailable = false;
+      if (source === "agent") {
+        // Cruce con lo que hay en la carpeta del caso de este Tatana.
+        let here: Set<string> | null = null;
+        if (sameHost) {
+          try {
+            here = new Set((await agent.listCaseFiles(caseId)).files.map(f => f.filename));
+          } catch { here = null; }
+        }
+        agentUnavailable = here === null;
+        images = images.map(i => ({ ...i, available: i.available && !!here?.has(i.filename) }));
+      }
+      if (alive) setResult({ key, images, status: "ready", agentUnavailable });
+    })().catch(() => { if (alive) setResult({ key, images: null, status: "error", agentUnavailable: false }); });
     return () => { alive = false; };
-  }, [caseId, key]);
+  }, [caseId, key, source, sameHost]);
 
   const reload = useCallback(() => setNonce(n => n + 1), []);
   // Un resultado de otro caso (o de antes de "Reintentar") no se muestra: se ve "cargando".
   const current = result && result.key === key ? result : null;
-  return { images: current?.images ?? null, status: current?.status ?? "loading", reload };
+  return {
+    images: current?.images ?? null,
+    status: current?.status ?? "loading",
+    reload,
+    agentUnavailable: current?.agentUnavailable ?? false,
+  };
 }
 
 /* ── Vistas previas ──────────────────────────────────────────────────── */
@@ -57,12 +99,32 @@ const IDLE: PreviewEntry = Object.freeze({ status: "idle" }) as PreviewEntry;
 
 export class ReportImagePreviewCache {
   private readonly caseId: string;
+  private readonly source: ReportImageSource;
   private entries = new Map<string, PreviewEntry>();
   private controllers = new Map<string, AbortController>();
   private listeners = new Set<() => void>();
 
-  constructor(caseId: string) {
+  constructor(caseId: string, source: ReportImageSource = "server") {
     this.caseId = caseId;
+    this.source = source;
+  }
+
+  /**
+   * Bytes de la vista previa. Con `agent` salen de Tatana y se verifica que el
+   * navegador los pueda decodificar: lo que no es una imagen queda `unavailable`
+   * (la validación con bytes reales es la de `generate/finish`).
+   */
+  private async fetchBlob(filename: string, signal: AbortSignal): Promise<Blob> {
+    if (this.source === "server") return api.getReportImagePreview(this.caseId, filename, signal);
+    const blob = await agent.getCaseFileBlob(this.caseId, filename, signal);
+    if (typeof createImageBitmap === "function") {
+      try {
+        (await createImageBitmap(blob)).close();
+      } catch {
+        throw new AgentError("http", 415, { error: "No es una imagen" });
+      }
+    }
+    return blob;
   }
 
   /** Para `useSyncExternalStore`. */
@@ -80,15 +142,17 @@ export class ReportImagePreviewCache {
     const controller = new AbortController();
     this.controllers.set(filename, controller);
     this.set(filename, { status: "loading" });
-    api.getReportImagePreview(this.caseId, filename, controller.signal)
+    this.fetchBlob(filename, controller.signal)
       .then(blob => {
         if (controller.signal.aborted) return;
         this.set(filename, { status: "ready", url: URL.createObjectURL(blob) });
       })
       .catch(err => {
         if (controller.signal.aborted) return;
-        // 400/404: no es una captura disponible. Red o 5xx: se puede reintentar.
-        const unavailable = err instanceof ApiError && (err.status === 400 || err.status === 404);
+        // 400/404 (o 415: no decodifica): no es una captura disponible. Red o 5xx: se puede reintentar.
+        const unavailable =
+          (err instanceof ApiError && (err.status === 400 || err.status === 404))
+          || (err instanceof AgentError && err.kind === "http" && (err.status === 400 || err.status === 404 || err.status === 415));
         this.set(filename, { status: unavailable ? "unavailable" : "error" });
       })
       .finally(() => {

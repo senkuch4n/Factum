@@ -89,6 +89,86 @@ public sealed class Case
     // Ruta de origen en el dispositivo para archivos traídos con el explorador de archivos
     // (no todos los archivos tienen una — screenshots/grabaciones/fotos de webcam no aplican).
     public List<FileSource> FileSources { get; set; } = [];
+
+    // ── zip-local-informe-servidor (§3.1) ────────────────────────────────────
+    // Todo anulable o con default []: un documento previo deserializa sin migración y nada de
+    // esto se escribe salvo por una acción del flujo nuevo sobre el propio caso.
+
+    /// <summary>
+    /// Marca de flujo del caso (D8): <c>"agent"</c> (evidencia en la PC del perito) o
+    /// <c>"server"</c> (flujo viejo). En Mongo puede faltar; el servicio la completa en memoria
+    /// con <c>EvidenceManifest.ResolveStorage</c> antes de devolver el caso, así el JSON trae
+    /// siempre el valor resuelto.
+    /// </summary>
+    [BsonIgnoreIfNull]
+    public string? EvidenceStorage { get; set; }
+
+    /// <summary>Manifiesto del flujo nuevo: archivos guardados en Tatana (ningún byte en el servidor).</summary>
+    public List<EvidenceItem> Evidence { get; set; } = [];
+
+    /// <summary>PC donde está la evidencia (D7). null mientras el manifiesto esté vacío.</summary>
+    public EvidenceHost? EvidenceHost { get; set; }
+
+    /// <summary>Dónde quedó el ZIP en la PC del perito (D6/D7). null en el flujo viejo.</summary>
+    public ZipLocation? ZipLocation { get; set; }
+
+    /// <summary>
+    /// Intento de generación abierto (§5.5/§5.6). Lleva la contraseña del ZIP: nunca sale en un
+    /// JSON.
+    /// </summary>
+    [JsonIgnore]
+    public PendingGeneration? PendingGeneration { get; set; }
+}
+
+public static class EvidenceStorages
+{
+    public const string Agent = "agent";
+    public const string Server = "server";
+}
+
+[BsonIgnoreExtraElements]
+public sealed class EvidenceItem
+{
+    public string Filename { get; set; } = string.Empty;
+    public long Size { get; set; }
+    /// <summary>SHA-256, 64 hex en minúscula.</summary>
+    public string Sha256 { get; set; } = string.Empty;
+    /// <summary>Ruta en el celular (solo explorador de archivos).</summary>
+    public string? SourcePath { get; set; }
+    public DateTime RegisteredAt { get; set; } = DateTime.UtcNow;
+}
+
+[BsonIgnoreExtraElements]
+public sealed class EvidenceHost
+{
+    /// <summary>Tatana <c>/info.hostname</c> (Environment.MachineName).</summary>
+    public string Hostname { get; set; } = string.Empty;
+    public string OsUser { get; set; } = string.Empty;
+    public string AgentVersion { get; set; } = string.Empty;
+    /// <summary>Ruta absoluta de la carpeta de trabajo del caso en esa PC.</summary>
+    public string CaseDirectory { get; set; } = string.Empty;
+    public DateTime RegisteredAt { get; set; } = DateTime.UtcNow;
+}
+
+[BsonIgnoreExtraElements]
+public sealed class ZipLocation
+{
+    public string Hostname { get; set; } = string.Empty;
+    /// <summary>Carpeta final del ZIP en esa PC.</summary>
+    public string Directory { get; set; } = string.Empty;
+    /// <summary>Ruta absoluta del ZIP.</summary>
+    public string Path { get; set; } = string.Empty;
+}
+
+[BsonIgnoreExtraElements]
+public sealed class PendingGeneration
+{
+    /// <summary>Guid "N".</summary>
+    public string Id { get; set; } = string.Empty;
+    /// <summary>null si Report:EncryptZip=false.</summary>
+    public string? Password { get; set; }
+    public string ZipFilename { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 [BsonIgnoreExtraElements]

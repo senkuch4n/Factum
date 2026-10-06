@@ -38,15 +38,34 @@ public interface IStorageService
 
     /// <summary>Borra los archivos que haya en <c>.upload-tmp/</c> (solo ahí, sin recursión). Solo al arrancar.</summary>
     int CleanupOrphanUploads();
+
+    // ── zip-local-informe-servidor (§3.3, §5.8) ──────────────────────────────
+
+    /// <summary>
+    /// true si <c>cases/&lt;id&gt;/</c> existe y tiene al menos un archivo que no es un artefacto
+    /// generado. Solo lectura: NO crea la carpeta.
+    /// </summary>
+    bool HasEvidenceFiles(string caseId);
+
+    /// <summary>
+    /// Carpeta vacía <c>&lt;DataDirectory&gt;/.generate-tmp/&lt;generationId&gt;/</c> (si existía,
+    /// se borra antes). <paramref name="generationId"/> tiene que ser un Guid "N".
+    /// </summary>
+    string NewGenerationTempDir(string generationId);
+
+    /// <summary>Borra todo lo que haya DENTRO de <c>.generate-tmp/</c>. Solo al arrancar.</summary>
+    int CleanupOrphanGenerations();
 }
 
 public sealed class StorageService : IStorageService
 {
     internal const string UploadTmpDirName = ".upload-tmp";
+    internal const string GenerateTmpDirName = ".generate-tmp";
     private const int CopyBufferSize = 1024 * 1024; // DT16
 
     private readonly string _root;
     private readonly string _uploadTmp;
+    private readonly string _generateTmp;
     private readonly long _minFreeBytes;
     private readonly IDiskSpaceProbe _probe;
     private readonly Func<string, Stream> _openTempForWrite;
@@ -63,6 +82,7 @@ public sealed class StorageService : IStorageService
     {
         _root = Path.GetFullPath(opts.DataDirectory);
         _uploadTmp = Path.Combine(_root, UploadTmpDirName);
+        _generateTmp = Path.Combine(_root, GenerateTmpDirName);
         _minFreeBytes = opts.MinFreeBytes;
         _probe = probe;
         _log = log ?? NullLogger.Instance;
@@ -217,6 +237,59 @@ public sealed class StorageService : IStorageService
 
     private void LogDeleteFailed(string path, Exception ex) =>
         _log.LogWarning(ex, "No se pudo borrar el temporal de subida {Temp}", path);
+
+    // ── zip-local-informe-servidor ───────────────────────────────────────────
+
+    public bool HasEvidenceFiles(string caseId)
+    {
+        if (string.IsNullOrEmpty(caseId) || !Factum.Backend.Services.Reports.ReportImageRef.IsPlainName(caseId))
+            return false;
+        var dir = Path.Combine(_root, "cases", caseId);
+        if (!Directory.Exists(dir)) return false;
+        try
+        {
+            return Directory.EnumerateFiles(dir)
+                .Any(p => !Factum.Backend.Services.Reports.ReportService.IsGeneratedArtifact(Path.GetFileName(p)));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _log.LogWarning(ex, "No se pudo leer la carpeta del caso {CaseId}", caseId);
+            return false;
+        }
+    }
+
+    public string NewGenerationTempDir(string generationId)
+    {
+        if (!Guid.TryParseExact(generationId, "N", out _))
+            throw new ArgumentException("Identificador de generación inválido", nameof(generationId));
+        var dir = Path.GetFullPath(Path.Combine(_generateTmp, generationId));
+        if (Path.GetDirectoryName(dir) != _generateTmp)
+            throw new ArgumentException("Identificador de generación inválido", nameof(generationId));
+        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    public int CleanupOrphanGenerations()
+    {
+        if (!Directory.Exists(_generateTmp)) return 0;
+
+        var deleted = 0;
+        foreach (var entry in Directory.EnumerateFileSystemEntries(_generateTmp))
+        {
+            try
+            {
+                if (Directory.Exists(entry)) Directory.Delete(entry, recursive: true);
+                else File.Delete(entry);
+                deleted++;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "No se pudo borrar el temporal de generación {Temp}", entry);
+            }
+        }
+        return deleted;
+    }
 
     public int CleanupOrphanUploads()
     {

@@ -13,6 +13,9 @@
 
   <ItemGroup>
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.3.1" />
+    <!-- ZIP de evidencia AES-256 (WinZip AE-2), misma versión que el backend
+         (zip-local-informe-servidor D-T1; ver Refactorizaciones/zip-cifrado-real.md §3). -->
+    <PackageReference Include="SharpZipLib" Version="1.4.2" />
   </ItemGroup>
 
   <!-- Tests de Factum.Agent (server/tests/Factum.Agent.Tests): ToolResolver, DshowDevices,

@@ -206,8 +206,10 @@ npm run package   # empaqueta la app instalable
 | `TatanaUpdates:PublicBaseUrl` | URL pública de este backend — a la que apuntan el instalador Electron y el `.bat` portátil para actualizarse |
 | `Branding:OrganizationName` / `OrganizationLogo` / `OrganizationIsotype` / `ContactLines` / `PrimaryColor` / `AccentColor` | Identidad de la organización que emite los informes (nombre, logo, isotipo, contacto y colores del informe) — ver [Branding](#identidad-de-la-organización-branding). Vacío en el repo |
 | `Report:TimeZone` / `DomicilioConstituido` / `DefaultTexts:*` | Zona horaria, domicilio constituido y textos por defecto del informe pericial — ver [Informe pericial](#informe-pericial-configuración). Domicilio vacío en el repo |
+| `Report:MaxGenerateUploadBytes` | Env `Report__MaxGenerateUploadBytes`. Tope del cuerpo de `POST /api/cases/{id}/generate/finish` (los datos del ZIP más las capturas que el informe embebe). Default `268435456` (256 MiB). Tiene que ser mayor que 0 o el backend no arranca. Si se supera: 413 `request_too_large` con `max_bytes` |
+| `Cors:AllowedOrigins` | Env `Cors__AllowedOrigins__0`, `Cors__AllowedOrigins__1`, … Orígenes del front que pueden llamar a la API desde el navegador. Cada valor es un origen absoluto `http`/`https` sin path, query ni fragmento (`https://factum.ejemplo.com`; la `/` final se ignora). Si falta o está vacía vale `http://localhost:3000` y `http://127.0.0.1:3000`. `"*"` o un valor inválido impide arrancar. Se loguea la lista al arrancar. No va en el `appsettings.json` versionado: los defaults cubren desarrollo y la instalación local |
 
-Las subidas en curso se escriben en `<DataDirectory>/.upload-tmp/` y recién al terminar completas se mueven a `cases/<id>/`; esa carpeta no es evidencia, no entra al ZIP y se vacía al arrancar el backend.
+Las subidas en curso se escriben en `<DataDirectory>/.upload-tmp/` y recién al terminar completas se mueven a `cases/<id>/`; esa carpeta no es evidencia, no entra al ZIP y se vacía al arrancar el backend. Lo mismo `<DataDirectory>/.generate-tmp/`: guarda las capturas del informe solo mientras se arma el DOCX de un caso nuevo (ver [Evidencia en la PC del perito](#evidencia-en-la-pc-del-perito)) y se borra al terminar cada generación y al arrancar.
 
 **`client/.env.local`**
 
@@ -223,7 +225,11 @@ Las subidas en curso se escriben en `<DataDirectory>/.upload-tmp/` y recién al 
 | `Agent:Port` | Puerto donde escucha el agente (8765 por defecto). CLI: `--port` |
 | `Agent:BindAddress` | Dónde escucha: `localhost` (default: 127.0.0.1 y ::1, solo esta máquina) o una IP. `0.0.0.0`/`::` expone el agente a la red, que no tiene autenticación: arranca con un warning. Cualquier otro valor impide arrancar. CLI: `--bind` |
 | `Agent:Mock` | `true` simula dispositivos sin USB real — útil para desarrollar sin celular a mano. Ponelo en `appsettings.Local.json` o usá `--mock`, nunca en el `appsettings.json` versionado |
-| `Agent:DataDirectory` | Carpeta temporal de capturas antes de subirlas al backend |
+| `Agent:DataDirectory` | Carpeta de las capturas recién hechas (raíz) y de las carpetas de trabajo de cada caso (`cases/<id>/`, flujo nuevo). CLI: `--data` |
+| `Agent:EvidenceDirectory` | Env `Agent__EvidenceDirectory`. Carpeta base donde Tatana deja el ZIP de cada caso (`<causa>_<id8>/evidencia_….zip`). Default `C:\Factum\Evidencia` en Windows y `~/Factum/Evidencia` en macOS/Linux (nunca Documentos). Una ruta relativa se resuelve contra el directorio de trabajo de Tatana. Se crea al primer ZIP. Si cae dentro de OneDrive o iCloud, Tatana avisa en el log y la web lo muestra (no la cambia) |
+| `Agent:AllowedOrigins` | Env `Agent__AllowedOrigins__0`, … Orígenes del front que pueden llamar a Tatana. Mismas reglas que `Cors:AllowedOrigins` del backend; default `http://localhost:3000` y `http://127.0.0.1:3000`. Tatana responde **403** `origin_not_allowed` a cualquier request (incluido el WebSocket y los preflight) con un `Origin` que no está en la lista; las requests sin `Origin` (curl, la app de escritorio) pasan |
+| `Agent:MaxUploadBytes` | Env `Agent__MaxUploadBytes`. Tope de un archivo que el navegador copia a la carpeta del caso (cámara externa, adjuntos). Default `17179869184` (16 GiB) |
+| `Agent:MinFreeBytes` | Env `Agent__MinFreeBytes`. Espacio libre que tiene que quedar en el disco después de copiar un archivo o de armar el ZIP. Default `1073741824` (1 GiB) |
 
 > `Jwt:Secret` sigue commiteado con un valor de desarrollo, pensado para correr
 > todo en local: rotalo antes de cualquier despliegue real. La `ServiceKey` de
@@ -445,6 +451,36 @@ informe no puede contener su propio hash.
 solo al dueño del caso por `GET /api/cases/{id}/zip-password`
 (`{ "password": "…" }`, `Cache-Control: no-store`; 403 para un caso ajeno, 404
 si el caso no tiene un ZIP cifrado).
+
+### Evidencia en la PC del perito
+
+Desde `zip-local-informe-servidor`, en un caso nuevo **ningún byte de evidencia
+llega al servidor**: las capturas, grabaciones y archivos quedan en la PC del
+perito, en la carpeta de trabajo del caso de Tatana
+(`<Agent:DataDirectory>/cases/<id>/`), y el backend guarda solo un
+**manifiesto** (nombre, tamaño, SHA-256, ruta de origen y PC) que el navegador
+registra con `PUT /api/cases/{id}/evidence`. Generar pasa por tres etapas:
+
+1. `POST /api/cases/{id}/generate/prepare` — el backend valida el caso contra el
+   manifiesto, genera la contraseña y abre un intento de generación (el caso
+   **no** cambia de estado).
+2. `POST http://localhost:8765/cases/{id}/zip` — Tatana verifica cada archivo
+   contra los SHA-256 del manifiesto, arma el ZIP AES-256 en
+   `<Agent:EvidenceDirectory>/<causa>_<id8>/.factum/pendiente/`, lo reabre para
+   verificarlo y calcula su hash.
+3. `POST /api/cases/{id}/generate/finish` (multipart) — el navegador manda el
+   hash y la ubicación del ZIP y **solo las capturas que el informe embebe**. El
+   backend las escribe en `.generate-tmp/`, arma el DOCX, lo guarda en
+   `cases/<id>/` (es lo único que queda en el servidor), borra el temporal y
+   marca el caso `completed`.
+
+Recién entonces Tatana pasa el ZIP a su nombre final (`/zip/commit`) y borra los
+archivos sueltos de la carpeta de trabajo. Si el navegador se cierra entre el
+paso 3 y el commit, el ZIP pendiente tiene el hash registrado y se confirma la
+próxima vez que se abre el caso en esa PC. Los casos y borradores con evidencia
+ya subida al servidor siguen con el flujo anterior (`POST /files` +
+`POST /generate`) hasta cerrarse; el JSON del caso trae `evidence_storage`
+(`"agent"` o `"server"`) para que la web sepa cuál usar.
 
 **Regenerar las plantillas v4 y v6** (por ejemplo, si cambia la plantilla de
 origen o el diseño): ver `ops/plantilla/README.md`.
