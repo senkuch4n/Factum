@@ -3,11 +3,11 @@
 import { useId, useMemo, useRef, useState } from "react";
 import { Menu } from "primereact/menu";
 import type { MenuItem } from "primereact/menuitem";
-import { Ban, KeyRound, LockOpen, MoreHorizontal, Pencil, RotateCcw } from "lucide-react";
+import { Ban, KeyRound, LockOpen, MoreHorizontal, Palette, Pencil, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AdminUser } from "@/types";
 
-export type AccountAction = "edit" | "reset" | "unlock" | "suspend" | "reactivate";
+export type AccountAction = "edit" | "branding" | "reset" | "unlock" | "suspend" | "reactivate";
 
 /** Acciones disponibles para una cuenta, con las protecciones de D4 (abm-clientes §6.2). */
 export interface AccountActionAvailability {
@@ -56,6 +56,8 @@ export function AccountActionsMenu({ user, isSelf, onAction, className }: Props)
     const icon = (I: React.ElementType) => <I className="h-4 w-4" aria-hidden="true" />;
     const list: MenuItem[] = [
       { label: "Editar", icon: icon(Pencil), command: () => onAction("edit", user) },
+      // Cualquier cuenta, incluida la propia y las suspendidas (marca-por-cliente §9.6).
+      { label: "Editar marca", icon: icon(Palette), command: () => onAction("branding", user) },
       {
         label: "Resetear contraseña",
         icon: icon(KeyRound),

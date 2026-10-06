@@ -25,6 +25,8 @@ public interface IBrandingService
 }
 
 /// <summary>
+/// Default de la instalación: login y fallback de las cuentas sin marca propia (marca-por-cliente D4/D6;
+/// la marca de cada cuenta la resuelve <see cref="ReportBrandingResolver"/>).
 /// Lee la sección <c>Branding</c> UNA sola vez (al construirse; se registra como singleton y
 /// <c>Program.cs</c> lo resuelve al arrancar para que los warnings salgan en el log de
 /// inicio). Para cambiar el logo, el isotipo, los colores o el nombre hay que reiniciar el

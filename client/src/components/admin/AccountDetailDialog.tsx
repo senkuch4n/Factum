@@ -3,7 +3,7 @@
 import { useId } from "react";
 import { Dialog } from "primereact/dialog";
 import { Button } from "primereact/button";
-import { Ban, Info, KeyRound, LockOpen, Pencil, RotateCcw } from "lucide-react";
+import { Ban, Info, KeyRound, LockOpen, Palette, Pencil, RotateCcw } from "lucide-react";
 import { FxBanner } from "@/components/feedback/FxBanner";
 import { formatDateTime, formatRelative } from "@/lib/admin-accounts";
 import { hasRealSigla } from "@/lib/format";
@@ -85,6 +85,11 @@ export function AccountDetailDialog({ user, selfDni, onHide, onAction, historyKe
                 size="small" severity="secondary" label="Editar"
                 icon={<Pencil className="h-3.5 w-3.5" aria-hidden="true" />}
                 onClick={() => onAction("edit", user)}
+              />
+              <Button
+                size="small" severity="secondary" label="Editar marca"
+                icon={<Palette className="h-3.5 w-3.5" aria-hidden="true" />}
+                onClick={() => onAction("branding", user)}
               />
               <Button
                 size="small" severity="secondary" label="Resetear contraseña"

@@ -57,9 +57,13 @@ public sealed class ReportDesignTests : IDisposable
         public string DefaultReserva => "";
     }
 
-    private sealed class FakeBranding(BrandingSnapshot current) : IBrandingService
+    private sealed class FakeBranding(BrandingSnapshot current) : IBrandingService, IReportBrandingResolver
     {
         public BrandingSnapshot Current { get; } = current;
+
+        // marca-por-cliente §6.6: ReportService pide la marca al resolver; acá siempre la misma.
+        public Task<BrandingSnapshot> ResolveAsync(string? ownerDni, CancellationToken ct = default) =>
+            Task.FromResult(Current);
     }
 
     private static Case MakeCase() => new()

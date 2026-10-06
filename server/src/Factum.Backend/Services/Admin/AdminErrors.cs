@@ -80,6 +80,9 @@ public static class AdminErrors
         UserNotFound or NotAvailable => ErrorKind.NotFound,
         DniTaken or StaleUpdate or CannotActOnSelf or LastSuperadmin or InvalidState or OperationBusy
             => ErrorKind.Conflict,
+        // marca-por-cliente §6.5 (B7).
+        Branding.BrandingErrors.ImageNotFound => ErrorKind.NotFound,
+        Branding.BrandingErrors.RequestTooLarge => ErrorKind.PayloadTooLarge,
         _ => ErrorKind.Failure,
     };
 

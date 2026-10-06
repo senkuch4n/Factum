@@ -30,9 +30,13 @@ internal static class ReportTestSupport
         public string DefaultReserva => "";
     }
 
-    public sealed class FakeBranding(BrandingSnapshot current) : IBrandingService
+    public sealed class FakeBranding(BrandingSnapshot current) : IBrandingService, IReportBrandingResolver
     {
         public BrandingSnapshot Current { get; } = current;
+
+        // marca-por-cliente §6.6: ReportService pide la marca al resolver; acá siempre la misma.
+        public Task<BrandingSnapshot> ResolveAsync(string? ownerDni, CancellationToken ct = default) =>
+            Task.FromResult(Current);
     }
 
     /// <summary>Branding con los colores de Factum (B-R2b no toca nada).</summary>

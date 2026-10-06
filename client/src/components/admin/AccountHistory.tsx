@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Button } from "primereact/button";
 import {
-  Ban, ChevronDown, History, KeyRound, Loader2, LockOpen, Pencil, RotateCcw, UserPlus,
+  Ban, ChevronDown, History, KeyRound, Loader2, LockOpen, Palette, Pencil, RotateCcw, UserPlus,
 } from "lucide-react";
 import { FxBanner } from "@/components/feedback/FxBanner";
 import { api } from "@/lib/api";
@@ -22,6 +22,7 @@ const ACTION_ICONS: Record<AdminAction, React.ElementType> = {
   reactivate: RotateCcw,
   reset_password: KeyRound,
   unlock: LockOpen,
+  update_branding: Palette,
 };
 
 /** Concatena sin repetir ids (pudo entrar un evento nuevo entre páginas). */
@@ -34,7 +35,8 @@ function EventItem({ evt }: { evt: AdminUserEvent }) {
   const [open, setOpen] = useState(false);
   const changesId = `${useId()}-changes`;
   const Icon = ACTION_ICONS[evt.action] ?? History;
-  const expandable = (evt.action === "update" || evt.action === "create") && evt.changes.length > 0;
+  const expandable = (evt.action === "update" || evt.action === "create" || evt.action === "update_branding")
+    && evt.changes.length > 0;
 
   return (
     <li className="relative flex gap-3 pb-4 last:pb-0">

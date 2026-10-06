@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { resetMyBranding } from "@/hooks/useMyBranding";
 import type { User, Case } from "@/types";
 
 /**
@@ -38,6 +39,7 @@ export function useAuth(options?: { withHistory?: boolean }) {
 
   function handleLogout() {
     api.logout();
+    resetMyBranding();
     router.push("/");
   }
 

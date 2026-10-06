@@ -348,10 +348,24 @@ db.users.updateOne({ Dni: "30111222" }, { $set: { Status: "activo" } })      // 
 ## Identidad de la organización (Branding)
 
 Factum es un producto: el **emisor** del informe es la organización cliente
-(un estudio, un gabinete, un perito). Su nombre, su logo y sus datos de
-contacto se configuran en el backend, en la sección `Branding`, y se usan en
-el informe y en la web (login, menú de usuario y pie, vía
-`GET /api/config/public`).
+(un estudio, un gabinete, un perito). Hay dos niveles de marca:
+
+- **Marca de cada cuenta** (`account_brandings` en MongoDB): cada usuario la
+  edita desde la web ("Marca del informe" en el menú de usuario) y un
+  superadmin la de cualquier cuenta desde `/admin/cuentas` ("Editar marca").
+  Tiene nombre, logo, isotipo, hasta 6 líneas de contacto y los dos colores,
+  con las mismas reglas que abajo, pero validadas estrictamente al guardar.
+  Cada informe sale con la marca **del dueño del caso** en el momento de
+  generarlo; si esa cuenta guardó su marca alguna vez, se usa solo la suya
+  (sin mezclar con la de la instalación). Cada guardado con cambios queda en
+  la auditoría (`update_branding`).
+- **Default de la instalación** (sección `Branding` del backend, esta
+  sección): es la marca del **login** (`GET /api/config/public`) y la de los
+  informes de las cuentas que **nunca guardaron su marca**.
+
+> En una instalación en la nube con varios clientes conviene dejar `Branding`
+> vacío: así ninguna cuenta hereda la identidad de otra y cada una carga la
+> suya desde la web.
 
 | Clave | Tipo | Qué es |
 |---|---|---|

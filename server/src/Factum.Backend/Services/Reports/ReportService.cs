@@ -59,22 +59,23 @@ public sealed class ReportService : IReportService
 {
     private const string DefaultTemplateFileName = "plantilla_informe_v6.docx";
 
-    private readonly IBrandingService branding;
+    // marca-por-cliente §6.6 (D8): la marca del DUEÑO del caso, resuelta en cada generación.
+    private readonly IReportBrandingResolver brandings;
     private readonly IReportSettings settings;
     private readonly ILogger<ReportService> logger;
     private readonly string templateFileName;
 
-    public ReportService(IBrandingService branding, IReportSettings settings, ILogger<ReportService> logger)
-        : this(branding, settings, logger, DefaultTemplateFileName)
+    public ReportService(IReportBrandingResolver brandings, IReportSettings settings, ILogger<ReportService> logger)
+        : this(brandings, settings, logger, DefaultTemplateFileName)
     {
     }
 
     // Solo para los tests (p. ej. generar el mismo caso con la v4 como línea de base). DI usa
     // el constructor público.
-    internal ReportService(IBrandingService branding, IReportSettings settings, ILogger<ReportService> logger,
+    internal ReportService(IReportBrandingResolver brandings, IReportSettings settings, ILogger<ReportService> logger,
         string templateFileName)
     {
-        this.branding = branding;
+        this.brandings = brandings;
         this.settings = settings;
         this.logger = logger;
         this.templateFileName = templateFileName;
@@ -106,6 +107,10 @@ public sealed class ReportService : IReportService
         var docxPath = Path.Combine(caseDir, $"informe_pericial_{safeName}.docx");
         var zipFilename = ZipFilenameFor(cas);
         var zipPath = Path.Combine(caseDir, zipFilename);
+
+        // 0. Marca del dueño del caso (marca-por-cliente §6.6), ANTES de escribir artefactos: si Mongo
+        // falla, la generación falla sin dejar un ZIP a medias (DT3).
+        var brand = await brandings.ResolveAsync(cas.Officer?.Dni, ct);
 
         // 1. Restos de un intento anterior fallido (con los nombres de ESTE caso): si no se
         // borran, el ZIP que se está escribiendo podría leerse a sí mismo como evidencia.
@@ -152,7 +157,7 @@ public sealed class ReportService : IReportService
             // puede contener su propio hash: lo muestran ResultStep y CaseCard).
             // Flujo viejo: las imágenes y la salida son la misma carpeta del caso.
             await GenerateDocxAsync(cas, evidence, hashes, docxPath, imagesDir: caseDir, zipFilename, zipHash,
-                branding.Current, ct);
+                brand, ct);
             reportHash = await Sha256Async(docxPath);
         }
         catch
@@ -208,11 +213,14 @@ public sealed class ReportService : IReportService
             .OrderBy(f => f.Name, StringComparer.Ordinal)
             .ToList();
 
+        // Marca del dueño del caso (marca-por-cliente §6.6), antes de escribir el DOCX.
+        var brand = await brandings.ResolveAsync(cas.Officer?.Dni, ct);
+
         try
         {
             // 3. DOCX con las capturas de imagesDir y los hashes del manifiesto. 4. Hash del DOCX.
             await GenerateDocxAsync(cas, ordered, hashes, docxPath, imagesDir, zipFilename, zipHash,
-                branding.Current, ct);
+                brand, ct);
             var reportHash = await Sha256Async(docxPath);
             return new ReportOnlyResult(docxPath, Path.GetFileName(docxPath), reportHash);
         }

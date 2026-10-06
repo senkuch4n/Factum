@@ -8,6 +8,8 @@ export type {
   RegisterEvidenceRequest, EvidenceResponse, PrepareGenerationResponse, FinishGenerationMetadata, GenerateResult,
   AdminUser, AdminUserStatus, AdminAction, AdminUserField, AdminErrorCode, AdminUserEvent, AdminUserChange,
   AdminCreateUserRequest, AdminUpdateUserRequest, AdminUserWithPassword,
+  BrandingImageKind, BrandingImageAction, BrandingImage, AccountBranding, BrandingSaveMetadata,
+  AccountBrandingSaveResponse, BrandingField, BrandingErrorCode,
 } from "@/lib/api";
 export type { Device, AgentEvent, AgentFile, VideoVariant, AgentInfo } from "@/lib/agent";
 

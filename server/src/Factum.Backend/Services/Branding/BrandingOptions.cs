@@ -1,8 +1,9 @@
 namespace Factum.Backend.Services.Branding;
 
 /// <summary>
-/// Identidad de la organización que emite los informes (sección <c>Branding</c> de la
-/// config). Todo vacío por defecto: los datos reales del cliente viven fuera del repo
+/// Identidad de la organización por default de la instalación (sección <c>Branding</c> de la
+/// config): la del login y la de los informes de las cuentas que nunca guardaron su marca propia
+/// (marca-por-cliente D4; cada cuenta la edita desde la web). Todo vacío por defecto: los datos reales del cliente viven fuera del repo
 /// (<c>appsettings.Local.json</c> ignorado por git o variables de entorno
 /// <c>Branding__*</c>). Ver README, "Identidad de la organización (Branding)".
 /// </summary>

@@ -3,7 +3,8 @@
 import { useId, useMemo, useRef, useState } from "react";
 import { Menu } from "primereact/menu";
 import type { MenuItem } from "primereact/menuitem";
-import { KeyRound, LogOut, UserCog, Users } from "lucide-react";
+import { KeyRound, LogOut, Palette, UserCog, Users } from "lucide-react";
+import { useMyBranding } from "@/hooks/useMyBranding";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { hasRealSigla } from "@/lib/format";
 
@@ -14,6 +15,8 @@ interface Props {
   onOpenProfile?: () => void;
   /** Abre el diálogo "Cambiar contraseña" (solo modo `local`). */
   onChangePassword?: () => void;
+  /** Abre el diálogo "Marca del informe" (todos los modos, D7-A). */
+  onOpenBranding?: () => void;
   /** Lleva al panel "Administrar cuentas" (solo superadmin en modo `local`). Sin la prop, no hay ítem. */
   onOpenAdmin?: () => void;
 }
@@ -24,16 +27,33 @@ interface Props {
  * ítems informativos `disabled`) y el foco que vuelve al disparador los
  * resuelve Prime.
  */
-export function UserMenu({ user, onLogout, onOpenProfile, onChangePassword, onOpenAdmin }: Props) {
+export function UserMenu({ user, onLogout, onOpenProfile, onOpenBranding, onChangePassword, onOpenAdmin }: Props) {
   const menuRef = useRef<Menu>(null);
   const [open, setOpen] = useState(false);
   const menuId = `user-menu-${useId().replace(/:/g, "")}`;
-  const { organizationName, organizationLogoSrc } = usePublicConfig();
-  const [orgLogoFailed, setOrgLogoFailed] = useState(false);
+  const publicConfig = usePublicConfig();
+  const mine = useMyBranding(user?.dni ?? null);
+  /** Logo que no cargó (por src: si cambia el logo, se vuelve a intentar). */
+  const [failedLogoSrc, setFailedLogoSrc] = useState<string | null>(null);
+  /*
+   * Organización que se muestra (D5 / DT8): la marca de la cuenta si alguna vez
+   * la guardó (aunque esté vacía: sus informes tampoco usan la instalación); si
+   * no, la de la instalación (el fallback de sus informes). Mientras carga, nada,
+   * para no mostrar una marca que no es la suya.
+   */
+  let organizationName: string | null = null;
+  let organizationLogoSrc: string | null = null;
+  if (mine.status === "ready" && mine.branding?.exists) {
+    organizationName = mine.branding.organization_name.trim() || null;
+    organizationLogoSrc = mine.logoSrc;
+  } else if (mine.status === "ready" || mine.status === "error") {
+    organizationName = publicConfig.organizationName;
+    organizationLogoSrc = publicConfig.organizationLogoSrc;
+  }
 
   const items = useMemo<MenuItem[]>(() => {
     if (!user) return [];
-    const showOrgLogo = !!organizationLogoSrc && !orgLogoFailed;
+    const showOrgLogo = !!organizationLogoSrc && organizationLogoSrc !== failedLogoSrc;
     /* Organización emisora (Branding del backend): solo si hay nombre o logo. */
     const orgItem: MenuItem[] = organizationName || showOrgLogo
       ? [{
@@ -45,8 +65,9 @@ export function UserMenu({ user, onLogout, onOpenProfile, onChangePassword, onOp
                 <img
                   src={organizationLogoSrc}
                   alt={organizationName ? "" : "Logo de la organización"}
-                  className="h-4 w-auto max-w-[96px] shrink-0 object-contain"
-                  onError={() => setOrgLogoFailed(true)}
+                  // Fondo blanco: el logo está pensado para el informe (hoja blanca) y en tema oscuro se perdería.
+                  className="h-5 w-auto max-w-[96px] shrink-0 rounded-fx-sm bg-white object-contain p-0.5"
+                  onError={() => setFailedLogoSrc(organizationLogoSrc)}
                 />
               )}
               {organizationName && (
@@ -88,6 +109,13 @@ export function UserMenu({ user, onLogout, onOpenProfile, onChangePassword, onOp
             command: () => onOpenProfile(),
           }]
         : []),
+      ...(onOpenBranding
+        ? [{
+            label: "Marca del informe",
+            icon: <Palette className="h-4 w-4" aria-hidden="true" />,
+            command: () => onOpenBranding(),
+          }]
+        : []),
       ...(onChangePassword
         ? [{
             label: "Cambiar contraseña",
@@ -102,7 +130,7 @@ export function UserMenu({ user, onLogout, onOpenProfile, onChangePassword, onOp
         command: () => onLogout(),
       },
     ];
-  }, [user, onLogout, onOpenProfile, onChangePassword, onOpenAdmin, organizationName, organizationLogoSrc, orgLogoFailed]);
+  }, [user, onLogout, onOpenProfile, onOpenBranding, onChangePassword, onOpenAdmin, organizationName, organizationLogoSrc, failedLogoSrc]);
 
   if (!user) return null;
 

@@ -120,6 +120,11 @@ builder.Services.AddSingleton<IAgentEventRepository, AgentEventRepository>();
 builder.Services.AddSingleton<IDiskSpaceProbe, DriveInfoDiskSpaceProbe>();
 builder.Services.AddSingleton<IStorageService, StorageService>();
 builder.Services.AddSingleton<IBrandingService, BrandingService>();
+// marca-por-cliente §6.8: marca del informe por cuenta (account_brandings). El repositorio no conecta hasta
+// el primer uso; no hay índices extra (todo va por _id = DNI).
+builder.Services.AddSingleton<IAccountBrandingRepository, AccountBrandingRepository>();
+builder.Services.AddSingleton<IReportBrandingResolver, ReportBrandingResolver>();
+builder.Services.AddSingleton<IAccountBrandingService, AccountBrandingService>();
 builder.Services.AddSingleton<IReportSettings, ReportSettings>();
 builder.Services.AddSingleton<IExpertProfileRepository, ExpertProfileRepository>();
 builder.Services.AddSingleton<ICatalogRepository, CatalogRepository>();

@@ -12,6 +12,7 @@ import { useFxToast } from "@/components/shell/FxToastProvider";
 import { useAuth } from "@/hooks/useAuth";
 import { useAuthMode } from "@/hooks/useAuthMode";
 import { useAdminAccounts } from "@/hooks/useAdminAccounts";
+import { setMyBranding } from "@/hooks/useMyBranding";
 import { api } from "@/lib/api";
 import {
   EMPTY_FILTERS, adminErrorCode, adminErrorMessage, hasActiveFilters, isAdminAccessError, matchesFilters,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/admin-accounts";
 import type { AdminUser, AdminUserWithPassword } from "@/types";
 import type { AccountAction } from "./AccountActionsMenu";
+import { BrandingDialog, type BrandingTarget } from "@/components/branding/BrandingDialog";
 import { AccountDetailDialog } from "./AccountDetailDialog";
 import { AccountFormDialog } from "./AccountFormDialog";
 import { AccountsTable } from "./AccountsTable";
@@ -88,6 +90,10 @@ export function AdminAccountsScreen() {
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm>(null);
   const [reveal, setReveal] = useState<TemporaryPasswordReveal | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** Cuenta cuya marca se edita ("Editar marca"), o `null`. */
+  const [brandingTarget, setBrandingTarget] = useState<Extract<BrandingTarget, { kind: "account" }> | null>(null);
+  /** Aparte del target: así el diálogo se cierra con su animación y Prime devuelve el foco. */
+  const [brandingOpen, setBrandingOpen] = useState(false);
   const inFlight = useRef(false);
 
   const detailUser = useMemo(() => users.find(u => u.id === detailId) ?? null, [users, detailId]);
@@ -180,6 +186,10 @@ export function AdminAccountsScreen() {
       case "edit":
         setFormUser(target);
         setFormOpen(true);
+        break;
+      case "branding":
+        setBrandingTarget({ kind: "account", userId: target.id, name: target.name, dni: target.dni });
+        setBrandingOpen(true);
         break;
       case "reset":
         setPendingConfirm({ kind: "reset", user: target });
@@ -318,6 +328,19 @@ export function AdminAccountsScreen() {
         onViewExisting={viewExisting}
         onReload={refreshOne}
       />
+
+      {brandingTarget && (
+        <BrandingDialog
+          visible={brandingOpen}
+          target={brandingTarget}
+          onHide={() => setBrandingOpen(false)}
+          onSaved={(b) => {
+            setHistoryKey(k => k + 1);
+            // El superadmin editó su propia marca: el menú se actualiza sin recargar.
+            if (brandingTarget.dni === user.dni) setMyBranding(b);
+          }}
+        />
+      )}
 
       <SuspendAccountDialog
         user={suspendTarget}

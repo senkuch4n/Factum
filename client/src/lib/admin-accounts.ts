@@ -220,6 +220,7 @@ export const ACTION_LABELS: Record<AdminAction, string> = {
   reactivate: "Reactivación",
   reset_password: "Reset de contraseña",
   unlock: "Desbloqueo",
+  update_branding: "Marca del informe",
 };
 
 /** Nombre visible de cada campo del historial (`changes[].field` es el nombre JSON). */
@@ -232,6 +233,13 @@ export const FIELD_LABELS: Record<string, string> = {
   contact_email: "Email de contacto",
   organization: "Organización",
   notes: "Notas internas",
+  // Marca del informe (marca-por-cliente §8.3).
+  organization_name: "Nombre en el informe",
+  contact_lines: "Contacto",
+  primary_color: "Color primario",
+  accent_color: "Color de acento",
+  logo: "Logo",
+  isotype: "Isotipo",
 };
 
 export const ROLE_LABELS: Record<UserRole, string> = {
@@ -239,9 +247,16 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   cliente: "Cliente",
 };
 
-/** Valor de un cambio del historial: `role` con su etiqueta, vacío como "(vacío)". */
+/**
+ * Valor de un cambio del historial: `role` con su etiqueta, vacío como
+ * "(vacío)". Marca: color vacío = "Color de Factum"; imagen = "versión {v}" o
+ * "(sin imagen)" (nunca bytes).
+ */
 export function formatChangeValue(field: string, value: string | null): string {
-  if (value === null || value === "") return "(vacío)";
+  const empty = value === null || value === "";
+  if (field === "primary_color" || field === "accent_color") return empty ? "Color de Factum" : value;
+  if (field === "logo" || field === "isotype") return empty ? "(sin imagen)" : `versión ${value}`;
+  if (empty) return "(vacío)";
   if (field === "role" && (value === "superadmin" || value === "cliente")) return ROLE_LABELS[value];
   return value;
 }
