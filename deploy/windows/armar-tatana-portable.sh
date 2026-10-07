@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Arma el portátil de Tatana para Windows (Tatana-Portable-vX.Y.Z-Windows.zip) en la Mac.
-# Réplica local del job build-portable-win de .gitlab-ci.yml (el CI de GitLab no corre: el
-# remoto real es GitHub). Lo llama armar-paquete.sh; también se puede usar suelto.
+# Lo llaman armar-paquete.sh (instalación local), los workflows tatana-windows.yml (humo) y
+# tatana-release.yml (base del instalador de Tatana para la nube); también se puede usar suelto.
 #
 #   deploy/windows/armar-tatana-portable.sh --version X.Y.Z --src <árbol limpio> --salida <dir>
 #       [--origenes "<o1>[,<o2>...]" [--client-url <url>]]
@@ -102,8 +102,10 @@ echo "[1/7] Verificando Mock en la fuente..."
 verificar_mock "$SRC/server/src/Factum.Agent/appsettings.json"
 
 echo "[2/7] Publicando Factum.Agent para win-x64 (self-contained)..."
+# -p:Version: /health.version, /info.version y la auditoría reportan la versión real
+# (SDD tatana-instalador-autoupdate D12, D-T1).
 dotnet publish "$SRC/server/src/Factum.Agent/Factum.Agent.csproj" \
-  -c Release -r win-x64 --self-contained true -o "$OUT" --nologo -v quiet
+  -c Release -r win-x64 --self-contained true -p:Version="$VERSION" -o "$OUT" --nologo -v quiet
 [[ -f "$OUT/Factum.Agent.exe" ]] || { echo "ERROR: no se generó Factum.Agent.exe." >&2; exit 1; }
 verificar_mock "$OUT/appsettings.json"
 if [[ -e "$OUT/appsettings.Local.json" ]]; then
@@ -250,27 +252,26 @@ else
 fi
 
 echo "[7/7] Scripts del portátil y zip..."
-cp "$SRC"/packaging/portable/*.bat "$SRC"/packaging/portable/*.ps1 "$SRC"/packaging/portable/*.ini "$OUT/"
+# Sin *.ps1: el actualizador sin verificación del portátil (update-portable.ps1) se retiró
+# (SDD tatana-instalador-autoupdate D-T18). Para la nube, Tatana se actualiza con el instalador.
+cp "$SRC"/packaging/portable/*.bat "$SRC"/packaging/portable/*.ini "$OUT/"
 # En la copia (el .ini del repo no cambia, lo usa el CI): sin navegador al iniciar sesión
-# (DT4: Factum se abre con el acceso del Escritorio) y sin auto-actualización (no hay
-# endpoint de releases en la instalación local).
+# (DT4: Factum se abre con el acceso del Escritorio).
 if [[ -n "$CLIENT_URL" ]]; then
-  # despliegue-nube §6.8: Tatana para Factum en la nube. UPDATE_URL sigue vacío (D8b).
+  # despliegue-nube §6.8: Tatana para Factum en la nube. Es la base del instalador (tatana-release.yml)
+  # y el respaldo manual de armar-tatana-nube.sh.
   cat > "$OUT/tatana-portable.ini" <<INI
 ; Config de Tatana Portable para Factum en la nube.
 ; CLIENT_URL = la web de Factum que se abre al iniciar sesion.
-; UPDATE_URL vacio = sin auto-actualizacion (se actualiza descargando el zip nuevo).
 CLIENT_URL=$CLIENT_URL
-UPDATE_URL=
 AGENT_PORT=8765
 INI
 else
   cat > "$OUT/tatana-portable.ini" <<'INI'
 ; Config de Tatana Portable para la instalacion local de Factum (Docker en esta PC).
 ; CLIENT_URL vacio = no abrir el navegador al iniciar sesion (Factum se abre con el
-; acceso "Factum" del Escritorio). UPDATE_URL vacio = sin auto-actualizacion.
+; acceso "Factum" del Escritorio). Se actualiza con "Actualizar Factum.bat".
 CLIENT_URL=
-UPDATE_URL=
 AGENT_PORT=8765
 INI
 fi

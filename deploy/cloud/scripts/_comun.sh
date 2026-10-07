@@ -93,6 +93,10 @@ cargar_env() {
   done
   [[ "$FACTUM_MONGO_ROOT_PASSWORD" != "$FACTUM_MONGO_APP_PASSWORD" ]] || morir "FACTUM_MONGO_ROOT_PASSWORD y FACTUM_MONGO_APP_PASSWORD tienen que ser distintas."
   [[ "$FACTUM_BACKUP_AGE_RECIPIENT" =~ ^age1[0-9a-z]+$ ]] || morir "FACTUM_BACKUP_AGE_RECIPIENT tiene que ser una clave pública de age (age1...)."
+  # tatana-instalador-autoupdate D-T19: el backend no arrancaría (y el deploy haría rollback).
+  if [[ -n "${FACTUM_TATANA_VERSION_MINIMA:-}" && ! "$FACTUM_TATANA_VERSION_MINIMA" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    morir "FACTUM_TATANA_VERSION_MINIMA tiene que ser X.Y.Z (por ejemplo 1.4.0) o quedar vacía (guía, sección 19.6)."
+  fi
   for clave in 0 1; do
     local dni="FACTUM_SUPERADMIN_${clave}_DNI" nombre="FACTUM_SUPERADMIN_${clave}_NOMBRE" temporal="FACTUM_SUPERADMIN_${clave}_TEMPORAL"
     if [[ -n "${!dni:-}" ]]; then

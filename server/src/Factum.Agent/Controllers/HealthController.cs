@@ -1,3 +1,4 @@
+using Factum.Agent.Common;
 using Factum.Agent.Models;
 using Factum.Agent.Services;
 using Factum.Agent.Services.Ios;
@@ -22,7 +23,8 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
         return Ok(new
         {
             status = "ok",
-            version = "2.0.0",
+            // tatana-instalador-autoupdate D12/D-T1: la versión real (antes, siempre "2.0.0").
+            version = AgentVersion.Current,
             mock = opts.Value.Mock,
             ios_available = ios.IsAvailable,
             tools = inventory.Snapshot(),
@@ -34,7 +36,9 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
             },
             // zip-local-informe-servidor §6.1: la web detecta un Tatana viejo por esta lista.
             // ios_developer_mode_v1: POST /devices/{serial}/ios/developer-mode (ios-herramientas-windows §4.3).
-            capabilities = new[] { "case_evidence_v1", "ios_developer_mode_v1" },
+            // real_version_v1: "version" es la real (D-T2; sin esto la web la trata como desconocida).
+            // agent_state_v1: GET /agent/state y POST/DELETE /agent/maintenance (tatana-instalador-autoupdate §5.4).
+            capabilities = Capabilities,
         });
     }
 
@@ -46,12 +50,18 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
     {
         hostname = Environment.MachineName,
         os_user = Environment.UserName,
-        version = "2.0.0",
-        mode = IsPortable() ? "portable" : "installed",
+        version = AgentVersion.Current,
+        mode = ResolveMode(opts.Value),
         // Carpeta base del ZIP (DP4) y si cae dentro de OneDrive/iCloud (la web lo avisa).
         evidence_directory = zips.EvidenceDirectory,
         evidence_directory_synced = Factum.Agent.Common.AgentFileNames.IsSyncedFolder(zips.EvidenceDirectory),
     });
+
+    internal static readonly string[] Capabilities =
+        ["case_evidence_v1", "ios_developer_mode_v1", "real_version_v1", "agent_state_v1"];
+
+    /// <summary><c>--mode</c> gana (D-T15); sin él, la heurística de <c>tools/</c> (portátil).</summary>
+    internal static string ResolveMode(AgentOptions o) => o.InstallMode ?? (IsPortable() ? "portable" : "installed");
 
     // Distingue el modo portátil (zip descomprimido con adb/pymobiledevice3
     // embebidos en tools/ al lado del exe) del instalado (Tatana vía Electron,

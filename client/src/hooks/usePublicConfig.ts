@@ -11,6 +11,8 @@ export interface PublicClientConfig {
   supportEnabled: boolean;
   /** `true` si el backend cifra el ZIP de evidencia con AES-256. */
   encryptZip: boolean;
+  /** Versión mínima de Tatana para capturar (D6); `null` = sin mínimo. */
+  tatanaMinVersion: string | null;
 }
 
 const EMPTY: PublicClientConfig = {
@@ -18,6 +20,7 @@ const EMPTY: PublicClientConfig = {
   organizationLogoSrc: null,
   supportEnabled: false,
   encryptZip: false,
+  tatanaMinVersion: null,
 };
 
 /* Caché a nivel de módulo: un solo fetch por carga de la app, compartido por
@@ -27,7 +30,8 @@ const EMPTY: PublicClientConfig = {
 let cached: PublicClientConfig | null = null;
 let pending: Promise<PublicClientConfig> | null = null;
 
-function loadPublicConfig(): Promise<PublicClientConfig> {
+/** Config pública con caché de módulo. Exportada para usarla fuera de React (`useAgentIdentity`). */
+export function loadPublicConfig(): Promise<PublicClientConfig> {
   if (cached) return Promise.resolve(cached);
   pending ??= api
     .getPublicConfig()
@@ -41,6 +45,11 @@ function loadPublicConfig(): Promise<PublicClientConfig> {
         supportEnabled: cfg.support_enabled === true,
         // Idem: sin el campo, la UI no promete cifrado (texto neutro).
         encryptZip: cfg.encrypt_zip === true,
+        // Un valor no string o vacío = sin mínimo (no bloquea).
+        tatanaMinVersion:
+          typeof cfg.tatana_min_version === "string" && cfg.tatana_min_version.trim()
+            ? cfg.tatana_min_version.trim()
+            : null,
       };
     })
     .catch(() => EMPTY)

@@ -42,7 +42,7 @@ public interface IIosService
 // DDI montado. Todo lo de pymobiledevice3 pasa por un solo helper Python multiplataforma
 // (Services/Ios/ios_helper.py, SDD ios-herramientas-windows §6.2): listado, preparación del iPhone
 // (Modo Desarrollador + DDI), captura, grabación (DVT → pipe PNG → ffmpeg H.264) y Modo Desarrollador.
-public sealed class IosService : IIosService
+public sealed class IosService : IIosService, IOperationSource
 {
     // Las herramientas externas (ffmpeg, qvh, uxplay, rife) se resuelven con el helper común
     // ToolResolver: tools/<dir>/<exe> junto al exe → PATH → Homebrew (solo fuera de Windows). qvh
@@ -68,6 +68,9 @@ public sealed class IosService : IIosService
     private readonly ConcurrentDictionary<string, bool> _prepared = new(StringComparer.Ordinal);
     private IosSession? _session;
     private AirplayShotSession? _shotSession;
+    // tatana-instalador-autoupdate §5.3: post-procesos de video (RunInterpolationsAsync) en curso.
+    private int _videoPostprocessCount;
+    private long _videoPostprocessSinceTicks;
     private int _appleServiceMissingLogged; // 1 = ya se avisó (se rearma cuando vuelve el servicio)
 
     public IosService(IOptions<AgentOptions> opts, ILogger<IosService> log, AgentWebSocketHub hub,
@@ -89,6 +92,7 @@ public sealed class IosService : IIosService
         public string OutputPath = string.Empty;
         public string SessionId  = string.Empty;
         public string DataDir    = string.Empty;
+        public readonly DateTimeOffset Started = DateTimeOffset.UtcNow;
         // DVT recorder (helper Python que maneja su propio ffmpeg)
         public DvtRecorder? Dvt;
         // AirPlay (uxplay)
@@ -118,11 +122,42 @@ public sealed class IosService : IIosService
     {
         public string ReceiverName = string.Empty;
         public string Mp4Stem      = string.Empty;
+        public readonly DateTimeOffset Started = DateTimeOffset.UtcNow;
         public Process? UxplayProc;
         public DateTime? ConnectedAt;              // se setea cuando se detecta el primer byte del mp4
         public readonly List<double> Marks = [];   // segundos transcurridos desde ConnectedAt
         public readonly object MarksLock = new();
         public CancellationTokenSource? WatchCts;  // tarea de background que espera la conexión
+    }
+
+    // ── Operaciones en curso (tatana-instalador-autoupdate §5.3) ──────────────
+    // Grabación, sesión AirPlay de capturas y post-proceso de video bloquean "Reiniciar y actualizar".
+    public IEnumerable<AgentOperation> ActiveOperations
+    {
+        get
+        {
+            var ops = new List<AgentOperation>(3);
+            if (_session is { } rec) ops.Add(new AgentOperation("recording_ios", rec.Started));
+            if (_shotSession is { } shot) ops.Add(new AgentOperation("airplay_session", shot.Started));
+            if (Volatile.Read(ref _videoPostprocessCount) > 0)
+                ops.Add(new AgentOperation("video_postprocess",
+                    new DateTimeOffset(Interlocked.Read(ref _videoPostprocessSinceTicks), TimeSpan.Zero)));
+            return ops;
+        }
+    }
+
+    // El contador sube ANTES de soltar la request de stop (así no hay un hueco entre la respuesta y
+    // el arranque de la tarea) y baja en el finally, pase lo que pase.
+    private void StartVideoPostprocess(string videoPath)
+    {
+        if (Interlocked.Increment(ref _videoPostprocessCount) == 1)
+            Interlocked.Exchange(ref _videoPostprocessSinceTicks, DateTimeOffset.UtcNow.UtcTicks);
+        _ = Task.Run(async () =>
+        {
+            try { await RunInterpolationsAsync(videoPath); }
+            catch (Exception ex) { _log.LogWarning(ex, "Post-proceso de video falló: {Path}", videoPath); }
+            finally { Interlocked.Decrement(ref _videoPostprocessCount); }
+        });
     }
 
     // ── Python, helper y disponibilidad (§6.1) ────────────────────────────────
@@ -801,7 +836,7 @@ public sealed class IosService : IIosService
 
             // Interpolación solo para grabaciones DVT/burst (airplay ya es 30fps nativo)
             if (session.Mode != "airplay")
-                _ = Task.Run(() => RunInterpolationsAsync(session.OutputPath));
+                StartVideoPostprocess(session.OutputPath);
 
             return session.OutputPath;
         }

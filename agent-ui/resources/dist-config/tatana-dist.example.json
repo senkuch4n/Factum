@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "client_url": "https://factum.example.com",
+  "update_urls": [
+    "https://factum.example.com/tatana/updates/",
+    "https://anterior.example.com/tatana/updates/"
+  ]
+}

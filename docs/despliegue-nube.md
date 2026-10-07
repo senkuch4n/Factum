@@ -30,8 +30,9 @@ Referencias técnicas: la SDD `Refactorizaciones/despliegue-nube.md` y el mapa d
      │                                       ▼
      │                         ┌───────────── VPS DonWeb (Ubuntu 24.04) ─────────────┐
      │                         │  Caddy :80/:443  (certificado Let's Encrypt, headers)│
-     │                         │    ├─ /api, /health, /tatana/updates → backend :8080 │
-     │                         │    ├─ /descargas → archivos (Tatana para la nube)    │
+     │                         │    ├─ /api, /health → backend :8080                  │
+     │                         │    ├─ /tatana/updates → canal de Tatana (estático)   │
+     │                         │    ├─ /descargas → archivos (instalador de Tatana)   │
      │                         │    └─ el resto → frontend :3000                      │
      │                         │  backend ──(red interna "datos")── Mongo 7 (con auth)│
      │                         │  /srv/factum/datos: Mongo, DOCX, certificados        │
@@ -55,7 +56,7 @@ Referencias técnicas: la SDD `Refactorizaciones/despliegue-nube.md` y el mapa d
 | Cargar variables y secrets en GitHub | `.github/workflows/desplegar-produccion.yml` y `verificar.yml` |
 | Crear el bucket de R2, la clave `age` y el check de healthchecks.io | `deploy/cloud/scripts/backup.sh`, `restaurar.sh`, `verificar-informes.sh` |
 | Crear el monitor de UptimeRobot | `GET /health/ready` en el backend |
-| Distribuir el Tatana "nube" a las PCs | `deploy/cloud/armar-tatana-nube.sh` |
+| Instalar Tatana en cada PC (una vez; después se actualiza solo) | `.github/workflows/tatana-release.yml` (arma, prueba, firma y publica el instalador) |
 | Hacer un simulacro de restauración | `deploy/cloud/scripts/desplegar.sh`, `revertir.sh` (rollback) |
 
 **Tiempo estimado:** entre medio día y un día la primera vez (lo que más tarda es esperar al panel, al DNS y leer con
@@ -405,43 +406,64 @@ compose.sh up -d backend
 
 ## 10. Tatana para la nube
 
-Tatana sigue corriendo en la PC de cada perito (necesita el USB). Por seguridad, solo acepta pedidos de las páginas que
-tiene en su lista (`Agent:AllowedOrigins`); el Tatana de la instalación local solo acepta `localhost`. Hay que armar un
-Tatana que además acepte `https://<DOMINIO>`.
+Tatana sigue corriendo en la PC de cada perito (necesita el USB). Para Factum en la nube se distribuye como un
+**instalador de Windows** (`Tatana-Setup-Windows.exe`) que no pide permisos de administrador, arranca solo al iniciar
+sesión y **se actualiza solo** desde este servidor. Cada versión viaja con una firma digital que Tatana comprueba antes
+de instalar nada: aunque alguien tomara el control del servidor, no podría colarle a las PCs un programa falso (la clave
+de firma vive solo en GitHub). Cómo se publica una versión: sección 19.
 
-**10.1 Armarlo** [Repo, en la Mac, desde la raíz del repo]
+Por seguridad, Tatana solo acepta pedidos de las páginas que tiene en su lista (`Agent:AllowedOrigins`). El instalador
+ya trae `https://<DOMINIO>` (y los demás orígenes de `TATANA_ORIGENES`). El Tatana de la instalación local solo acepta
+`localhost`.
 
-```bash
-deploy/cloud/armar-tatana-nube.sh --version <X.Y.Z> --origenes https://<DOMINIO>
-# Si ya conocés el dominio definitivo:  --origenes https://<PROVISORIO>,https://<DEFINITIVO>
-```
+**10.1 Dónde se descarga**: `https://<DOMINIO>/descargas/tatana/Tatana-Setup-Windows.exe` (con su `.sha256` al lado).
+Lo publica el workflow de la sección 19; la primera vez hay que publicar una versión antes de poder instalar.
 
-Parte de `origin/main` (no de tus cambios locales), descarga unos 300 MB y deja
-`deploy/cloud/dist/Tatana-Portable-v<X.Y.Z>-Windows-nube.zip` con su `.sha256`. El primer origen es la web que abre
-Tatana al iniciar sesión.
+**10.2 Link en la web** [A mano]: en GitHub, variable `FACTUM_TATANA_DESCARGA_URL` =
+`https://<DOMINIO>/descargas/tatana/Tatana-Setup-Windows.exe`. Se ve a partir del próximo deploy: si un perito no
+tiene Tatana, o tiene uno que no acepta el dominio o que está por debajo de la versión mínima (sección 19.6), la web le
+muestra ese link.
 
-**10.2 Publicarlo** [A mano]: el script imprime los dos comandos (`scp` y `ssh ... sudo install`). Queda en
-`https://<DOMINIO>/descargas/Tatana-Portable-Windows-nube.zip`.
+**10.3 En la PC del perito** [A mano]
 
-**10.3 Link en la web** [A mano]: en GitHub, variable `FACTUM_TATANA_DESCARGA_URL` =
-`https://<DOMINIO>/descargas/Tatana-Portable-Windows-nube.zip`. Se ve a partir del próximo deploy: si un perito tiene
-un Tatana que no acepta el dominio, la web le muestra ese link.
+1. Descargar `Tatana-Setup-Windows.exe` desde el link de la web.
+2. Doble clic. Como el instalador no tiene firma de código (decisión D2), **Windows SmartScreen** muestra "Windows
+   protegió su PC":
+   1. tocá **Más información**;
+   2. comprobá que diga "Aplicación: Tatana-Setup-…exe";
+   3. tocá **Ejecutar de todas formas**.
 
-**10.4 En la PC del perito** [A mano]
-
-1. Descargar el zip y descomprimirlo.
-2. Doble clic en `install-portable.bat` (no pide permisos de administrador).
-3. Tatana arranca y abre `https://<DOMINIO>`.
-4. **Permiso de red local**: Chrome y Edge pueden preguntar si la página puede "acceder a otros dispositivos o apps de
+   Si el navegador marca la descarga como "poco común", elegí **Conservar** (en Edge: los tres puntos de la descarga ›
+   **Conservar** › **Mostrar más** › **Conservar de todas formas**).
+3. El instalador no pregunta nada: instala en `%LOCALAPPDATA%\Programs\Tatana`, crea los accesos "Tatana" en el
+   Escritorio y el menú Inicio, y abre Tatana. Desde ese momento arranca solo (oculto, en la bandeja) al iniciar sesión.
+4. Abrí Factum desde la bandeja de Tatana (**Abrir Factum**) o desde el navegador.
+5. **Permiso de red local**: Chrome y Edge pueden preguntar si la página puede "acceder a otros dispositivos o apps de
    tu red local" (o un texto parecido). Hay que **permitirlo**: es lo que deja a la web hablar con Tatana en
    `localhost`. Si alguien tocó "Bloquear": candado a la izquierda de la dirección › **Configuración del sitio** ›
    buscar el permiso de red local y ponerlo en **Permitir**, y recargar la página.
 
+**10.4 Si la PC tenía Tatana portátil para la nube** (el zip de versiones anteriores): el instalador lo detecta,
+avisa que lo va a reemplazar, lo detiene, saca su arranque automático, pasa su `appsettings.Local.json` a
+`%APPDATA%\Tatana\` y guarda la carpeta vieja en `%LOCALAPPDATA%\Tatana\portable-anterior-<fecha>`. **La evidencia
+no se toca**: Tatana instalado usa la misma carpeta de datos (`%LOCALAPPDATA%\Tatana\data`) y el ZIP del caso sigue en
+`C:\Factum\Evidencia`. La ventana de Tatana muestra un aviso con la carpeta archivada: borrala cuando confirmes que
+todo anda. Si había una grabación o captura en curso, terminala **antes** de instalar.
+
+**10.5 Si la PC tiene la instalación local de Factum** (Docker en esa PC, con su Tatana portátil): el instalador
+**se niega** y no toca nada. Las dos no pueden convivir (pelearían por el puerto 8765). Esa PC sigue con la instalación
+local y se actualiza con `Actualizar Factum.bat`.
+
+**10.6 Actualizaciones** (automáticas): Tatana busca una versión nueva al arrancar y cada 6 horas, la descarga en
+silencio y la verifica. Cuando está lista avisa una vez ("Hay una versión nueva de Tatana") y la instala **al reiniciar
+Tatana, al iniciar sesión o con "Reiniciar y actualizar"** (bandeja o ventana), **nunca** con una grabación, una subida
+o un ZIP en curso. Si Tatana no puede verificar una descarga, la descarta y sigue con la versión que tiene.
+
 **Navegadores soportados** (D10): **Chrome y Edge actualizados en Windows**. Firefox debería andar. Safari no está
 soportado.
 
-**Escape para una sola PC** (sin rearmar el paquete): crear `appsettings.Local.json` al lado de `Factum.Agent.exe`
-(en `%LOCALAPPDATA%\Programs\Tatana`) con:
+**Escape para una sola PC** (otro origen, otra carpeta de evidencia, etc.): crear o editar
+`%APPDATA%\Tatana\appsettings.Local.json`, por ejemplo:
 
 ```json
 {
@@ -451,9 +473,17 @@ soportado.
 }
 ```
 
-y reiniciar Tatana. Este archivo no lo pisa la actualización. **No uses variables de entorno** para esto
-(`Agent__AllowedOrigins__0=...`): .NET combina las listas por posición y terminás con una mezcla difícil de entender.
-Tatana rechaza `*` y cualquier valor con path (`https://x.com/algo`): con un valor inválido, Tatana no arranca.
+y reiniciar Tatana. Ese archivo **no lo toca ninguna actualización ni la desinstalación**. Ojo: si fija
+`AllowedOrigins`, las actualizaciones ya no pueden cambiar esa lista (por ejemplo, en un cambio de dominio): la ventana
+de Tatana lo avisa. Si el JSON tiene un error, Tatana lo ignora, arranca igual y muestra el error en su ventana.
+**No uses variables de entorno** para esto (`Agent__AllowedOrigins__0=...`): .NET combina las listas por posición y
+terminás con una mezcla difícil de entender. Tatana rechaza `*` y cualquier valor con path (`https://x.com/algo`).
+
+**Desinstalar**: Configuración de Windows › Aplicaciones › Tatana › Desinstalar. Borra el programa; **no** borra
+`%LOCALAPPDATA%\Tatana\data`, `C:\Factum\Evidencia` ni `%APPDATA%\Tatana`.
+
+**Respaldo manual** (solo si el workflow no estuviera disponible): `deploy/cloud/armar-tatana-nube.sh` sigue armando un
+portátil en la Mac, pero está retirado para la nube: no se actualiza solo.
 
 ---
 
@@ -509,7 +539,7 @@ Usá exactamente el mismo `<IP>` (o nombre) que cargues en `DEPLOY_HOST`.
 | `DEPLOY_USER` | Variables | `deploy` (opcional) |
 | `FACTUM_URL_PUBLICA` | Variables | Ya cargada (sección 7) |
 | `FACTUM_AGENT_URL` | Variables | Opcional; por defecto `http://localhost:8765` |
-| `FACTUM_TATANA_DESCARGA_URL` | Variables | Sección 10.3 |
+| `FACTUM_TATANA_DESCARGA_URL` | Variables | Sección 10.2 |
 | `FACTUM_DEPLOY_HABILITADO` | Variables | `true`, recién en el paso 11.7 |
 
 Cuando termines la prueba del paso 11.6, borrá la privada de la Mac (o guardala en tu gestor de contraseñas):
@@ -555,9 +585,11 @@ workflow, y seguí el log hasta ver `OK desplegado`.
 - **Revocar la clave de CI**: borrá su línea de `~deploy/.ssh/authorized_keys` y el secret `DEPLOY_SSH_KEY`.
 - Si cambia `deploy-forzado.sh` en el repo, la copia del servidor no se actualiza sola:
   `sudo install -m 755 -o root -g root /srv/factum/repo/deploy/cloud/scripts/deploy-forzado.sh /srv/factum/bin/`.
-- **Minutos de Actions**: en un repo privado, cada cuenta tiene un cupo mensual gratis de minutos (2.000 en GitHub Free
-  y 3.000 en Pro, a confirmar, consultado el 2026-10-06). Cada deploy usa unos minutos (más el workflow "Verificar" en
-  cada PR). Se ve en Settings › Billing.
+- **Minutos de Actions**: el repo es público, así que los runners estándar (también los de Windows que usa Tatana,
+  sección 19) no consumen cupo. Se ve en Settings › Billing.
+- **PRs de forks**: ningún workflow les pasa secrets. El deploy solo corre en `main` y la publicación de Tatana solo con
+  el environment `tatana-release` (sección 19), que no se puede usar desde un PR.
+- Los secrets y variables de Tatana (`TATANA_*`) están en la sección 19.
 
 ---
 
@@ -716,14 +748,16 @@ df -h /srv                              # espacio en disco
 
 Cuando se defina el nombre definitivo. Se hace en tres fases, sin cortar el servicio.
 
-**Fase A: Tatana con los dos dominios** (sin apuro)
+**Fase A: Tatana con los dos dominios** (sin apuro, no hay que redistribuir nada)
 
-```bash
-deploy/cloud/armar-tatana-nube.sh --version <X.Y.Z> --origenes https://<PROVISORIO>,https://<DEFINITIVO>
-```
-
-Publicalo (sección 10.2) y redistribuilo. Los peritos siguen trabajando con el provisorio, que sigue en la lista. El
-primer origen es el que abre Tatana: mientras el servidor siga en el provisorio, poné el provisorio primero.
+1. En GitHub, variable `TATANA_ORIGENES` = `https://<PROVISORIO>,https://<DEFINITIVO>`. El primero es el que abre
+   "Abrir Factum" y el primer canal de actualización: mientras el servidor siga en el provisorio, poné el provisorio
+   primero.
+2. Publicá una versión nueva de Tatana (sección 19). Las PCs la reciben solas desde el provisorio, y desde ahí aceptan
+   los dos dominios y buscan actualizaciones en los dos.
+3. Esperá a que las PCs actualicen. Para ver cuáles ya lo hicieron, mirá `agent_events.agent_version` (la versión de
+   Tatana de cada PC que usó Factum): `"2.0.0"` significa **un Tatana anterior al instalador** (los viejos decían
+   siempre 2.0.0), que no se actualiza solo y hay que reinstalar a mano (sección 10.3).
 
 **Fase B: mudar el servidor** (cuando las PCs ya tienen el Tatana nuevo)
 
@@ -733,16 +767,18 @@ primer origen es el que abre Tatana: mientras el servidor siga en el provisorio,
 4. *Run workflow* de "Desplegar producción". La guarda del deploy exige que los dos valores coincidan: si te olvidaste
    de uno, falla sin tocar nada.
 5. Redirección del dominio anterior: crear `/srv/factum/repo/deploy/cloud/caddy-sitios/anterior.caddy` con el bloque de
-   `deploy/cloud/caddy-sitios/LEEME.md` y correr `compose.sh up -d --force-recreate caddy`.
+   `deploy/cloud/caddy-sitios/LEEME.md` y correr `compose.sh up -d --force-recreate caddy`. La redirección cubre
+   también `/tatana/updates/`: un Tatana que quedó con el provisorio primero sigue encontrando las actualizaciones.
 6. UptimeRobot: cambiar la URL del monitor.
 
 Los usuarios tienen que volver a iniciar sesión en el dominio nuevo: la sesión del navegador es por dominio.
 
-**Fase C: limpiar** (semanas después): borrá `anterior.caddy`, `compose.sh up -d --force-recreate caddy`, y en la
-próxima versión armá Tatana solo con el definitivo.
+**Fase C: limpiar** (semanas después, cuando `agent_events.agent_version` muestra que todas las PCs tienen una versión
+con el definitivo): `TATANA_ORIGENES=https://<DEFINITIVO>`, publicá una versión de Tatana, y recién después borrá
+`anterior.caddy` y `compose.sh up -d --force-recreate caddy`.
 
 **Una PC que no actualizó Tatana**: en el dominio nuevo, la web le muestra "origen no permitido" con el link de
-descarga (sección 10.3).
+descarga (sección 10.2).
 
 El renombre del producto en la web y en el informe es otra HU.
 
@@ -784,6 +820,8 @@ docker image prune          # imágenes sin uso; NO uses "docker volume prune" n
 | Token de GHCR | Sección 5.2 |
 | Deploy key del repo | Borrarla en GitHub › Deploy keys, generar otra (sección 5.1) |
 | Clave de CI | Sección 11 (línea nueva en `authorized_keys`, secret nuevo, borrar la vieja) |
+| Clave SSH de publicación de Tatana | Sección 19.2 (línea nueva en `~tatana-pub/.ssh/authorized_keys`, secret `TATANA_PUB_SSH_KEY` nuevo, borrar la vieja) |
+| Clave de firma de Tatana | Sección 19.7 (**rotación en dos pasos**: no se cambia de golpe) |
 | Token de R2 | Crear otro en Cloudflare, `rclone config` de nuevo, borrar el viejo |
 | Clave `age` | Generar otra y cambiar `FACTUM_BACKUP_AGE_RECIPIENT`. **No borres la vieja**: los backups anteriores solo se abren con ella |
 
@@ -831,6 +869,183 @@ Después actualizá `FACTUM_MONGO_APP_PASSWORD` (y `FACTUM_MONGO_ROOT_PASSWORD`)
 - Los backups cifrados quedan en Cloudflare R2, fuera del país, cifrados con una clave que solo tenés vos (decisión P2).
 - La evidencia y el ZIP de cada caso nunca suben al servidor: quedan en la PC del perito.
 - Esta guía no es asesoramiento legal sobre protección de datos personales (Ley 25.326).
+
+---
+
+## 19. Publicar una versión de Tatana
+
+El instalador de Tatana para la nube lo arma, lo prueba, lo firma y lo publica el workflow
+`.github/workflows/tatana-release.yml`. **Nunca se publica solo**: lo disparás vos con un tag o con "Run workflow". Las
+releases salen **solo de commits que están en `main`** (P3); desde otras ramas solo hay ensayo.
+
+```
+ tag tatana-vX.Y.Z (o Run workflow)
+   → preparar (versión, orígenes, chequeos) → payload (agente + herramientas, ubuntu)
+   → instalador (NSIS, windows) → firmar (clave Ed25519, environment tatana-release)
+   → prueba (windows: migra un portátil, instala, actualiza, desinstala; comprueba que no se pierde evidencia)
+   → publicar (SSH como tatana-pub al VPS + GitHub Release)
+```
+
+### 19.1 Clave de firma (una vez) [A mano, en la Mac]
+
+```bash
+mkdir -p ~/Seguro && chmod 700 ~/Seguro
+node ops/tatana/generar-clave-firma.mjs --key-id tatana-2026-10 --salida ~/Seguro/tatana-firma.pem
+```
+
+El script se niega a escribir la clave dentro de un repo y la deja con permisos `0600`. Imprime tres cosas:
+
+1. Una línea `{ keyId: 'tatana-2026-10', spkiDerBase64: '…' },` (la clave **pública**). Pegala dentro de
+   `TRUSTED_UPDATE_KEYS` en `agent-ui/src/main/updater/trusted-keys.ts` y commiteala (en un PR a `develop`, como
+   cualquier cambio). Sin esa línea, Tatana no acepta ninguna actualización.
+2. El comando para cargar la **privada** como secret: `gh secret set TATANA_FIRMA_CLAVE_PRIVADA --env tatana-release < ~/Seguro/tatana-firma.pem`
+   (primero creá el environment, paso 19.3).
+3. `gh variable set TATANA_FIRMA_KEY_ID --body tatana-2026-10`.
+
+**Guardá dos copias de `tatana-firma.pem` fuera de GitHub**: una en tu gestor de contraseñas y otra en un medio offline
+(un pendrive guardado). Después borrala de la Mac. Si se pierde la clave, las PCs **no** pueden recibir más
+actualizaciones: hay que reinstalar Tatana a mano en cada una (sección 19.7).
+
+### 19.2 Usuario y clave de publicación en el VPS (una vez)
+
+GitHub sube los archivos con un usuario aparte, **`tatana-pub`**, que **no** está en el grupo `docker` (no puede tocar
+los contenedores) y cuya única clave solo puede correr `publicar-tatana-forzado.sh`. Ese script valida el paquete
+(nombres, SHA-256, versión de `latest.yml`), rechaza una versión igual o menor que la publicada y publica con renombres
+atómicos en `/srv/factum/tatana-updates` (`https://<DOMINIO>/tatana/updates/`) y
+`/srv/factum/descargas/tatana/Tatana-Setup-Windows.exe`. Guarda los 5 últimos instaladores.
+
+[A mano, en la Mac] copiá los scripts al servidor:
+
+```bash
+scp deploy/cloud/scripts/preparar-servidor.sh deploy/cloud/scripts/publicar-tatana-forzado.sh admin@<IP>:/tmp/
+```
+
+[A mano, en el servidor, como `admin`] corré **solo** el bloque del canal de Tatana:
+
+```bash
+sudo bash /tmp/preparar-servidor.sh --solo-tatana
+```
+
+[A mano, en la Mac] la clave de publicación:
+
+```bash
+ssh-keygen -t ed25519 -f ~/factum-tatana-pub -C factum-tatana-release -N ""
+cat ~/factum-tatana-pub.pub
+```
+
+[A mano, en el servidor, como `admin`] autorizala con **una sola línea** (reemplazá `<CLAVE-PUBLICA>` por el contenido
+completo de `factum-tatana-pub.pub`):
+
+```bash
+echo 'command="/srv/factum/bin/publicar-tatana-forzado.sh",restrict <CLAVE-PUBLICA>' | sudo tee -a /home/tatana-pub/.ssh/authorized_keys
+```
+
+Probala desde la Mac:
+
+```bash
+ssh -i ~/factum-tatana-pub tatana-pub@<IP> estado    # "ninguna" (o la versión publicada)
+ssh -i ~/factum-tatana-pub tatana-pub@<IP> ls        # ERROR: comando no permitido
+```
+
+Después redesplegá (o `compose.sh up -d --force-recreate caddy`) para que Caddy tome el Caddyfile y el volumen nuevos.
+Si `publicar-tatana-forzado.sh` cambia en el repo, la copia del servidor no se actualiza sola: repetí el `scp` y
+`sudo bash /tmp/preparar-servidor.sh --solo-tatana`.
+
+### 19.3 Environment, secrets y variables en GitHub (una vez) [A mano]
+
+1. Repo › **Settings › Environments › New environment** › `tatana-release`. En **Deployment branches and tags**:
+   **Selected branches and tags** › agregar la rama `main` y la regla de tags `tatana-v*`. Así, ni un PR ni otra rama
+   pueden leer la clave de firma.
+2. En ese environment, **Environment secrets**:
+
+| Nombre | Valor |
+|---|---|
+| `TATANA_FIRMA_CLAVE_PRIVADA` | El contenido completo de `tatana-firma.pem` (paso 19.1, con `gh secret set ... --env tatana-release`) |
+| `TATANA_PUB_SSH_KEY` | El contenido completo de `~/factum-tatana-pub` (la **privada**, con las líneas BEGIN/END) |
+
+3. **Settings › Secrets and variables › Actions › Variables** (del repo):
+
+| Nombre | Valor |
+|---|---|
+| `TATANA_FIRMA_KEY_ID` | `tatana-2026-10` (el `key_id` vigente) |
+| `TATANA_ORIGENES` | `https://<DOMINIO>` (o varios separados por coma, en orden; si falta, se usa `FACTUM_URL_PUBLICA`) |
+| `TATANA_PUB_USER` | `tatana-pub` (opcional) |
+| `TATANA_PUBLICAR_HABILITADO` | `true` cuando el VPS esté listo (paso 19.2). Mientras no sea `true`, el workflow arma y prueba pero no publica |
+
+`DEPLOY_HOST`, `DEPLOY_KNOWN_HOSTS` y `DEPLOY_PORT` son los de la sección 11. Borrá `~/factum-tatana-pub` de la Mac
+después de cargar el secret (o guardalo en el gestor de contraseñas).
+
+### 19.4 Ensayo (sin publicar)
+
+- Cada PR a `develop` o `main` que toque el armado o el actualizador corre el workflow en **modo ensayo** (versión
+  `0.9.0`).
+- A mano: **Actions › Tatana release › Run workflow**, con una versión y **sin** tildar "publicar", desde cualquier rama.
+
+El ensayo firma con una clave descartable que se genera y se borra dentro del run (nunca usa los secrets) y corre la
+misma prueba de Windows. No publica nada. Revisá el resumen del job "Prueba en Windows".
+
+### 19.5 Publicar
+
+1. Que el cambio esté en `main` (merge de `develop` → `main`).
+2. Elegí la versión: **mayor** que la publicada (`ssh ... tatana-pub@<IP> estado` o el último release `tatana-v*`), en
+   formato `X.Y.Z` (sin `v`, sin `-beta`). La primera es la **1.4.0**.
+3. Una de dos:
+   - tag anotado desde `main` (el mensaje del tag son las notas de la versión):
+
+     ```bash
+     git fetch origin && git tag -a tatana-v1.4.0 origin/main -m "Tatana 1.4.0: <qué cambia>" && git push origin tatana-v1.4.0
+     ```
+
+   - **Actions › Tatana release › Run workflow**, rama `main`, versión `1.4.0`, tildar **publicar** y, si querés,
+     notas.
+4. Seguí el run. Si la prueba de Windows falla, **no se publica nada**. Si pasa, el job "Publicar" sube los archivos,
+   comprueba desde afuera que `https://<DOMINIO>/tatana/updates/tatana-update.json` es el firmado y crea el GitHub
+   Release `tatana-v1.4.0` (archivo histórico).
+5. Comprobalo vos:
+
+   ```bash
+   curl -fsS https://<DOMINIO>/tatana/updates/tatana-update.json -o /tmp/tatana-update.json
+   node ops/tatana/verificar-manifiesto.mjs --manifiesto /tmp/tatana-update.json
+   ```
+
+Las PCs la reciben solas en las próximas horas (al arrancar Tatana o cada 6 h) y la instalan al reiniciar Tatana o al
+iniciar sesión.
+
+**Revertir**: no se puede publicar una versión menor (ni repetir una): las PCs la rechazarían igual. Para volver atrás,
+publicá una **X.Y.Z+1** desde el commit anterior (un revert en `main`).
+
+### 19.6 Versión mínima (`FACTUM_TATANA_VERSION_MINIMA`)
+
+En `factum.env` del servidor, `FACTUM_TATANA_VERSION_MINIMA=X.Y.Z` hace que la web **no inicie capturas** desde una PC
+con un Tatana menor y le muestre al perito cómo actualizar. Vacío = no bloquea (así arranca).
+
+- Un Tatana anterior al instalador (portátil) **siempre** queda por debajo de cualquier mínimo y **no se actualiza
+  solo**: fijá el mínimo recién cuando las PCs ya tienen el instalador (mirá `agent_events.agent_version`; `"2.0.0"` =
+  anterior al instalador). Si no, los peritos no pueden capturar hasta que reinstalen a mano.
+- Se aplica con `compose.sh up -d backend`. Un valor que no sea `X.Y.Z` hace que el backend no arranque (y lo dice en
+  el log).
+
+### 19.7 Rotar o perder la clave de firma
+
+**Rotar** (por ejemplo, una vez por año o si la clave pudo filtrarse), en dos versiones:
+
+1. Generá la nueva (`generar-clave-firma.mjs --key-id tatana-AAAA-MM`) y agregá su línea a `trusted-keys.ts` **sin
+   sacar la vieja**. Publicá una versión firmada todavía con la vieja.
+2. Esperá a que las PCs actualicen (`agent_events.agent_version`).
+3. Cambiá el secret `TATANA_FIRMA_CLAVE_PRIVADA` y la variable `TATANA_FIRMA_KEY_ID` a la nueva y publicá otra versión.
+4. Sacá la vieja de `trusted-keys.ts` en la versión siguiente.
+
+**Si la clave se filtró**: hacé la rotación cuanto antes. Mientras tanto, quien la tenga **además** necesita el control
+del servidor para hacer algo con ella.
+
+**Si se perdió** (y no hay copia): las PCs no aceptan nada firmado con otra clave. Generá una nueva, publicá una versión
+y **reinstalá Tatana a mano** en cada PC (sección 10.3; la evidencia no se toca).
+
+### 19.8 Soporte: verificar una PC
+
+- Versión instalada: ventana de Tatana (barra lateral) o `http://localhost:8765/health` (`version`).
+- Log del actualizador: `%APPDATA%\Tatana\logs\tatana-updater.log`; estado: `%APPDATA%\Tatana\update-state.json`.
+- Log del instalador y la migración del portátil: `%APPDATA%\Tatana\logs\instalador.log`.
 
 ---
 

@@ -218,8 +218,7 @@ npm run package   # empaqueta la app instalable
 | `Storage:MaxUploadBytes` | Env `Storage__MaxUploadBytes`. Tope de tamaño de un archivo de evidencia en `POST /api/cases/{id}/files` (solo ese endpoint; el resto sigue con el tope de 30 MB de Kestrel). Default `4294967296` (4 GB). Tiene que ser mayor que 0 o el backend no arranca |
 | `Storage:MinFreeBytes` | Env `Storage__MinFreeBytes`. Espacio libre que tiene que quedar en el disco de `DataDirectory` después de una subida; si no alcanza, la subida se rechaza con 507 antes de escribir. Default `1073741824` (1 GB). Tiene que ser mayor o igual que 0 o el backend no arranca |
 | `Audit:AdminDnis` | DNIs habilitados a leer `GET /api/agent-events` (auditoría de uso del agente). En `Auth:Mode=local` también puede leerla cualquier superadmin |
-| `TatanaUpdates:ProjectId` / `ProjectRawBaseUrl` / `PrivateToken` | Proyecto de GitLab del que se espeja la última release de Tatana |
-| `TatanaUpdates:PublicBaseUrl` | URL pública de este backend — a la que apuntan el instalador Electron y el `.bat` portátil para actualizarse |
+| `Tatana:MinVersion` | Env `Tatana__MinVersion` (en la nube, `FACTUM_TATANA_VERSION_MINIMA`). Versión mínima de Tatana con la que la web inicia capturas: vacío = no bloquea; `X.Y.Z` = un Tatana menor (o anterior al instalador, sin `real_version_v1`) queda como desactualizado. Sale en `GET /api/config/public` como `tatana_min_version`. Otro formato impide arrancar |
 | `Branding:OrganizationName` / `OrganizationLogo` / `OrganizationIsotype` / `ContactLines` / `PrimaryColor` / `AccentColor` | Identidad de la organización que emite los informes (nombre, logo, isotipo, contacto y colores del informe) — ver [Branding](#identidad-de-la-organización-branding). Vacío en el repo |
 | `Report:TimeZone` / `DomicilioConstituido` / `DefaultTexts:*` | Zona horaria, domicilio constituido y textos por defecto del informe pericial — ver [Informe pericial](#informe-pericial-configuración). Domicilio vacío en el repo |
 | `Report:MaxGenerateUploadBytes` | Env `Report__MaxGenerateUploadBytes`. Tope del cuerpo de `POST /api/cases/{id}/generate/finish` (los datos del ZIP más las capturas que el informe embebe). Default `268435456` (256 MiB). Tiene que ser mayor que 0 o el backend no arranca. Si se supera: 413 `request_too_large` con `max_bytes` |
@@ -660,35 +659,43 @@ factum/
 ├── deploy/
 │   ├── windows/                   # Instalación local en la PC de un estudio
 │   └── cloud/                     # Producción en la nube (VPS): compose, Caddy, scripts
-├── .github/workflows/             # Verificación de PRs y deploy a producción
+├── .github/workflows/             # Verificación de PRs, deploy a producción y release de Tatana
+├── ops/tatana/                    # Firma del canal de Tatana y prueba del instalador en Windows
 ├── docker-compose.yml             # mongo + backend + frontend (desarrollo)
 └── AGENTE_TATANA.md               # Casos de uso del agente
 ```
 
 ## Despliegue del agente en la PC del fiscal
 
-Hay dos formas de correr Tatana, pensadas para distintos niveles de permisos
-en la PC del fiscal — ambas hablan con el mismo `client` vía `localhost:8765`
-y ambas se actualizan solas sin que el fiscal tenga que hacer nada:
+Hay dos formas de correr Tatana; las dos hablan con el mismo `client` vía
+`localhost:8765`, traen adb, scrcpy, ffmpeg y un Python embebido con
+`pymobiledevice3` (en `tools/`, que `ToolResolver` prefiere al `PATH`) y no piden
+permisos de administrador:
 
-- **Instalado** (`agent-ui`, Electron + NSIS): requiere poder correr un
-  instalador. Se actualiza con `electron-updater` contra
-  `/tatana/updates/` del backend (nunca contra GitLab directo).
-- **Portátil** (`packaging/portable/`): sin instalador y sin permisos de
-  administrador. Trae adb (platform-tools) y un Python embebido con
-  `pymobiledevice3` ya copiados adentro — `AdbService`/`IosService` los
-  resuelven por ruta relativa al ejecutable antes que por `PATH` del sistema.
-  `install-portable.bat` copia todo a `%LOCALAPPDATA%\Programs\Tatana` y arma
-  el autostart con un acceso directo en el `Startup` del usuario (sin admin).
-  Se actualiza sola vía `update-portable.ps1` contra el mismo backend.
+- **Instalado, para Factum en la nube** (`agent-ui`, Electron + NSIS per-user,
+  `Tatana-Setup-Windows.exe`): lo arma, lo prueba en un runner Windows, lo firma
+  y lo publica `.github/workflows/tatana-release.yml` (tag `tatana-vX.Y.Z` o
+  "Run workflow", solo desde `main`). Se actualiza solo desde
+  `https://<dominio>/tatana/updates/` (archivos estáticos de Caddy en el VPS):
+  cada versión lleva un manifiesto `tatana-update.json` **firmado con Ed25519**
+  cuya clave pública está horneada en Tatana (`agent-ui/src/main/updater/trusted-keys.ts`),
+  así que un servidor comprometido no puede instalar nada en las PCs. Instala
+  solo al reiniciar Tatana o al iniciar sesión, nunca con una operación en
+  curso (`GET /agent/state`, `POST /agent/maintenance`). Al instalarse migra el
+  portátil para la nube que encuentre sin tocar la evidencia. Guía:
+  [docs/despliegue-nube.md](docs/despliegue-nube.md), secciones 10 y 19.
+- **Portátil** (`packaging/portable/`, armado con
+  `deploy/windows/armar-tatana-portable.sh`): el de la instalación local
+  (`deploy/windows/`). `install-portable.bat` copia todo a
+  `%LOCALAPPDATA%\Programs\Tatana` y arma el autostart con un acceso directo en
+  el `Startup` del usuario. Se actualiza con `Actualizar Factum.bat` (ya no hay
+  auto-actualización del portátil: el viejo `update-portable.ps1`, sin
+  verificación, se retiró).
 
-CI (`.gitlab-ci.yml`) arma ambos artifacts por tag (`v*`) y los publica como
-GitLab Release (ese CI de Tatana sigue en GitLab; el deploy de la web en la nube es
-GitHub Actions, `.github/workflows/`). Para Factum en la nube, el Tatana portátil con
-el origen del dominio horneado se arma con `deploy/cloud/armar-tatana-nube.sh` (ver
-[docs/despliegue-nube.md](docs/despliegue-nube.md), sección 10). El backend expone `/tatana/updates/` (`TatanaUpdatesService`)
-para espejar esa release sin que la PC del fiscal necesite salida directa a
-internet.
+Tatana reporta su versión real (`/health.version`, `/info.version`, capability
+`real_version_v1`), que llega a la auditoría. Los Tatana anteriores al
+instalador decían siempre `"2.0.0"`. El backend puede exigir una versión mínima
+(`Tatana:MinVersion`).
 
 **Auditoría de uso**: cada acción de captura (screenshot, grabación, webcam) y
 el arranque del wizard reportan al backend quién (DNI), desde qué PC

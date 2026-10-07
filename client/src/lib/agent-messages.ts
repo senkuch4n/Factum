@@ -9,6 +9,7 @@ import {
   type AirplayUnavailableReason, type IosDeveloperModeStatus,
 } from "./agent";
 import { formatBytes } from "./format";
+import type { AgentIdentity } from "@/hooks/useAgentIdentity";
 
 export type AgentAction = "save" | "preview" | "generate" | "reveal" | "copy";
 
@@ -25,9 +26,34 @@ export function agentUnreachableMessage(): string {
   return cachedLocalNetworkPermission() === "denied" ? AGENT_LNA_DENIED_MESSAGE : AGENT_OFFLINE_MESSAGE;
 }
 
-/** Texto según el estado de `useAgentIdentity` (`offline` / `outdated`). */
-export function agentStatusMessage(status: "offline" | "outdated"): string {
-  return status === "outdated" ? AGENT_OUTDATED_MESSAGE : agentUnreachableMessage();
+/**
+ * Tatana debajo de la versión mínima del backend (tatana-instalador-autoupdate,
+ * D6). Con versión real (`real_version_v1`) el instalado se actualiza solo al
+ * reiniciarlo; un Tatana anterior a esa HU no, y hay que instalar el nuevo.
+ */
+export function agentMinVersionMessage(identity?: Pick<AgentIdentity, "info" | "versionIsReal">): string {
+  const url = process.env.NEXT_PUBLIC_TATANA_DOWNLOAD_URL;
+  const version = identity?.versionIsReal && identity.info?.version ? identity.info.version : null;
+  if (version) {
+    return url
+      ? `Tu Tatana (v${version}) necesita actualizarse para esta versión de Factum. Se actualiza solo al reiniciarlo; si no, descargalo de ${url}.`
+      : `Tu Tatana (v${version}) necesita actualizarse para esta versión de Factum. Se actualiza solo al reiniciarlo; si no, pedile a tu administrador el instalador nuevo.`;
+  }
+  return url
+    ? `Tu Tatana es de una versión anterior y necesita actualizarse para esta versión de Factum. Descargá el instalador nuevo de ${url} e instalalo.`
+    : "Tu Tatana es de una versión anterior y necesita actualizarse para esta versión de Factum. Pedile a tu administrador el instalador nuevo.";
+}
+
+/**
+ * Texto según el estado de `useAgentIdentity` (`offline` / `outdated`). Con la
+ * identidad, distingue "debajo de la versión mínima" (D6) de "sin capability".
+ */
+export function agentStatusMessage(
+  status: "offline" | "outdated",
+  identity?: Pick<AgentIdentity, "info" | "outdatedReason" | "versionIsReal">,
+): string {
+  if (status === "offline") return agentUnreachableMessage();
+  return identity?.outdatedReason === "min_version" ? agentMinVersionMessage(identity) : AGENT_OUTDATED_MESSAGE;
 }
 
 export function agentErrorMessage(err: unknown, ctx: { name?: string; action: AgentAction }): string {
@@ -77,6 +103,8 @@ export function agentErrorMessage(err: unknown, ctx: { name?: string; action: Ag
       return "No se pudo armar o verificar el ZIP en esta PC; la evidencia quedó intacta. Reintentá.";
     case "zip_not_found":
       return "El ZIP no está en esta PC.";
+    case "agent_updating":
+      return "Tatana se está actualizando. Esperá unos segundos y reintentá.";
   }
   const detail = typeof b?.error === "string" && b.error.trim() ? b.error.trim() : null;
   return detail ? `Tatana respondió con un error: ${detail}` : `Tatana respondió con un error (${err.status}).`;

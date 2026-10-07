@@ -4,13 +4,16 @@ import {
   Server, Wifi, WifiOff, Smartphone, RefreshCw,
   AlertTriangle, CheckCircle2, XCircle, Loader2,
 } from 'lucide-react'
+import { UpdateStatusLine, TatanaNotices } from './UpdateStatus'
 
 interface Props {
   agentStatus: string
   config: TatanaConfig | null
+  update: TatanaUpdateState | null
+  appInfo: TatanaAppInfo | null
 }
 
-export function Dashboard({ agentStatus, config }: Props) {
+export function Dashboard({ agentStatus, config, update, appInfo }: Props) {
   const [devices, setDevices] = useState<TatanaDevice[]>([])
   const [loadingDevices, setLoadingDevices] = useState(false)
   const [serverResult, setServerResult] = useState<{ ok: boolean; ms: number; error?: string } | null>(null)
@@ -101,6 +104,10 @@ export function Dashboard({ agentStatus, config }: Props) {
           action={{ label: 'Reintentar', onClick: checkServer }}
         />
       </div>
+
+      {/* Actualización de Tatana (debajo del estado del agente) y avisos */}
+      <UpdateStatusLine state={update} />
+      <TatanaNotices info={appInfo} />
 
       {/* Agent missing alert */}
       <AnimatePresence>

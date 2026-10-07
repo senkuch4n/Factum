@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Factum en la nube — arma el Tatana portátil "para la nube" en la Mac (SDD despliegue-nube §6.8, DT16).
 #
+# RETIRADO PARA LA NUBE (SDD tatana-instalador-autoupdate P1, B23): desde la 1.4.0, Tatana para la nube
+# sale como INSTALADOR con actualización automática firmada, por .github/workflows/tatana-release.yml
+# (tag tatana-vX.Y.Z o "Run workflow"; guía docs/despliegue-nube.md, sección 19). Este script queda solo
+# como respaldo manual: un portátil armado acá NO se actualiza solo y el instalador lo reemplaza.
+#
 #   deploy/cloud/armar-tatana-nube.sh --version X.Y.Z --origenes "https://<dominio>[,https://<otro>]" \
 #       [--ref origin/main] [--salida <carpeta>]
 #
@@ -32,6 +37,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$VERSION" && -n "$ORIGENES" ]] || uso
+
+echo "AVISO: armar-tatana-nube.sh está retirado para la nube. Tatana se publica como instalador con" >&2
+echo "       .github/workflows/tatana-release.yml (guía, sección 19). Esto arma un portátil de respaldo" >&2
+echo "       que no se actualiza solo." >&2
 
 DIR_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$DIR_SCRIPT/../.." && pwd)"

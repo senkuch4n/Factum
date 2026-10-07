@@ -37,4 +37,12 @@ public static class AgentErrorCodes
     public const string IosCaptureFailed = "ios_capture_failed";
     public const string IosRecordingEmpty = "ios_recording_empty";
     public const string AirplayUnavailable = "airplay_unavailable";
+
+    // ── Actualización de Tatana (tatana-instalador-autoupdate §5.3) ──
+    /// <summary>503: Tatana está en modo mantenimiento (se va a actualizar); la request mutante no entra.</summary>
+    public const string AgentUpdating = "agent_updating";
+    /// <summary>409 de <c>POST /agent/maintenance</c>: hay operaciones en curso.</summary>
+    public const string AgentBusy = "agent_busy";
+    /// <summary>403 de <c>/agent/maintenance</c>: solo se acepta sin <c>Origin</c> ni <c>Sec-Fetch-Site</c>.</summary>
+    public const string MaintenanceLocalOnly = "maintenance_local_only";
 }

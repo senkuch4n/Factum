@@ -17,7 +17,7 @@ public interface IAdbService
     Task<List<AndroidFileEntry>> FindByAppAsync(string serial, string app, CancellationToken ct = default);
 }
 
-public sealed class AdbService : IAdbService
+public sealed class AdbService : IAdbService, IOperationSource
 {
     // adb: tools/platform-tools junto al exe (portátil), PATH o Homebrew (ToolResolver). Si no
     // aparece, queda el nombre pelado "adb": ProcessRunner devuelve -1 y se mantienen los
@@ -39,6 +39,8 @@ public sealed class AdbService : IAdbService
     private readonly ILogger<AdbService> _log;
     private Process? _recordingProcess;
     private string?  _recordingPath;
+    // tatana-instalador-autoupdate §5.3: inicio de la grabación en curso (recording_android).
+    private DateTimeOffset? _recordingSince;
     private MicCapture? _mic;
     // Últimas líneas de scrcpy, para los errores E2/E8. Se reemplaza en cada start.
     private LineTail _scrcpyTail = new(20);
@@ -49,6 +51,22 @@ public sealed class AdbService : IAdbService
         _mock      = opts.Value.Mock;
         _micDevice = opts.Value.MicDevice;
         _log       = log;
+    }
+
+    // ── Operaciones en curso (tatana-instalador-autoupdate §5.3) ──────────────
+    // Una grabación activa bloquea "Reiniciar y actualizar". Si scrcpy ya terminó solo (celular
+    // desconectado), no cuenta: no hay nada que cortar y si no la actualización quedaría trabada
+    // hasta que alguien toque "Detener".
+    public IEnumerable<AgentOperation> ActiveOperations
+    {
+        get
+        {
+            var since = _recordingSince;
+            var proc  = _recordingProcess;
+            if (since is null || _recordingPath is null) return [];
+            if (!_mock && (proc is null || HasExitedSafe(proc))) return [];
+            return [new AgentOperation("recording_android", since.Value)];
+        }
     }
 
     public async Task EnsureServerAsync(CancellationToken ct = default)
@@ -114,7 +132,7 @@ public sealed class AdbService : IAdbService
         await _recordLock.WaitAsync(ct);
         try
         {
-            if (_mock) { _recordingPath = outputPath; return; }
+            if (_mock) { _recordingPath = outputPath; _recordingSince = DateTimeOffset.UtcNow; return; }
 
             // E3: una sola grabación Android a la vez.
             if (_recordingProcess is not null && !HasExitedSafe(_recordingProcess))
@@ -213,6 +231,7 @@ public sealed class AdbService : IAdbService
 
             _recordingProcess = proc;
             _recordingPath    = outputPath;
+            _recordingSince   = DateTimeOffset.UtcNow;
 
             // DP6 A: con mic, si el mic no arranca (E4/E5/E6), no se graba.
             if (withMic)
@@ -233,6 +252,7 @@ public sealed class AdbService : IAdbService
                     proc.Dispose();
                     _recordingProcess = null;
                     _recordingPath    = null;
+                    _recordingSince   = null;
                     _mic              = null;
                     // Solo lo que creó este intento.
                     TryDelete(outputPath);
@@ -258,6 +278,7 @@ public sealed class AdbService : IAdbService
                 var mockPath = _recordingPath ?? throw new InvalidOperationException(ErrorNotRecording);
                 await File.WriteAllBytesAsync(mockPath, Array.Empty<byte>(), ct);
                 _recordingPath = null;
+                _recordingSince = null;
                 return mockPath;
             }
 
@@ -280,6 +301,7 @@ public sealed class AdbService : IAdbService
                 proc?.Dispose();
                 _recordingProcess = null;
                 _recordingPath    = null;
+                _recordingSince   = null;
                 _mic              = null;
                 if (mic is not null) await mic.StopAsync();
             }
@@ -314,6 +336,7 @@ public sealed class AdbService : IAdbService
         _recordingProcess?.Dispose();
         _recordingProcess = null;
         _recordingPath    = null;
+        _recordingSince   = null;
         var mic = _mic;
         _mic = null;
         if (mic is not null) await mic.StopAsync();

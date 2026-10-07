@@ -1,5 +1,6 @@
 # Factum — verificación de PRs a develop y main (SDD despliegue-nube §6.7, DT18).
-# .NET: build y tests de backend y Tatana (los tests no usan Mongo). Node: tsc de client/ y agent-ui/.
+# .NET: build y tests de backend y Tatana (los tests no usan Mongo) y prueba del comando forzado que
+# publica Tatana. Node: tsc de client/ y agent-ui/, tests del actualizador y de las herramientas de firma.
 name: Verificar
 
 on:
@@ -37,6 +38,9 @@ jobs:
       # ios-herramientas-windows §8.3: el helper de iPhone que Tatana lleva embebido compila.
       - name: Helper de iPhone (py_compile)
         run: python3 -m py_compile server/src/Factum.Agent/Services/Ios/ios_helper.py
+      # tatana-instalador-autoupdate B20: el comando forzado que publica Tatana en el VPS (raíz temporal).
+      - name: publicar-tatana-forzado.sh
+        run: bash ops/tatana/probar-publicar-forzado.sh
 
   node:
     name: TypeScript (client + agent-ui)
@@ -67,3 +71,7 @@ jobs:
           npm ci
           npx tsc --noEmit -p tsconfig.web.json
           npx tsc --noEmit -p tsconfig.node.json
+          npm test
+      # tatana-instalador-autoupdate B30: firma Ed25519 del canal de Tatana (claves efímeras, sin secrets).
+      - name: Herramientas de firma de Tatana
+        run: node ops/tatana/probar-firma.mjs

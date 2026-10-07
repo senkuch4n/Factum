@@ -87,3 +87,11 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-07 — #7 reviewer APROBADA -> progress/review_ios-herramientas-windows.md. Pendiente prueba Mac del usuario.
 - 2026-10-07 — #7 copy 'sin Mac' corregido por el frontend. Esperando prueba en Mac del usuario y OK sobre cerrar con 'Refs #7'.
 - 2026-10-07 — #7 prueba en Mac OK del usuario. aprobada; PR con 'Refs #7' (issue abierto hasta prueba en Windows).
+- 2026-10-07 — #7: PR contra develop (Refs #7) + comentario de estado en el issue.
+- 2026-10-07 — PR #22 mergeado (smoke Windows en CI OK). #21 en rama feat/tatana-instalador-autoupdate desde develop; implementando; lanzados implementer-backend y implementer-frontend.
+- 2026-10-07 — #21 implementer-frontend done -> progress/impl_frontend_tatana-instalador-autoupdate.md (tsc agent-ui/client OK, npm test 11/11; NSIS y migrar-portable.ps1 sin verificar por falta de Windows; 2 desvíos para el reviewer). Esperando backend.
+- 2026-10-07 — #21 implementer-backend done -> progress/impl_backend_tatana-instalador-autoupdate.md. en_revision; lanzado reviewer.
+- 2026-10-07 — #21 RECHAZADA (1ª) -> progress/review_tatana-instalador-autoupdate.md: frontend (timeout del agente tratado como 'caído' mata capturas; installer.nsh sigue si Detectar falla). Relanzado implementer-frontend.
+- 2026-10-07 — #21 correcciones del frontend hechas. en_revision; relanzado reviewer.
+- 2026-10-07 — #21 re-revisión APROBADA. aprobada; pendiente: regresión Mac del usuario + pasos manuales §18 (clave de firma, environment tatana-release, clave SSH de publicación, primera release 1.4.0).
+- 2026-10-07 — #21 OK del usuario (regresión Mac). Commit + push + PR.

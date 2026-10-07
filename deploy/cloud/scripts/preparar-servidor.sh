@@ -2,24 +2,32 @@
 # Factum en la nube — preparación del VPS, UNA sola vez, como root (SDD despliegue-nube §6.5).
 # Ubuntu 24.04 LTS x86_64. Idempotente: se puede volver a correr. Pide confirmación en cada bloque.
 #
-#   scp deploy/cloud/scripts/preparar-servidor.sh deploy/cloud/scripts/deploy-forzado.sh root@<IP>:/root/
+#   scp deploy/cloud/scripts/preparar-servidor.sh deploy/cloud/scripts/deploy-forzado.sh \
+#       deploy/cloud/scripts/publicar-tatana-forzado.sh root@<IP>:/root/
 #   ssh root@<IP>
 #   bash /root/preparar-servidor.sh --clave-admin /root/admin.pub
+#
+# Solo el canal de Tatana (un VPS ya preparado; como admin, con sudo):
+#   sudo bash /tmp/preparar-servidor.sh --solo-tatana
 #
 # Bloques: 1) paquetes y actualizaciones automáticas; 2) Docker Engine + compose (repo oficial);
 # 3) ufw (22, 80, 443/tcp y 443/udp); 4) swap de 2 GB; 5) usuario admin (sudo, con tu clave);
 # 6) usuario deploy (sin sudo, grupo docker); 7) árbol /srv/factum; 8) deploy-forzado.sh en
-# /srv/factum/bin; 9) sshd sin contraseña ni root (solo si admin tiene clave); 10) chequeo de AVX.
-# Opción --si: no pregunta (contesta que sí a todo).
+# /srv/factum/bin; 9) sshd sin contraseña ni root (solo si admin tiene clave); 10) chequeo de AVX;
+# 11) canal de Tatana: usuario tatana-pub (sin docker), carpetas y publicar-tatana-forzado.sh
+# (SDD tatana-instalador-autoupdate D-T21).
+# Opción --si: no pregunta (contesta que sí a todo). --solo-tatana: corre solo el bloque 11.
 set -euo pipefail
 
 CLAVE_ADMIN=""
 SIEMPRE_SI=0
+SOLO_TATANA=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --clave-admin) CLAVE_ADMIN="${2:-}"; shift 2 ;;
     --si) SIEMPRE_SI=1; shift ;;
-    *) echo "Uso: $0 --clave-admin <archivo.pub> [--si]" >&2; exit 2 ;;
+    --solo-tatana) SOLO_TATANA=1; shift ;;
+    *) echo "Uso: $0 --clave-admin <archivo.pub> [--si] | --solo-tatana [--si]" >&2; exit 2 ;;
   esac
 done
 
@@ -41,6 +49,52 @@ confirmar() {
 . /etc/os-release
 [[ "${ID:-}" == ubuntu ]] || morir "se esperaba Ubuntu (24.04 LTS) y esto es ${PRETTY_NAME:-desconocido}."
 [[ "${VERSION_ID:-}" == 24.04 ]] || echo "AVISO: la guía está probada para Ubuntu 24.04; esto es ${PRETTY_NAME}."
+
+# ── 11. Canal de actualización de Tatana (D-T21) ─────────────────────────────────────────────
+# tatana-pub NO entra al grupo docker (deploy equivale a root). Es dueño solo de las carpetas del canal
+# y de staging; su única clave SSH lleva command= forzado a publicar-tatana-forzado.sh.
+bloque_tatana() {
+  if ! confirmar "11) ¿Crear el usuario tatana-pub (sin docker), las carpetas del canal de Tatana e instalar publicar-tatana-forzado.sh?"; then
+    return 0
+  fi
+  [[ -f "$DIR_SCRIPT/publicar-tatana-forzado.sh" ]] ||
+    morir "falta $DIR_SCRIPT/publicar-tatana-forzado.sh (copialo junto a este script)."
+  [[ -d "$RAIZ" ]] || morir "falta $RAIZ (bloque 7)."
+  id tatana-pub >/dev/null 2>&1 || adduser --disabled-password --gecos "" tatana-pub
+  if id -nG tatana-pub | tr ' ' '\n' | grep -qx docker; then
+    gpasswd -d tatana-pub docker
+    echo "AVISO: se sacó a tatana-pub del grupo docker."
+  fi
+  install -d -m 700 -o tatana-pub -g tatana-pub /home/tatana-pub/.ssh
+  # authorized_keys vacío la primera vez; nunca se pisa una clave ya cargada.
+  [[ -f /home/tatana-pub/.ssh/authorized_keys ]] || : >/home/tatana-pub/.ssh/authorized_keys
+  chown tatana-pub:tatana-pub /home/tatana-pub/.ssh/authorized_keys
+  chmod 600 /home/tatana-pub/.ssh/authorized_keys
+  # 755: Caddy las monta de solo lectura y tiene que poder leerlas.
+  install -d -m 755 -o deploy -g deploy "$RAIZ/descargas"
+  install -d -m 755 -o tatana-pub -g tatana-pub "$RAIZ/tatana-updates" "$RAIZ/descargas/tatana"
+  install -d -m 700 -o tatana-pub -g tatana-pub "$RAIZ/tatana-staging"
+  install -d "$RAIZ/bin"
+  # Dueño root y sin escritura para tatana-pub: la clave no puede cambiar su propio comando.
+  install -m 755 -o root -g root "$DIR_SCRIPT/publicar-tatana-forzado.sh" "$RAIZ/bin/publicar-tatana-forzado.sh"
+  chown root:root "$RAIZ/bin"
+  chmod 755 "$RAIZ/bin"
+  echo "OK $RAIZ/bin/publicar-tatana-forzado.sh, $RAIZ/tatana-updates, $RAIZ/descargas/tatana"
+  echo
+  echo "Falta pegar la clave PÚBLICA de publicación (ssh-keygen -t ed25519 -C factum-tatana-release) en"
+  echo "/home/tatana-pub/.ssh/authorized_keys, en UNA línea y con este prefijo (guía, sección 19.2):"
+  echo
+  echo '  command="/srv/factum/bin/publicar-tatana-forzado.sh",restrict ssh-ed25519 AAAA… factum-tatana-release'
+  echo
+  echo "Después: redeploy, o deploy/cloud/scripts/compose.sh up -d --force-recreate caddy (Caddyfile y volumen nuevos)."
+}
+
+if ((SOLO_TATANA)); then
+  [[ "$(id -u)" == 0 ]] || morir "este script se corre como root (sudo)."
+  id deploy >/dev/null 2>&1 || morir "falta el usuario deploy: corré antes el script completo."
+  bloque_tatana
+  exit 0
+fi
 
 # ── 10 (primero): AVX. Mongo 5+ lo exige en x86_64; sin AVX no tiene sentido seguir ─────────────
 log "Chequeo de AVX (Mongo 7 lo necesita)"
@@ -179,6 +233,8 @@ SSHD
 else
   echo "9) Se saltea: admin no tiene clave SSH cargada."
 fi
+
+bloque_tatana
 
 log "Listo. Seguí con la guía (sección 4: dominio provisorio)."
 echo "AVX: $(grep -m1 -o -w avx /proc/cpuinfo)   Arquitectura: $(uname -m)"

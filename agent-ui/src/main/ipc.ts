@@ -1,17 +1,32 @@
-import { ipcMain, app } from 'electron'
+import { ipcMain } from 'electron'
 import { spawn } from 'child_process'
 import * as http from 'http'
 import * as https from 'https'
-import { readConfig, writeConfig } from './config'
+import { readConfig, writeConfig, applyLoginItem } from './config'
 import { agentProcess } from './agent-process'
+import { appInfo, type NoticeId } from './app-info'
+import { updateManager } from './updater/update-manager'
 
 // ── Config ─────────────────────────────────────────────────────────────────────
 ipcMain.handle('tatana:get-config', () => readConfig())
 
 ipcMain.handle('tatana:save-config', (_e, patch: Record<string, unknown>) => {
   const config = writeConfig(patch as never)
-  app.setLoginItemSettings({ openAtLogin: config.autostart })
+  applyLoginItem(config)
   return config
+})
+
+// ── App y actualizaciones (SDD §6.7) ─────────────────────────────────────────
+ipcMain.handle('tatana:get-app-info', () => appInfo.get())
+ipcMain.handle('tatana:get-update-state', () => updateManager.getState())
+ipcMain.handle('tatana:check-updates', async () => {
+  // Devuelve el estado apenas arranca el chequeo; el resto llega por `tatana:update-state-change`.
+  void updateManager.check()
+  return updateManager.getState()
+})
+ipcMain.handle('tatana:install-update', () => updateManager.installNow({ relaunch: true }))
+ipcMain.handle('tatana:dismiss-notice', (_e, id: unknown) => {
+  if (id === 'migration' || id === 'local_config') appInfo.dismiss(id as NoticeId)
 })
 
 // ── Agent process ──────────────────────────────────────────────────────────────
