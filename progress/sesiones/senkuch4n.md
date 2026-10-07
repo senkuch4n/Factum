@@ -52,3 +52,14 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-06 — #13 implementer-backend done -> progress/impl_backend_marca-por-cliente.md. en_revision; lanzado reviewer (sonnet).
 - 2026-10-06 — #13 reviewer APROBADA -> progress/review_marca-por-cliente.md. Fase aprobada; esperando prueba manual.
 - 2026-10-06 — #13 OK del usuario. Commit + push + PR.
+- 2026-10-06 — #13 cerrada: PR contra develop + resumen de cierre en el issue.
+- 2026-10-06 — PR #17 mergeado. #14 despliegue-nube tomada, rama feat/despliegue-nube, afinando; lanzado afinador.
+- 2026-10-06 — #14 afinador done -> docs/hu-despliegue-nube.md (18 dudas); afinada_pendiente_validacion.
+- 2026-10-06 — #14 validada: D1 = VPS DonWeb; D5 = dominio provisorio y configurable (nombre del producto por definir con agencia); resto recomendadas; pide guía DonWeb. en_arquitectura; lanzado architect.
+- 2026-10-06 — #14 D9 cambia a deploy automático al mergear a main (pedido del usuario); avisado al architect en curso.
+- 2026-10-06 — #14 architect done -> Refactorizaciones/despliegue-nube.md con 5 decisiones pendientes + DT1 (un solo hostname por path). Preguntando.
+- 2026-10-06 — #14 P1-P5 + DT1 aceptados. implementando; lanzados implementer-backend y implementer-frontend (opus).
+- 2026-10-06 — #14 implementer-frontend done -> progress/impl_frontend_despliegue-nube.md (F1-F4; tsc OK). Esperando backend/infra.
+- 2026-10-06 — #14 implementer-backend done -> progress/impl_backend_despliegue-nube.md (sin bloqueos; guía 834 líneas; sin secretos detectados; verify OK). en_revision; lanzado reviewer (sonnet).
+- 2026-10-06 — #14 reviewer APROBADA -> progress/review_despliegue-nube.md (Backend.Tests 794, Agent.Tests 139). Fase aprobada. Corriendo shellcheck/actionlint por docker.
+- 2026-10-06 — #14 ajustes post-review (workflow solo main; known_hosts con puerto). shellcheck/actionlint limpios. Commit + push + PR; prueba real = seguir la guía en DonWeb.

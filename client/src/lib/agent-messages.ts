@@ -40,8 +40,13 @@ export function agentErrorMessage(err: unknown, ctx: { name?: string; action: Ag
 
   const b = err.body;
   switch (err.code) {
-    case "origin_not_allowed":
-      return "Tatana no acepta pedidos desde esta página. Pedí que agreguen esta dirección a la configuración de Tatana (Agent:AllowedOrigins).";
+    case "origin_not_allowed": {
+      // Build arg opcional (despliegue-nube, DT17): vacío en la instalación local.
+      const url = process.env.NEXT_PUBLIC_TATANA_DOWNLOAD_URL;
+      return url
+        ? `El Tatana de esta PC no está habilitado para esta dirección. Descargá e instalá la versión actual desde ${url} y reintentá.`
+        : "Tatana no acepta pedidos desde esta página. Pedí que agreguen esta dirección a la configuración de Tatana (Agent:AllowedOrigins).";
+    }
     case "file_busy":
       return `${name} todavía se está procesando en Tatana. Esperá unos segundos y volvé a intentar.`;
     case "insufficient_storage": {

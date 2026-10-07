@@ -1,0 +1,6 @@
+# Los scripts corren en el VPS Linux: siempre LF, aunque alguien los toque desde Windows.
+*.sh text eol=lf
+Caddyfile text eol=lf
+*.yml text eol=lf
+*.js text eol=lf
+*.example text eol=lf

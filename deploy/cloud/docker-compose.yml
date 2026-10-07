@@ -1,0 +1,130 @@
+# Factum — compose de PRODUCCIÓN en la nube (VPS). Ver docs/despliegue-nube.md.
+# Se usa SIEMPRE a través de deploy/cloud/scripts/*.sh (_comun.sh pasa --project-directory, -f,
+# --env-file /srv/factum/config/factum.env y FACTUM_TAG).
+#
+# Reglas de este archivo (SDD despliegue-nube §6.1):
+# - Solo caddy publica puertos (80 y 443). Docker publica saltándose ufw: ningún otro servicio
+#   puede tener "ports:".
+# - Mongo con usuario y contraseña, en la red "datos" (interna, sin salida a internet).
+# - Ningún secreto literal: todos vienen del --env-file.
+# - Datos en bind mounts bajo FACTUM_DATOS (DT5): se ven y se respaldan desde el host.
+# - Los superadmins iniciales NO están acá: van en compose.bootstrap*.yml, que _comun.sh suma solo
+#   si FACTUM_SUPERADMIN_0_DNI / FACTUM_SUPERADMIN_1_DNI tienen valor (un DNI vacío hace que el
+#   backend no arranque; ver progress/impl_backend_despliegue-nube.md, A1).
+# - La instalación local de Windows usa deploy/windows/docker-compose.yml, no este (D15).
+name: factum
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  caddy:
+    image: caddy:2.11.7
+    ports:
+      # FACTUM_PUERTO_HTTP/HTTPS existen solo para la prueba local del compose (guía, anexo); en el
+      # VPS no se definen y quedan 80/443.
+      - "${FACTUM_PUERTO_HTTP:-80}:80"
+      - "${FACTUM_PUERTO_HTTPS:-443}:443"
+      - "${FACTUM_PUERTO_HTTPS:-443}:443/udp"
+    environment:
+      FACTUM_DOMINIO: ${FACTUM_DOMINIO:?Falta FACTUM_DOMINIO}
+      FACTUM_ACME_EMAIL: ${FACTUM_ACME_EMAIL:?Falta FACTUM_ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Redirección del dominio anterior durante un cambio de dominio (guía, sección 15).
+      - ./caddy-sitios:/etc/caddy/sitios:ro
+      - ${FACTUM_HOME:-/srv/factum}/descargas:/srv/descargas:ro
+      # caddy-data guarda los certificados: perderlo obliga a pedir otros (rate limits de Let's Encrypt).
+      - ${FACTUM_DATOS:-/srv/factum/datos}/caddy-data:/data
+      - ${FACTUM_DATOS:-/srv/factum/datos}/caddy-config:/config
+    networks: [web]
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+
+  mongo:
+    image: mongo:7.0.43 # mismo tag que deploy/windows/docker-compose.yml
+    command: ["mongod", "--wiredTigerCacheSizeGB", "${FACTUM_MONGO_CACHE_GB:-0.5}"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${FACTUM_MONGO_ROOT_PASSWORD:?Falta FACTUM_MONGO_ROOT_PASSWORD}
+      # Lo usan mongo-init/01-usuario-app.js (primer arranque) y verificar-informes.sh.
+      FACTUM_MONGO_APP_PASSWORD: ${FACTUM_MONGO_APP_PASSWORD:?Falta FACTUM_MONGO_APP_PASSWORD}
+    volumes:
+      # El entrypoint de mongo le cambia el dueño a mongodb (uid 999) si hace falta.
+      - ${FACTUM_DATOS:-/srv/factum/datos}/mongo:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d:ro
+    networks: [datos]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+    logging: *logging
+
+  backend:
+    image: ${FACTUM_REGISTRO:?Falta FACTUM_REGISTRO}/factum-backend:${FACTUM_TAG:?Falta FACTUM_TAG (usá los scripts de deploy/cloud/scripts)}
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      # factum_app se crea en la base factum (DT4): authSource=factum. Contraseña en hex: sin escapes.
+      MongoDb__ConnectionString: mongodb://factum_app:${FACTUM_MONGO_APP_PASSWORD}@mongo:27017/factum?authSource=factum
+      MongoDb__DatabaseName: factum
+      Jwt__Secret: ${FACTUM_JWT_SECRET:?Falta FACTUM_JWT_SECRET}
+      Jwt__ExpiryHours: ${FACTUM_JWT_EXPIRY_HOURS:-8}
+      Auth__Mode: local
+      Auth__AllowDevOutsideDevelopment: "false"
+      # Un solo hostname (DT1): la web y la API comparten origen.
+      Cors__AllowedOrigins__0: https://${FACTUM_DOMINIO}
+      Storage__DataDirectory: /data
+      Integrations__Support__Enabled: "false"
+      TatanaUpdates__PublicBaseUrl: https://${FACTUM_DOMINIO}
+      # Branding global del login (opcional). Vacío = el default de la app.
+      Branding__OrganizationName: ${FACTUM_BRANDING_NOMBRE:-}
+      Branding__OrganizationLogo: ${FACTUM_BRANDING_LOGO:-}
+    volumes:
+      - ${FACTUM_DATOS:-/srv/factum/datos}/backend:/data
+      # Logo del branding global (opcional): ver la guía, sección 6.
+      - ${FACTUM_HOME:-/srv/factum}/config/branding:/app/branding:ro
+    networks: [web, datos]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      # Liveness (/health no toca Mongo): si Mongo se cae, el backend no se reinicia en bucle.
+      # El deploy y el monitor externo usan /health/ready (DT3).
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 40s
+    restart: unless-stopped
+    logging: *logging
+
+  frontend:
+    image: ${FACTUM_REGISTRO:?Falta FACTUM_REGISTRO}/factum-frontend:${FACTUM_TAG:?Falta FACTUM_TAG (usá los scripts de deploy/cloud/scripts)}
+    networks: [web]
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    logging: *logging
+
+networks:
+  web: {}
+  datos:
+    internal: true

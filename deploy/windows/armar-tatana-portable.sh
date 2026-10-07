@@ -4,6 +4,13 @@
 # remoto real es GitHub). Lo llama armar-paquete.sh; también se puede usar suelto.
 #
 #   deploy/windows/armar-tatana-portable.sh --version X.Y.Z --src <árbol limpio> --salida <dir>
+#       [--origenes "<o1>[,<o2>...]" [--client-url <url>]]
+#
+# Sin --origenes ni --client-url sale el portátil de la instalación local, igual que siempre (D15).
+# Con --origenes (Factum en la nube, ver docs/despliegue-nube.md) se hornea Agent:AllowedOrigins =
+# localhost + esos orígenes en el appsettings.json del zip (hornear-origenes-tatana.py, que se busca
+# al lado de ESTE script y no en --src). --client-url hace que el portátil abra esa web al iniciar
+# sesión; exige --origenes. El que arma el Tatana para la nube es deploy/cloud/armar-tatana-nube.sh.
 #
 # --src tiene que ser un árbol LIMPIO (git archive), nunca la copia de trabajo: así no entra un
 # appsettings.Local.json ni un "Mock": true local. Igual se verifica dos veces.
@@ -21,9 +28,13 @@ SCRCPY_WIN64_SHA256="5b12172b3264b2889f4583ee64752ce832e29bc8b1089dca81093459697
 VERSION=""
 SRC=""
 SALIDA=""
+ORIGENES=""
+CLIENT_URL=""
+DIR_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HORNEAR="$DIR_SCRIPT/hornear-origenes-tatana.py"
 
 uso() {
-  echo "Uso: $0 --version X.Y.Z --src <árbol limpio del repo> --salida <carpeta>" >&2
+  echo "Uso: $0 --version X.Y.Z --src <árbol limpio del repo> --salida <carpeta> [--origenes \"<o1>[,<o2>...]\" [--client-url <url>]]" >&2
   exit 2
 }
 
@@ -32,6 +43,8 @@ while [[ $# -gt 0 ]]; do
     --version) VERSION="${2:-}"; shift 2 ;;
     --src) SRC="${2:-}"; shift 2 ;;
     --salida) SALIDA="${2:-}"; shift 2 ;;
+    --origenes) ORIGENES="${2:-}"; [[ -n "$ORIGENES" ]] || { echo "ERROR: --origenes vacío." >&2; exit 2; }; shift 2 ;;
+    --client-url) CLIENT_URL="${2:-}"; [[ -n "$CLIENT_URL" ]] || { echo "ERROR: --client-url vacío." >&2; exit 2; }; shift 2 ;;
     -h|--help) uso ;;
     *) echo "Argumento desconocido: $1" >&2; uso ;;
   esac
@@ -44,6 +57,25 @@ done
 for herramienta in dotnet python3 curl unzip zip; do
   command -v "$herramienta" >/dev/null 2>&1 || { echo "ERROR: falta '$herramienta' en esta Mac." >&2; exit 1; }
 done
+
+# despliegue-nube §6.8: los orígenes se validan ANTES de la descarga de ~300 MB (un origen inválido
+# haría que Tatana no arranque en la PC del perito).
+ORIGENES_LISTA=()
+if [[ -n "$ORIGENES" ]]; then
+  [[ -f "$HORNEAR" ]] || { echo "ERROR: falta $HORNEAR." >&2; exit 1; }
+  IFS=',' read -r -a ORIGENES_LISTA <<<"$ORIGENES"
+  PRUEBA_ORIGENES="$(mktemp "${TMPDIR:-/tmp}/tatana-origenes.XXXXXX")"
+  echo '{}' > "$PRUEBA_ORIGENES"
+  if ! python3 "$HORNEAR" "$PRUEBA_ORIGENES" "${ORIGENES_LISTA[@]}" >/dev/null; then
+    rm -f "$PRUEBA_ORIGENES"
+    exit 2
+  fi
+  rm -f "$PRUEBA_ORIGENES"
+fi
+if [[ -n "$CLIENT_URL" ]]; then
+  [[ -n "$ORIGENES" ]] || { echo "ERROR: --client-url exige --origenes (Tatana tiene que aceptar la web que abre)." >&2; exit 2; }
+  [[ "$CLIENT_URL" =~ ^https?://[^[:space:]]+$ ]] || { echo "ERROR: --client-url tiene que ser una URL http(s), no '$CLIENT_URL'." >&2; exit 2; }
+fi
 
 mkdir -p "$SALIDA"
 SALIDA="$(cd "$SALIDA" && pwd)"
@@ -76,6 +108,11 @@ verificar_mock "$OUT/appsettings.json"
 if [[ -e "$OUT/appsettings.Local.json" ]]; then
   echo "ERROR: el publish trae appsettings.Local.json (config local de desarrollo): no puede viajar." >&2
   exit 1
+fi
+if [[ ${#ORIGENES_LISTA[@]} -gt 0 ]]; then
+  echo "  Horneando los orígenes de la nube en el appsettings.json del portátil..."
+  python3 "$HORNEAR" "$OUT/appsettings.json" "${ORIGENES_LISTA[@]}"
+  verificar_mock "$OUT/appsettings.json"
 fi
 
 echo "[3/7] Descargando adb (Android platform-tools para Windows)..."
@@ -169,7 +206,18 @@ cp "$SRC"/packaging/portable/*.bat "$SRC"/packaging/portable/*.ps1 "$SRC"/packag
 # En la copia (el .ini del repo no cambia, lo usa el CI): sin navegador al iniciar sesión
 # (DT4: Factum se abre con el acceso del Escritorio) y sin auto-actualización (no hay
 # endpoint de releases en la instalación local).
-cat > "$OUT/tatana-portable.ini" <<'INI'
+if [[ -n "$CLIENT_URL" ]]; then
+  # despliegue-nube §6.8: Tatana para Factum en la nube. UPDATE_URL sigue vacío (D8b).
+  cat > "$OUT/tatana-portable.ini" <<INI
+; Config de Tatana Portable para Factum en la nube.
+; CLIENT_URL = la web de Factum que se abre al iniciar sesion.
+; UPDATE_URL vacio = sin auto-actualizacion (se actualiza descargando el zip nuevo).
+CLIENT_URL=$CLIENT_URL
+UPDATE_URL=
+AGENT_PORT=8765
+INI
+else
+  cat > "$OUT/tatana-portable.ini" <<'INI'
 ; Config de Tatana Portable para la instalacion local de Factum (Docker en esta PC).
 ; CLIENT_URL vacio = no abrir el navegador al iniciar sesion (Factum se abre con el
 ; acceso "Factum" del Escritorio). UPDATE_URL vacio = sin auto-actualizacion.
@@ -177,6 +225,7 @@ CLIENT_URL=
 UPDATE_URL=
 AGENT_PORT=8765
 INI
+fi
 # El .ini lo lee cmd.exe: fin de línea CRLF.
 sed 's/$/\r/' "$OUT/tatana-portable.ini" > "$OUT/tatana-portable.ini.tmp" && mv "$OUT/tatana-portable.ini.tmp" "$OUT/tatana-portable.ini"
 printf '%s\n' "$VERSION" > "$OUT/version.txt"
@@ -203,6 +252,26 @@ SOBRAN="$(grep -E '^tools/scrcpy/(adb\.exe|AdbWin[^/]*\.dll)$' <<<"$CONTENIDO" |
 if [[ -n "$SOBRAN" ]]; then
   echo "ERROR: el zip de Tatana trae el adb propio de scrcpy (tiene que usar el de platform-tools): $(tr '\n' ' ' <<<"$SOBRAN")" >&2
   exit 1
+fi
+# despliegue-nube §6.8: con --origenes, el appsettings.json DEL ZIP trae exactamente la lista horneada.
+if [[ ${#ORIGENES_LISTA[@]} -gt 0 ]]; then
+  ESPERADO="$TMP/origenes-esperados.json"
+  echo '{}' > "$ESPERADO"
+  python3 "$HORNEAR" "$ESPERADO" "${ORIGENES_LISTA[@]}" >/dev/null
+  unzip -p "$ZIP" appsettings.json > "$TMP/appsettings-del-zip.json"
+  python3 - "$ESPERADO" "$TMP/appsettings-del-zip.json" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8-sig") as f:
+    esperado = json.load(f)["Agent"]["AllowedOrigins"]
+with open(sys.argv[2], encoding="utf-8-sig") as f:
+    cfg = json.load(f)
+real = cfg.get("Agent", {}).get("AllowedOrigins")
+if real != esperado:
+    sys.exit(f"ERROR: el appsettings.json del zip trae Agent.AllowedOrigins = {real!r}; se esperaba {esperado!r}.")
+if cfg.get("Agent", {}).get("Mock", False) is not False:
+    sys.exit("ERROR: el appsettings.json del zip tiene Agent.Mock distinto de false.")
+print("  OK  Agent.AllowedOrigins del zip: " + ", ".join(real))
+PY
 fi
 echo "  OK  contenido del zip verificado"
 echo "  OK  $ZIP ($(du -h "$ZIP" | cut -f1))"

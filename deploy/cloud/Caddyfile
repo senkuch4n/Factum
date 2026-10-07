@@ -1,0 +1,54 @@
+# Factum — proxy HTTPS de producción. Dominio: FACTUM_DOMINIO (.env del VPS). Sin access log a propósito:
+# las descargas llevan ?token= en la URL (B10). Ver docs/despliegue-nube.md, sección 8.
+#
+# Un solo hostname ruteado por path (DT1):
+#   /api/*, /health, /health/*, /tatana/updates/*  -> backend
+#   /descargas/*                                    -> archivos estáticos (Tatana para la nube)
+#   el resto                                        -> frontend
+# Caddy saca el certificado de Let's Encrypt solo y redirige http -> https.
+{
+	email {$FACTUM_ACME_EMAIL}
+}
+
+(seguridad) {
+	header {
+		# Sin includeSubDomains ni preload: con un dominio provisorio de terceros no corresponde (DT15).
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		# CSP efectiva mínima: frame-ancestors se ignora en Report-Only, por eso va acá.
+		Content-Security-Policy "frame-ancestors 'none'"
+		# CSP completa solo en Report-Only (D13): las violaciones se ven en la consola del navegador.
+		Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://localhost:8765 http://127.0.0.1:8765; media-src 'self' blob: http://localhost:8765 http://127.0.0.1:8765; font-src 'self' data:; connect-src 'self' http://localhost:8765 ws://localhost:8765 http://127.0.0.1:8765 ws://127.0.0.1:8765; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		# La web usa la cámara y el micrófono del navegador (CameraRecordModal, WebcamCaptureModal).
+		Permissions-Policy "camera=(self), microphone=(self), geolocation=(), payment=(), usb=()"
+		-Server
+	}
+}
+
+{$FACTUM_DOMINIO} {
+	import seguridad
+	encode zstd gzip
+
+	@backend path /api/* /health /health/* /tatana/updates/*
+	handle @backend {
+		# Tope de defensa: generate/finish acepta hasta 256 MiB (Report:MaxGenerateUploadBytes).
+		request_body {
+			max_size 300MB
+		}
+		reverse_proxy backend:8080
+	}
+
+	handle_path /descargas/* {
+		root * /srv/descargas
+		file_server
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}
+
+# Redirección de un dominio anterior (cambio de dominio, guía sección 15). Ver caddy-sitios/LEEME.md.
+import /etc/caddy/sitios/*.caddy
