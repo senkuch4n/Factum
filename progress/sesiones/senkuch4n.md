@@ -95,3 +95,4 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-07 — #21 correcciones del frontend hechas. en_revision; relanzado reviewer.
 - 2026-10-07 — #21 re-revisión APROBADA. aprobada; pendiente: regresión Mac del usuario + pasos manuales §18 (clave de firma, environment tatana-release, clave SSH de publicación, primera release 1.4.0).
 - 2026-10-07 — #21 OK del usuario (regresión Mac). Commit + push + PR.
+- 2026-10-07 — #21 cerrada: PR contra develop + resumen en el issue. Sin HU activa. Próximo: pasos §18 con el usuario.
