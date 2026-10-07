@@ -47,7 +47,10 @@ $Base = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath
 $Trabajo = Join-Path $Base 'tatana-prueba'
 $CanalServido = Join-Path $Trabajo 'canal'
 $AgenteUrl = 'http://localhost:8765'
-$CaseId = '0123456789abcdef01234567'
+# Los ids de caso del agente son Guid "D" en minúscula (AgentFileNames.TryParseCaseId), no ObjectId:
+# con un id de 24 hex el agente responde 400 invalid_case_id. En minúscula porque es la forma
+# canónica de la carpeta del caso (cases\<id>).
+$CaseId = '0c1a5e00-ca5e-4000-8000-0000000000c1'
 $resumen = [System.Collections.Generic.List[string]]::new()
 $servidor = $null
 
@@ -382,6 +385,7 @@ fs.writeFileSync(dst, JSON.stringify({ ...env, signature: sig.toString('base64')
     $hashSubida = Hash $subida
     $codigoSubida = Join-Path $Trabajo 'subida.code'
     $errorSubida = Join-Path $Trabajo 'subida.stderr'
+    $cuerpoSubida = Join-Path $Trabajo 'subida.body'
     $urlSubida = "$AgenteUrl/cases/$CaseId/evidence/upload?filename=ci-subida.bin"
     # Start-Process une -ArgumentList con espacios y NO pone comillas. Con un array,
     # 'Content-Type: application/octet-stream' llegaba a curl partido en dos: un `-H Content-Type:`
@@ -390,7 +394,7 @@ fs.writeFileSync(dst, JSON.stringify({ ...env, signature: sig.toString('base64')
     # Es la misma subida que hace la web: POST con Content-Length del archivo, sin upload-check
     # previo (es opcional). Sin Origin la guarda no aplica; con Origin tendría que estar en
     # AllowedOrigins. `Expect:` vacío evita la espera de "100 Continue".
-    $argsCurl = '-sS -o NUL -w "%{http_code}" --limit-rate 100k -X POST -H "Expect:" ' +
+    $argsCurl = '-sS -o "' + $cuerpoSubida + '" -w "%{http_code}" --limit-rate 100k -X POST -H "Expect:" ' +
         '-H "Content-Type: application/octet-stream" --data-binary "@' + $subida + '" "' + $urlSubida + '"'
     $curl = Start-Process -FilePath 'curl.exe' -PassThru -ArgumentList $argsCurl `
         -RedirectStandardOutput $codigoSubida -RedirectStandardError $errorSubida
@@ -399,7 +403,9 @@ fs.writeFileSync(dst, JSON.stringify({ ...env, signature: sig.toString('base64')
         $estado = if ($curl.HasExited) { "terminó con exit $($curl.ExitCode)" } else { 'sigue corriendo' }
         $http = if (Test-Path -LiteralPath $codigoSubida) { "$(Get-Content -LiteralPath $codigoSubida -Raw)".Trim() } else { '' }
         $err = if (Test-Path -LiteralPath $errorSubida) { "$(Get-Content -LiteralPath $errorSubida -Raw)".Trim() } else { '' }
-        "curl $estado; HTTP '$http'; stderr: '$err'"
+        $cuerpo = if (Test-Path -LiteralPath $cuerpoSubida) { "$(Get-Content -LiteralPath $cuerpoSubida -Raw)".Trim() } else { '' }
+        if ($cuerpo.Length -gt 500) { $cuerpo = $cuerpo.Substring(0, 500) + '…' }
+        "curl $estado; HTTP '$http'; body: '$cuerpo'; stderr: '$err'"
     }
     $limite = (Get-Date).AddSeconds(15)
     $ocupado = $false

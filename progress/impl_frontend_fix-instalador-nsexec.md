@@ -602,3 +602,69 @@ entrecomillada imprime `[Content-Type: application/octet-stream]` y `[URL]`.
   mensaje trae el exit code, el HTTP y el stderr de curl.
 
 Archivos tocados en la ronda 7: `ops/tatana/prueba-windows.ps1` y este archivo. Sin commit.
+
+## Ronda 8: la subida da 400 enseguida
+
+Fuente: run 37642777147. `curl terminó con exit 0; HTTP '400'; stderr: ''`.
+
+### Reproducción local (antes de otro ensayo)
+
+- Compilé `Factum.Agent` con `--artifacts-path` en el scratchpad (no toca `bin/`/`obj/` del repo)
+  y lo levanté aislado:
+  `dotnet Factum.Agent.dll --mock --port 18766 --data <scratchpad>/agent-run/data --local-config <scratchpad>/agent-run/appsettings.Local.json`,
+  con PID 4194. No usé el 8765, ni el `agent-data` del usuario, ni su `appsettings.Local.json`.
+  Al final lo detuve por PID con `kill 4194` y verifiqué que `/health` ya no respondía.
+- Corrí la misma invocación de curl que arma `prueba-windows.ps1`, con los mismos argumentos y
+  comillas, cambiando solo el puerto y `-o NUL` por un archivo:
+  ```
+  curl -sS -o body.json -w "%{http_code}" --limit-rate 100k -X POST -H "Expect:" -H "Content-Type: application/octet-stream" --data-binary "@subida.bin" "http://localhost:18766/cases/0123456789abcdef01234567/evidence/upload?filename=ci-subida.bin"
+  ```
+  Resultado: **400** en 0,65 s, con body `{"error":"Identificador de caso inválido","code":"invalid_case_id"}`.
+  El pedido salió bien formado (`-v`): `Content-Type: application/octet-stream` y
+  `Content-Length: 4194304`.
+
+### Causa
+
+`AgentFileNames.TryParseCaseId` (`server/src/Factum.Agent/Common/AgentFileNames.cs:57`) exige
+un **Guid "D"** (`Guid.TryParseExact(id, "D")`) y devuelve la forma canónica en minúscula. El
+backend usa ids Guid, no ObjectId de Mongo. El `$CaseId` de la prueba,
+`0123456789abcdef01234567`, son 24 hex (formato ObjectId), así que no pasa. **Corrijo lo que
+dije en la ronda 7**: ahí di por válido ese id sin verificar `TryParseCaseId`. No era cierto.
+
+### Comprobación con un Guid (mismo agente local, misma invocación)
+
+Con `0c1a5e00-ca5e-4000-8000-0000000000c1`:
+- a los 3 s y a los 13 s, `/agent/state` dio `busy: true`, con
+  `operations: [{kind: "request", detail: "POST /cases"}]`;
+- la subida terminó en unos 41 s (4 MB a 100 KB/s) con **200** y exit 0;
+- `data/cases/0c1a5e00-ca5e-4000-8000-0000000000c1/ci-subida.bin` tiene el mismo SHA-256 que el
+  original. Es la ruta que verifica la prueba (`$DataDir\cases\$CaseId\ci-subida.bin`).
+
+**No hay bug de Tatana con subidas lentas.** A 100 KB/s, Kestrel no corta el body: el
+`MinRequestBodyDataRate` por defecto es de 240 B/s. No toqué `server/` y por eso no corrí
+`dotnet test`.
+
+### Cambios en `ops/tatana/prueba-windows.ps1`
+
+- `$CaseId = '0c1a5e00-ca5e-4000-8000-0000000000c1'` (Guid "D" en minúscula, la forma
+  canónica de la carpeta), con un comentario que explica por qué.
+- curl guarda el body de la respuesta en `subida.body` (`-o "<archivo>"`, antes `-o NUL`).
+  `Detalle-Subida` lo muestra, recortado a 500 caracteres, junto al exit code, el HTTP y el
+  stderr.
+- La invocación queda como en la ronda 7 (una sola línea con comillas, `Expect:` vacío y
+  `--limit-rate 100k`). Localmente produjo una subida válida, en curso unos 40 s, con `busy=true`.
+
+### Para el orquestador
+
+`Refactorizaciones/tatana-instalador-autoupdate.md:734` documenta el mismo curl con
+`0123456789abcdef01234567`. Habría que cambiarlo por un Guid. No lo edité porque es la SDD.
+`server/tests/Factum.Agent.Tests/OperationTrackerTests.cs:54` usa esa ruta solo como string
+para el tracker: no valida el id, así que está bien.
+
+### Verificación (ronda 8)
+
+- Reproducción local del 400 y de la subida válida en curso (arriba).
+- Parser de pwsh sobre `prueba-windows.ps1`: 0 errores. `npm test` 22/22. Los dos `tsc`: 0.
+  `actionlint`: rc=0.
+
+Archivos tocados en la ronda 8: `ops/tatana/prueba-windows.ps1` y este archivo. Sin commit.
