@@ -415,3 +415,60 @@ compilación: si `PRODUCT_FILENAME` no es `Tatana`, sale con `!error`. Así, un 
   desinstalación deje vacía `Programs\Tatana`.
 
 Archivos tocados en la ronda 4: `agent-ui/build/installer.nsh` y este archivo. Sin commit.
+
+## Ronda 5: `.Count` con Set-StrictMode en `prueba-windows.ps1`
+
+Fuente: run 37635462299. Pasan los pasos 1 a 3. Falla `prueba-windows.ps1:293` con
+`The property 'Count' cannot be found on this object`.
+
+### Diagnóstico
+
+- Una función que devuelve `@(...)` igual **se desenrolla al salir**: con 1 elemento llega el
+  objeto suelto, y con 0 llega `$null`. `Duenos-8765` y `Procesos-Tatana` ya tenían `@()`
+  adentro, pero eso no alcanza: hay que envolver la **llamada**.
+- Lo verifiqué en pwsh 7.4 con `Set-StrictMode -Version Latest`. Con un objeto suelto,
+  `.Count` da 1 (pwsh 7 tiene `Count` intrínseco). **Solo `$null.Count` falla**, con el mismo
+  mensaje del run. O sea, en el run **`Duenos-8765` no devolvió ningún PID**, aunque `/health`
+  y `/agent/state` respondían en ese momento. Envolver con `@()` convierte la excepción en
+  `Falla "8765 tiene 0 dueños"`, pero no la resuelve sola. Por eso sumé un respaldo y diagnóstico
+  (ver abajo). No sé por qué `Get-NetTCPConnection` no devolvió nada: es CIM y corre con
+  `-ErrorAction SilentlyContinue`, así que un error de CIM quedaría oculto. El próximo ensayo lo
+  aclara.
+
+### Cambios en `ops/tatana/prueba-windows.ps1`
+
+- Todas las llamadas quedaron envueltas: `@(Procesos-Tatana).Count` (líneas 172, 176 y 397),
+  `@(Duenos-8765).Count` (176 y 441) y `$duenos = @(Duenos-8765)` (295). Agregué un comentario
+  sobre el patrón junto a las funciones.
+- `Duenos-8765`: si `Get-NetTCPConnection` no devuelve nada, usa `netstat -ano -p TCP` y
+  `-p TCPv6`. Toma las filas `TCP <local>:8765 <remota>:0 <estado> <PID>`: dirección remota
+  `:0` es escucha, sin depender del idioma de la columna de estado. Probado con líneas de muestra
+  en pwsh: toma `LISTENING`/`ESCUCHANDO` en IPv4 e IPv6, y descarta `ESTABLISHED` y `:18765`.
+- La falla de "un solo agente en 8765" ahora muestra los PIDs y las líneas de `netstat` con
+  `:8765` (`Netstat-8765`). `(Get-Process -Id $duenos[0]).Path` pasa a usar
+  `-ErrorAction SilentlyContinue`, y si `$ruta` es nula falla con mensaje en vez de lanzar
+  "método sobre null".
+- Revisé el resto de los `.Count`/`[0]`/`Where-Object`/`Get-*` del script. `$agentePortable`
+  (líneas 217 y 246-247), `$archivado` (250) y `@($e.busyOperations)` (373) ya tenían `@()`.
+  `$centinelas` es un hashtable. Los `Get-ChildItem ... | Select-Object -First 1` se usan como
+  booleano, no con `.Count`, y `$run`/`$m`/`$ini` son objetos únicos con chequeo de `$null`.
+  No encontré nada más con el patrón.
+
+### `agent-ui/build/migrar-portable.ps1`
+
+No hizo falta cambiarlo. No usa `Set-StrictMode`, y sus dos `.Count`
+(`$procesos = @(Get-ProcesosBajo ...)` y `$items = @(Get-ChildItem ...)`) ya envuelven la
+llamada. `Get-RutasProcesos` devuelve un hashtable, que no se desenrolla.
+
+### Verificación (ronda 5)
+
+- Parser de PowerShell (pwsh 7.4, Docker) sobre `prueba-windows.ps1` y `migrar-portable.ps1`:
+  **0 errores** en los dos.
+- Comportamiento con `Set-StrictMode -Version Latest`: `$null.Count` falla igual que en el run,
+  y `@(f).Count` da 1 y 0 en los dos casos. El regex de netstat se probó con líneas de muestra.
+- `actionlint`: rc=0.
+- Qué mirar en el próximo ensayo: si vuelve a fallar en ese punto, el mensaje ahora trae los
+  PIDs y el `netstat`. Si `netstat` muestra el puerto en escucha, el respaldo debería haber
+  resuelto el PID.
+
+Archivos tocados en la ronda 5: `ops/tatana/prueba-windows.ps1` y este archivo. Sin commit.

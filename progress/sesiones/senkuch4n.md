@@ -109,3 +109,6 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-07 — Ronda 3: causa real = multiUser.nsh de electron-builder 24 lee NSIS_MAX_STRLEN del buffer de SHGetKnownFolderPath (lectura de más, intermitente; upstream PR #9769, eb 26.12). Parche idempotente en postinstall (parchar-electron-builder.mjs), INSTDIR sin cambios. Push al PR #28; se correrá el ensayo varias veces.
 - 2026-10-07 — Ronda 3: SIN crash; migración completa OK (detiene Factum.Agent+adb, copia config, archiva). Falla: INSTDIR = Programs	atana-agent (name del package.json) y no Programs\Tatana como espera la SDD/prueba. Relanzado implementer-frontend.
 - 2026-10-07 — Ronda 4: APP_FILENAME redefinido al productFilename (Tatana) en installer.nsh con !error de guarda; INSTDIR = Programs\Tatana en el script generado. Push al PR #28.
+- 2026-10-07 — Ronda 4: pasos 1-3 OK (INSTDIR Programs\Tatana); falla bug .Count en prueba-windows.ps1:293 → ronda 5. Leo (imleticio) subió rama ui/ux: 4 commits de diseño en client/, base 42fa825 (10 detrás de develop), sin PR.
+- 2026-10-07 — ui/ux de Leo: merge de prueba con develop sin conflictos y tsc de client OK (worktree temporal, borrado).
+- 2026-10-07 — Ronda 5: @() en Duenos-8765/Procesos-Tatana + respaldo netstat y mensajes con PIDs (el error venía de 0 PIDs). Push al PR #28.
