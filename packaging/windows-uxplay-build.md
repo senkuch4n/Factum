@@ -4,8 +4,10 @@
 screenshot vía AirPlay) no tiene binario oficial para Windows — [FDH2/UxPlay](https://github.com/FDH2/UxPlay)
 solo documenta compilarlo a mano vía MSYS2. Como recompilar GStreamer en cada pipeline de CI
 sería lentísimo y frágil, este build se hace **una sola vez a mano** y el resultado se sube a
-una URL estable propia (ej. GitLab Generic Package Registry) que el job `build-portable-win`
-de `.gitlab-ci.yml` descarga usando la variable de CI/CD `UXPLAY_WIN_ARTIFACT_URL`.
+una URL estable propia (ej. un release de GitHub) que `deploy/windows/armar-tatana-portable.sh`
+descarga si está definida la variable de entorno `UXPLAY_WIN_ARTIFACT_URL`. Hoy no se usa: el
+portátil y el instalador de Windows salen sin AirPlay (decisión D1 de ios-herramientas-windows).
+(El `.gitlab-ci.yml` que lo descargaba se retiró en tatana-instalador-autoupdate.)
 
 ## Pasos (Windows 10/11, 64-bit)
 
@@ -33,12 +35,12 @@ de `.gitlab-ci.yml` descarga usando la variable de CI/CD `UXPLAY_WIN_ARTIFACT_UR
    (`/ucrt64/lib/gstreamer-1.0/`).
 5. Zippear `uxplay.exe` + DLLs + carpeta `gstreamer-1.0/` en un único `.zip` plano (sin
    subcarpeta contenedora — el CI lo extrae directo a `tools/uxplay/`).
-6. Subir ese `.zip` a un release/paquete genérico estable (ej. `Settings → Packages & Registries
-   → Package Registry` en GitLab) y setear su URL pública en la variable de CI/CD
-   `UXPLAY_WIN_ARTIFACT_URL` (Settings → CI/CD → Variables).
+6. Subir ese `.zip` a una URL estable (ej. un asset de un release de GitHub) y exportar esa URL
+   como `UXPLAY_WIN_ARTIFACT_URL` antes de correr `armar-tatana-portable.sh` (en un workflow,
+   como variable del repo pasada por `env:`).
 
 ## Cuándo repetir esto
 
 Solo hace falta repetir el build si se quiere actualizar la versión de uxplay o de GStreamer.
-No es parte del pipeline normal — el job `build-portable-win` solo descarga el artefacto ya
+No es parte del pipeline normal: `armar-tatana-portable.sh` solo descarga el artefacto ya
 armado.

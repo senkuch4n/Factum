@@ -1,0 +1,671 @@
+# Factum — instalador de Tatana para Windows: arma, prueba, firma y publica
+# (SDD tatana-instalador-autoupdate §8; guía docs/despliegue-nube.md, sección 19).
+#
+# Modos (D-T23):
+#   - release: push de un tag tatana-vX.Y.Z, o "Run workflow" con publicar=true. SOLO desde un commit que
+#     está en main (P3). Firma con el secret del environment tatana-release y, si la prueba pasa y
+#     TATANA_PUBLICAR_HABILITADO == 'true', publica en el VPS y crea el GitHub Release.
+#   - ensayo: PRs que tocan el armado o el actualizador, o "Run workflow" con publicar=false. Firma con
+#     una clave Ed25519 EFÍMERA que se genera y se descarta dentro del job "instalador"; nunca toca un
+#     secret ni publica nada. Sirve igual para PRs de forks: ningún job de ensayo usa secrets.
+#
+# Jobs: preparar → payload (ubuntu) → instalador (windows; en ensayo, también firma) →
+#       firmar (ubuntu, environment tatana-release, solo release) → prueba (windows, D11) →
+#       publicar (ubuntu, environment tatana-release, solo release).
+#
+# Secrets (environment tatana-release): TATANA_FIRMA_CLAVE_PRIVADA, TATANA_PUB_SSH_KEY.
+# Secrets del repo (ya existen): DEPLOY_HOST, DEPLOY_KNOWN_HOSTS.
+# Variables: TATANA_FIRMA_KEY_ID, TATANA_ORIGENES (fallback FACTUM_URL_PUBLICA), TATANA_PUB_USER,
+#            TATANA_PUBLICAR_HABILITADO, DEPLOY_PORT.
+# Los valores de inputs, vars y secrets llegan a los "run:" por env:, nunca interpolados en el script.
+name: Tatana release
+
+on:
+  push:
+    tags: ["tatana-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versión X.Y.Z (sin la v)"
+        required: true
+        type: string
+      publicar:
+        description: "Publicar (solo desde main). Sin tildar = ensayo: arma y prueba, no publica."
+        required: false
+        type: boolean
+        default: false
+      notas:
+        description: "Notas de la versión (opcional)"
+        required: false
+        type: string
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - .github/workflows/tatana-release.yml
+      - ops/tatana/**
+      - agent-ui/build/**
+      - agent-ui/src/main/updater/**
+      - agent-ui/package.json
+      - deploy/windows/armar-tatana-portable.sh
+
+# Una publicación a la vez (nunca se cancela a mitad). Los ensayos de PR van en su propio grupo: si no,
+# un PR podría dejar en espera (o desplazar) una release pendiente.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('tatana-ensayo-pr-{0}', github.event.number) || 'tatana-release' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preparar:
+    name: Preparar (versión, modo, orígenes)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.modo.outputs.version }}
+      modo: ${{ steps.modo.outputs.modo }}
+      origenes: ${{ steps.origenes.outputs.origenes }}
+      client_url: ${{ steps.origenes.outputs.client_url }}
+      update_urls: ${{ steps.origenes.outputs.update_urls }}
+      update_urls_horneadas: ${{ steps.origenes.outputs.update_urls_horneadas }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Versión y modo
+        id: modo
+        env:
+          EVENTO: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PUBLICAR: ${{ inputs.publicar }}
+        run: |
+          case "$EVENTO" in
+            push)
+              VERSION="${REF_NAME#tatana-v}"
+              MODO=release ;;
+            workflow_dispatch)
+              VERSION="$INPUT_VERSION"
+              if [[ "$INPUT_PUBLICAR" == true ]]; then MODO=release; else MODO=ensayo; fi ;;
+            pull_request)
+              VERSION=0.9.0
+              MODO=ensayo ;;
+            *) echo "::error::Evento no soportado: $EVENTO"; exit 1 ;;
+          esac
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::La versión tiene que ser X.Y.Z (sin prerelease), no '$VERSION'."
+            exit 1
+          fi
+          if [[ "$VERSION" == 0.0.1 ]]; then
+            echo "::error::0.0.1 está reservada para la base de la prueba (D-T24)."
+            exit 1
+          fi
+          if [[ "$MODO" == release ]]; then
+            # P3: lo publicado está en main. Un dispatch con publicar=true solo desde main.
+            if [[ "$EVENTO" == workflow_dispatch && "$REF" != refs/heads/main ]]; then
+              echo "::error::Para publicar, lanzá el workflow desde main (o empujá un tag tatana-vX.Y.Z de un commit de main). Desde otra rama solo hay ensayo."
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::El commit ${GITHUB_SHA:0:12} no está en main: las releases de Tatana solo salen de main (P3)."
+              exit 1
+            fi
+          fi
+          echo "version=$VERSION" >>"$GITHUB_OUTPUT"
+          echo "modo=$MODO" >>"$GITHUB_OUTPUT"
+          echo "Tatana $VERSION — modo $MODO" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Orígenes y canal
+        id: origenes
+        env:
+          MODO: ${{ steps.modo.outputs.modo }}
+          TATANA_ORIGENES: ${{ vars.TATANA_ORIGENES }}
+          FACTUM_URL_PUBLICA: ${{ vars.FACTUM_URL_PUBLICA }}
+        run: |
+          CRUDO="${TATANA_ORIGENES:-$FACTUM_URL_PUBLICA}"
+          if [[ -z "$CRUDO" ]]; then
+            if [[ "$MODO" == release ]]; then
+              echo "::error::Falta la variable TATANA_ORIGENES (o FACTUM_URL_PUBLICA): https://<dominio>[,https://<otro>] (guía, sección 19)."
+              exit 1
+            fi
+            # Ensayo sin variables (p. ej. un PR de un fork): un dominio que no existe.
+            CRUDO="https://ensayo.factum.invalid"
+          fi
+          ORIGENES=()
+          IFS=',' read -r -a CRUDOS <<<"$CRUDO"
+          for o in "${CRUDOS[@]}"; do
+            o="$(printf '%s' "$o" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+            o="${o%/}"
+            [[ -z "$o" ]] && continue
+            if [[ ! "$o" =~ ^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$ ]]; then
+              echo "::error::Origen inválido en TATANA_ORIGENES: '$o' (https://<dominio>, minúsculas, sin barra final)."
+              exit 1
+            fi
+            ORIGENES+=("$o")
+          done
+          [[ ${#ORIGENES[@]} -gt 0 ]] || { echo "::error::TATANA_ORIGENES no tiene ningún origen."; exit 1; }
+          UPDATE_URLS="$(printf '%s/tatana/updates/\n' "${ORIGENES[@]}" | jq -R . | jq -cs .)"
+          # Ensayo: el instalador confía en una clave efímera, así que NO se le hornea el canal real
+          # (si alguien instalara un ensayo, nunca podría recibir nada de producción ni de un VPS
+          # comprometido). La prueba usa su propio canal local (TATANA_UPDATE_URLS).
+          if [[ "$MODO" == release ]]; then
+            HORNEADAS="$UPDATE_URLS"
+          else
+            HORNEADAS='["https://ensayo.factum.invalid/tatana/updates/"]'
+          fi
+          {
+            echo "origenes=$(IFS=,; echo "${ORIGENES[*]}")"
+            echo "client_url=${ORIGENES[0]}"
+            echo "update_urls=$UPDATE_URLS"
+            echo "update_urls_horneadas=$HORNEADAS"
+          } >>"$GITHUB_OUTPUT"
+          echo "Orígenes: ${ORIGENES[*]}" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Chequeos del instalador (D-T25, D-T26)
+        run: |
+          node -e '
+            const b = require("./agent-ui/package.json").build ?? {};
+            const errores = [];
+            if (b.appId !== "com.factum.tatana") errores.push("build.appId tiene que ser com.factum.tatana para siempre (D-T26)");
+            if (b.nsis?.deleteAppDataOnUninstall !== false) errores.push("build.nsis.deleteAppDataOnUninstall tiene que ser false para siempre (D-T25)");
+            if (b.nsis?.perMachine !== false) errores.push("build.nsis.perMachine tiene que ser false (sin admin)");
+            if (errores.length) { for (const e of errores) console.log("::error::" + e); process.exit(1); }
+          '
+
+      - name: Release - clave de firma y versión publicada
+        if: steps.modo.outputs.modo == 'release'
+        env:
+          KEY_ID: ${{ vars.TATANA_FIRMA_KEY_ID }}
+          VERSION: ${{ steps.modo.outputs.version }}
+          UPDATE_URLS: ${{ steps.origenes.outputs.update_urls }}
+          PUBLICAR_HABILITADO: ${{ vars.TATANA_PUBLICAR_HABILITADO }}
+        run: |
+          if [[ -z "$KEY_ID" ]]; then
+            echo "::error::Falta la variable TATANA_FIRMA_KEY_ID (guía, sección 19)."
+            exit 1
+          fi
+          # shellcheck disable=SC2016 # JavaScript, no shell: los ${} son de node.
+          KEY_ID="$KEY_ID" node --input-type=module -e '
+            import { readTrustedKeys } from "./ops/tatana/_lib.mjs";
+            const ids = readTrustedKeys().map((k) => k.keyId);
+            if (!ids.includes(process.env.KEY_ID)) {
+              console.log(`::error::TATANA_FIRMA_KEY_ID "${process.env.KEY_ID}" no está en agent-ui/src/main/updater/trusted-keys.ts (hay: ${ids.join(", ") || "ninguna"}).`);
+              process.exit(1);
+            }
+          '
+          if [[ "$PUBLICAR_HABILITADO" != true ]]; then
+            echo "::notice::TATANA_PUBLICAR_HABILITADO no es 'true': se arma y se prueba, pero no se publica."
+            exit 0
+          fi
+          PRIMERA="$(jq -r '.[0]' <<<"$UPDATE_URLS")"
+          CODIGO="$(curl -sS -o vigente.json -w '%{http_code}' --max-time 30 --retry 3 --retry-all-errors "${PRIMERA}tatana-update.json" || true)"
+          if [[ "$CODIGO" == 404 ]]; then
+            echo "Primera publicación (no hay tatana-update.json en $PRIMERA)."
+            exit 0
+          fi
+          if [[ "$CODIGO" != 200 ]]; then
+            echo "::error::No se pudo leer ${PRIMERA}tatana-update.json (HTTP $CODIGO)."
+            exit 1
+          fi
+          VIGENTE="$(node -e '
+            const e = JSON.parse(require("fs").readFileSync("vigente.json", "utf8"));
+            process.stdout.write(JSON.parse(Buffer.from(e.payload, "base64").toString("utf8")).version);
+          ')"
+          if [[ "$(printf '%s\n%s\n' "$VIGENTE" "$VERSION" | sort -V | tail -1)" != "$VERSION" || "$VIGENTE" == "$VERSION" ]]; then
+            echo "::error::La versión $VERSION no es mayor que la publicada ($VIGENTE). Para revertir, publicá una X.Y.Z+1 (D-T7)."
+            exit 1
+          fi
+          echo "Publicada: $VIGENTE → nueva: $VERSION" >>"$GITHUB_STEP_SUMMARY"
+
+  payload:
+    name: Agente y herramientas (ubuntu)
+    needs: preparar
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Armar el payload (portátil para la nube)
+        env:
+          VERSION: ${{ needs.preparar.outputs.version }}
+          ORIGENES: ${{ needs.preparar.outputs.origenes }}
+          CLIENT_URL: ${{ needs.preparar.outputs.client_url }}
+        run: |
+          # Árbol limpio del commit (ningún archivo local ni appsettings.Local.json).
+          mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/out"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/src"
+          bash deploy/windows/armar-tatana-portable.sh --version "$VERSION" --src "$RUNNER_TEMP/src" \
+            --salida "$RUNNER_TEMP/out" --origenes "$ORIGENES" --client-url "$CLIENT_URL"
+      - name: Agente base 0.0.1 (para la prueba)
+        run: |
+          dotnet publish "$RUNNER_TEMP/src/server/src/Factum.Agent/Factum.Agent.csproj" -c Release -r win-x64 \
+            --self-contained true -p:Version=0.0.1 -o "$RUNNER_TEMP/base-publish" --nologo -v quiet
+          mkdir -p "$RUNNER_TEMP/base"
+          cp "$RUNNER_TEMP/base-publish/Factum.Agent.exe" "$RUNNER_TEMP/base/"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: payload
+          path: ${{ runner.temp }}/out/Tatana-Portable-v${{ needs.preparar.outputs.version }}-Windows.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agente-base
+          path: ${{ runner.temp }}/base/Factum.Agent.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  instalador:
+    name: Instalador NSIS (windows)
+    needs: [preparar, payload]
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      VERSION: ${{ needs.preparar.outputs.version }}
+      MODO: ${{ needs.preparar.outputs.modo }}
+      ORIGENES: ${{ needs.preparar.outputs.origenes }}
+      CLIENT_URL: ${{ needs.preparar.outputs.client_url }}
+      UPDATE_URLS_HORNEADAS: ${{ needs.preparar.outputs.update_urls_horneadas }}
+      # Sin firma de código (D2 = A): electron-builder no busca certificados.
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: agent-ui/package-lock.json
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: payload
+          path: ${{ runner.temp }}/payload
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: agente-base
+          path: ${{ runner.temp }}/agente-base
+
+      - name: Agente y herramientas en resources/agent
+        run: |
+          $agent = 'agent-ui/resources/agent'
+          if (Test-Path $agent) { Remove-Item -Recurse -Force $agent }
+          Expand-Archive -LiteralPath "$env:RUNNER_TEMP/payload/Tatana-Portable-v$env:VERSION-Windows.zip" -DestinationPath $agent
+          # Lo que es solo del portátil no viaja en el instalador.
+          foreach ($f in 'launch-tatana.bat', 'install-portable.bat', 'tatana-portable.ini', 'version.txt') {
+            Remove-Item -LiteralPath (Join-Path $agent $f) -Force -ErrorAction SilentlyContinue
+          }
+          foreach ($f in 'Factum.Agent.exe', 'appsettings.json', 'tools/platform-tools/adb.exe', 'tools/scrcpy/scrcpy.exe',
+                         'tools/ffmpeg/ffmpeg.exe', 'tools/python-embed/python.exe') {
+            if (-not (Test-Path -LiteralPath (Join-Path $agent $f))) { throw "falta $f en el payload" }
+          }
+          $cfg = Get-Content -LiteralPath (Join-Path $agent 'appsettings.json') -Raw | ConvertFrom-Json
+          if ($cfg.Agent.Mock -ne $false) { throw "appsettings.json tiene Agent.Mock = $($cfg.Agent.Mock)" }
+          foreach ($o in $env:ORIGENES.Split(',')) {
+            if (-not (@($cfg.Agent.AllowedOrigins) -contains $o)) { throw "AllowedOrigins no incluye $o" }
+          }
+          if (Test-Path -LiteralPath (Join-Path $agent 'appsettings.Local.json')) { throw 'el payload trae appsettings.Local.json' }
+          Write-Host "OK agente $env:VERSION con orígenes: $(@($cfg.Agent.AllowedOrigins) -join ', ')"
+
+      - name: Canal horneado (tatana-dist.json)
+        run: |
+          $dist = [ordered]@{
+            schema      = 1
+            client_url  = $env:CLIENT_URL
+            update_urls = @($env:UPDATE_URLS_HORNEADAS | ConvertFrom-Json)
+          }
+          New-Item -ItemType Directory -Force -Path 'agent-ui/resources/dist-config' | Out-Null
+          $dist | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath 'agent-ui/resources/dist-config/tatana-dist.json' -Encoding utf8NoBOM
+          Get-Content 'agent-ui/resources/dist-config/tatana-dist.json'
+
+      - name: Clave efímera (solo ensayo)
+        if: needs.preparar.outputs.modo == 'ensayo'
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'clave-ensayo'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          node ops/tatana/generar-clave-firma.mjs --key-id "ensayo-$env:RUN_ID" --salida (Join-Path $dir 'ensayo.pem') --extra-salida (Join-Path $dir 'extra.txt')
+          if ($LASTEXITCODE -ne 0) { throw 'no se pudo generar la clave de ensayo' }
+          $extra = (Get-Content -LiteralPath (Join-Path $dir 'extra.txt') -Raw).Trim()
+          "TATANA_EXTRA_UPDATE_KEY=$extra" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "KEY_ID_ENSAYO=ensayo-$env:RUN_ID" | Add-Content -LiteralPath $env:GITHUB_ENV
+
+      - name: Release - sin clave extra
+        if: needs.preparar.outputs.modo == 'release'
+        run: |
+          if ($env:TATANA_EXTRA_UPDATE_KEY) { throw 'TATANA_EXTRA_UPDATE_KEY tiene que estar vacía en una release (D-T23)' }
+
+      - name: Instalador vX
+        working-directory: agent-ui
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci' }
+          npm version $env:VERSION --no-git-tag-version --allow-same-version
+          npx electron-vite build
+          if ($LASTEXITCODE -ne 0) { throw 'electron-vite build' }
+          $primera = @($env:UPDATE_URLS_HORNEADAS | ConvertFrom-Json)[0]
+          npx electron-builder --win nsis --x64 --publish never "-c.publish.url=$primera"
+          if ($LASTEXITCODE -ne 0) { throw 'electron-builder' }
+          foreach ($f in "Tatana-Setup-$env:VERSION.exe", "Tatana-Setup-$env:VERSION.exe.blockmap", 'latest.yml') {
+            if (-not (Test-Path -LiteralPath "dist/$f")) { throw "falta dist/$f" }
+          }
+
+      - name: Instalador base 0.0.1 (para la prueba)
+        working-directory: agent-ui
+        run: |
+          Copy-Item -LiteralPath "$env:RUNNER_TEMP/agente-base/Factum.Agent.exe" -Destination 'resources/agent/Factum.Agent.exe' -Force
+          npm version 0.0.1 --no-git-tag-version --allow-same-version
+          npx electron-vite build
+          if ($LASTEXITCODE -ne 0) { throw 'electron-vite build (base)' }
+          $primera = @($env:UPDATE_URLS_HORNEADAS | ConvertFrom-Json)[0]
+          npx electron-builder --win nsis --x64 --publish never "-c.publish.url=$primera" -c.directories.output=dist-base
+          if ($LASTEXITCODE -ne 0) { throw 'electron-builder (base)' }
+          if (-not (Test-Path -LiteralPath 'dist-base/Tatana-Setup-0.0.1.exe')) { throw 'falta dist-base/Tatana-Setup-0.0.1.exe' }
+
+      # Ensayo: se firma acá mismo con la clave efímera, que nunca sale de este job (no se sube como
+      # artifact). En release firma el job "firmar", con el secret del environment tatana-release.
+      - name: Firmar (solo ensayo, clave efímera)
+        if: needs.preparar.outputs.modo == 'ensayo'
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          $canal = Join-Path $env:RUNNER_TEMP 'canal'
+          New-Item -ItemType Directory -Force -Path $canal | Out-Null
+          $exe = "agent-ui/dist/Tatana-Setup-$env:VERSION.exe"
+          Copy-Item -LiteralPath $exe, "$exe.blockmap", 'agent-ui/dist/latest.yml' -Destination $canal
+          node ops/tatana/armar-payload.mjs --exe (Join-Path $canal "Tatana-Setup-$env:VERSION.exe") --latest (Join-Path $canal 'latest.yml') `
+            --version $env:VERSION --commit $env:SHA --notas 'Ensayo de CI (no publicable)' --salida (Join-Path $env:RUNNER_TEMP 'payload.json')
+          if ($LASTEXITCODE -ne 0) { throw 'armar-payload' }
+          $env:TATANA_FIRMA_CLAVE_PRIVADA = Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'clave-ensayo/ensayo.pem') -Raw
+          node ops/tatana/firmar-manifiesto.mjs --payload (Join-Path $env:RUNNER_TEMP 'payload.json') --key-id $env:KEY_ID_ENSAYO `
+            --clave-extra $env:TATANA_EXTRA_UPDATE_KEY --salida (Join-Path $canal 'tatana-update.json')
+          if ($LASTEXITCODE -ne 0) { throw 'firmar-manifiesto' }
+          Remove-Item Env:TATANA_FIRMA_CLAVE_PRIVADA
+          node ops/tatana/verificar-manifiesto.mjs --manifiesto (Join-Path $canal 'tatana-update.json') --clave-extra $env:TATANA_EXTRA_UPDATE_KEY `
+            --version $env:VERSION --exe (Join-Path $canal "Tatana-Setup-$env:VERSION.exe") --payload (Join-Path $env:RUNNER_TEMP 'payload.json')
+          if ($LASTEXITCODE -ne 0) { throw 'verificar-manifiesto' }
+          Push-Location $canal
+          $lineas = foreach ($f in "Tatana-Setup-$env:VERSION.exe", "Tatana-Setup-$env:VERSION.exe.blockmap", 'latest.yml', 'tatana-update.json') {
+            "$((Get-FileHash -Algorithm SHA256 -LiteralPath $f).Hash.ToLowerInvariant())  $f"
+          }
+          [IO.File]::WriteAllText((Join-Path $canal 'SHA256SUMS'), (($lineas -join "`n") + "`n"))
+          Pop-Location
+
+      - name: Borrar la clave efímera
+        if: always() && needs.preparar.outputs.modo == 'ensayo'
+        run: Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP 'clave-ensayo')
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: instalador
+          path: |
+            agent-ui/dist/Tatana-Setup-${{ needs.preparar.outputs.version }}.exe
+            agent-ui/dist/Tatana-Setup-${{ needs.preparar.outputs.version }}.exe.blockmap
+            agent-ui/dist/latest.yml
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: instalador-base
+          path: agent-ui/dist-base/Tatana-Setup-0.0.1.exe
+          if-no-files-found: error
+          retention-days: 7
+      - if: needs.preparar.outputs.modo == 'ensayo'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canal
+          path: ${{ runner.temp }}/canal/
+          if-no-files-found: error
+          retention-days: 7
+
+  firmar:
+    name: Firmar (release)
+    needs: [preparar, instalador]
+    if: needs.preparar.outputs.modo == 'release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # La clave de firma vive SOLO en este environment (deployment branches: main + tags tatana-v*).
+    environment: tatana-release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            ops/tatana
+            agent-ui/src/main/updater
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: instalador
+          path: ${{ runner.temp }}/canal
+      - name: Notas
+        id: notas
+        env:
+          EVENTO: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_NOTAS: ${{ inputs.notas }}
+        run: |
+          NOTAS="$INPUT_NOTAS"
+          if [[ -z "$NOTAS" && "$EVENTO" == push ]]; then
+            git fetch --quiet --depth=1 origin "+refs/tags/$REF_NAME:refs/tags/$REF_NAME" 2>/dev/null || true
+            if [[ "$(git cat-file -t "refs/tags/$REF_NAME" 2>/dev/null)" == tag ]]; then
+              NOTAS="$(git tag -l --format='%(contents:subject)%0a%(contents:body)' "$REF_NAME" | sed '/-----BEGIN/,$d')"
+            fi
+          fi
+          printf '%s' "$NOTAS" >"$RUNNER_TEMP/notas.txt"
+      - name: Payload, firma y verificación
+        env:
+          VERSION: ${{ needs.preparar.outputs.version }}
+          KEY_ID: ${{ vars.TATANA_FIRMA_KEY_ID }}
+          SHA: ${{ github.sha }}
+          TATANA_FIRMA_CLAVE_PRIVADA: ${{ secrets.TATANA_FIRMA_CLAVE_PRIVADA }}
+        run: |
+          set -euo pipefail
+          C="$RUNNER_TEMP/canal"
+          if [[ -z "$TATANA_FIRMA_CLAVE_PRIVADA" ]]; then
+            echo "::error::Falta el secret TATANA_FIRMA_CLAVE_PRIVADA en el environment tatana-release (guía, sección 19)."
+            exit 1
+          fi
+          node ops/tatana/armar-payload.mjs --exe "$C/Tatana-Setup-$VERSION.exe" --latest "$C/latest.yml" \
+            --version "$VERSION" --commit "$SHA" --notas "$(cat "$RUNNER_TEMP/notas.txt")" --salida "$RUNNER_TEMP/payload.json"
+          node ops/tatana/firmar-manifiesto.mjs --payload "$RUNNER_TEMP/payload.json" --key-id "$KEY_ID" \
+            --salida "$C/tatana-update.json"
+          unset TATANA_FIRMA_CLAVE_PRIVADA
+          node ops/tatana/verificar-manifiesto.mjs --manifiesto "$C/tatana-update.json" --version "$VERSION" \
+            --exe "$C/Tatana-Setup-$VERSION.exe" --payload "$RUNNER_TEMP/payload.json"
+          (cd "$C" && sha256sum "Tatana-Setup-$VERSION.exe" "Tatana-Setup-$VERSION.exe.blockmap" latest.yml tatana-update.json >SHA256SUMS)
+          cat "$C/SHA256SUMS"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canal
+          path: ${{ runner.temp }}/canal/
+          if-no-files-found: error
+          retention-days: 7
+
+  prueba:
+    name: Prueba en Windows (D11)
+    needs: [preparar, payload, instalador, firmar]
+    # "firmar" se saltea en ensayo (firmó "instalador"); en release tiene que haber pasado.
+    if: >-
+      !cancelled() && needs.instalador.result == 'success' &&
+      (needs.firmar.result == 'success' || (needs.firmar.result == 'skipped' && needs.preparar.outputs.modo == 'ensayo'))
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: ops/tatana
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: payload
+          path: ${{ runner.temp }}/payload
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: instalador-base
+          path: ${{ runner.temp }}/instalador-base
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: canal
+          path: ${{ runner.temp }}/canal
+      - name: Prueba del instalador
+        env:
+          VERSION: ${{ needs.preparar.outputs.version }}
+          CLIENT_URL: ${{ needs.preparar.outputs.client_url }}
+        run: >-
+          ./ops/tatana/prueba-windows.ps1
+          -Instalador "$env:RUNNER_TEMP/canal/Tatana-Setup-$env:VERSION.exe"
+          -InstaladorBase "$env:RUNNER_TEMP/instalador-base/Tatana-Setup-0.0.1.exe"
+          -Canal "$env:RUNNER_TEMP/canal"
+          -PayloadZip "$env:RUNNER_TEMP/payload/Tatana-Portable-v$env:VERSION-Windows.zip"
+          -Version $env:VERSION
+          -OrigenWeb $env:CLIENT_URL
+      - name: Juntar logs
+        if: failure()
+        run: |
+          $dst = Join-Path $env:RUNNER_TEMP 'logs-prueba'
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          foreach ($src in @((Join-Path $env:APPDATA 'Tatana'), (Join-Path $env:RUNNER_TEMP 'tatana-prueba'))) {
+            if (Test-Path $src) {
+              Get-ChildItem -LiteralPath $src -Recurse -File -Include '*.log', '*.json', '*.txt' -ErrorAction SilentlyContinue |
+                Where-Object { $_.Length -lt 20MB } |
+                ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dst ($_.FullName.Substring($src.Length).TrimStart('\').Replace('\', '_'))) }
+            }
+          }
+          Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'Tatana') -Filter '*.log' -Recurse -ErrorAction SilentlyContinue |
+            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $dst }
+      - name: Subir logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: logs-prueba
+          path: ${{ runner.temp }}/logs-prueba/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publicar:
+    name: Publicar en el VPS y GitHub Release
+    needs: [preparar, prueba]
+    if: needs.preparar.outputs.modo == 'release' && vars.TATANA_PUBLICAR_HABILITADO == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: tatana-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            ops/tatana
+            agent-ui/src/main/updater
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: canal
+          path: ${{ runner.temp }}/canal
+      - name: Verificar antes de publicar
+        env:
+          VERSION: ${{ needs.preparar.outputs.version }}
+        run: |
+          C="$RUNNER_TEMP/canal"
+          node ops/tatana/verificar-manifiesto.mjs --manifiesto "$C/tatana-update.json" --version "$VERSION" --exe "$C/Tatana-Setup-$VERSION.exe"
+          (cd "$C" && sha256sum --check --strict SHA256SUMS)
+
+      - name: Preparar SSH
+        env:
+          TATANA_PUB_SSH_KEY: ${{ secrets.TATANA_PUB_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          if [[ -z "$TATANA_PUB_SSH_KEY" || -z "$DEPLOY_KNOWN_HOSTS" ]]; then
+            echo "::error::Faltan los secrets TATANA_PUB_SSH_KEY (environment tatana-release) o DEPLOY_KNOWN_HOSTS (guía, sección 19)."
+            exit 1
+          fi
+          printf '%s\n' "$TATANA_PUB_SSH_KEY" >~/.ssh/tatana_pub_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" >~/.ssh/known_hosts
+
+      - name: Publicar en el VPS
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+          PUB_USER: ${{ vars.TATANA_PUB_USER || 'tatana-pub' }}
+          VERSION: ${{ needs.preparar.outputs.version }}
+        run: |
+          if [[ -z "$DEPLOY_HOST" ]]; then
+            echo "::error::Falta el secret DEPLOY_HOST (guía, sección 11)."
+            exit 1
+          fi
+          C="$RUNNER_TEMP/canal"
+          tar -C "$C" -cf "$RUNNER_TEMP/bundle.tar" "Tatana-Setup-$VERSION.exe" "Tatana-Setup-$VERSION.exe.blockmap" \
+            latest.yml tatana-update.json SHA256SUMS
+          ssh -i ~/.ssh/tatana_pub_key -p "$DEPLOY_PORT" \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 \
+            "$PUB_USER@$DEPLOY_HOST" "publicar $VERSION" <"$RUNNER_TEMP/bundle.tar"
+
+      - name: Chequeo externo
+        env:
+          VERSION: ${{ needs.preparar.outputs.version }}
+          UPDATE_URLS: ${{ needs.preparar.outputs.update_urls }}
+        run: |
+          C="$RUNNER_TEMP/canal"
+          TAM="$(stat -c %s "$C/Tatana-Setup-$VERSION.exe")"
+          for URL in $(jq -r '.[]' <<<"$UPDATE_URLS"); do
+            curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o "$RUNNER_TEMP/remoto.json" "${URL}tatana-update.json"
+            cmp -s "$RUNNER_TEMP/remoto.json" "$C/tatana-update.json" || { echo "::error::${URL}tatana-update.json no es el firmado"; exit 1; }
+            LARGO="$(curl -fsSIL --retry 3 --retry-all-errors "${URL}Tatana-Setup-$VERSION.exe" | tr -d '\r' | awk 'tolower($1) == "content-length:" { v = $2 } END { print v }')"
+            [[ "$LARGO" == "$TAM" ]] || { echo "::error::${URL}Tatana-Setup-$VERSION.exe: Content-Length $LARGO, se esperaba $TAM"; exit 1; }
+            echo "OK $URL"
+          done
+          echo "Publicado Tatana $VERSION en: $(jq -r 'join(", ")' <<<"$UPDATE_URLS")" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.preparar.outputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          C="$RUNNER_TEMP/canal"
+          ARCHIVOS=("$C/Tatana-Setup-$VERSION.exe" "$C/Tatana-Setup-$VERSION.exe.blockmap" "$C/latest.yml" "$C/tatana-update.json" "$C/SHA256SUMS")
+          if gh release view "tatana-v$VERSION" >/dev/null 2>&1; then
+            gh release upload "tatana-v$VERSION" "${ARCHIVOS[@]}" --clobber
+          else
+            NOTAS="$(node -e 'const e=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const p=JSON.parse(Buffer.from(e.payload,"base64"));process.stdout.write(p.notes||"")' "$C/tatana-update.json")"
+            gh release create "tatana-v$VERSION" "${ARCHIVOS[@]}" --target "$SHA" --title "Tatana v$VERSION" \
+              --notes "${NOTAS:-Tatana v$VERSION}"
+          fi
+
+      - name: Limpiar clave
+        if: always()
+        run: rm -f ~/.ssh/tatana_pub_key

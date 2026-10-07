@@ -9,6 +9,11 @@
     <!-- Single-file publish para distribuir al fiscal -->
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
+    <!-- Versión real de Tatana (SDD tatana-instalador-autoupdate D-T1): un build local dice
+         0.0.0-dev; el armado y el workflow de release la pisan con -p:Version=X.Y.Z. Sin el +<sha>
+         que .NET agrega por defecto a AssemblyInformationalVersion. -->
+    <Version>0.0.0-dev</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>

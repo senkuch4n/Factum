@@ -1,0 +1,6 @@
+# Config horneada del canal de actualización: la escribe CI (job `instalador`).
+# Se versiona solo el ejemplo (tatana-dist.example.json).
+resources/dist-config/tatana-dist.json
+
+# Instalador "base" 0.0.1 que arma CI para la prueba de actualización.
+dist-base/

@@ -2,9 +2,13 @@
 # las descargas llevan ?token= en la URL (B10). Ver docs/despliegue-nube.md, sección 8.
 #
 # Un solo hostname ruteado por path (DT1):
-#   /api/*, /health, /health/*, /tatana/updates/*  -> backend
-#   /descargas/*                                    -> archivos estáticos (Tatana para la nube)
-#   el resto                                        -> frontend
+#   /api/*, /health, /health/*  -> backend
+#   /tatana/updates/*            -> canal de actualización de Tatana (estático, /srv/factum/tatana-updates)
+#   /descargas/*                 -> archivos estáticos (instalador de Tatana para la nube)
+#   el resto                     -> frontend
+# /tatana/updates/ y /descargas/tatana/ los publica el workflow tatana-release.yml por SSH con el usuario
+# tatana-pub (scripts/publicar-tatana-forzado.sh). La integridad no depende de este servidor: Tatana
+# verifica la firma Ed25519 de tatana-update.json (SDD tatana-instalador-autoupdate D7, guía sección 19).
 # Caddy saca el certificado de Let's Encrypt solo y redirige http -> https.
 {
 	email {$FACTUM_ACME_EMAIL}
@@ -31,13 +35,22 @@
 	import seguridad
 	encode zstd gzip
 
-	@backend path /api/* /health /health/* /tatana/updates/*
+	@backend path /api/* /health /health/*
 	handle @backend {
 		# Tope de defensa: generate/finish acepta hasta 256 MiB (Report:MaxGenerateUploadBytes).
 		request_body {
 			max_size 300MB
 		}
 		reverse_proxy backend:8080
+	}
+
+	# Canal de Tatana: los manifiestos sin caché (una versión nueva se ve enseguida); el exe y el
+	# .blockmap tienen nombre con versión y no cambian nunca.
+	handle_path /tatana/updates/* {
+		root * /srv/tatana-updates
+		@manifiestos path /latest.yml /tatana-update.json
+		header @manifiestos Cache-Control "no-cache"
+		file_server
 	}
 
 	handle_path /descargas/* {

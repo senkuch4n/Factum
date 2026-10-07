@@ -159,7 +159,7 @@ export default function Dashboard() {
     if (!currentCase || currentStorage !== "agent") return null;
     if (identity.status === "loading") return null;
     if (identity.status === "offline" || identity.status === "outdated") {
-      return { tone: "error", message: agentStatusMessage(identity.status) };
+      return { tone: "error", message: agentStatusMessage(identity.status, identity) };
     }
     const hasManifest = (currentCase.evidence?.length ?? 0) > 0;
     if (hasManifest && !isSameHostFor(identity, currentCase)) {
@@ -441,7 +441,7 @@ export default function Dashboard() {
     // 1. Sin Tatana, desactualizado u otra PC: mensaje sin llamar al backend. El caso no cambia.
     const id = await ensureAgentIdentity(true);
     if (id.status === "offline" || id.status === "outdated" || !id.info) {
-      setGlobal(agentStatusMessage(id.status === "outdated" ? "outdated" : "offline"));
+      setGlobal(agentStatusMessage(id.status === "outdated" ? "outdated" : "offline", id));
       return;
     }
     if (!isSameHostFor(id, cas)) {

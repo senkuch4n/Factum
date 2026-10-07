@@ -129,7 +129,7 @@ export function ReportStep({
   const imagesNotice = agentSource && reportImages.agentUnavailable
     ? identity.status === "online" && otherHost && !sameHost
       ? `Las capturas de este caso están en la PC ${otherHost}.`
-      : agentStatusMessage(identity.status === "outdated" ? "outdated" : "offline")
+      : agentStatusMessage(identity.status === "outdated" ? "outdated" : "offline", identity)
     : null;
   const retryImages = useCallback(() => {
     void identity.refresh().finally(() => reportImages.reload());

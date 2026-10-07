@@ -24,6 +24,51 @@ interface TatanaLibrary {
   version?: string
 }
 
+/* ── Actualizaciones (SDD tatana-instalador-autoupdate §13.F) ──
+   Espejo de src/main/updater/state.ts y src/main/app-info.ts (el renderer no
+   importa código de main). */
+type TatanaUpdatePhase =
+  | 'disabled' | 'idle' | 'checking' | 'downloading' | 'ready' | 'installing'
+  | 'up_to_date' | 'offline' | 'rejected' | 'error'
+
+interface TatanaUpdateState {
+  phase: TatanaUpdatePhase
+  currentVersion: string
+  availableVersion?: string
+  percent?: number
+  sourceUrl?: string
+  checkedAt?: string
+  verifiedAt?: string
+  reason?: 'firma_invalida' | 'clave_desconocida' | 'manifiesto_invalido' | 'no_coincide_con_manifiesto'
+         | 'hash_no_coincide' | 'sin_canal' | 'sin_claves' | 'no_empaquetado' | 'instalacion_fallida'
+  busyOperations?: string[]
+  notifiedVersion?: string
+}
+
+/** `%APPDATA%\Tatana\migracion-portable.json` (§13.E). */
+interface TatanaMigracionPortable {
+  schema: 1
+  fecha: string
+  portable_version: string | null
+  carpeta_anterior: string
+  config_local_migrada: boolean
+  config_local_destino: string | null
+  conflicto: boolean
+  mostrado: boolean
+}
+
+interface TatanaAppInfo {
+  appVersion: string
+  agentVersion?: string
+  clientUrl?: string
+  notices: {
+    migration?: TatanaMigracionPortable
+    localConfig?: { path: string; overridesAllowedOrigins: boolean; error?: string }
+  }
+}
+
+type TatanaNoticeId = 'migration' | 'local_config'
+
 interface TatanaAPI {
   getConfig(): Promise<TatanaConfig>
   saveConfig(patch: Partial<TatanaConfig>): Promise<TatanaConfig>
@@ -34,6 +79,13 @@ interface TatanaAPI {
   getLibraries(): Promise<TatanaLibrary[]>
   installLibrary(id: string): Promise<void>
   updateLibrary(id: string): Promise<void>
+  getAppInfo(): Promise<TatanaAppInfo>
+  getUpdateState(): Promise<TatanaUpdateState>
+  checkUpdates(): Promise<TatanaUpdateState>
+  installUpdate(): Promise<{ ok: boolean; reason?: 'busy' | 'not_ready' | 'error' }>
+  dismissNotice(id: TatanaNoticeId): Promise<void>
+  onUpdateStateChange(cb: (s: TatanaUpdateState) => void): void
+  onAppInfoChange(cb: (info: TatanaAppInfo) => void): void
   onAgentLog(cb: (lines: string[]) => void): void
   onAgentStatusChange(cb: (status: string) => void): void
   onLibProgress(id: string, cb: (p: { line: string; done: boolean; ok: boolean }) => void): void

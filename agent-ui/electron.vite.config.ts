@@ -12,6 +12,11 @@ const { version: tatanaVersion } = JSON.parse(
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
+    define: {
+      // Clave extra de verificación del manifiesto, SOLO para el ensayo de CI
+      // (D-T23): `key_id:spkiDerBase64` o vacío. En release el workflow exige vacío.
+      __TATANA_EXTRA_UPDATE_KEY__: JSON.stringify(process.env.TATANA_EXTRA_UPDATE_KEY ?? ''),
+    },
   },
   preload: {
     plugins: [externalizeDepsPlugin()],

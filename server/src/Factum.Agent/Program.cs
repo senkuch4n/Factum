@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Factum.Agent.Models;
 using Microsoft.Extensions.Configuration.Json;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using Factum.Agent.Services;
 using Factum.Agent.Services.Ios;
@@ -28,11 +29,38 @@ WindowsConsoleSignal.EnableCtrlCForChildren();
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── Config local fuera del repo (appsettings.Local.json, ignorado por git) ────
+// ── CLI args override: --mock, --port, --data, --bind, --mode, --local-config ─
+var mock = args.Contains("--mock");
+var portArg = args.SkipWhile(a => a != "--port").Skip(1).FirstOrDefault();
+var dataArg = args.SkipWhile(a => a != "--data").Skip(1).FirstOrDefault();
+var bindArg = args.SkipWhile(a => a != "--bind").Skip(1).FirstOrDefault();
+// tatana-instalador-autoupdate D-T15/D-T16: el instalado (Electron) pasa --mode installed y
+// --local-config %APPDATA%\Tatana\appsettings.Local.json.
+var modeArg = args.SkipWhile(a => a != "--mode").Skip(1).FirstOrDefault();
+var localConfigArg = args.SkipWhile(a => a != "--local-config").Skip(1).FirstOrDefault();
+string? installMode = null;
+if (args.Contains("--mode"))
+{
+    installMode = modeArg?.Trim().ToLowerInvariant();
+    if (installMode is null || !AgentOptions.InstallModes.Contains(installMode))
+        throw new InvalidOperationException(
+            $"--mode inválido: '{modeArg}'. Usá {string.Join(" o ", AgentOptions.InstallModes)}.");
+}
+
+// ── Config local fuera del repo (appsettings.Local.json) ──────────────────────
 // Mismo bloque que Factum.Backend/Program.cs: se inserta justo DESPUÉS del último
 // appsettings*.json, así pisa a la config versionada pero las variables de entorno y la
 // línea de comandos siguen ganando. Sirve para un "Agent": { "Mock": true } local de
-// desarrollo sin tocar appsettings.json. El .csproj lo excluye de bin/ y publish/.
+// desarrollo sin tocar appsettings.json, y en la PC del perito para fijar orígenes/carpetas
+// (D9). El .csproj lo excluye de bin/ y publish/.
+// Con --local-config <ruta> se usa ESE archivo en lugar del de al lado del exe (D-T16). En los dos
+// casos se valida antes: un JSON inválido se ignora (queda en /agent/state.local_config.error) en
+// vez de impedir que Tatana arranque.
+var localConfigStatus = LocalConfigInspector.Inspect(
+    string.IsNullOrWhiteSpace(localConfigArg)
+        ? Path.Combine(builder.Environment.ContentRootPath, "appsettings.Local.json")
+        : localConfigArg.Trim());
+if (localConfigStatus.Loaded)
 {
     var sources = builder.Configuration.Sources;
     var lastAppSettings = -1;
@@ -44,19 +72,14 @@ var builder = WebApplication.CreateBuilder(args);
     }
     var localSource = new JsonConfigurationSource
     {
-        Path = "appsettings.Local.json",
+        Path = Path.GetFileName(localConfigStatus.Path),
         Optional = true,
         ReloadOnChange = false,
-        FileProvider = builder.Environment.ContentRootFileProvider,
+        FileProvider = new PhysicalFileProvider(Path.GetDirectoryName(localConfigStatus.Path)!),
     };
     sources.Insert(lastAppSettings >= 0 ? lastAppSettings + 1 : sources.Count, localSource);
 }
-
-// ── CLI args override: --mock, --port, --data, --bind ─────────────────────────
-var mock = args.Contains("--mock");
-var portArg = args.SkipWhile(a => a != "--port").Skip(1).FirstOrDefault();
-var dataArg = args.SkipWhile(a => a != "--data").Skip(1).FirstOrDefault();
-var bindArg = args.SkipWhile(a => a != "--bind").Skip(1).FirstOrDefault();
+builder.Services.AddSingleton(localConfigStatus);
 
 builder.Services.Configure<AgentOptions>(opts =>
 {
@@ -67,6 +90,8 @@ builder.Services.Configure<AgentOptions>(opts =>
     if (portArg is not null && int.TryParse(portArg, out var p)) opts.Port = p;
     if (dataArg is not null) opts.DataDirectory = dataArg;
     if (!string.IsNullOrWhiteSpace(bindArg)) opts.BindAddress = bindArg.Trim();
+    // Solo por CLI: un "InstallMode" en la config no cuenta.
+    opts.InstallMode = installMode;
 });
 
 // ── JSON ──────────────────────────────────────────────────────────────────────
@@ -95,9 +120,17 @@ if (originErrors.Count > 0)
 }
 
 // ── Servicios ─────────────────────────────────────────────────────────────────
-builder.Services.AddSingleton<IAdbService, AdbService>();
+// AdbService e IosService: UNA instancia cada uno, expuesta por su interfaz y como
+// IOperationSource (tatana-instalador-autoupdate §5.3, B10).
+builder.Services.AddSingleton<AdbService>();
+builder.Services.AddSingleton<IAdbService>(sp => sp.GetRequiredService<AdbService>());
+builder.Services.AddSingleton<IOperationSource>(sp => sp.GetRequiredService<AdbService>());
 builder.Services.AddSingleton<AppleServiceProbe>();
-builder.Services.AddSingleton<IIosService, IosService>();
+builder.Services.AddSingleton<IosService>();
+builder.Services.AddSingleton<IIosService>(sp => sp.GetRequiredService<IosService>());
+builder.Services.AddSingleton<IOperationSource>(sp => sp.GetRequiredService<IosService>());
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<OperationTracker>();
 builder.Services.AddSingleton<IWebcamService, WebcamService>();
 builder.Services.AddSingleton<IFileStorageService, FileStorageService>();
 builder.Services.AddSingleton<AgentWebSocketHub>();
@@ -184,6 +217,40 @@ app.Use(async (ctx, next) =>
     }
 });
 
+// Modo mantenimiento (tatana-instalador-autoupdate §5.3, D-T10): DESPUÉS de la guarda de origen y
+// del OPTIONS. Cada request mutante (POST/PUT/PATCH/DELETE, salvo /agent/maintenance) se cuenta como
+// operación en curso mientras dura; en mantenimiento se rechaza con 503 agent_updating. Los GET,
+// /ws y /health nunca se bloquean.
+var operations = app.Services.GetRequiredService<OperationTracker>();
+app.Use(async (ctx, next) =>
+{
+    var path = ctx.Request.Path.Value ?? "/";
+    if (!OperationTracker.IsTracked(ctx.Request.Method, path))
+    {
+        await next(ctx);
+        return;
+    }
+    if (!operations.TryEnterRequest(ctx.Request.Method, path, out var token))
+    {
+        ctx.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        ctx.Response.Headers.RetryAfter = "10";
+        await ctx.Response.WriteAsJsonAsync(new
+        {
+            error = "Tatana se está actualizando. Esperá unos segundos y reintentá.",
+            code = AgentErrorCodes.AgentUpdating,
+        });
+        return;
+    }
+    try
+    {
+        await next(ctx);
+    }
+    finally
+    {
+        token?.Dispose();
+    }
+});
+
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(25) });
 app.MapControllers();
 
@@ -194,6 +261,14 @@ var ios = app.Services.GetRequiredService<IIosService>();
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
 // Valores efectivos (config + appsettings.Local.json + CLI), no solo el flag --mock.
 var agentOptions = app.Services.GetRequiredService<IOptions<AgentOptions>>().Value;
+
+// D-T16: config local ignorada por inválida (Tatana arranca igual; la ventana lo avisa).
+if (localConfigStatus.Error is not null)
+    logger.LogError("La configuración local {Path} tiene un error y se ignoró: {Error}",
+        localConfigStatus.Path, localConfigStatus.Error);
+else if (localConfigStatus.Loaded)
+    logger.LogInformation("Configuración local: {Path} (fija orígenes: {Overrides})",
+        localConfigStatus.Path, localConfigStatus.OverridesAllowedOrigins);
 
 // §4.2: carpetas efectivas y orígenes; aviso si el ZIP caería en OneDrive/iCloud (DP4).
 {
@@ -247,5 +322,6 @@ _ = Task.Run(async () =>
     }
 });
 
-logger.LogInformation("Factum Agent en {Url} (mock={Mock})", listenUrl, agentOptions.Mock);
+logger.LogInformation("Factum Agent {Version} en {Url} (mock={Mock}, modo={Mode})",
+    AgentVersion.Current, listenUrl, agentOptions.Mock, Factum.Agent.Controllers.HealthController.ResolveMode(agentOptions));
 app.Run();

@@ -686,6 +686,12 @@ export interface PublicConfig {
   support_enabled: boolean;
   /** `true` si el backend genera el ZIP de evidencia cifrado con AES-256 (`Report:EncryptZip`). */
   encrypt_zip: boolean;
+  /**
+   * Versión mínima de Tatana (`Tatana:MinVersion`, `X.Y.Z`) para capturar desde
+   * esta web (tatana-instalador-autoupdate, D6). `null` = sin mínimo. Falta en
+   * un backend anterior a esa HU (= sin mínimo).
+   */
+  tatana_min_version?: string | null;
 }
 
 /** Modo de autenticación del backend (`GET /api/auth/mode`). */

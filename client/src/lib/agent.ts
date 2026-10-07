@@ -91,7 +91,15 @@ export interface AgentIosStatus {
 /** Respuesta de `POST /devices/{serial}/ios/developer-mode` (§4.3). */
 export type IosDeveloperModeStatus = "enabled" | "restarting" | "manual_required";
 
-/** `GET /health`. `capabilities` falta en un Tatana anterior a zip-local-informe-servidor. */
+/**
+ * `GET /health`. `capabilities` falta en un Tatana anterior a zip-local-informe-servidor.
+ * Capabilities conocidas:
+ * - `case_evidence_v1`: evidencia del caso en esta PC (zip-local-informe-servidor);
+ * - `real_version_v1`: `version` es la versión real de Tatana. Sin ella, `version`
+ *   no es confiable (los Tatana anteriores dicen siempre "2.0.0") y se trata
+ *   como anterior a cualquier mínimo (tatana-instalador-autoupdate, D-T2);
+ * - `agent_state_v1`: `GET /agent/state` y modo mantenimiento (D5).
+ */
 export interface AgentHealth {
   status: string;
   version: string;
@@ -178,6 +186,8 @@ export type AgentErrorCode =
   | "length_required" | "file_too_large" | "insufficient_storage" | "incomplete_upload" | "storage_error"
   | "evidence_changed" | "zip_in_progress" | "zip_already_committed" | "zip_failed" | "zip_not_found"
   | "zip_hash_mismatch" | "origin_not_allowed"
+  // Tatana en modo mantenimiento mientras se actualiza (tatana-instalador-autoupdate, 503).
+  | "agent_updating"
   // iPhone (ios-herramientas-windows §4.1): el `error` que acompaña ya viene en castellano.
   | "ios_apple_service_missing" | "ios_device_not_found" | "ios_not_trusted" | "ios_locked"
   | "ios_developer_mode_disabled" | "ios_ddi_mount_failed" | "ios_tunnel_failed" | "ios_admin_required"
