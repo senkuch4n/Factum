@@ -9,6 +9,7 @@ using Factum.Backend.Services.Cases;
 using Factum.Backend.Services.Profile;
 using Factum.Backend.Services.Reports;
 using Factum.Backend.Services.Support;
+using Factum.Backend.Services.Tatana;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -62,6 +63,9 @@ if (reportSettingsRaw.MaxGenerateUploadBytes <= 0)
     configErrors.Add("Report:MaxGenerateUploadBytes tiene que ser mayor que 0");
 var (corsOrigins, corsErrors) = CorsOrigins.Parse(builder.Configuration);
 configErrors.AddRange(corsErrors);
+// tatana-instalador-autoupdate D-T19: versión mínima de Tatana (vacío o X.Y.Z).
+if (TatanaOptions.Validate(builder.Configuration["Tatana:MinVersion"]) is { } tatanaError)
+    configErrors.Add(tatanaError);
 if (configErrors.Count > 0)
     throw new InvalidOperationException(
         "Configuración inválida, el backend no arranca:" + string.Concat(configErrors.Select(e => "\n  - " + e)));
@@ -73,7 +77,7 @@ builder.Services.Configure<MongoOptions>(builder.Configuration.GetSection("Mongo
 builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection("Storage"));
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.Configure<Factum.Backend.Controllers.AuditOptions>(builder.Configuration.GetSection("Audit"));
-builder.Services.Configure<Factum.Backend.Services.Updates.TatanaUpdatesOptions>(builder.Configuration.GetSection("TatanaUpdates"));
+builder.Services.Configure<TatanaOptions>(builder.Configuration.GetSection("Tatana"));
 builder.Services.Configure<BrandingOptions>(builder.Configuration.GetSection("Branding"));
 builder.Services.Configure<ReportOptions>(builder.Configuration.GetSection("Report"));
 
@@ -182,8 +186,6 @@ else
 {
     builder.Services.AddSingleton<ISupportService, DisabledSupportService>();
 }
-builder.Services.AddHttpClient<Factum.Backend.Services.Updates.ITatanaUpdatesService,
-    Factum.Backend.Services.Updates.TatanaUpdatesService>();
 
 // ── Swagger ───────────────────────────────────────────────────────────────────
 builder.Services.AddEndpointsApiExplorer();

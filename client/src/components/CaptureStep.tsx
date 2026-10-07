@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useId } from "react";
 import { Button } from "primereact/button";
 import { Checkbox } from "primereact/checkbox";
 import { Tag } from "primereact/tag";
@@ -13,7 +13,8 @@ import {
 } from "lucide-react";
 import type { CaptureRole, CaptureRoleValue } from "@/lib/api";
 import { CAPTURE_ROLES_FIELD_ID, isRoleEligible } from "@/lib/pericial";
-import { agent, type VideoVariant } from "@/lib/agent";
+import { agent, type AirplayUnavailableReason, type VideoVariant } from "@/lib/agent";
+import { airplayUnavailableText } from "@/lib/agent-messages";
 import type { EvidenceStorage } from "@/lib/api";
 import { FOCUS_RING } from "@/lib/prime/pt/shared";
 import { cn } from "@/lib/utils";
@@ -90,6 +91,12 @@ interface Props {
   onStartAirplayShot?: () => void;
   onMarkAirplayShot?: () => void;
   onStopAirplayShot?: () => void;
+  /**
+   * Motivo por el que Tatana no ofrece AirPlay (ios-herramientas-windows D1 b);
+   * `null`/`undefined` = disponible. Deshabilita la tarjeta "Espejo AirPlay" y
+   * "Espejar para capturas", mostrando el motivo.
+   */
+  airplayUnavailableReason?: AirplayUnavailableReason | null;
   // "Con mic de PC" para Android — mezcla el micrófono de la PC en la grabación cuando el
   // audio digital no se puede capturar (ej. notas de voz de WhatsApp, protegidas por el SO).
   androidWithMic?: boolean;
@@ -141,6 +148,7 @@ export function CaptureStep({
   airplayReceiverName,
   airplayShotActive, airplayShotConnected, airplayShotReceiverName, airplayShotMarksCount = 0,
   onStartAirplayShot, onMarkAirplayShot, onStopAirplayShot,
+  airplayUnavailableReason = null,
   androidWithMic = false, onToggleAndroidWithMic,
   uploading = false, uploadProgress = null, uploadStates = NO_UPLOAD_STATES, uploadNotice = null,
   onCancelUpload, onDismissUploadNotice,
@@ -148,6 +156,7 @@ export function CaptureStep({
   syncWarning = null, onDismissSyncWarning, onContinueWithoutSaving,
 }: Props) {
   const isIOS = platform === "ios";
+  const airplayShotHintId = useId();
   const agentMode = storageMode === "agent";
   // Captura deshabilitada durante el envío o con la evidencia en otra PC / Tatana caído.
   const captureBlocked = uploading || !!evidenceLock;
@@ -310,6 +319,7 @@ export function CaptureStep({
         open={!!iosModePicker}
         onSelect={mode => onSelectIosMode?.(mode)}
         onCancel={() => onCancelIosMode?.()}
+        airplayUnavailableReason={airplayUnavailableReason}
       />
 
       {/* ── Input de archivos oculto ── */}
@@ -495,13 +505,22 @@ export function CaptureStep({
                 normal de arriba: se conecta una vez, se navega libremente en el teléfono y se
                 puede marcar el momento exacto de cada captura las veces que haga falta. */}
             {isIOS && !airplayShotActive && (
-              <Button type="button" severity="secondary" size="small"
-                icon={<Wifi className="h-3.5 w-3.5" aria-hidden="true" />}
-                label="Espejar para capturas"
-                onClick={onStartAirplayShot}
-                loading={!!loading.shotStart}
-                disabled={!!deviceOffline || isRecording || captureBlocked}
-                className="w-full min-h-11 sm:min-h-0" />
+              <div>
+                <Button type="button" severity="secondary" size="small"
+                  icon={<Wifi className="h-3.5 w-3.5" aria-hidden="true" />}
+                  label="Espejar para capturas"
+                  onClick={onStartAirplayShot}
+                  loading={!!loading.shotStart}
+                  disabled={!!airplayUnavailableReason || !!deviceOffline || isRecording || captureBlocked}
+                  aria-describedby={airplayUnavailableReason ? airplayShotHintId : undefined}
+                  className="w-full min-h-11 sm:min-h-0" />
+                {/* Sin AirPlay (Windows, D1 b): el botón queda visible con el motivo, igual que la tarjeta del selector. */}
+                {airplayUnavailableReason && (
+                  <p id={airplayShotHintId} className="m-0 mt-1.5 text-xs text-fx-text-3">
+                    {airplayUnavailableText(airplayUnavailableReason)}
+                  </p>
+                )}
+              </div>
             )}
             {isIOS && airplayShotActive && !airplayShotConnected && (
               <div className={cn("space-y-2", ENTER)}>

@@ -6,6 +6,7 @@ import { Smartphone, RefreshCw, Wifi, ChevronRight, Cpu, Fingerprint, Signal, Al
 import type { Device } from "@/lib/agent";
 import { FxBanner } from "@/components/feedback/FxBanner";
 import { StepHeader } from "@/components/wizard/StepHeader";
+import { IOS_APPLE_SERVICE_MISSING_MESSAGE, IOS_APPLE_SERVICE_MISSING_TITLE } from "@/lib/agent-messages";
 
 interface Props {
   devices: Device[];
@@ -14,12 +15,14 @@ interface Props {
   onSelect: (d: Device) => void;
   onRefresh: () => void;
   onOpenGuide?: () => void;
+  /** Tatana informa que falta el servicio de dispositivos de Apple (`/health.ios.apple_service = "missing"`). */
+  appleServiceMissing?: boolean;
 }
 
 const FADE_IN = "motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]";
 
 /** Paso 1: elegir el dispositivo conectado por USB. */
-export function DeviceConnect({ devices, agentOnline, loading, onSelect, onRefresh, onOpenGuide }: Props) {
+export function DeviceConnect({ devices, agentOnline, loading, onSelect, onRefresh, onOpenGuide, appleServiceMissing = false }: Props) {
   return (
     <div className="space-y-6">
       <div className="pt-2 pb-2 text-center">
@@ -56,6 +59,25 @@ export function DeviceConnect({ devices, agentOnline, loading, onSelect, onRefre
               link
               size="small"
               label="Ver la guía de uso"
+              onClick={onOpenGuide}
+              className="mt-1"
+              pt={{ root: { className: "px-0" } }}
+            />
+          )}
+        </FxBanner>
+      )}
+
+      {/* Sin el servicio de Apple el iPhone no aparece: se avisa aunque haya Androids en la lista. */}
+      {agentOnline && appleServiceMissing && (
+        <FxBanner tone="warn" role="status" icon={<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}>
+          <p className="m-0 font-semibold">{IOS_APPLE_SERVICE_MISSING_TITLE}</p>
+          <p className="m-0 mt-0.5 font-normal text-fx-text">{IOS_APPLE_SERVICE_MISSING_MESSAGE}</p>
+          {onOpenGuide && (
+            <Button
+              type="button"
+              link
+              size="small"
+              label="Ver la guía"
               onClick={onOpenGuide}
               className="mt-1"
               pt={{ root: { className: "px-0" } }}

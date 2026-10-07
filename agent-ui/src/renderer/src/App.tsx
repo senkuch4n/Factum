@@ -4,6 +4,7 @@ import { Dashboard } from './components/Dashboard'
 import { Libraries } from './components/Libraries'
 import { Settings } from './components/Settings'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { useTatanaUpdates } from './hooks/useTatanaUpdates'
 
 type View = 'dashboard' | 'libraries' | 'settings'
 
@@ -12,6 +13,7 @@ export default function App() {
   const [config, setConfig] = useState<TatanaConfig | null>(null)
   const [agentStatus, setAgentStatus] = useState('unknown')
   const [serverConnected, setServerConnected] = useState(false)
+  const { appInfo, update } = useTatanaUpdates()
 
   // Load config on mount
   useEffect(() => {
@@ -41,11 +43,13 @@ export default function App() {
         onView={setView}
         agentRunning={agentStatus === 'running'}
         serverConnected={serverConnected}
+        appVersion={appInfo?.appVersion}
+        agentVersion={appInfo?.agentVersion}
       />
       <main className="flex-1 overflow-y-auto">
         <ErrorBoundary>
           {view === 'dashboard' && (
-            <Dashboard agentStatus={agentStatus} config={config} />
+            <Dashboard agentStatus={agentStatus} config={config} update={update} appInfo={appInfo} />
           )}
           {view === 'libraries' && <Libraries />}
           {view === 'settings' && (

@@ -66,3 +66,33 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-06 — #14 cerrada: PR contra develop + resumen de cierre en el issue. Sin HU activa.
 - 2026-10-06 — PR #18 mergeado. Local en develop actualizado. Próximo: usuario sigue docs/despliegue-nube.md en DonWeb.
 - 2026-10-07 — Guía DonWeb en vivo: SSH key del panel falla (QueryException de DonWeb) → root+contraseña; firewall del panel bloqueaba 22 → reglas 22/80/443 tcp + 443 udp; sudo -v pide contraseña por %admin de la imagen → guía corregida a sudo -n whoami (rama fix/guia-donweb).
+- 2026-10-07 — Guía DonWeb: deploy key + clone OK, GHCR login y FACTUM_URL_PUBLICA cargados. PR #19 (ajustes guía) y PR develop→main abiertos.
+- 2026-10-07 — PR #19 y #20 mergeados; workflow publicó imágenes sha-a60c893 (deploy salteado). factum.env completo (solo BACKUP_DESTINO pendiente).
+- 2026-10-07 — PRIMER DEPLOY OK en https://vps-6480429-x.dattaweb.com (sha a60c8938). Verificado: cert Let's Encrypt (vence 2027-01-05), headers D13, http→https 308, solo 22/80/443 abiertos, /health/ready ok.
+- 2026-10-07 — Tatana nube v1.2.0 armado (sin uxplay: falta UXPLAY_WIN_ARTIFACT_URL) y publicado en /descargas/. Sin PC Windows para probar 10.4.
+- 2026-10-07 — Deploy automático habilitado: secrets DEPLOY_* por gh, clave CI restringida (estado OK, ls rechazado, sin PTY), FACTUM_DEPLOY_HABILITADO=true, corrida de prueba 37566996340 OK desplegado a60c8938. Falta: borrar ~/factum-ci de la Mac, secciones 12-14, prueba Windows, vaciar superadmins tras ingreso de Leo.
+- 2026-10-07 — Prueba de Tatana en Mac contra la nube: creado server/src/Factum.Agent/appsettings.Local.json (gitignored) con AllowedOrigins + dominio nube y Mock false.
+- 2026-10-07 — PRUEBA E2E OK en Mac: web en la nube (Chrome) + Tatana local + iPhone real: captura, generación, ZIP local, informe en servidor.
+- 2026-10-07 — #7 ios-herramientas-windows tomada (rama feat/ios-herramientas-windows), afinando. Alta #21 tatana-instalador-autoupdate (tomada, afinado adelantado en paralelo). Lanzados dos afinadores.
+- 2026-10-07 — #7 afinador done -> docs/hu-ios-herramientas-windows.md (10 dudas); afinada_pendiente_validacion.
+- 2026-10-07 — #21 afinador done -> docs/hu-tatana-instalador-autoupdate.md (12 dudas); afinada_pendiente_validacion.
+- 2026-10-07 — #7 validada (todas las recomendadas). en_arquitectura; lanzado architect. #21: D2 = A aceptada; D4 en explicación; resto pendiente.
+- 2026-10-07 — #21 validada (D2=A, D4=A manual, resto recomendadas; PC Windows más adelante). SDD adelantada (queda en validada mientras #7 está activa); lanzado architect.
+- 2026-10-07 — #7 architect done -> Refactorizaciones/ios-herramientas-windows.md con 3 DP (GPL pymobiledevice3, piloto Windows, trigger CI). Hallazgo: portátil Windows trae pymobiledevice3 1.0.0 sin deps Windows; se fija 10.7.4.
+- 2026-10-07 — #7 DP1-3 aceptadas (DP2: merge con CI y HU abierta hasta prueba en Windows real). implementando; lanzados implementer-backend y implementer-frontend.
+- 2026-10-07 — #21 architect (SDD adelantada) done -> Refactorizaciones/tatana-instalador-autoupdate.md con 4 DP. Queda en validada hasta cerrar #7.
+- 2026-10-07 — #7 implementer-frontend done -> progress/impl_frontend_ios-herramientas-windows.md (tsc OK). Esperando backend.
+- 2026-10-07 — #21 P1-P4 aceptadas. Repo ahora PÚBLICO: gitleaks sobre todo el historial = solo fixtures de tests, ejemplos de docs y el default de dev de appsettings.json; sin docs reales en el historial (docs/INFORME* ignorados).
+- 2026-10-07 — #7 implementer-backend done -> progress/impl_backend_ios-herramientas-windows.md (sin bloqueos; verify OK). en_revision; lanzado reviewer.
+- 2026-10-07 — #7 reviewer APROBADA -> progress/review_ios-herramientas-windows.md. Pendiente prueba Mac del usuario.
+- 2026-10-07 — #7 copy 'sin Mac' corregido por el frontend. Esperando prueba en Mac del usuario y OK sobre cerrar con 'Refs #7'.
+- 2026-10-07 — #7 prueba en Mac OK del usuario. aprobada; PR con 'Refs #7' (issue abierto hasta prueba en Windows).
+- 2026-10-07 — #7: PR contra develop (Refs #7) + comentario de estado en el issue.
+- 2026-10-07 — PR #22 mergeado (smoke Windows en CI OK). #21 en rama feat/tatana-instalador-autoupdate desde develop; implementando; lanzados implementer-backend y implementer-frontend.
+- 2026-10-07 — #21 implementer-frontend done -> progress/impl_frontend_tatana-instalador-autoupdate.md (tsc agent-ui/client OK, npm test 11/11; NSIS y migrar-portable.ps1 sin verificar por falta de Windows; 2 desvíos para el reviewer). Esperando backend.
+- 2026-10-07 — #21 implementer-backend done -> progress/impl_backend_tatana-instalador-autoupdate.md. en_revision; lanzado reviewer.
+- 2026-10-07 — #21 RECHAZADA (1ª) -> progress/review_tatana-instalador-autoupdate.md: frontend (timeout del agente tratado como 'caído' mata capturas; installer.nsh sigue si Detectar falla). Relanzado implementer-frontend.
+- 2026-10-07 — #21 correcciones del frontend hechas. en_revision; relanzado reviewer.
+- 2026-10-07 — #21 re-revisión APROBADA. aprobada; pendiente: regresión Mac del usuario + pasos manuales §18 (clave de firma, environment tatana-release, clave SSH de publicación, primera release 1.4.0).
+- 2026-10-07 — #21 OK del usuario (regresión Mac). Commit + push + PR.
+- 2026-10-07 — #21 cerrada: PR contra develop + resumen en el issue. Sin HU activa. Próximo: pasos §18 con el usuario.

@@ -1,4 +1,5 @@
 using Factum.Agent.Services;
+using Factum.Agent.Services.Ios;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Factum.Agent.Controllers;
@@ -18,6 +19,10 @@ public sealed class AirplayShotController(IIosService ios) : ControllerBase
             var receiverName = await ios.StartAirplayShotSessionAsync(ct);
             return Ok(new { receiver_name = receiverName });
         }
+        catch (IosException ex)
+        {
+            return StatusCode(500, new { error = ex.Message, code = ex.Code });
+        }
         catch (Exception ex)
         {
             return StatusCode(500, new { error = ex.Message });
@@ -32,6 +37,10 @@ public sealed class AirplayShotController(IIosService ios) : ControllerBase
             var count = await ios.MarkAirplayShotAsync(ct);
             return Ok(new { count });
         }
+        catch (IosException ex)
+        {
+            return StatusCode(500, new { error = ex.Message, code = ex.Code });
+        }
         catch (Exception ex)
         {
             return StatusCode(500, new { error = ex.Message });
@@ -45,6 +54,10 @@ public sealed class AirplayShotController(IIosService ios) : ControllerBase
         {
             var files = await ios.StopAirplayShotSessionAsync(ct);
             return Ok(new { files = files.Select(f => new { filename = f.Filename, url = f.Url }) });
+        }
+        catch (IosException ex)
+        {
+            return StatusCode(500, new { error = ex.Message, code = ex.Code });
         }
         catch (Exception ex)
         {

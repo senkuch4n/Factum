@@ -4,6 +4,10 @@ import { Dialog } from "primereact/dialog";
 import { Button } from "primereact/button";
 import { Tag } from "primereact/tag";
 import { Smartphone } from "lucide-react";
+import { useId } from "react";
+import type { AirplayUnavailableReason } from "@/lib/agent";
+import { AIRPLAY_UNAVAILABLE_BADGE, airplayUnavailableText } from "@/lib/agent-messages";
+import { cn } from "@/lib/utils";
 
 export type IOSRecordMode = "video_only" | "with_mic" | "on_device" | "airplay";
 
@@ -101,12 +105,18 @@ const IOS_MODES: Array<{
  * medios). Escape, la X y el click en la máscara cancelan (DP4 A).
  */
 export function IOSModePicker({
-  open, onSelect, onCancel,
+  open, onSelect, onCancel, airplayUnavailableReason = null,
 }: {
   open: boolean;
   onSelect: (mode: IOSRecordMode) => void;
   onCancel: () => void;
+  /**
+   * Motivo por el que Tatana no ofrece AirPlay (ios-herramientas-windows D1 b).
+   * `null`/`undefined` = disponible. Con motivo, la tarjeta se ve pero deshabilitada.
+   */
+  airplayUnavailableReason?: AirplayUnavailableReason | null;
 }) {
+  const reasonId = useId();
   return (
     <Dialog
       visible={open}
@@ -133,27 +143,47 @@ export function IOSModePicker({
     >
       <p className="m-0 text-fx-body-sm text-fx-text-2">Seleccioná cómo capturar el audio durante la inspección</p>
       <ul className="m-0 mt-4 list-none space-y-2.5 p-0">
-        {IOS_MODES.map(({ mode, badge, title, subtitle, desc, illustration }) => (
-          <li key={mode}>
-            <button
-              type="button"
-              onClick={() => onSelect(mode)}
-              className="fx-card fx-card-interactive flex w-full items-center gap-3.5 p-3.5 text-left"
-            >
-              <span className="flex h-11 w-16 shrink-0 items-center justify-center overflow-hidden rounded-fx-md border border-fx-border bg-fx-surface-2 text-fx-text-2">
-                {illustration}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-fx-body-sm font-semibold leading-tight text-fx-text">{title}</span>
-                  {badge && <Tag severity={badge.severity} value={badge.label} />}
+        {IOS_MODES.map(({ mode, badge, title, subtitle, desc, illustration }) => {
+          const unavailable = mode === "airplay" && !!airplayUnavailableReason;
+          const shownBadge = unavailable ? { label: AIRPLAY_UNAVAILABLE_BADGE, severity: "secondary" as const } : badge;
+          return (
+            <li key={mode}>
+              <button
+                type="button"
+                onClick={unavailable ? undefined : () => onSelect(mode)}
+                disabled={unavailable}
+                aria-disabled={unavailable || undefined}
+                aria-describedby={unavailable ? reasonId : undefined}
+                className={cn(
+                  "fx-card flex w-full items-center gap-3.5 p-3.5 text-left",
+                  unavailable ? "cursor-not-allowed" : "fx-card-interactive",
+                )}
+              >
+                {/* Deshabilitada: se atenúan la ilustración y el título, no el motivo (tiene que leerse). */}
+                <span className={cn(
+                  "flex h-11 w-16 shrink-0 items-center justify-center overflow-hidden rounded-fx-md border border-fx-border bg-fx-surface-2 text-fx-text-2",
+                  unavailable && "opacity-50",
+                )}>
+                  {illustration}
                 </span>
-                <span className="mt-0.5 block text-xs font-semibold text-fx-text-2">{subtitle}</span>
-                <span className="mt-1 block text-xs leading-relaxed text-fx-text-3">{desc}</span>
-              </span>
-            </button>
-          </li>
-        ))}
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span className={cn("text-fx-body-sm font-semibold leading-tight", unavailable ? "text-fx-text-3" : "text-fx-text")}>{title}</span>
+                    {shownBadge && <Tag severity={shownBadge.severity} value={shownBadge.label} />}
+                  </span>
+                  <span className={cn("mt-0.5 block text-xs font-semibold", unavailable ? "text-fx-text-3" : "text-fx-text-2")}>{subtitle}</span>
+                  {unavailable ? (
+                    <span id={reasonId} className="mt-1 block text-xs leading-relaxed text-fx-text-2">
+                      {airplayUnavailableText(airplayUnavailableReason)}
+                    </span>
+                  ) : (
+                    <span className="mt-1 block text-xs leading-relaxed text-fx-text-3">{desc}</span>
+                  )}
+                </span>
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </Dialog>
   );

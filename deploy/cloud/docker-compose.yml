@@ -37,6 +37,8 @@ services:
       # Redirección del dominio anterior durante un cambio de dominio (guía, sección 15).
       - ./caddy-sitios:/etc/caddy/sitios:ro
       - ${FACTUM_HOME:-/srv/factum}/descargas:/srv/descargas:ro
+      # Canal de actualización de Tatana (/tatana/updates/), lo escribe tatana-pub (preparar-servidor.sh, bloque 10).
+      - ${FACTUM_HOME:-/srv/factum}/tatana-updates:/srv/tatana-updates:ro
       # caddy-data guarda los certificados: perderlo obliga a pedir otros (rate limits de Let's Encrypt).
       - ${FACTUM_DATOS:-/srv/factum/datos}/caddy-data:/data
       - ${FACTUM_DATOS:-/srv/factum/datos}/caddy-config:/config
@@ -86,7 +88,8 @@ services:
       Cors__AllowedOrigins__0: https://${FACTUM_DOMINIO}
       Storage__DataDirectory: /data
       Integrations__Support__Enabled: "false"
-      TatanaUpdates__PublicBaseUrl: https://${FACTUM_DOMINIO}
+      # Versión mínima de Tatana (vacío = no bloquea; X.Y.Z = la web no captura con un Tatana menor).
+      Tatana__MinVersion: ${FACTUM_TATANA_VERSION_MINIMA:-}
       # Branding global del login (opcional). Vacío = el default de la app.
       Branding__OrganizationName: ${FACTUM_BRANDING_NOMBRE:-}
       Branding__OrganizationLogo: ${FACTUM_BRANDING_LOGO:-}

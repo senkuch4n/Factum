@@ -7,19 +7,21 @@ carpeta. La instalación local de Windows sigue en `deploy/windows/` y no usa na
 |---|---|
 | `docker-compose.yml` | Compose de producción: Caddy (único con puertos, 80/443), frontend, backend y Mongo (red interna, con usuario y contraseña). Datos en `/srv/factum/datos`. |
 | `compose.bootstrap.yml`, `compose.bootstrap-2.yml` | Superadmins iniciales 0 y 1. Los suma `_comun.sh` solo si `FACTUM_SUPERADMIN_<n>_DNI` tiene valor. |
-| `Caddyfile` | HTTPS automático, ruteo por path (`/api`, `/health`, `/tatana/updates` → backend; `/descargas` → estáticos; el resto → frontend), headers de seguridad, sin access log. |
+| `Caddyfile` | HTTPS automático, ruteo por path (`/api`, `/health` → backend; `/tatana/updates` → canal de Tatana, estático en `/srv/factum/tatana-updates`; `/descargas` → estáticos, incluido el instalador de Tatana en `/descargas/tatana/`; el resto → frontend), headers de seguridad, sin access log. |
 | `caddy-sitios/` | Redirección del dominio anterior durante un cambio de dominio (ver su `LEEME.md`). |
 | `factum.env.example` | Todas las claves del `.env` del VPS, con placeholders. El real va en `/srv/factum/config/factum.env` y **nunca** al repo. |
 | `mongo-init/01-usuario-app.js` | Crea el usuario `factum_app` (solo `readWrite` sobre `factum`) en el primer arranque. |
-| `armar-tatana-nube.sh` | En la Mac: arma el Tatana portátil con los orígenes de la nube horneados. |
+| `armar-tatana-nube.sh` | **Retirado para la nube** (respaldo manual): Tatana para la nube sale como instalador por `.github/workflows/tatana-release.yml` (guía, sección 19). |
 | `scripts/_comun.sh` | Librería: carga y valida el `factum.env`, `compose()`, chequeo de salud, locks. |
 | `scripts/compose.sh` | `docker compose` con el env y la versión desplegada, para operar a mano (`ps`, `logs`, `up -d`). |
-| `scripts/preparar-servidor.sh` | Una vez, como root: Docker, ufw, swap, usuarios `admin`/`deploy`, árbol `/srv/factum`, sshd. |
+| `scripts/preparar-servidor.sh` | Una vez, como root: Docker, ufw, swap, usuarios `admin`/`deploy`, árbol `/srv/factum`, sshd. Bloque 10: usuario `tatana-pub` y carpetas del canal de Tatana. |
 | `scripts/desplegar.sh` | Despliega `--tag sha-<commit>` (o `--construir-local`, plan B) con backup previo, chequeo de salud y rollback automático. |
 | `scripts/deploy-forzado.sh` | Comando forzado de la clave SSH de GitHub Actions (copia estable en `/srv/factum/bin/`). |
+| `scripts/publicar-tatana-forzado.sh` | Comando forzado de la clave SSH de `tatana-pub`: recibe el `tar` de una versión de Tatana, valida nombres, hashes y versión, y publica con renombres atómicos (copia estable en `/srv/factum/bin/`). |
 | `scripts/revertir.sh` | Rollback manual a la versión anterior. |
 | `scripts/backup.sh` | Backup diario cifrado con `age` (Mongo + DOCX), subido a Cloudflare R2 con `rclone`. |
 | `scripts/restaurar.sh` | Restaura un backup (pensado para un host nuevo y vacío). |
 | `scripts/verificar-informes.sh` | Solo lectura: compara el SHA-256 de cada DOCX con su `ReportHash`. |
 
-El workflow que publica las imágenes y despliega es `.github/workflows/desplegar-produccion.yml`.
+El workflow que publica las imágenes y despliega es `.github/workflows/desplegar-produccion.yml`. El que arma, prueba,
+firma y publica Tatana es `.github/workflows/tatana-release.yml` (guía, sección 19).

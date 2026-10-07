@@ -12,6 +12,15 @@ public sealed class AgentOptions
     // name). null = el primero que lista Windows. Sin UI: se fija en appsettings.Local.json.
     public string? MicDevice { get; set; }
 
+    /// <summary>
+    /// Cómo se instaló Tatana: <c>"installed"</c> (instalador NSIS; Electron pasa <c>--mode installed</c>)
+    /// o <c>"portable"</c>. null = heurística de <c>tools/</c> junto al exe (tatana-instalador-autoupdate
+    /// D-T15). Solo por CLI (<c>--mode</c>); otro valor → Tatana no arranca.
+    /// </summary>
+    public string? InstallMode { get; set; }
+
+    public static readonly string[] InstallModes = ["installed", "portable"];
+
     // ── zip-local-informe-servidor (§4.2) ────────────────────────────────────
 
     /// <summary>

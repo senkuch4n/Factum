@@ -582,8 +582,9 @@ export function useFileManager() {
     explicitSaveRef.current = true;
     lastSaveErrorRef.current = null;
     try {
-      const status = (await ensureAgentIdentity()).status;
-      if (status === "offline" || status === "outdated") { onError(agentStatusMessage(status)); return; }
+      const identity = await ensureAgentIdentity();
+      const status = identity.status;
+      if (status === "offline" || status === "outdated") { onError(agentStatusMessage(status, identity)); return; }
 
       await drainQueue();
       // Reintento de todo lo pendiente (errores, ocupados, lo que llegó sin guardar).

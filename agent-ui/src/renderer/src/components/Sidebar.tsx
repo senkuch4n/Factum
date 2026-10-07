@@ -9,6 +9,10 @@ interface Props {
   onView: (v: View) => void
   agentRunning: boolean
   serverConnected: boolean
+  /** `app.getVersion()` (la que compara el actualizador). */
+  appVersion?: string
+  /** `/agent/state.version`; se muestra solo si difiere de la de la app. */
+  agentVersion?: string
 }
 
 const NAV: { id: View; label: string; icon: React.ElementType }[] = [
@@ -17,7 +21,8 @@ const NAV: { id: View; label: string; icon: React.ElementType }[] = [
   { id: 'settings',   label: 'Configuración', icon: Settings },
 ]
 
-export function Sidebar({ view, onView, agentRunning, serverConnected }: Props) {
+export function Sidebar({ view, onView, agentRunning, serverConnected, appVersion, agentVersion }: Props) {
+  const version = appVersion ?? __TATANA_VERSION__
   return (
     <aside
       className="w-[210px] flex-shrink-0 flex flex-col h-full border-r"
@@ -94,9 +99,12 @@ export function Sidebar({ view, onView, agentRunning, serverConnected }: Props) 
           failText="Sin conexión"
         />
 
-        {/* Versión del agente (útil para soporte) */}
-        <p translate="no" className="px-2 pt-2 text-[0.58rem] leading-tight tabular-nums" style={{ color: 'var(--text-muted)' }}>
-          Factum · Tatana v{__TATANA_VERSION__}
+        {/* Versión de la app y, si difiere, la del agente (útil para soporte) */}
+        <p translate="no" className="px-2 pt-2 text-[0.6rem] leading-tight tabular-nums select-text" style={{ color: 'var(--text-secondary)' }}>
+          Factum · Tatana v{version}
+          {agentVersion && agentVersion !== version && (
+            <span className="block">Agente v{agentVersion}</span>
+          )}
         </p>
       </div>
     </aside>

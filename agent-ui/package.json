@@ -1,6 +1,7 @@
 {
   "name": "tatana-agent",
   "version": "1.0.0",
+  "productName": "Tatana",
   "description": "Factum — Agente Tatana",
   "main": "./out/main/index.js",
   "scripts": {
@@ -8,14 +9,16 @@
     "build": "electron-vite build",
     "package": "electron-vite build && electron-builder",
     "package:mac": "electron-vite build && PATH=\"$PWD/.bin:$PATH\" electron-builder",
-    "setup": "mkdir -p .bin && printf '#!/bin/sh\\nexec /usr/bin/python3 \"$@\"\\n' > .bin/python && chmod +x .bin/python"
+    "setup": "mkdir -p .bin && printf '#!/bin/sh\\nexec /usr/bin/python3 \"$@\"\\n' > .bin/python && chmod +x .bin/python",
+    "test": "tsx --test src/main/updater/*.test.ts"
   },
   "build": {
     "appId": "com.factum.tatana",
     "productName": "Tatana",
     "copyright": "© Factum",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
     "files": [
       "out/**/*"
@@ -34,11 +37,18 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "resources/dist-config",
+        "to": "dist-config",
+        "filter": [
+          "tatana-dist.json"
+        ]
       }
     ],
     "publish": {
       "provider": "generic",
-      "url": "http://localhost:8080/tatana/updates/",
+      "url": "https://factum.invalid/tatana/updates/",
       "channel": "latest"
     },
     "mac": {
@@ -47,8 +57,28 @@
       "icon": "resources/icon.icns"
     },
     "win": {
-      "target": "nsis",
-      "icon": "resources/icon.ico"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.ico",
+      "artifactName": "Tatana-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false,
+      "include": "build/installer.nsh",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Tatana",
+      "runAfterFinish": true,
+      "differentialPackage": true
     },
     "linux": {
       "target": "AppImage",
@@ -58,12 +88,14 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.0",
     "@electron-toolkit/utils": "^3.0.0",
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "semver": "^7.8.5"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/semver": "^7.8.0",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.0",
     "electron": "^33.0.0",
@@ -75,6 +107,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwindcss": "^3.4.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.0"
   }
 }
