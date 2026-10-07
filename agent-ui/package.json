@@ -10,6 +10,7 @@
     "package": "electron-vite build && electron-builder",
     "package:mac": "electron-vite build && PATH=\"$PWD/.bin:$PATH\" electron-builder",
     "setup": "mkdir -p .bin && printf '#!/bin/sh\\nexec /usr/bin/python3 \"$@\"\\n' > .bin/python && chmod +x .bin/python",
+    "postinstall": "node scripts/parchar-electron-builder.mjs",
     "test": "tsx --test src/main/updater/*.test.ts"
   },
   "build": {

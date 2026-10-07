@@ -11,17 +11,105 @@
 ;
 ; La evidencia (%LOCALAPPDATA%\Tatana\data y C:\Factum\Evidencia) NUNCA se toca:
 ; no hay customUnInstall y `deleteAppDataOnUninstall` es false (D-T25).
+;
+; Carpeta de instalación (D-T5, D-T25): %LOCALAPPDATA%\Programs\Tatana, la misma del portátil.
+; En oneClick per-user, electron-builder 24 arma APP_FILENAME con el `name` npm ("tatana-agent").
+; Ver getWindowsInstallationDirName en app-builder-lib/out/targets/targetUtil.js: usa
+; productFilename solo si !oneClick || perMachine. El `name` no se cambia, porque define
+; updaterCacheDirName (D-T26). Así que acá se redefine APP_FILENAME con el productFilename.
+; Es el mismo valor que electron-builder usa en los otros modos. Este archivo se incluye antes de
+; installer.nsi/multiUser.nsh, así que vale para INSTDIR del instalador y del desinstalador.
+!if "${PRODUCT_FILENAME}" != "Tatana"
+  !error "PRODUCT_FILENAME es '${PRODUCT_FILENAME}': la carpeta de instalación tiene que ser Programs\Tatana (D-T5)"
+!endif
+!ifdef APP_FILENAME
+  !undef APP_FILENAME
+!endif
+!define APP_FILENAME "${PRODUCT_FILENAME}"
 
-!macro tatanaPs1 ARGS
-  nsExec::ExecToLog 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\migrar-portable.ps1" ${ARGS}'
+; customInit y customUnInit corren en .onInit / un.onInit: todavía no hay ventana ni
+; control de detalles. Acá solo se usan instrucciones del núcleo de NSIS, nsExec::ExecToStack
+; (no toca la ventana) y MessageBox protegido con ${IfNot} ${Silent}. Nada de
+; nsExec::ExecToLog ni DetailPrint. Ver progress/impl_frontend_fix-instalador-nsexec.md.
+
+; Agrega una línea al log propio del instalador, el mismo instalador.log que escribe
+; migrar-portable.ps1. Usa %APPDATA% del entorno y no $APPDATA de NSIS, que depende de
+; SetShellVarContext. Si no puede escribir, no hace nada: el log nunca frena la instalación.
+; Preserva $R7 y $R8.
+!macro tatanaLog TEXTO
+  Push $R8
+  Push $R7
+  ReadEnvStr $R8 APPDATA
+  ${If} $R8 != ""
+    CreateDirectory "$R8\Tatana\logs"
+    ClearErrors
+    FileOpen $R7 "$R8\Tatana\logs\instalador.log" a
+    ${IfNot} ${Errors}
+      FileSeek $R7 0 END
+      FileWrite $R7 `[nsis] ${TEXTO}$\r$\n`
+      FileClose $R7
+    ${EndIf}
+  ${EndIf}
+  ClearErrors
+  Pop $R7
+  Pop $R8
+!macroend
+
+; PowerShell de 64 bits. NSIS es un proceso de 32 bits: "powershell.exe" a secas termina en
+; SysWOW64 (32 bits), y desde ahí Get-Process no ve la ruta de procesos de 64 bits como
+; Factum.Agent.exe. $WINDIR\Sysnative solo existe para procesos de 32 bits en Windows de 64 bits.
+; Si no está (Windows de 32 bits), se usa el de System32.
+Var tatanaPowerShell
+
+!macro tatanaElegirPowerShell
+  StrCpy $tatanaPowerShell "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
+  ${If} ${FileExists} "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+    StrCpy $tatanaPowerShell "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  ${EndIf}
+  !insertmacro tatanaLog `PowerShell: $tatanaPowerShell`
+!macroend
+
+; Corre migrar-portable.ps1 y deja en RESULT el código de salida de PowerShell como texto
+; ("0", "20"...), o "error"/"timeout" si nsExec no pudo ejecutarlo.
+; nsExec::ExecToStack apila primero la salida y encima el código. Así que el primer Pop es el
+; código y el segundo la salida. En sus caminos de error tempranos, nsExec apila solo "error"
+; sin salida. El centinela evita que el segundo Pop se lleve un valor ajeno de la pila.
+; Preserva $R9 (RESULT no puede ser $R9).
+!macro tatanaPs1 ARGS RESULT
+  !insertmacro tatanaLog `ejecuta migrar-portable.ps1 ${ARGS}`
+  Push $R9
+  Push "tatana:sin-salida"
+  nsExec::ExecToStack '"$tatanaPowerShell" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\migrar-portable.ps1" ${ARGS}'
+  Pop ${RESULT}
+  Pop $R9
+  ${If} $R9 != "tatana:sin-salida"
+    ${If} $R9 != ""
+      !insertmacro tatanaLog `salida de PowerShell (${ARGS}): $R9`
+    ${EndIf}
+    Pop $R9
+  ${EndIf}
+  Pop $R9
+  !insertmacro tatanaLog `resultado de ${ARGS}: ${RESULT}`
+!macroend
+
+; preInit: lo inserta electron-builder al principio de .onInit, antes de check64BitAndSetRegView,
+; ALLOW_ONLY_ONE_INSTALLER_INSTANCE e initMultiUser, que usan System.dll. Es lo más temprano en
+; que se puede escribir el log. Se excluye la pasada BUILD_UNINSTALLER: es la que electron-builder
+; ejecuta en la máquina de build para generar el desinstalador.
+!macro preInit
+  !ifndef BUILD_UNINSTALLER
+    !insertmacro tatanaLog `preInit: inicio de .onInit`
+  !endif
 !macroend
 
 !macro customInit
+  ; Si esta línea falta pero está la de preInit, la falla fue en el .onInit de electron-builder.
+  !insertmacro tatanaLog `customInit: inicio`
   InitPluginsDir
   File /oname=$PLUGINSDIR\migrar-portable.ps1 "${BUILD_RESOURCES_DIR}\migrar-portable.ps1"
+  !insertmacro tatanaElegirPowerShell
 
-  !insertmacro tatanaPs1 '-Accion Detectar'
-  Pop $0
+  !insertmacro tatanaPs1 '-Accion Detectar' $0
 
   ${If} $0 == "20"
     ; Portátil para la nube: se migra (se detiene, se archiva su carpeta y su config local
@@ -31,11 +119,10 @@
       Quit
     ${EndIf}
     ${If} ${Silent}
-      !insertmacro tatanaPs1 '-Accion Migrar -Silencioso 1'
+      !insertmacro tatanaPs1 '-Accion Migrar -Silencioso 1' $1
     ${Else}
-      !insertmacro tatanaPs1 '-Accion Migrar -Silencioso 0'
+      !insertmacro tatanaPs1 '-Accion Migrar -Silencioso 0' $1
     ${EndIf}
-    Pop $1
     ${If} $1 != "0"
       ; "error"/"timeout" de nsExec no son números: SetErrorLevel los tomaría como 0 (éxito).
       StrCpy $2 $1
@@ -75,13 +162,13 @@
 
   ; Detectar dio "0": Tatana ya instalado (actualización) o instalación nueva. Detener lo que corra desde
   ; resources\agent (adb.exe, scrcpy, python…) para que no bloquee la carpeta. Siempre da 0.
-  !insertmacro tatanaPs1 '-Accion DetenerInstalado -Carpeta "$INSTDIR"'
-  Pop $0
+  !insertmacro tatanaPs1 '-Accion DetenerInstalado -Carpeta "$INSTDIR"' $0
 !macroend
 
 !macro customUnInit
+  !insertmacro tatanaLog `customUnInit: inicio`
   InitPluginsDir
   File /oname=$PLUGINSDIR\migrar-portable.ps1 "${BUILD_RESOURCES_DIR}\migrar-portable.ps1"
-  !insertmacro tatanaPs1 '-Accion DetenerInstalado -Carpeta "$INSTDIR"'
-  Pop $0
+  !insertmacro tatanaElegirPowerShell
+  !insertmacro tatanaPs1 '-Accion DetenerInstalado -Carpeta "$INSTDIR"' $0
 !macroend

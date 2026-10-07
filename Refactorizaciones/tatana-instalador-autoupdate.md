@@ -731,7 +731,7 @@ con `$env:TATANA_UPDATE_URLS = 'http://127.0.0.1:8099/'`. Para servir el canal:
    - Canal = el `tatana-update.json` real del job `firmar`. Relanzar. `Esperar-Fase ready`
      (`availableVersion == V`).
    - Iniciar en segundo plano
-     `curl.exe --limit-rate 100k -X POST --data-binary @<4 MB> -H "Content-Type: application/octet-stream" "http://localhost:8765/cases/0123456789abcdef01234567/evidence/upload?filename=ci-subida.bin"`
+     `curl.exe --limit-rate 100k -X POST --data-binary @<4 MB> -H "Content-Type: application/octet-stream" "http://localhost:8765/cases/0c1a5e00-ca5e-4000-8000-0000000000c1/evidence/upload?filename=ci-subida.bin"`
      (el `caseId` tiene que pasar `CaseEvidenceStore.RequireCaseId`; si exige otro formato, se ajusta).
    - Mientras sube: `/agent/state.busy == true`. `Tatana.exe --install-update`. A los 10 s:
      `/health.version` sigue en `0.0.1` y `update-state.json` sigue en `ready` con `busyOperations` no vacío.
