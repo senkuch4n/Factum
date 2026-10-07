@@ -23,7 +23,7 @@
 import type { TrustedKey } from './manifest'
 
 export const TRUSTED_UPDATE_KEYS: ReadonlyArray<TrustedKey> = [
-  // { keyId: 'tatana-2026-10', spkiDerBase64: '…' },
+  { keyId: 'tatana-2026-10', spkiDerBase64: 'MCowBQYDK2VwAyEA6qowB0nU0nTcEMGoja+bR+Pu7/NY2Ea3GieExp15Oyw=' },
 ]
 
 /** `key_id:spkiDerBase64` → TrustedKey, o null si está vacío o mal formado. */
