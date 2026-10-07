@@ -353,12 +353,15 @@ celulares:
 
 **iPhone**
 
-1. Instalá **Apple Mobile Device Support**: viene con iTunes o con la app **"Dispositivos de
-   Apple"** (Microsoft Store). Instalarla una vez alcanza.
+1. Instalá la app **Apple Devices** ("Dispositivos de Apple", Microsoft Store) o iTunes: traen
+   el servicio de Apple que Tatana necesita para ver el iPhone. Instalarla una vez alcanza. Si
+   falta, Factum lo avisa al conectar el iPhone.
 2. Al conectarlo, desbloqueá el iPhone y tocá **"Confiar en esta computadora"** (pide el
    código del iPhone).
-3. En **iOS 17 o posterior** algunas funciones necesitan que Tatana corra con privilegios de
-   administrador; el asistente de Factum lo indica cuando hace falta.
+3. El Modo Desarrollador se activa desde la guía de conexión de iPhone de Factum (botón
+   **Activar Modo Desarrollador**). La primera captura de cada iPhone tarda unos segundos más:
+   Tatana prepara el iPhone y necesita internet. Tatana **no** necesita correr como
+   administrador; si Windows lo pide, Factum lo dice.
 
 **Firewall:** Tatana ya no escucha en la red (solo en esta PC), así que Windows no muestra el
 aviso del firewall.
@@ -369,6 +372,7 @@ al proveedor.
 
 Debajo, en **Herramientas de Tatana**, el diagnóstico lista `adb`, `scrcpy` (grabación de
 pantalla de Android), `ffmpeg` y `python`, cada una con **OK** (versión y ruta) o **FALTA**.
+AirPlay no está disponible en Tatana para Windows.
 Todas tienen que estar en OK, con su ruta dentro de la carpeta de Tatana (`tools\`). Si alguna
 dice **FALTA** (por ejemplo `scrcpy: FALTA`), se arregla con **"Actualizar Factum"** usando el
 paquete del proveedor. Si dice *"Esta versión de Tatana no informa sus herramientas"*, Tatana

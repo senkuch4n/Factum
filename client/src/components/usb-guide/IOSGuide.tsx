@@ -3,14 +3,15 @@
 import { Button } from "primereact/button";
 import { Check } from "lucide-react";
 import { IOS_STEPS } from "./data";
-import { GuideStepList, TerminalBlock, type GuideStep } from "./Mockups";
+import { GuideStepList, type GuideStep } from "./Mockups";
+import { DeveloperModeAction } from "./DeveloperModeAction";
 
 export function IOSGuide({ onDone }: { onDone: () => void }) {
   const steps: GuideStep[] = IOS_STEPS.map((s) => ({
     title: s.title,
     detail: s.detail,
     tip: s.tip,
-    node: s.type === "terminal" ? <TerminalBlock command={s.command} /> : undefined,
+    node: s.type === "devmode" ? <DeveloperModeAction /> : undefined,
   }));
 
   return (

@@ -21,6 +21,7 @@ import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { ReportStep } from "@/components/ReportStep";
 import { useAuth } from "@/hooks/useAuth";
 import { useAgentConnection } from "@/hooks/useAgentConnection";
+import { useAgentIosStatus } from "@/hooks/useAgentIosStatus";
 import { useFileManager, storageOf } from "@/hooks/useFileManager";
 import { useRecording } from "@/hooks/useRecording";
 import { useAirplayShotSession } from "@/hooks/useAirplayShotSession";
@@ -241,6 +242,9 @@ export default function Dashboard() {
   }, [addFile, addVideoVariant, markPendingVariant, setRecording, setDiscoRec, setDeviceOffline, setAirplayName, isRecordingRef, handleShotConnected, handleShotTimeout]);
 
   const { agentOnline, devices, loadingDev, refreshDevices } = useAgentConnection(handleWsEvent);
+  // ios-herramientas-windows §9.4: servicio de Apple y AirPlay según `/health.ios`.
+  const { appleService, airplayAvailable, airplayReason } = useAgentIosStatus(agentOnline);
+  const airplayUnavailableReason = airplayAvailable ? null : airplayReason ?? "uxplay_not_found";
 
   // Tatana se cerró o se volvió a abrir: se revalida la identidad (estado de los avisos del paso 3/5).
   const refreshIdentity = identity.refresh;
@@ -901,6 +905,7 @@ export default function Dashboard() {
                               onSelect={handleSelectDevice}
                               onRefresh={refreshDevices}
                               onOpenGuide={() => setGuideOpen(true)}
+                              appleServiceMissing={appleService === "missing"}
                             />
                           )}
 
@@ -942,6 +947,8 @@ export default function Dashboard() {
                               iosModePicker={iosModePicker}
                               iosRecordMode={iosRecordMode}
                               onSelectIosMode={m => {
+                                // La tarjeta AirPlay está deshabilitada sin AirPlay; por las dudas, no se llama a Tatana.
+                                if (m === "airplay" && airplayUnavailableReason) return;
                                 api.reportAgentEvent("capture_start", currentCase?.id);
                                 handleSelectIosMode(m, selDevice, setGlobal);
                               }}
@@ -1002,6 +1009,7 @@ export default function Dashboard() {
                               onStartAirplayShot={handleStartAirplayShot}
                               onMarkAirplayShot={handleMarkAirplayShot}
                               onStopAirplayShot={handleStopAirplayShot}
+                              airplayUnavailableReason={airplayUnavailableReason}
                               androidWithMic={androidWithMic}
                               onToggleAndroidWithMic={setAndroidWithMic}
                               uploading={!!fileLoading.upload}

@@ -31,7 +31,6 @@ public static class AgentTools
     public static readonly ToolSpec Adb     = new("adb",     "platform-tools", "adb",     "adb.exe");
     public static readonly ToolSpec Scrcpy  = new("scrcpy",  "scrcpy",         "scrcpy",  "scrcpy.exe");
     public static readonly ToolSpec Ffmpeg  = new("ffmpeg",  "ffmpeg",         "ffmpeg",  "ffmpeg.exe");
-    public static readonly ToolSpec Ffprobe = new("ffprobe", "ffmpeg",         "ffprobe", "ffprobe.exe");
     public static readonly ToolSpec Python  = new("python",  "python-embed",   "python3", "python.exe");
     public static readonly ToolSpec Uxplay  = new("uxplay",  "uxplay",         "uxplay",  "uxplay.exe");
     public static readonly ToolSpec Qvh     = new("qvh",     "qvh",            "qvh",     null);

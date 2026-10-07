@@ -24,6 +24,12 @@
     <InternalsVisibleTo Include="Factum.Agent.Tests" />
   </ItemGroup>
 
+  <!-- Helper Python de iPhone (SDD ios-herramientas-windows §6.2): viaja dentro del exe
+       (funciona con single-file) y IosHelper lo escribe en %TEMP%/tatana al usarlo. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Services/Ios/ios_helper.py" LogicalName="Factum.Agent.Services.Ios.ios_helper.py" />
+  </ItemGroup>
+
   <!-- Config local de desarrollo (fuera del repo, ej. "Mock": true): no se copia a bin/ ni a
        publish/, así el portátil nunca se la lleva. -->
   <ItemGroup>

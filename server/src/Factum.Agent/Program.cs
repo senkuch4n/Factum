@@ -5,6 +5,7 @@ using Factum.Agent.Models;
 using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.Options;
 using Factum.Agent.Services;
+using Factum.Agent.Services.Ios;
 using Factum.Agent.WebSockets;
 using Factum.Agent.Common;
 
@@ -13,6 +14,13 @@ using Factum.Agent.Common;
 if (args.Length == 2 && args[0] == WindowsConsoleSignal.HelperFlag)
 {
     Environment.Exit(WindowsConsoleSignal.RunHelper(args[1]));
+}
+
+// Modo `--autoprueba-ios <carpeta>`: prueba de humo del Python/helper/ffmpeg de iPhone sin iPhone
+// (SDD ios-herramientas-windows §6.9). No levanta el host ni toca DataDirectory.
+if (args.Length == 2 && args[0] == IosSelfTest.Flag)
+{
+    Environment.Exit(await IosSelfTest.RunAsync(args[1]));
 }
 
 // DP12: que scrcpy no herede un "ignorar Ctrl+C" que haya dejado algún lanzador (solo Windows).
@@ -88,6 +96,7 @@ if (originErrors.Count > 0)
 
 // ── Servicios ─────────────────────────────────────────────────────────────────
 builder.Services.AddSingleton<IAdbService, AdbService>();
+builder.Services.AddSingleton<AppleServiceProbe>();
 builder.Services.AddSingleton<IIosService, IosService>();
 builder.Services.AddSingleton<IWebcamService, WebcamService>();
 builder.Services.AddSingleton<IFileStorageService, FileStorageService>();

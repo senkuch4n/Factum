@@ -58,4 +58,22 @@ public sealed class VersionParserTests
     {
         Assert.Equal(esperado, ToolInventory.SourceText(s));
     }
+    // T3 de ios-herramientas-windows: versión de pymobiledevice3 (importlib.metadata).
+    [Theory]
+    [InlineData("10.7.4\n", "10.7.4")]
+    [InlineData("  10.7.4  \r\n", "10.7.4")]
+    [InlineData("\n\n10.7.4.dev3+g1a2b\n", "10.7.4.dev3+g1a2b")]
+    public void Pymobiledevice3_version(string salida, string esperado)
+    {
+        Assert.Equal(esperado, VersionParser.Pymobiledevice3(salida));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   \n")]
+    [InlineData("Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nimportlib.metadata.PackageNotFoundError: No package metadata was found for pymobiledevice3\n")]
+    public void Pymobiledevice3_vacio_o_traceback_es_null(string salida)
+    {
+        Assert.Null(VersionParser.Pymobiledevice3(salida));
+    }
 }
