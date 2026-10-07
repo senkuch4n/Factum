@@ -4,7 +4,10 @@
  * Nunca devuelve "Failed to fetch" ni un código HTTP solo.
  */
 
-import { AgentError, cachedLocalNetworkPermission } from "./agent";
+import {
+  AgentError, cachedLocalNetworkPermission,
+  type AirplayUnavailableReason, type IosDeveloperModeStatus,
+} from "./agent";
 import { formatBytes } from "./format";
 
 export type AgentAction = "save" | "preview" | "generate" | "reveal" | "copy";
@@ -77,4 +80,33 @@ export function agentErrorMessage(err: unknown, ctx: { name?: string; action: Ag
   }
   const detail = typeof b?.error === "string" && b.error.trim() ? b.error.trim() : null;
   return detail ? `Tatana respondió con un error: ${detail}` : `Tatana respondió con un error (${err.status}).`;
+}
+
+/* ── iPhone en Tatana (ios-herramientas-windows, SDD §9.2) ──
+   Los errores de captura/grabación de iPhone los manda Tatana ya en castellano
+   (`{ error, code }`) y se muestran tal cual; acá van solo los textos de la web. */
+
+export const IOS_APPLE_SERVICE_MISSING_TITLE = "Falta el servicio de Apple en esta PC";
+export const IOS_APPLE_SERVICE_MISSING_MESSAGE =
+  'Para que Factum vea el iPhone, instalá la app "Apple Devices" desde Microsoft Store (o iTunes) y volvé a conectar el iPhone.';
+
+export const AIRPLAY_UNAVAILABLE_BADGE = "No disponible en esta PC";
+
+/** Motivo de AirPlay no disponible; sin motivo, el genérico de uxplay. */
+export function airplayUnavailableText(reason: AirplayUnavailableReason | null | undefined): string {
+  return reason === "not_supported_on_windows"
+    ? "AirPlay no está disponible en Tatana para Windows."
+    : "Falta el receptor AirPlay en esta PC.";
+}
+
+/** Resultado de "Activar Modo Desarrollador" (§4.3). */
+export function iosDeveloperModeMessage(status: IosDeveloperModeStatus, deviceName: string): string {
+  switch (status) {
+    case "enabled":
+      return `El Modo Desarrollador ya está activo en ${deviceName}.`;
+    case "restarting":
+      return `Listo: ${deviceName} se va a reiniciar. Cuando encienda, tocá "Encender" en el aviso de Modo Desarrollador y volvé a conectarlo.`;
+    case "manual_required":
+      return `${deviceName} tiene código de bloqueo, así que el Modo Desarrollador se prende a mano: en el iPhone andá a Ajustes → Privacidad y seguridad → Modo Desarrollador (ya quedó visible) y activalo. El iPhone se reinicia.`;
+  }
 }

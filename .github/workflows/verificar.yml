@@ -34,6 +34,9 @@ jobs:
         run: dotnet test server/tests/Factum.Backend.Tests/Factum.Backend.Tests.csproj
       - name: Tests Tatana
         run: dotnet test server/tests/Factum.Agent.Tests/Factum.Agent.Tests.csproj
+      # ios-herramientas-windows §8.3: el helper de iPhone que Tatana lleva embebido compila.
+      - name: Helper de iPhone (py_compile)
+        run: python3 -m py_compile server/src/Factum.Agent/Services/Ios/ios_helper.py
 
   node:
     name: TypeScript (client + agent-ui)

@@ -15,6 +15,7 @@
 # --src tiene que ser un árbol LIMPIO (git archive), nunca la copia de trabajo: así no entra un
 # appsettings.Local.json ni un "Mock": true local. Igual se verifica dos veces.
 # Requisitos: dotnet 10, python3 (con pip), curl, unzip, zip e internet (descarga ~300 MB).
+# Funciona también en Linux (lo usa el CI .github/workflows/tatana-windows.yml): nada de BSD/macOS.
 set -euo pipefail
 
 # ── scrcpy (Genymobile, Apache-2.0): versión FIJA, verificada por SHA-256 ──────────────────
@@ -175,17 +176,64 @@ sed 's/$/\r/' "$OUT/tools/scrcpy/THIRD-PARTY-NOTICES.txt" > "$OUT/tools/scrcpy/T
   && mv "$OUT/tools/scrcpy/THIRD-PARTY-NOTICES.txt.tmp" "$OUT/tools/scrcpy/THIRD-PARTY-NOTICES.txt"
 echo "  OK  scrcpy $SCRCPY_VERSION (sin adb propio)"
 
-echo "[5/7] Python embebido 3.11.9 + pymobiledevice3 (ruedas win_amd64)..."
+echo "[5/7] Python embebido 3.11.9 + pymobiledevice3 10.7.4 (lock de Windows)..."
+# SDD ios-herramientas-windows §7.3: lock con hashes (packaging/portable/ios-win/), con las
+# dependencias que solo aplican en Windows (pywin32, av, lzfse…), instalado en Lib\site-packages
+# para que el `import site` del ._pth procese pywin32.pth. Sin lock, pip retrocedía en silencio a
+# pymobiledevice3 1.0.0 (hexdump solo existe como sdist) y sin pywin32 (A2, A3).
+IOS_WIN="$SRC/packaging/portable/ios-win"
+for f in requirements-win.lock hexdump.txt; do
+  [[ -f "$IOS_WIN/$f" ]] || { echo "ERROR: falta $IOS_WIN/$f." >&2; exit 1; }
+done
 curl -fsSL -o "$TMP/python-embed.zip" https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip
 mkdir -p "$OUT/tools/python-embed"
 unzip -q "$TMP/python-embed.zip" -d "$OUT/tools/python-embed"
 # Habilitar site-packages en el embebido (viene comentado). sed portable (BSD/GNU).
 PTH="$OUT/tools/python-embed/python311._pth"
 sed 's/^#import site/import site/' "$PTH" > "$PTH.tmp" && mv "$PTH.tmp" "$PTH"
-python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir \
-  --target "$OUT/tools/python-embed" --platform win_amd64 --implementation cp \
-  --python-version 311 --only-binary=:all: pymobiledevice3
-echo "  OK  pymobiledevice3"
+grep -q '^import site' "$PTH" || { echo "ERROR: $PTH no quedó con 'import site'." >&2; exit 1; }
+# hexdump: wheel puro construido desde el sdist verificado por hash.
+python3 -m pip wheel --quiet --disable-pip-version-check --no-cache-dir --no-deps --require-hashes \
+  -r "$IOS_WIN/hexdump.txt" --wheel-dir "$TMP/wheelhouse"
+SITE="$OUT/tools/python-embed/Lib/site-packages"
+mkdir -p "$SITE"
+# --no-compile: sin .pyc del Python de esta máquina (no sirven para el 3.11 de Windows).
+python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir --no-compile --no-deps --require-hashes \
+  --only-binary=:all: --platform win_amd64 --implementation cp --python-version 311 \
+  --target "$SITE" -r "$IOS_WIN/requirements-win.lock"
+HEXDUMP_WHL=("$TMP"/wheelhouse/hexdump-3.3-*.whl)
+[[ -f "${HEXDUMP_WHL[0]}" ]] || { echo "ERROR: no se construyó el wheel de hexdump." >&2; exit 1; }
+python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir --no-compile --no-deps --no-index \
+  --target "$SITE" "${HEXDUMP_WHL[@]}"
+# Trazabilidad forense: con qué versiones exactas se capturó.
+cp "$IOS_WIN/requirements-win.lock" "$OUT/tools/python-embed/TATANA-PYTHON-LOCK.txt"
+cat > "$OUT/tools/python-embed/THIRD-PARTY-NOTICES.txt" <<'NOTICES'
+Avisos de terceros - tools/python-embed de Tatana
+=================================================
+
+Python 3.11.9 (distribucion "embeddable" para Windows x64)
+  Copyright (c) Python Software Foundation.
+  Licencia: PSF License Agreement (texto completo en LICENSE.txt, en esta carpeta).
+  Fuente: https://www.python.org/downloads/release/python-3119/
+
+pymobiledevice3 10.7.4
+  Copyright (c) doronz88 y colaboradores.
+  Licencia: GNU General Public License v3.0 o posterior (GPL-3.0-or-later).
+  Fuente exacta de esta version:
+    https://github.com/doronz88/pymobiledevice3/tree/v10.7.4
+    https://pypi.org/project/pymobiledevice3/10.7.4/ (sdist)
+  Se distribuye sin modificaciones (wheel pymobiledevice3-10.7.4-py3-none-any.whl).
+
+Las demas bibliotecas de Python y sus versiones exactas estan en TATANA-PYTHON-LOCK.txt (en
+esta carpeta); hexdump 3.3 se construye desde su sdist de PyPI. Sus licencias estan en
+Lib\site-packages\*.dist-info.
+NOTICES
+# Lo abre un perito en Windows: fin de línea CRLF.
+for f in THIRD-PARTY-NOTICES.txt TATANA-PYTHON-LOCK.txt; do
+  sed 's/$/\r/' "$OUT/tools/python-embed/$f" > "$OUT/tools/python-embed/$f.tmp" \
+    && mv "$OUT/tools/python-embed/$f.tmp" "$OUT/tools/python-embed/$f"
+done
+echo "  OK  pymobiledevice3 10.7.4 (lock de Windows)"
 
 echo "[6/7] ffmpeg (BtbN win64 gpl) y uxplay..."
 mkdir -p "$OUT/tools/ffmpeg" "$OUT/tools/uxplay"
@@ -198,7 +246,7 @@ if [[ -n "${UXPLAY_WIN_ARTIFACT_URL:-}" ]]; then
   curl -fsSL -o "$TMP/uxplay-win.zip" "$UXPLAY_WIN_ARTIFACT_URL"
   unzip -q "$TMP/uxplay-win.zip" -d "$OUT/tools/uxplay"
 else
-  echo "  AVISO: \$UXPLAY_WIN_ARTIFACT_URL no está configurada — el portátil de Windows quedará sin captura AirPlay. Ver packaging/windows-uxplay-build.md"
+  echo "  AVISO: el portátil de Windows sale sin AirPlay (decisión D1 de ios-herramientas-windows); ver packaging/windows-uxplay-build.md"
 fi
 
 echo "[7/7] Scripts del portátil y zip..."
@@ -241,11 +289,23 @@ FALTAN=()
 for requerido in \
   tools/scrcpy/scrcpy.exe tools/scrcpy/scrcpy-server tools/scrcpy/SDL3.dll \
   tools/scrcpy/LICENSE.txt tools/scrcpy/THIRD-PARTY-NOTICES.txt \
-  tools/platform-tools/adb.exe tools/ffmpeg/ffmpeg.exe Factum.Agent.exe; do
+  tools/platform-tools/adb.exe tools/ffmpeg/ffmpeg.exe Factum.Agent.exe \
+  tools/python-embed/python.exe tools/python-embed/python311._pth \
+  tools/python-embed/Lib/site-packages/pymobiledevice3/__init__.py \
+  tools/python-embed/Lib/site-packages/win32/win32security.pyd \
+  tools/python-embed/Lib/site-packages/pywin32.pth \
+  tools/python-embed/TATANA-PYTHON-LOCK.txt tools/python-embed/THIRD-PARTY-NOTICES.txt; do
   grep -qxF "$requerido" <<<"$CONTENIDO" || FALTAN+=("$requerido")
 done
 if [[ ${#FALTAN[@]} -gt 0 ]]; then
   echo "ERROR: al zip de Tatana le falta: ${FALTAN[*]}" >&2
+  exit 1
+fi
+# ios-herramientas-windows §7.3: el pymobiledevice3 del zip es el probado (no una versión vieja).
+PMD_VERSION="$(unzip -p "$ZIP" 'tools/python-embed/Lib/site-packages/pymobiledevice3-10.7.4.dist-info/METADATA' 2>/dev/null \
+  | sed -n 's/^Version: //p' | tr -d '\r' | head -1 || true)"
+if [[ "$PMD_VERSION" != "10.7.4" ]]; then
+  echo "ERROR: el zip de Tatana no trae pymobiledevice3 10.7.4 (METADATA dice '${PMD_VERSION:-nada}')." >&2
   exit 1
 fi
 SOBRAN="$(grep -E '^tools/scrcpy/(adb\.exe|AdbWin[^/]*\.dll)$' <<<"$CONTENIDO" || true)"

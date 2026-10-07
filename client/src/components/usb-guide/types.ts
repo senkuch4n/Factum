@@ -25,7 +25,8 @@ export interface Mockup {
 export type IOSStep =
   | { type: "step"; icon: ElementType | string; title: string; detail: string; tip?: string; mockup?: Mockup }
   | { type: "dialog"; icon: ElementType | string; title: string; detail: string; tip?: string; dialog: { title: string; message: string; confirm: string } }
-  | { type: "terminal"; icon: ElementType | string; title: string; detail: string; tip?: string; command: string };
+  /** Botón "Activar Modo Desarrollador" (ios-herramientas-windows D5): Tatana lo activa sin comandos. */
+  | { type: "devmode"; icon: ElementType | string; title: string; detail: string; tip?: string };
 
 export type AndroidStep =
   | { type?: "step"; icon: ElementType | string; title: string; detail: string; mockup?: Mockup; tip?: string }

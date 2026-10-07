@@ -1,0 +1,83 @@
+# Factum — prueba de humo del Tatana portátil de Windows sin iPhone (SDD ios-herramientas-windows §8, D2).
+# Job "armar" (Ubuntu): arma el zip con deploy/windows/armar-tatana-portable.sh desde el checkout
+# (árbol limpio). Job "humo" (windows-latest): lo descomprime y corre ci/tatana-windows/prueba-humo.ps1
+# (pymobiledevice3 10.7.4, autoprueba de iPhone con el grabador DVT real, /health, errores con código).
+# DP3: en PRs a develop/main solo si cambia Tatana o su empaquetado, y a mano (workflow_dispatch).
+name: Tatana Windows (humo)
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - server/src/Factum.Agent/**
+      - packaging/portable/**
+      - deploy/windows/armar-tatana-portable.sh
+      - .github/workflows/tatana-windows.yml
+      - ci/tatana-windows/**
+
+concurrency:
+  group: tatana-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  armar:
+    name: Armar el portátil (Ubuntu)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      # Python con pip propio (sin PEP 668) para el lock de Windows.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Verificar el lock de Python de Windows
+        run: python3 -I packaging/portable/ios-win/generar-lock.py --check
+      - name: Armar Tatana portátil
+        run: >-
+          bash deploy/windows/armar-tatana-portable.sh
+          --version 0.0.0-ci
+          --src "$GITHUB_WORKSPACE"
+          --salida "$RUNNER_TEMP/dist"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tatana-portable-windows
+          path: ${{ runner.temp }}/dist/Tatana-Portable-v0.0.0-ci-Windows.zip
+          if-no-files-found: error
+          retention-days: 3
+
+  humo:
+    name: Prueba de humo (windows-latest)
+    needs: armar
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: ci/tatana-windows
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tatana-portable-windows
+          path: ${{ runner.temp }}/artefacto
+      - name: Prueba de humo
+        shell: pwsh
+        run: ./ci/tatana-windows/prueba-humo.ps1 -Zip "$env:RUNNER_TEMP\artefacto\Tatana-Portable-v0.0.0-ci-Windows.zip"
+      - name: Subir logs si falló
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tatana-humo-logs
+          path: |
+            ${{ runner.temp }}/tatana-humo/*.log
+            ${{ runner.temp }}/tatana-humo/autoprueba/**
+          if-no-files-found: ignore
+          retention-days: 3

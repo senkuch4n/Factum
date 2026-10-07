@@ -1,7 +1,9 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using Factum.Agent.Common;
 using Factum.Agent.Models;
+using Factum.Agent.Services.Ios;
 using Factum.Agent.WebSockets;
 using Microsoft.Extensions.Options;
 
@@ -20,64 +22,63 @@ public interface IIosService
     Task<string> StartAirplayShotSessionAsync(CancellationToken ct = default);
     Task<int> MarkAirplayShotAsync(CancellationToken ct = default);
     Task<List<(string Filename, string Url)>> StopAirplayShotSessionAsync(CancellationToken ct = default);
+
+    // ios-herramientas-windows §6.6: AirPlay (uxplay) disponible en esta PC; en Windows nunca (D1 b).
+    bool AirplayAvailable { get; }
+    // "not_supported_on_windows" | "uxplay_not_found"; null si AirPlay está disponible.
+    string? AirplayUnavailableReason { get; }
+    // §4.3: "enabled" | "restarting" | "manual_required".
+    Task<string> EnableDeveloperModeAsync(string udid, CancellationToken ct = default);
 }
 
 // Modos de grabación iOS:
 //   video_only  → capturas DVT → ffmpeg MP4 (~2 FPS; limitación de iOS 26)
 //   with_mic    → igual que video_only + micrófono del PC mezclado en el MP4 final
 //   on_device   → grabación nativa iOS (Control Center); se extrae del DCIM al detener
+//   airplay     → receptor uxplay (solo Mac; en Windows no está disponible, D1 b)
 //
 // iOS 26.5 bloquea com.apple.coredevice.feature.startmediastream (requiere iOS 27+).
-// En su lugar usamos com.apple.instruments.server.services.screenshot vía DVT,
-// que sí funciona con el DDI montado. El Python helper ios_dvt_recorder.py mantiene
-// el tunnel abierto y captura frames continuamente → pipe PNG → ffmpeg H.264 MP4.
+// En su lugar usamos com.apple.instruments.server.services.screenshot vía DVT, que funciona con el
+// DDI montado. Todo lo de pymobiledevice3 pasa por un solo helper Python multiplataforma
+// (Services/Ios/ios_helper.py, SDD ios-herramientas-windows §6.2): listado, preparación del iPhone
+// (Modo Desarrollador + DDI), captura, grabación (DVT → pipe PNG → ffmpeg H.264) y Modo Desarrollador.
 public sealed class IosService : IIosService
 {
-    // Las herramientas externas (ffmpeg, ffprobe, qvh, uxplay, rife) se resuelven con el helper
-    // común ToolResolver: tools/<dir>/<exe> junto al exe → PATH → Homebrew (solo fuera de
-    // Windows). qvh (danielpaulus/quicktime_video_hack, MIT) reimplementa el protocolo de
-    // espejado por USB de QuickTime y no tiene binario de Windows (el upstream abandonó ese port).
+    // Las herramientas externas (ffmpeg, qvh, uxplay, rife) se resuelven con el helper común
+    // ToolResolver: tools/<dir>/<exe> junto al exe → PATH → Homebrew (solo fuera de Windows). qvh
+    // (danielpaulus/quicktime_video_hack, MIT) reimplementa el protocolo de espejado por USB de
+    // QuickTime y no tiene binario de Windows (el upstream abandonó ese port).
 
-    // python candidates — se elige el primero que tenga pymobiledevice3.
-    // Primero el modo portátil ("Tatana Portable"): un Python embebido con
-    // pymobiledevice3 preinstalado, copiado junto al exe en tools/python-embed/,
-    // sin depender del PATH del sistema. Si no existe, cae a las rutas típicas
-    // de Windows (antes no había NINGUNA acá) y luego a las de Unix ya existentes.
-    private static readonly string[] PythonCandidates = BuildPythonCandidates();
-
-    private static string[] BuildPythonCandidates()
-    {
-        var portable = Path.Combine(AppContext.BaseDirectory, "tools", "python-embed",
-            OperatingSystem.IsWindows() ? "python.exe" : "python3");
-        return
-        [
-            portable,
-            "python.exe", "python", "py",
-            "python3", "/usr/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python3",
-        ];
-    }
+    private static readonly TimeSpan DevicesTimeout    = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan PrepareTimeout    = TimeSpan.FromSeconds(120);
+    private static readonly TimeSpan ScreenshotTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan DevModeTimeout    = TimeSpan.FromSeconds(60);
+    private const double DvtFps = 2.0;
 
     private readonly bool _mock;
+    private readonly bool _isWindows = OperatingSystem.IsWindows();
     private readonly string? _micDevice;
     private readonly ILogger<IosService> _log;
     private readonly AgentWebSocketHub _hub;
     private readonly IFileStorageService _storage;
+    private readonly AppleServiceProbe _probe;
     private readonly SemaphoreSlim _recordLock = new(1, 1);
     private readonly SemaphoreSlim _shotLock = new(1, 1);
+    // §6.4: iPhones con Modo Desarrollador y DDI comprobados (se invalida al desconectarse).
+    private readonly ConcurrentDictionary<string, bool> _prepared = new(StringComparer.Ordinal);
     private IosSession? _session;
     private AirplayShotSession? _shotSession;
-    private bool? _available;
-    private string? _dvtScriptPath;
-    private string? _python; // python3 con pymobiledevice3 instalado
+    private int _appleServiceMissingLogged; // 1 = ya se avisó (se rearma cuando vuelve el servicio)
 
     public IosService(IOptions<AgentOptions> opts, ILogger<IosService> log, AgentWebSocketHub hub,
-        IFileStorageService storage)
+        IFileStorageService storage, AppleServiceProbe probe)
     {
         _mock      = opts.Value.Mock;
         _micDevice = opts.Value.MicDevice;
         _log       = log;
-        _hub     = hub;
-        _storage = storage;
+        _hub       = hub;
+        _storage   = storage;
+        _probe     = probe;
     }
 
     // ── Session state ─────────────────────────────────────────────────────────
@@ -88,7 +89,9 @@ public sealed class IosService : IIosService
         public string OutputPath = string.Empty;
         public string SessionId  = string.Empty;
         public string DataDir    = string.Empty;
-        // DVT recorder (Python helper process — manages its own ffmpeg)
+        // DVT recorder (helper Python que maneja su propio ffmpeg)
+        public DvtRecorder? Dvt;
+        // AirPlay (uxplay)
         public Process? StreamProc;
         public bool IsStreamMode;
         // burst fallback (último recurso si DVT falla)
@@ -96,6 +99,8 @@ public sealed class IosService : IIosService
         public readonly object FramesLock = new();
         public CancellationTokenSource? BurstCts;
         public Task? BurstTask;
+        // Error de DVT que hizo caer al burst: motivo de ios_recording_empty si el burst queda vacío.
+        public IosException? StartError;
         // audio (with_mic → micrófono de la PC vía ffmpeg, MicCapture)
         public MicCapture? Mic;
         // on_device
@@ -120,152 +125,166 @@ public sealed class IosService : IIosService
         public CancellationTokenSource? WatchCts;  // tarea de background que espera la conexión
     }
 
-    // ── Python discovery ──────────────────────────────────────────────────────
-    //
-    // pymobiledevice3 puede estar instalado en un python distinto al que es
-    // default en PATH (ej: Homebrew Python 3.14 no tiene pymobiledevice3,
-    // pero sí lo tiene /usr/bin/python3 3.9). Buscamos el primero que lo tenga.
+    // ── Python, helper y disponibilidad (§6.1) ────────────────────────────────
 
-    private string Python
+    public bool IsAvailable => _mock || IosHelper.ResolvePython() is not null;
+
+    public bool AirplayAvailable => _mock || (!_isWindows && FindBinary(AgentTools.Uxplay) is not null);
+
+    public string? AirplayUnavailableReason =>
+        _mock ? null
+        : _isWindows ? "not_supported_on_windows"
+        : FindBinary(AgentTools.Uxplay) is null ? "uxplay_not_found"
+        : null;
+
+    private string RequirePython() =>
+        IosHelper.ResolvePython() ?? throw IosErrors.Create(IosErrors.ToolsMissing, _isWindows);
+
+    private string RequireFfmpeg() =>
+        FindBinary(AgentTools.Ffmpeg) ?? throw IosErrors.Create(IosErrors.ToolsMissing, _isWindows);
+
+    private IosException AirplayUnavailableError() => IosErrors.Create(IosErrors.AirplayUnavailable, _isWindows);
+
+    // §6.5: las operaciones con UDID no lanzan Python si falta el servicio de Apple.
+    private async Task EnsureAppleServiceAsync(CancellationToken ct)
     {
-        get
-        {
-            if (_python is not null) return _python;
-            foreach (var candidate in PythonCandidates)
-            {
-                try
-                {
-                    var r = ProcessRunner.RunAsync(candidate, "-c \"import pymobiledevice3\"")
-                                         .GetAwaiter().GetResult();
-                    if (r.Success) { _python = candidate; return _python; }
-                }
-                catch { }
-            }
-            _python = "python3"; // fallback
-            return _python;
-        }
+        if (await _probe.GetStateAsync(ct) == AppleServiceState.Missing)
+            throw IosErrors.Create(IosErrors.AppleServiceMissing, _isWindows);
     }
 
-    // ── IsAvailable ───────────────────────────────────────────────────────────
-
-    public bool IsAvailable
+    private Task<string> RunHelperAsync(string subcommand, IEnumerable<string> args, TimeSpan timeout,
+        CancellationToken ct)
     {
-        get
-        {
-            if (_mock) return true;
-            if (_available.HasValue) return _available.Value;
-            try
-            {
-                var r = ProcessRunner.RunAsync(Python, "-m pymobiledevice3 --help")
-                                     .GetAwaiter().GetResult();
-                _available = r.Success;
-            }
-            catch { _available = false; }
-            return _available!.Value;
-        }
+        var python = RequirePython();
+        var helper = IosHelper.EnsureHelperFile();
+        return IosHelper.RunAsync(python, helper, subcommand, args, timeout, _log, ct);
     }
 
-    // ── Device listing ────────────────────────────────────────────────────────
+    // ── Device listing (§6.8) ─────────────────────────────────────────────────
 
     public async Task<List<Device>> ListDevicesAsync(CancellationToken ct = default)
     {
         if (_mock) return [MockDevice()];
         if (!IsAvailable) return [];
 
-        var r = await ProcessRunner.RunAsync(Python,
-            "-m pymobiledevice3 usbmux list", ct);
-        if (!r.Success || string.IsNullOrWhiteSpace(r.Stdout)) return [];
+        // §6.5: sin el servicio de Apple no se lanza Python cada 3 s; se avisa una sola vez.
+        if (await _probe.GetStateAsync(ct) == AppleServiceState.Missing)
+        {
+            if (Interlocked.Exchange(ref _appleServiceMissingLogged, 1) == 0)
+                _log.LogWarning(
+                    "Servicio de dispositivos de Apple no encontrado (127.0.0.1:27015): los iPhone no se van a ver hasta instalar \"Apple Devices\"");
+            return [];
+        }
+        Interlocked.Exchange(ref _appleServiceMissingLogged, 0);
 
+        string stdout;
         try
         {
-            using var doc = JsonDocument.Parse(r.Stdout);
-            var devices   = new List<Device>();
+            stdout = await RunHelperAsync("devices", [], DevicesTimeout, ct);
+        }
+        catch (IosException ex)
+        {
+            _log.LogDebug("Listado de iPhone falló: {E}", ex.Message);
+            return [];
+        }
+
+        var devices = ParseDevices(stdout);
+        if (devices is null) return [];
+
+        // Un iPhone que se desconectó (o se reinició) pierde el DDI montado (A7): se vuelve a preparar.
+        var present = devices.Select(d => d.Serial).ToHashSet(StringComparer.Ordinal);
+        foreach (var udid in _prepared.Keys)
+            if (!present.Contains(udid)) _prepared.TryRemove(udid, out _);
+        return devices;
+    }
+
+    // Salida de `ios_helper.py devices`: [{udid, name, product_type, product_version, imei, phone_number}].
+    internal static List<Device>? ParseDevices(string stdout)
+    {
+        if (string.IsNullOrWhiteSpace(stdout)) return [];
+        try
+        {
+            using var doc = JsonDocument.Parse(stdout);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
+            var devices = new List<Device>();
             foreach (var item in doc.RootElement.EnumerateArray())
             {
-                if (!item.TryGetProperty("Identifier", out var idProp)) continue;
-                var udid = idProp.GetString() ?? "";
+                var udid = Str(item, "udid");
                 if (string.IsNullOrEmpty(udid)) continue;
-                try   { devices.Add(await FetchDeviceInfoAsync(udid, ct)); }
-                catch { devices.Add(new Device { Serial = udid, State = "device",
-                            Manufacturer = "Apple", Platform = "ios" }); }
+                var d = new Device
+                {
+                    Serial = udid, State = "device", Manufacturer = "Apple", Platform = "ios",
+                    Name = Str(item, "name"),
+                    Imei = Str(item, "imei"),
+                    Operator = Str(item, "phone_number"),
+                };
+                var productType = Str(item, "product_type");
+                if (productType.Length > 0) d.Model = FriendlyModel(productType);
+                var version = Str(item, "product_version");
+                if (version.Length > 0)
+                {
+                    d.IosVersion = version;
+                    if (int.TryParse(version.Split('.')[0], out var maj)) d.AndroidVersion = maj;
+                }
+                devices.Add(d);
             }
             return devices;
         }
-        catch { return []; }
+        catch (JsonException) { return null; }
+
+        static string Str(JsonElement e, string name) =>
+            e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
     }
 
-    private async Task<Device> FetchDeviceInfoAsync(string udid, CancellationToken ct)
+    // ── Preparar el iPhone: Modo Desarrollador + DDI (§6.4) ───────────────────
+
+    private async Task EnsurePreparedAsync(string udid, CancellationToken ct)
     {
-        var r = await ProcessRunner.RunAsync(Python,
-            $"-m pymobiledevice3 lockdown info --udid {udid}", ct);
-
-        var d = new Device { Serial = udid, State = "device", Manufacturer = "Apple", Platform = "ios" };
-        if (!r.Success) return d;
-
+        if (_prepared.ContainsKey(udid)) return;
+        var stdout = await RunHelperAsync("prepare", ["--udid", udid], PrepareTimeout, ct);
+        var ddi = "?";
         try
         {
-            using var doc = JsonDocument.Parse(r.Stdout);
-            var root      = doc.RootElement;
-            if (root.TryGetProperty("DeviceName",    out var v)) d.Name       = v.GetString() ?? "";
-            if (root.TryGetProperty("ProductType",   out v))     d.Model      = FriendlyModel(v.GetString() ?? "");
-            if (root.TryGetProperty("ProductVersion", out v))
-            {
-                d.IosVersion = v.GetString() ?? "";
-                if (int.TryParse(d.IosVersion.Split('.')[0], out var maj))
-                    d.AndroidVersion = maj;
-            }
-            if (root.TryGetProperty("InternationalMobileEquipmentIdentity", out v))
-                d.Imei = v.GetString() ?? "";
-            if (root.TryGetProperty("PhoneNumber", out v))
-                d.Operator = v.GetString() ?? "";
+            using var doc = JsonDocument.Parse(stdout);
+            if (doc.RootElement.TryGetProperty("ddi", out var v) && v.ValueKind == JsonValueKind.String)
+                ddi = v.GetString() ?? "?";
         }
-        catch { /* keep defaults */ }
-        return d;
+        catch (JsonException) { }
+        _prepared[udid] = true;
+        _log.LogInformation("iPhone {Udid}: Modo Desarrollador activo, imagen de desarrollador {Ddi}", udid, ddi);
     }
 
-    // ── Screenshot ────────────────────────────────────────────────────────────
-    //
-    // Usa el mismo servicio DVT (com.apple.instruments.server.services.screenshot)
-    // que el grabador de video, vía establish_userspace_rsd(). El anterior comando
-    // core-device screen-capture usaba un servicio distinto que falla si no hay
-    // DDI montado o si el dispositivo está en estado "passcode locked".
-
-    private const string DvtScreenshotScript = @"
-import asyncio, sys, warnings
-warnings.filterwarnings('ignore')
-
-async def main(output_path):
-    from pymobiledevice3.remote.userspace_tunnel import establish_userspace_rsd
-    from pymobiledevice3.services.dvt.instruments.screenshot import Screenshot
-    from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
-
-    rsd = await establish_userspace_rsd()
-    async with DvtProvider(rsd) as dvt:
-        async with Screenshot(dvt) as ss:
-            data = await asyncio.wait_for(ss.get_screenshot(), timeout=10.0)
-            with open(output_path, 'wb') as f:
-                f.write(data)
-
-asyncio.run(main(sys.argv[1]))
-";
-
-    private string? _dvtScreenshotScriptPath;
-
-    private string EnsureDvtScreenshotScript()
+    public async Task<string> EnableDeveloperModeAsync(string udid, CancellationToken ct = default)
     {
-        if (_dvtScreenshotScriptPath is not null && File.Exists(_dvtScreenshotScriptPath))
-            return _dvtScreenshotScriptPath;
-        var path = Path.Combine(Path.GetTempPath(), "ios_dvt_screenshot.py");
-        File.WriteAllText(path, DvtScreenshotScript);
-        _dvtScreenshotScriptPath = path;
-        return path;
+        if (_mock) return "enabled";
+        RequirePython();
+        await EnsureAppleServiceAsync(ct);
+        var stdout = await RunHelperAsync("devmode", ["--udid", udid], DevModeTimeout, ct);
+        string? status = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(stdout);
+            if (doc.RootElement.TryGetProperty("status", out var v) && v.ValueKind == JsonValueKind.String)
+                status = v.GetString();
+        }
+        catch (JsonException) { }
+        if (status is not ("enabled" or "restarting" or "manual_required"))
+            throw IosErrors.Create(IosErrors.CaptureFailed, _isWindows, "respuesta inesperada del helper");
+
+        // El iPhone se reinicia: el DDI se desmonta y hay que volver a prepararlo.
+        if (status == "restarting") _prepared.TryRemove(udid, out _);
+        _log.LogInformation("iPhone {Udid}: Modo Desarrollador → {Status}", udid, status);
+        return status;
     }
 
-    // Orquesta la captura de pantalla probando, en orden, los métodos que no requieren
-    // Developer Mode antes de darse por vencido. Con method="auto" (default) el fallback es
-    // transparente para el fiscal: DVT (rápido, requiere Developer Mode) → USB/qvh (automático,
-    // solo cable) → AirPlay (requiere que el fiscal active Espejo de pantalla a mano — último
-    // recurso porque es el único que necesita interacción humana en el teléfono).
+    // ── Screenshot (§6.3) ─────────────────────────────────────────────────────
+    //
+    // DVT (com.apple.instruments.server.services.screenshot) con el túnel en modo usuario de
+    // pymobiledevice3 en iOS 17+ (sin administrador). Con method="auto": DVT → USB/qvh (solo si
+    // existe qvh) → AirPlay (solo si está disponible; requiere que el fiscal active Espejo de
+    // pantalla a mano). Un error "definitivo" de DVT corta la cadena; si todo falla o se saltea,
+    // se lanza el error de DVT (el más informativo).
+
     public async Task<string> TakeScreenshotAsync(string udid, string outputPath,
         string method = "auto", CancellationToken ct = default)
     {
@@ -275,44 +294,65 @@ asyncio.run(main(sys.argv[1]))
             return outputPath;
         }
 
-        if (method is "auto" or "dvt")
+        switch (method)
         {
-            try { return await TakeDvtScreenshotAsync(udid, outputPath, ct); }
-            catch (Exception ex) when (method == "auto")
-            {
-                _log.LogWarning("DVT screenshot falló ({E}); probando USB (qvh)", ex.Message);
-            }
+            case "dvt":
+                return await TakeDvtScreenshotAsync(udid, outputPath, ct);
+            case "usb":
+                return await TakeUsbScreenshotAsync(udid, outputPath, ct);
+            case "airplay":
+                if (!AirplayAvailable) throw AirplayUnavailableError();
+                return await TakeAirplayScreenshotAsync(outputPath, ct);
+            case "auto":
+                break;
+            default:
+                throw new InvalidOperationException($"Método de captura desconocido: {method}");
         }
 
-        if (method is "auto" or "usb")
+        IosException dvtError;
+        try
         {
+            return await TakeDvtScreenshotAsync(udid, outputPath, ct);
+        }
+        catch (IosException ex)
+        {
+            if (IosErrors.IsDefinitive(ex.Code)) throw;
+            dvtError = ex;
+        }
+
+        if (FindBinary(AgentTools.Qvh) is not null)
+        {
+            _log.LogWarning("DVT screenshot falló ({Code}); probando USB (qvh)", dvtError.Code);
             try { return await TakeUsbScreenshotAsync(udid, outputPath, ct); }
-            catch (Exception ex) when (method == "auto")
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _log.LogWarning("USB screenshot (qvh) falló ({E}); probando AirPlay", ex.Message);
+                _log.LogWarning("USB screenshot (qvh) falló ({E})", ex.Message);
             }
         }
 
-        if (method is "auto" or "airplay")
-            return await TakeAirplayScreenshotAsync(outputPath, ct);
+        if (AirplayAvailable)
+        {
+            _log.LogWarning("DVT screenshot falló ({Code}); probando AirPlay", dvtError.Code);
+            try { return await TakeAirplayScreenshotAsync(outputPath, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning("AirPlay screenshot falló ({E})", ex.Message);
+            }
+        }
 
-        throw new InvalidOperationException($"Método de captura desconocido: {method}");
+        throw dvtError;
     }
 
     private async Task<string> TakeDvtScreenshotAsync(string udid, string outputPath,
         CancellationToken ct)
     {
-        var scriptPath = EnsureDvtScreenshotScript();
-        var r = await ProcessRunner.RunAsync(Python,
-            $"\"{scriptPath}\" \"{outputPath}\"", ct);
-        // No confiar solo en el exit code: pymobiledevice3/DvtProvider hace algo en su
-        // limpieza (aparenta ser un atexit/os._exit) que termina el proceso con código 0
-        // incluso cuando lanzó una excepción sin capturar (ej. sin Developer Mode:
-        // "InvalidServiceError: No such service: com.apple.instruments.dtservicehub").
-        // Verificar el archivo de salida es la única señal confiable de éxito real.
-        if (!r.Success || !File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
-            throw new InvalidOperationException(
-                $"screenshot iOS (DVT) falló: {r.Stderr}\nAsegurate de que el Modo Desarrollador esté activo y el iPhone desbloqueado.");
+        RequirePython();
+        await EnsureAppleServiceAsync(ct);
+        await EnsurePreparedAsync(udid, ct);
+        await RunHelperAsync("screenshot", ["--udid", udid, "--output", outputPath], ScreenshotTimeout, ct);
+        // El helper ya lo verifica, pero el éxito real es el archivo: exit 0 Y PNG > 0 bytes.
+        if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
+            throw IosErrors.Create(IosErrors.CaptureFailed, _isWindows, "el archivo de la captura quedó vacío");
         return outputPath;
     }
 
@@ -350,7 +390,7 @@ asyncio.run(main(sys.argv[1]))
 
             // Suficiente para tener frames decodificables sin alargar demasiado la captura.
             await Task.Delay(TimeSpan.FromSeconds(2), ct);
-            await GracefulStopAsync(proc, TimeSpan.FromSeconds(10), ct, signal: 2); // SIGINT
+            await GracefulStopAsync(proc, TimeSpan.FromSeconds(10), ct, signal: 2, name: "qvh"); // SIGINT
 
             if (!File.Exists(tmpH264) || new FileInfo(tmpH264).Length == 0)
                 throw new InvalidOperationException("qvh no generó stream de video (¿cable USB conectado?)");
@@ -379,9 +419,8 @@ asyncio.run(main(sys.argv[1]))
 
     private async Task<string> TakeAirplayScreenshotAsync(string outputPath, CancellationToken ct)
     {
-        var uxplay = FindBinary(AgentTools.Uxplay)
-            ?? throw new InvalidOperationException(
-                "uxplay no encontrado. Instalá: brew install uxplay");
+        var uxplay = (AirplayAvailable ? FindBinary(AgentTools.Uxplay) : null)
+            ?? throw AirplayUnavailableError();
 
         var receiverName = $"Factum-{Guid.NewGuid().ToString("N")[..6]}";
         var stem = Path.Combine(Path.GetTempPath(), $"ios_shot_{Guid.NewGuid():N}");
@@ -412,7 +451,7 @@ asyncio.run(main(sys.argv[1]))
 
             // Asegurar que haya al menos un frame completo y decodificable antes de cortar.
             await Task.Delay(TimeSpan.FromSeconds(1.5), ct);
-            await GracefulStopAsync(proc, TimeSpan.FromSeconds(15), ct);
+            await GracefulStopAsync(proc, TimeSpan.FromSeconds(15), ct, name: "uxplay");
 
             var ffmpeg = FindBinary(AgentTools.Ffmpeg) ?? "ffmpeg";
             // -sseof -1: toma un frame cerca del final, evitando el primer frame (a veces
@@ -481,8 +520,8 @@ asyncio.run(main(sys.argv[1]))
             if (_session is not null)
                 throw new InvalidOperationException("Hay una grabación activa — terminala antes de espejar para capturas.");
 
-            var uxplay = FindBinary(AgentTools.Uxplay)
-                ?? throw new InvalidOperationException("uxplay no encontrado. Instalá: brew install uxplay");
+            var uxplay = (AirplayAvailable ? FindBinary(AgentTools.Uxplay) : null)
+                ?? throw AirplayUnavailableError();
 
             var receiverName = $"Factum-{Guid.NewGuid().ToString("N")[..6]}";
             var stem = Path.Combine(Path.GetTempPath(), $"ios_shotsession_{Guid.NewGuid():N}");
@@ -573,7 +612,7 @@ asyncio.run(main(sys.argv[1]))
             session.WatchCts?.Cancel();
 
             if (session.UxplayProc is not null && !session.UxplayProc.HasExited)
-                await GracefulStopAsync(session.UxplayProc, TimeSpan.FromSeconds(30), ct);
+                await GracefulStopAsync(session.UxplayProc, TimeSpan.FromSeconds(30), ct, name: "uxplay");
 
             var results = new List<(string, string)>();
 
@@ -654,35 +693,46 @@ asyncio.run(main(sys.argv[1]))
                 SessionId  = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss"),
                 DataDir    = Path.GetDirectoryName(outputPath)!,
             };
-            _session = session;
 
-            if (_mock) { _log.LogInformation("iOS recording (mock): mode={Mode}", mode); return; }
+            if (_mock)
+            {
+                _session = session;
+                _log.LogInformation("iOS recording (mock): mode={Mode}", mode);
+                return;
+            }
+
+            // AirPlay mirror receiver — conecta el iPhone por WiFi, graba 30fps + audio nativo.
+            // Solo Mac (D1 b): en Windows, o sin uxplay, airplay_unavailable.
+            if (mode == "airplay")
+            {
+                if (!AirplayAvailable) throw AirplayUnavailableError();
+                if (!await TryStartAirplayRecorderAsync(session, ct))
+                    throw new IosException(IosErrors.AirplayUnavailable,
+                        "No se pudo iniciar el receptor AirPlay. Instalá uxplay: brew install uxplay");
+                _session = session;
+                return;
+            }
+
+            RequirePython();
+            await EnsureAppleServiceAsync(ct);
 
             if (mode == "on_device")
             {
                 session.ExistingDCIMFiles = await ListDCIMFilesAsync(udid, ct);
                 _log.LogInformation("iOS on_device: snapshot DCIM ({N} archivos)", session.ExistingDCIMFiles.Count);
+                _session = session;
                 return;
             }
 
-            // AirPlay mirror receiver — conecta el iPhone por WiFi, graba 30fps + audio nativo
-            if (mode == "airplay")
+            // DVT recorder: captura de pantalla continua vía com.apple.instruments.server.services.screenshot.
+            // Un error definitivo (§6.7) se lanza sin caer al burst.
+            if (!await TryStartDvtRecorderAsync(session, udid, ct))
             {
-                if (!await TryStartAirplayRecorderAsync(session, ct))
-                    throw new InvalidOperationException("No se pudo iniciar el receptor AirPlay. Instalá uxplay: brew install uxplay");
-                return;
+                _log.LogWarning("DVT recorder falló; fallback a burst screenshots");
+                StartBurst(session, udid);
             }
-
-            // DVT recorder: captura de pantalla continua vía com.apple.instruments.server.services.screenshot
-            if (await TryStartDvtRecorderAsync(session, ct))
-            {
-                if (mode == "with_mic") await StartAudioAsync(session, ct);
-                return;
-            }
-
-            _log.LogWarning("DVT recorder falló; fallback a burst screenshots");
-            StartBurst(session, udid);
             if (mode == "with_mic") await StartAudioAsync(session, ct);
+            _session = session;
         }
         finally { _recordLock.Release(); }
     }
@@ -706,29 +756,33 @@ asyncio.run(main(sys.argv[1]))
             if (session.Mode == "on_device")
                 return await PullNewRecordingAsync(udid, session, ct);
 
-            if (session.IsStreamMode)
+            if (session.Mode == "airplay")
             {
-                if (session.Mode == "airplay")
-                {
-                    // uxplay: SIGTERM → finaliza MP4 → renombra al path esperado
-                    await StopAirplayAsync(session, ct);
-                    // Corregir desfase A/V: en AirPlay el audio llega antes que el video
-                    if (File.Exists(session.OutputPath))
-                        await FixAirplaySyncAsync(session.OutputPath, ct);
-                }
-                else
-                {
-                    // with_mic: el mic se detiene antes que el recorder (SDD §6.4).
-                    if (session.Mode == "with_mic") await StopAudioAsync(session);
+                // uxplay: SIGTERM → finaliza MP4 → renombra al path esperado
+                await StopAirplayAsync(session, ct);
+                // Corregir desfase A/V: en AirPlay el audio llega antes que el video
+                if (File.Exists(session.OutputPath))
+                    await FixAirplaySyncAsync(session.OutputPath, ct);
+            }
+            else if (session.Dvt is { } dvt)
+            {
+                // with_mic: el mic se detiene antes que el recorder (SDD grabacion-android-windows §6.4).
+                if (session.Mode == "with_mic") await StopAudioAsync(session);
 
-                    // SIGTERM al Python DVT recorder → espera a que cierre ffmpeg → MP4 listo
-                    await StopDvtRecorderAsync(session, ct);
-
-                    // with_mic: mux audio PC en el MP4
-                    if (session.Mode == "with_mic" && session.Mic is { } mic &&
-                        File.Exists(mic.AudioPath) && File.Exists(session.OutputPath))
-                        await MuxAudioIntoVideoAsync(session.OutputPath, mic.AudioPath, ct);
+                // "stop" por stdin → el helper cierra ffmpeg → MP4 completo (§6.7).
+                DvtStopResult result;
+                await using (dvt) result = await dvt.StopAsync(ct);
+                if (!result.Ok)
+                {
+                    TryDelete(session.OutputPath);
+                    if (session.Mic is { } failedMic) TryDelete(failedMic.AudioPath);
+                    throw result.Error ?? IosErrors.RecordingEmptyFrom(null, IosErrors.ReasonNoFrames, _isWindows);
                 }
+
+                // with_mic: mux audio PC en el MP4
+                if (session.Mode == "with_mic" && session.Mic is { } mic &&
+                    File.Exists(mic.AudioPath) && File.Exists(session.OutputPath))
+                    await MuxAudioIntoVideoAsync(session.OutputPath, mic.AudioPath, ct);
             }
             else
             {
@@ -738,8 +792,15 @@ asyncio.run(main(sys.argv[1]))
                 await StopBurstAsync(session, ct);
             }
 
+            // §4.4 b: nunca se devuelve un archivo que no existe.
+            if (!File.Exists(session.OutputPath) || new FileInfo(session.OutputPath).Length == 0)
+            {
+                TryDelete(session.OutputPath);
+                throw IosErrors.RecordingEmptyFrom(session.StartError, IosErrors.ReasonNoFrames, _isWindows);
+            }
+
             // Interpolación solo para grabaciones DVT/burst (airplay ya es 30fps nativo)
-            if (session.Mode != "airplay" && File.Exists(session.OutputPath))
+            if (session.Mode != "airplay")
                 _ = Task.Run(() => RunInterpolationsAsync(session.OutputPath));
 
             return session.OutputPath;
@@ -747,159 +808,43 @@ asyncio.run(main(sys.argv[1]))
         finally { _recordLock.Release(); }
     }
 
-    // ── DVT recorder mode ────────────────────────────────────────────────────
-    //
-    // El helper Python ios_dvt_recorder.py mantiene un tunnel DVT abierto,
-    // captura screenshots vía com.apple.instruments.server.services.screenshot
-    // (~2 FPS, limitado por iOS 26) y los envía a ffmpeg para generar el MP4.
-    // Funciona en iOS 26.5 donde startmediastream exige iOS 27.
+    // ── DVT recorder mode (§6.7) ─────────────────────────────────────────────
 
-    private const string DvtRecorderScript = @"
-import asyncio, sys, os, subprocess, signal, argparse, time, warnings
-warnings.filterwarnings('ignore')
-
-FFMPEG_PATHS = ['ffmpeg', '/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']
-
-def find_ffmpeg():
-    for p in FFMPEG_PATHS:
-        if os.path.isabs(p):
-            if os.path.exists(p): return p
-        else:
-            for d in os.environ.get('PATH','').split(':'):
-                if os.path.exists(os.path.join(d, p)): return os.path.join(d, p)
-    return 'ffmpeg'
-
-async def capture_loop(ss, ffmpeg_proc, fps, stop_event):
-    frame_interval = 1.0 / fps
-    frame_count = 0
-    while not stop_event.is_set():
-        t0 = time.time()
-        try:
-            data = await asyncio.wait_for(ss.get_screenshot(), timeout=5.0)
-        except asyncio.TimeoutError:
-            continue
-        except Exception as e:
-            if stop_event.is_set(): break
-            await asyncio.sleep(0.1)
-            continue
-        try:
-            ffmpeg_proc.stdin.write(data)
-            ffmpeg_proc.stdin.flush()
-        except (BrokenPipeError, OSError):
-            break
-        frame_count += 1
-        elapsed = time.time() - t0
-        remaining = frame_interval - elapsed
-        if remaining > 0 and not stop_event.is_set():
-            await asyncio.sleep(remaining)
-    print(f'frames={frame_count}', file=sys.stderr, flush=True)
-
-async def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('output')
-    parser.add_argument('--fps', type=float, default=2.0)
-    args = parser.parse_args()
-
-    from pymobiledevice3.remote.userspace_tunnel import establish_userspace_rsd
-    from pymobiledevice3.services.dvt.instruments.screenshot import Screenshot
-    from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
-
-    stop_event = asyncio.Event()
-    loop = asyncio.get_event_loop()
-    loop.add_signal_handler(signal.SIGTERM, stop_event.set)
-    loop.add_signal_handler(signal.SIGINT, stop_event.set)
-
-    ffmpeg = find_ffmpeg()
-    ffmpeg_proc = subprocess.Popen(
-        [ffmpeg, '-y', '-f', 'image2pipe', '-vcodec', 'png', '-r', str(args.fps),
-         '-i', 'pipe:0', '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-         '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23', args.output],
-        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    rsd = await establish_userspace_rsd()
-    print('READY', file=sys.stderr, flush=True)
-
-    async with DvtProvider(rsd) as dvt:
-        async with Screenshot(dvt) as ss:
-            await capture_loop(ss, ffmpeg_proc, args.fps, stop_event)
-
-    try: ffmpeg_proc.stdin.close()
-    except Exception: pass
-    try: ffmpeg_proc.wait(timeout=30)
-    except subprocess.TimeoutExpired: ffmpeg_proc.kill()
-
-asyncio.run(main())
-";
-
-    private string EnsureDvtScript()
+    // true = grabando con DVT. false = falló con un error no definitivo (queda en
+    // session.StartError y se cae al burst). Un error definitivo se lanza.
+    private async Task<bool> TryStartDvtRecorderAsync(IosSession session, string udid, CancellationToken ct)
     {
-        if (_dvtScriptPath is not null && File.Exists(_dvtScriptPath))
-            return _dvtScriptPath;
-        var path = Path.Combine(Path.GetTempPath(), "ios_dvt_recorder.py");
-        File.WriteAllText(path, DvtRecorderScript);
-        _dvtScriptPath = path;
-        return path;
-    }
-
-    private async Task<bool> TryStartDvtRecorderAsync(IosSession session, CancellationToken ct)
-    {
-        var scriptPath = EnsureDvtScript();
-
-        var proc = Process.Start(new ProcessStartInfo
-        {
-            FileName  = Python,
-            Arguments = $"\"{scriptPath}\" \"{session.OutputPath}\" --fps 2",
-            RedirectStandardError  = true,
-            UseShellExecute = false,
-            CreateNoWindow  = true,
-        });
-        if (proc is null) return false;
-
-        // Leer stderr hasta "READY" (tunnel establecido) o error/EOF
-        using var readyCts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        using var linked   = CancellationTokenSource.CreateLinkedTokenSource(ct, readyCts.Token);
-        bool ready = false;
         try
         {
-            while (!linked.Token.IsCancellationRequested)
-            {
-                var line = await proc.StandardError.ReadLineAsync(linked.Token);
-                if (line is null) break;
-                _log.LogDebug("DVT recorder: {Line}", line);
-                if (line.Contains("READY")) { ready = true; break; }
-            }
+            var python = RequirePython();
+            var ffmpeg = RequireFfmpeg();
+            await EnsureAppleServiceAsync(ct);
+            await EnsurePreparedAsync(udid, ct);
+            session.Dvt = await DvtRecorder.StartAsync(python, IosHelper.EnsureHelperFile(), udid,
+                session.OutputPath, ffmpeg, DvtFps, synthetic: false, _log, ct);
+            return true;
         }
-        catch (OperationCanceledException) { }
-
-        if (!ready || proc.HasExited)
+        catch (IosException ex) when (!IosErrors.IsDefinitiveForRecording(ex.Code))
         {
-            try { proc.Kill(); } catch { }
+            _log.LogWarning("DVT recorder no arrancó ({Code}): {E}", ex.Code, ex.Message);
+            session.StartError = ex;
             return false;
         }
-
-        session.StreamProc   = proc;
-        session.IsStreamMode = true;
-        _log.LogInformation("iOS DVT recorder iniciado (~2 FPS via DVT/screenshot service)");
-        return true;
     }
 
-    private async Task StopDvtRecorderAsync(IosSession session, CancellationToken ct)
+    // Detiene un proceso de la Mac (uxplay: SIGTERM; qvh: SIGINT, solo escucha os.Interrupt) y
+    // espera a que cierre solo hasta `timeout`; si no responde, lo mata. Un Kill() directo
+    // corrompería el archivo a medio escribir. En Windows no existe `kill`: se usa Ctrl+C con
+    // ProcessStop (uxplay/qvh no existen hoy en Windows, D1 b).
+    private async Task GracefulStopAsync(Process proc, TimeSpan timeout, CancellationToken ct, int signal = 15,
+        string name = "proceso")
     {
-        if (session.StreamProc is null || session.StreamProc.HasExited) return;
+        if (_isWindows)
+        {
+            await ProcessStop.StopGracefullyAsync(proc, timeout, _log, name, ct);
+            return;
+        }
 
-        // SIGTERM: el script para la captura, cierra ffmpeg stdin, espera al MP4
-        await GracefulStopAsync(session.StreamProc, TimeSpan.FromSeconds(40), ct);
-
-        _log.LogInformation("DVT recorder detenido (exit {Code})", session.StreamProc.HasExited ? session.StreamProc.ExitCode : -1);
-    }
-
-    // Detiene un proceso con una señal Unix (15=SIGTERM por default, 2=SIGINT para qvh que
-    // solo escucha os.Interrupt) y espera a que cierre solo hasta `timeout`; si no responde,
-    // lo mata a la fuerza. Usado por los procesos que necesitan flushear ffmpeg/GStreamer
-    // antes de salir (DVT recorder, uxplay, qvh) — un Kill() directo corrompería el archivo
-    // de salida a medio escribir.
-    private static async Task GracefulStopAsync(Process proc, TimeSpan timeout, CancellationToken ct, int signal = 15)
-    {
         try
         {
             using var sig = Process.Start(new ProcessStartInfo
@@ -954,8 +899,8 @@ asyncio.run(main())
             RedirectStandardError  = false,
             RedirectStandardOutput = false,
         };
-        // DYLD_LIBRARY_PATH necesario para GLib/GObject de Homebrew
-        psi.Environment["DYLD_LIBRARY_PATH"] = GlibDyldPath;
+        // DYLD_LIBRARY_PATH necesario para GLib/GObject de Homebrew (solo macOS)
+        if (OperatingSystem.IsMacOS()) psi.Environment["DYLD_LIBRARY_PATH"] = GlibDyldPath;
         psi.ArgumentList.Add("-n");   psi.ArgumentList.Add(receiverName);
         psi.ArgumentList.Add("-nh");  // sin @hostname en el nombre
         psi.ArgumentList.Add("-mp4"); psi.ArgumentList.Add(mp4Stem);
@@ -990,7 +935,7 @@ asyncio.run(main())
         if (session.StreamProc is null || session.StreamProc.HasExited) return;
 
         // SIGTERM → uxplay finaliza el pipeline GStreamer y cierra el MP4
-        await GracefulStopAsync(session.StreamProc, TimeSpan.FromSeconds(30), ct);
+        await GracefulStopAsync(session.StreamProc, TimeSpan.FromSeconds(30), ct, name: "uxplay");
 
         _log.LogInformation("uxplay detenido (exit {Code})", session.StreamProc.HasExited ? session.StreamProc.ExitCode : -1);
 
@@ -1063,6 +1008,7 @@ asyncio.run(main())
 
     private void StartBurst(IosSession session, string udid)
     {
+        var python = RequirePython();
         session.BurstCts  = new CancellationTokenSource();
         session.BurstTask = Task.Run(async () =>
         {
@@ -1072,10 +1018,15 @@ asyncio.run(main())
             {
                 i++;
                 var path = Path.Combine(session.DataDir, $"ios_{session.SessionId}_{i:D4}.png");
-                var r = await ProcessRunner.RunAsync(Python,
-                    $"-m pymobiledevice3 developer core-device screen-capture screenshot --userspace \"{path}\"", token);
-                if (r.Success)
+                var r = await ProcessRunner.RunArgumentListAsync(python,
+                    ["-m", "pymobiledevice3", "developer", "core-device", "screen-capture", "screenshot",
+                     "--userspace", path],
+                    token, IosHelper.PythonEnvironment);
+                if (r.Success && File.Exists(path))
                     lock (session.FramesLock) session.Frames.Add(path);
+                else
+                    // Sin esto, un iPhone que no responde lanza procesos sin parar.
+                    try { await Task.Delay(500, token); } catch (OperationCanceledException) { }
             }
         });
         _log.LogInformation("iOS burst recording iniciada (fallback)");
@@ -1089,35 +1040,43 @@ asyncio.run(main())
 
         List<string> frames;
         lock (session.FramesLock) frames = [..session.Frames];
-        if (frames.Count == 0) { _log.LogWarning("iOS burst: sin frames"); return; }
+        if (frames.Count == 0)
+        {
+            _log.LogWarning("iOS burst: sin frames");
+            if (session.Mic is { } m) TryDelete(m.AudioPath);
+            throw IosErrors.RecordingEmptyFrom(session.StartError, IosErrors.ReasonNoFrames, _isWindows);
+        }
 
+        var ffmpeg   = RequireFfmpeg();
+        var listPath = session.OutputPath + ".txt";
+        await WriteConcatListAsync(frames, listPath);
+        ProcessResult r;
         if (session.Mode == "with_mic" && session.Mic is { } mic && File.Exists(mic.AudioPath))
         {
-            var ffmpeg = FindBinary(AgentTools.Ffmpeg) ?? "ffmpeg";
-            var listPath = session.OutputPath + ".txt";
-            await WriteConcatListAsync(frames, listPath);
-            var r = await ProcessRunner.RunAsync(ffmpeg,
-                $"-y -f concat -safe 0 -i \"{listPath}\" " +
-                $"-i \"{mic.AudioPath}\" " +
-                $"-vf scale=trunc(iw/2)*2:trunc(ih/2)*2 " +
-                $"-c:v libx264 -c:a aac -pix_fmt yuv420p -shortest \"{session.OutputPath}\"", ct);
-            try { File.Delete(listPath); } catch { }
+            r = await ProcessRunner.RunArgumentListAsync(ffmpeg,
+                ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-i", mic.AudioPath,
+                 "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                 "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-shortest", session.OutputPath], ct);
             if (!r.Success) _log.LogWarning("ffmpeg burst+mic falló: {E}", r.Stderr);
         }
         else
         {
-            var ffmpeg   = FindBinary(AgentTools.Ffmpeg) ?? "ffmpeg";
-            var listPath = session.OutputPath + ".txt";
-            await WriteConcatListAsync(frames, listPath);
-            var r = await ProcessRunner.RunAsync(ffmpeg,
-                $"-y -f concat -safe 0 -i \"{listPath}\" " +
-                $"-vf scale=trunc(iw/2)*2:trunc(ih/2)*2 " +
-                $"-c:v libx264 -pix_fmt yuv420p -crf 23 \"{session.OutputPath}\"", ct);
-            try { File.Delete(listPath); } catch { }
+            r = await ProcessRunner.RunArgumentListAsync(ffmpeg,
+                ["-y", "-f", "concat", "-safe", "0", "-i", listPath,
+                 "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "23", session.OutputPath], ct);
             if (!r.Success) _log.LogWarning("ffmpeg burst falló: {E}", r.Stderr);
         }
+        TryDelete(listPath);
+        foreach (var f in frames) TryDelete(f);
 
-        foreach (var f in frames) try { File.Delete(f); } catch { }
+        if (!r.Success)
+        {
+            TryDelete(session.OutputPath);
+            if (session.Mic is { } m) TryDelete(m.AudioPath);
+            throw IosErrors.RecordingEmptyFrom(session.StartError,
+                "no se pudo armar el video con los cuadros capturados.", _isWindows);
+        }
     }
 
     private static async Task WriteConcatListAsync(List<string> frames, string listPath)
@@ -1172,11 +1131,17 @@ asyncio.run(main())
     // Bug fix: afc ls devuelve rutas completas ("DCIM/100APPLE") no solo el nombre de carpeta.
     // Hay que usar esas rutas directamente en la siguiente llamada a afc ls.
 
+    private Task<ProcessResult> RunPymobiledevice3Async(IReadOnlyList<string> args, CancellationToken ct)
+    {
+        var python = RequirePython();
+        return ProcessRunner.RunArgumentListAsync(python, ["-m", "pymobiledevice3", .. args], ct,
+            IosHelper.PythonEnvironment);
+    }
+
     private async Task<List<string>> ListDCIMFilesAsync(string udid, CancellationToken ct)
     {
         // Líneas: "DCIM", "DCIM/100APPLE", "DCIM/101APPLE", "DCIM/.MISC" ...
-        var r = await ProcessRunner.RunAsync(Python,
-            $"-m pymobiledevice3 afc ls --udid {udid} DCIM", ct);
+        var r = await RunPymobiledevice3Async(["afc", "ls", "--udid", udid, "DCIM"], ct);
         if (!r.Success) return [];
 
         var files = new List<string>();
@@ -1187,8 +1152,7 @@ asyncio.run(main())
             if (folderPath == "DCIM" || folderName.StartsWith('.')) continue;
 
             // Listar contenido de esa carpeta — afc ls devuelve rutas completas también
-            var sub = await ProcessRunner.RunAsync(Python,
-                $"-m pymobiledevice3 afc ls --udid {udid} {folderPath}", ct);
+            var sub = await RunPymobiledevice3Async(["afc", "ls", "--udid", udid, folderPath], ct);
 
             foreach (var subLine in sub.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
@@ -1220,12 +1184,30 @@ asyncio.run(main())
         var outPath = Path.ChangeExtension(session.OutputPath, ".mov");
 
         // Syntax: afc pull -i REMOTE_FILE LOCAL_FILE  (donde -i = --ignore-errors, requerido)
-        var r = await ProcessRunner.RunAsync(Python,
-            $"-m pymobiledevice3 afc pull --udid {udid} -i {remote} \"{outPath}\"", ct);
-        if (!r.Success) throw new InvalidOperationException($"afc pull falló: {r.Stderr}");
+        var r = await RunPymobiledevice3Async(["afc", "pull", "--udid", udid, "-i", remote, outPath], ct);
+        if (!r.Success)
+        {
+            var error = ClassifyAfcError(r.Stderr, _isWindows);
+            _log.LogWarning("Error de iPhone {Code}: {Detail}", error.Code, IosHelper.LastLine(r.Stderr) ?? $"exit {r.ExitCode}");
+            _log.LogDebug("afc pull falló. stderr:\n{Stderr}", r.Stderr);
+            throw error;
+        }
+        if (!File.Exists(outPath) || new FileInfo(outPath).Length == 0)
+            throw IosErrors.Create(IosErrors.CaptureFailed, _isWindows, "el archivo extraído del iPhone quedó vacío");
 
         _log.LogInformation("iOS on_device: extraído {Remote} → {Local}", remote, outPath);
         return outPath;
+    }
+
+    // §6.8: clasificación de un `afc pull` que falló (por el stderr del CLI).
+    internal static IosException ClassifyAfcError(string stderr, bool isWindows)
+    {
+        if (stderr.Contains("ConnectionFailedToUsbmuxd", StringComparison.Ordinal))
+            return IosErrors.Create(IosErrors.AppleServiceMissing, isWindows);
+        if (stderr.Contains("PasscodeRequired", StringComparison.Ordinal))
+            return IosErrors.Create(IosErrors.Locked, isWindows);
+        return IosErrors.Create(IosErrors.CaptureFailed, isWindows,
+            "no se pudo extraer la grabación del iPhone (" + (IosHelper.LastLine(stderr) ?? "afc pull") + ")");
     }
 
     // ── Frame interpolation (background) ─────────────────────────────────────
@@ -1341,6 +1323,11 @@ asyncio.run(main())
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static string? FindBinary(ToolSpec s) => ToolResolver.Find(s)?.Path;
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
+    }
 
     private static string FriendlyModel(string pt) => pt switch
     {

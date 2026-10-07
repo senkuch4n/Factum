@@ -1,14 +1,20 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Factum.Agent.Common;
+using Factum.Agent.Services.Ios;
 
 namespace Factum.Agent.Services;
 
 // Estado de una herramienta para /health.tools (SDD grabacion-android-windows §4.2, §6.6).
 // Source va como string literal ("portable" | "path" | "homebrew") para no depender del
 // converter de enums; los null no viajan (WhenWritingNull en Program.cs).
-public sealed record ToolStatus(bool Found, string? Source = null, string? Path = null, string? Version = null);
+// Pymobiledevice3Version solo para "python" (ios-herramientas-windows §4.2): nombre JSON explícito
+// para no depender de cómo parte el snake_case un nombre con dígito.
+public sealed record ToolStatus(bool Found, string? Source = null, string? Path = null, string? Version = null,
+    [property: JsonPropertyName("pymobiledevice3_version")] string? Pymobiledevice3Version = null);
 
 // Inventario de las herramientas de Tatana para /health. La ruta se resuelve en cada llamada
 // (solo File.Exists, instantáneo); la versión sale de un caché en memoria que se llena en
@@ -18,16 +24,23 @@ public sealed class ToolInventory(ILogger<ToolInventory> log)
     private static readonly TimeSpan VersionTimeout = TimeSpan.FromSeconds(5);
 
     // Claves fijas en minúscula (las claves de diccionario no pasan por la naming policy).
-    private static readonly (string Key, ToolSpec Spec, string Arg)[] Tools =
+    // Arg null = no se lee versión (uxplay: lanzarlo levanta GStreamer).
+    private static readonly (string Key, ToolSpec Spec, string? Arg)[] Tools =
     [
         ("adb",    AgentTools.Adb,    "version"),
         ("scrcpy", AgentTools.Scrcpy, "--version"),
         ("ffmpeg", AgentTools.Ffmpeg, "-version"),
         ("python", AgentTools.Python, "--version"),
+        ("uxplay", AgentTools.Uxplay, null),
     ];
+
+    private static readonly string[] Pymobiledevice3VersionArgs =
+        ["-c", "import importlib.metadata as m; print(m.version('pymobiledevice3'))"];
 
     // ruta → versión (null = se está obteniendo o falló).
     private readonly ConcurrentDictionary<string, string?> _versions = new(StringComparer.Ordinal);
+    // ruta del python → versión de pymobiledevice3 (mismo criterio).
+    private readonly ConcurrentDictionary<string, string?> _pmdVersions = new(StringComparer.Ordinal);
 
     public Dictionary<string, ToolStatus> Snapshot()
     {
@@ -40,8 +53,9 @@ public sealed class ToolInventory(ILogger<ToolInventory> log)
                 result[key] = new ToolStatus(false);
                 continue;
             }
-            result[key] = new ToolStatus(true, SourceText(found.Source), found.Path,
-                GetOrStartVersion(key, found.Path, arg));
+            var version = arg is null ? null : GetOrStartVersion(key, found.Path, arg);
+            var pmd = key == "python" ? GetOrStartPymobiledevice3Version(found.Path) : null;
+            result[key] = new ToolStatus(true, SourceText(found.Source), found.Path, version, pmd);
         }
         return result;
     }
@@ -71,8 +85,40 @@ public sealed class ToolInventory(ILogger<ToolInventory> log)
         return null;
     }
 
+    private string? GetOrStartPymobiledevice3Version(string pythonPath)
+    {
+        if (_pmdVersions.TryGetValue(pythonPath, out var cached)) return cached;
+        if (_pmdVersions.TryAdd(pythonPath, null))
+            _ = Task.Run(async () =>
+            {
+                var (stdout, _) = await RunVersionAsync("pymobiledevice3", pythonPath, Pymobiledevice3VersionArgs) ?? ("", "");
+                var v = VersionParser.Pymobiledevice3(stdout);
+                if (v is null)
+                {
+                    log.LogDebug("No se pudo leer la versión de pymobiledevice3 ({Path})", pythonPath);
+                    return;
+                }
+                _pmdVersions[pythonPath] = v;
+                if (v != IosHelper.ExpectedPymobiledevice3Version)
+                    log.LogWarning("pymobiledevice3 {Version} en {Path}; la versión probada es {Expected}",
+                        v, pythonPath, IosHelper.ExpectedPymobiledevice3Version);
+            });
+        return null;
+    }
+
     private async Task<string?> ReadVersionAsync(string key, string path, string arg)
     {
+        var output = await RunVersionAsync(key, path, [arg]);
+        if (output is null) return null;
+        var version = VersionParser.Parse(key, output.Value.Stdout, output.Value.Stderr);
+        if (version is null) log.LogDebug("No se pudo leer la versión de {Tool} ({Path})", key, path);
+        return version;
+    }
+
+    // stdout/stderr de `<path> <args>` con timeout de 5 s; null si no arrancó o no terminó.
+    private async Task<(string Stdout, string Stderr)?> RunVersionAsync(string key, string path, string[] args)
+    {
+        var arg = string.Join(' ', args);
         try
         {
             var psi = new ProcessStartInfo
@@ -85,7 +131,10 @@ public sealed class ToolInventory(ILogger<ToolInventory> log)
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding  = Encoding.UTF8,
             };
-            psi.ArgumentList.Add(arg);
+            foreach (var a in args) psi.ArgumentList.Add(a);
+            // Mismo entorno que el resto de los Python de Tatana (UTF-8, sin colores).
+            if (key is "python" or "pymobiledevice3")
+                foreach (var (k, v) in IosHelper.PythonEnvironment) psi.Environment[k] = v;
 
             // Process local (no ProcessRunner): hay que poder matarlo si se pasa del timeout.
             using var proc = new Process { StartInfo = psi };
@@ -113,9 +162,7 @@ public sealed class ToolInventory(ILogger<ToolInventory> log)
             string outText, errText;
             lock (stdout) outText = stdout.ToString();
             lock (stderr) errText = stderr.ToString();
-            var version = VersionParser.Parse(key, outText, errText);
-            if (version is null) log.LogDebug("No se pudo leer la versión de {Tool} ({Path})", key, path);
-            return version;
+            return (outText, errText);
         }
         catch (Exception ex)
         {
@@ -126,7 +173,7 @@ public sealed class ToolInventory(ILogger<ToolInventory> log)
 }
 
 // Parsers de la salida de "--version" de cada herramienta (testeados).
-internal static class VersionParser
+internal static partial class VersionParser
 {
     public static string? Parse(string key, string stdout, string stderr) => key switch
     {
@@ -165,6 +212,16 @@ internal static class VersionParser
         var i = Array.IndexOf(tokens, "version");
         return i >= 0 && i + 1 < tokens.Length ? tokens[i + 1] : null;
     }
+
+    // Salida de `python -c "…print(m.version('pymobiledevice3'))"`: la primera línea no vacía que
+    // parezca una versión ("10.7.4", "10.7.4.dev3+g1a2b"); un traceback u otra cosa → null.
+    public static string? Pymobiledevice3(string output)
+    {
+        return Lines(output).FirstOrDefault(l => Pymobiledevice3Regex().IsMatch(l));
+    }
+
+    [GeneratedRegex(@"^\d+(\.\d+)*([a-z0-9.+-]*)$")]
+    private static partial Regex Pymobiledevice3Regex();
 
     // "Python 3.11.9" → "3.11.9" (Python < 3.4 lo escribe en stderr).
     public static string? Python(string output)

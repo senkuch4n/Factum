@@ -64,12 +64,44 @@ export interface AgentInfo {
   evidence_directory_synced?: boolean;
 }
 
+/** Herramienta externa de Tatana (`/health.tools.<k>`, `ToolInventory`). */
+export interface AgentToolStatus {
+  found: boolean;
+  source?: "portable" | "path" | "homebrew";
+  path?: string;
+  version?: string;
+  /** Solo en `tools.python` (ios-herramientas-windows §4.2); falta si no se pudo leer. */
+  pymobiledevice3_version?: string;
+}
+
+/** Estado del servicio de dispositivos de Apple en la PC (`/health.ios.apple_service`). */
+export type AppleServiceState = "ok" | "missing" | "unknown";
+
+/** Motivo de AirPlay no disponible (`/health.ios.airplay_unavailable_reason`). */
+export type AirplayUnavailableReason = "not_supported_on_windows" | "uxplay_not_found";
+
+/** `/health.ios` (ios-herramientas-windows §4.2). Tatanas anteriores a 1.3.0 no lo mandan. */
+export interface AgentIosStatus {
+  apple_service: AppleServiceState;
+  airplay_available: boolean;
+  /** Tatana omite los `null`: con AirPlay disponible, no viene. */
+  airplay_unavailable_reason?: AirplayUnavailableReason;
+}
+
+/** Respuesta de `POST /devices/{serial}/ios/developer-mode` (§4.3). */
+export type IosDeveloperModeStatus = "enabled" | "restarting" | "manual_required";
+
 /** `GET /health`. `capabilities` falta en un Tatana anterior a zip-local-informe-servidor. */
 export interface AgentHealth {
   status: string;
   version: string;
   mock: boolean;
   capabilities?: string[];
+  ios_available?: boolean;
+  /** Falta en Tatana < 1.1.0. */
+  tools?: Record<string, AgentToolStatus>;
+  /** Falta en Tatana < 1.3.0 (ios-herramientas-windows). */
+  ios?: AgentIosStatus;
 }
 
 /* ── Evidencia del caso en Tatana (zip-local-informe-servidor, SDD §6.2 y §8.2) ── */
@@ -145,7 +177,11 @@ export type AgentErrorCode =
   | "invalid_case_id" | "invalid_filename" | "file_not_found" | "file_exists" | "file_busy"
   | "length_required" | "file_too_large" | "insufficient_storage" | "incomplete_upload" | "storage_error"
   | "evidence_changed" | "zip_in_progress" | "zip_already_committed" | "zip_failed" | "zip_not_found"
-  | "zip_hash_mismatch" | "origin_not_allowed";
+  | "zip_hash_mismatch" | "origin_not_allowed"
+  // iPhone (ios-herramientas-windows §4.1): el `error` que acompaña ya viene en castellano.
+  | "ios_apple_service_missing" | "ios_device_not_found" | "ios_not_trusted" | "ios_locked"
+  | "ios_developer_mode_disabled" | "ios_ddi_mount_failed" | "ios_tunnel_failed" | "ios_admin_required"
+  | "ios_tools_missing" | "ios_capture_failed" | "ios_recording_empty" | "airplay_unavailable";
 
 /** Cuerpo de error de Tatana (claves literales en snake_case). */
 export interface AgentErrorBody {
@@ -304,28 +340,64 @@ export const agent = {
 
   async takeScreenshot(serial: string, platform: "android" | "ios" = "android"): Promise<{ filename: string; url: string }> {
     const url = `${AGENT_URL}/devices/${serial}/screenshot${platform === "ios" ? "?platform=ios" : ""}`;
-    const res = await fetch(url, { method: "POST" });
-    if (!res.ok) throw new Error("Error tomando screenshot");
+    let res: Response;
+    try {
+      res = await fetch(url, { method: "POST" });
+    } catch {
+      throw new Error(AGENT_UNREACHABLE);
+    }
+    // D7: el motivo real que manda Tatana (`{ error, code }`); el fallback solo si no viene.
+    if (!res.ok) throw await readAgentError(res, "Error tomando screenshot");
     return res.json();
   },
 
   // Sesión de "espejar para capturas" (iOS + AirPlay): conecta una vez, permite marcar
   // varios momentos mientras se navega libremente, y extrae un PNG por marca al finalizar.
   async startAirplayShot(serial: string): Promise<{ receiver_name: string }> {
-    const res = await fetch(`${AGENT_URL}/devices/${serial}/screenshot/airplay/start`, { method: "POST" });
-    if (!res.ok) throw new Error("Error iniciando sesión de captura AirPlay");
+    let res: Response;
+    try {
+      res = await fetch(`${AGENT_URL}/devices/${serial}/screenshot/airplay/start`, { method: "POST" });
+    } catch {
+      throw new Error(AGENT_UNREACHABLE);
+    }
+    if (!res.ok) throw await readAgentError(res, "Error iniciando sesión de captura AirPlay");
     return res.json();
   },
 
   async markAirplayShot(serial: string): Promise<{ count: number }> {
-    const res = await fetch(`${AGENT_URL}/devices/${serial}/screenshot/airplay/mark`, { method: "POST" });
-    if (!res.ok) throw new Error("Error marcando captura");
+    let res: Response;
+    try {
+      res = await fetch(`${AGENT_URL}/devices/${serial}/screenshot/airplay/mark`, { method: "POST" });
+    } catch {
+      throw new Error(AGENT_UNREACHABLE);
+    }
+    if (!res.ok) throw await readAgentError(res, "Error marcando captura");
     return res.json();
   },
 
   async stopAirplayShot(serial: string): Promise<{ files: { filename: string; url: string }[] }> {
-    const res = await fetch(`${AGENT_URL}/devices/${serial}/screenshot/airplay/stop`, { method: "POST" });
-    if (!res.ok) throw new Error("Error finalizando sesión de captura AirPlay");
+    let res: Response;
+    try {
+      res = await fetch(`${AGENT_URL}/devices/${serial}/screenshot/airplay/stop`, { method: "POST" });
+    } catch {
+      throw new Error(AGENT_UNREACHABLE);
+    }
+    if (!res.ok) throw await readAgentError(res, "Error finalizando sesión de captura AirPlay");
+    return res.json();
+  },
+
+  /**
+   * Activa el Modo Desarrollador del iPhone desde Tatana (ios-herramientas-windows §4.3).
+   * Puede tardar hasta ~1 min. Error: `Error` con el `error` de Tatana.
+   */
+  async enableIosDeveloperMode(serial: string): Promise<{ status: IosDeveloperModeStatus }> {
+    let res: Response;
+    try {
+      res = await fetch(`${AGENT_URL}/devices/${encodeURIComponent(serial)}/ios/developer-mode`, { method: "POST" });
+    } catch {
+      throw new Error(AGENT_UNREACHABLE);
+    }
+    if (!res.ok) throw await readAgentError(res, "No se pudo activar el Modo Desarrollador del iPhone");
     return res.json();
   },
 

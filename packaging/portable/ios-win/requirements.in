@@ -1,0 +1,16 @@
+# Entrada humana del lock de Python de Tatana para Windows (SDD ios-herramientas-windows §7.2).
+# El lock (requirements-win.lock) se genera con:  python3 -I generar-lock.py
+#
+# pymobiledevice3 fijo en la versión probada en la Mac (D6, A1). Cambiarla exige rearmar el lock
+# y cambiar IosHelper.ExpectedPymobiledevice3Version y los chequeos del armado/CI.
+pymobiledevice3==10.7.4
+
+# Dependencias que solo aplican en Windows: pip --platform evalúa los marcadores con los de la
+# máquina que arma (Mac/Linux) y no las ve (A3). generar-lock.py falla si falta alguna.
+pywin32
+av>=14.0.0
+lzfse>=0.4.2
+sslpsk-pmd3>=1.0.3
+colorama>=0.4.4
+win32-setctime>=1.0.0
+pyreadline3

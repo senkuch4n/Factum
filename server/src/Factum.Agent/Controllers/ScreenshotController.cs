@@ -1,4 +1,5 @@
 using Factum.Agent.Services;
+using Factum.Agent.Services.Ios;
 using Factum.Agent.WebSockets;
 using Factum.Agent.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -34,6 +35,10 @@ public sealed class ScreenshotController(
             }, ct);
 
             return Ok(new { filename, url = $"/files/{filename}" });
+        }
+        catch (IosException ex)
+        {
+            return StatusCode(500, new { error = ex.Message, code = ex.Code });
         }
         catch (Exception ex)
         {
