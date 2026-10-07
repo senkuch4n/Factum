@@ -324,3 +324,94 @@ Archivos tocados en la ronda 3: `agent-ui/scripts/parchar-electron-builder.mjs` 
 `agent-ui/package.json`, `agent-ui/package-lock.json`, `agent-ui/build/installer.nsh`,
 `.github/workflows/tatana-release.yml` y este archivo. Sin commit. `node_modules` local quedó
 parchado (lo hace el `postinstall`).
+
+## Ronda 4: INSTDIR quedaba en `Programs\tatana-agent`
+
+Fuente: run 37632134372. El instalador base sale con 0 y Migrar sale con 0, pero `INSTDIR` =
+`...\Programs\tatana-agent`, así que la prueba no encuentra `Programs\Tatana\Uninstall Tatana.exe`.
+
+### Causa
+
+`app-builder-lib/out/targets/nsis/NsisTarget.js:156`:
+`APP_FILENAME: getWindowsInstallationDirName(appInfo, !oneClick || isPerMachine)`.
+`targetUtil.js:38`:
+`isTryToUseProductName && /^[-_+0-9a-zA-Z .]+$/.test(productFilename) ? productFilename : sanitizedName`.
+Con `oneClick: true` y `perMachine: false`, el segundo argumento es `false`, así que usa
+`sanitizedName`, que sale del `name` npm (`tatana-agent`). `multiUser.nsh`
+(`setInstallModePerUser`) arma `StrCpy $INSTDIR "$0\${APP_FILENAME}"`. electron-builder 24.13.3
+no tiene ninguna opción de `nsis`/`build` para el nombre de la carpeta per-user: `installDir`
+no existe, y `allowToChangeInstallationDirectory` es solo para el modo asistido.
+
+### Opciones
+
+| Opción | Efectos colaterales |
+|---|---|
+| Cambiar `name` npm a `tatana` | Cambia `updaterCacheDirName` (`tatana-agent-updater` pasa a `tatana-updater`), `APP_PACKAGE_NAME`, `APP_INSTALLER_STORE_FILE` y el `name` del lockfile. La SDD **D-T26** lo prohíbe ("El `name` npm `tatana-agent` no cambia: define `updaterCacheDirName`"), y `prueba-windows.ps1` y la SDD usan `%LOCALAPPDATA%\tatana-agent-updater\pending`. Además la carpeta quedaría en minúsculas |
+| `oneClick: false` o `perMachine: true` | Cambia la UX (asistente) o pide admin. La SDD lo prohíbe y el workflow valida `perMachine === false` |
+| Ampliar el parche de `multiUser.nsh` | Funciona, pero suma deuda en `node_modules` |
+| **Redefinir `APP_FILENAME` en `build/installer.nsh`** | Ninguno fuera de la carpeta. Es el **mismo valor** (`productFilename`) que electron-builder usa en los modos asistido y per-machine. La SDD **D-T25** ya decía "`APP_FILENAME` es `Tatana`" |
+
+**Elegí la última.** `nsis.include` se inserta **antes** que `installer.nsi`, y por lo tanto
+antes que `multiUser.nsh` (`NsisTarget.js:553-556`: `scriptGenerator.include(customInclude)` y
+después `build() + originalScript`). Así que un `!undef`/`!define` ahí reemplaza el `-D` de la
+línea de comandos para todo el script: instalador y desinstalador. Agregué una guarda en
+compilación: si `PRODUCT_FILENAME` no es `Tatana`, sale con `!error`. Así, un cambio de
+`productName` no mueve la carpeta en silencio. El parche de la ronda 3 no se tocó.
+
+### Coherencia (todo se deriva de `$INSTDIR` o de defines que no cambian)
+
+- **Registro:** `include/installer.nsh:104` escribe `InstallLocation = $INSTDIR` en
+  `HKCU\Software\<APP_GUID>`, y en las líneas 121-123 escribe `UninstallString`/`QuietUninstallString`
+  = `"$INSTDIR\Uninstall Tatana.exe"` en `...\Uninstall\<UNINSTALL_APP_KEY>`. GUID y clave
+  salen del `appId` y no cambian.
+- **Desinstalador:** `UNINSTALL_FILENAME = "Uninstall ${PRODUCT_FILENAME}.exe"` (`common.nsh:17`),
+  es decir `Uninstall Tatana.exe`, dentro de `$INSTDIR`. Su `un.onInit` vuelve a correr
+  `initMultiUser` y toma `INSTDIR` del `InstallLocation` del registro.
+- **Accesos directos:** `include/installer.nsh:177/203` apuntan a `$INSTDIR\${APP_EXECUTABLE_FILENAME}`
+  = `Programs\Tatana\Tatana.exe`. El nombre del acceso es `SHORTCUT_NAME=Tatana`.
+- **Actualización:** con `InstallLocation` en el registro, `setInstallModePerUser` usa esa
+  ruta (`ReadRegStr ... InstallLocation`). La versión probada se instala encima de
+  `Programs\Tatana`, y el desinstalador viejo se llama con `_?=$installationDir`
+  (`installUtil.nsh:224`). Del lado de `migrar-portable.ps1`, `Detectar` ve
+  `Uninstall Tatana.exe` en `Programs\Tatana` y devuelve 0, que es el camino de actualización.
+- **`APP_FILENAME` en otros lugares:** `uninstaller.nsh:219` (`RMDir $APPDATA\${APP_FILENAME}`)
+  solo corre con `deleteAppDataOnUninstall`, que es `false` para siempre (D-T25). Antes habría
+  sido `$APPDATA\tatana-agent` y ahora es `$APPDATA\Tatana`, pero igual no se ejecuta.
+  `portable.nsi` no se usa.
+
+### Otros lugares revisados (punto 3)
+
+- `DetenerInstalado -Carpeta "$INSTDIR"`: `INSTDIR` ya viene de `initMultiUser`, que corre antes
+  de `customInit`, así que ahora apunta a `Programs\Tatana`. Es correcto.
+- `agent-ui/src/main/agent-process.ts`: no tiene rutas de instalación hardcodeadas. Los datos van
+  a `%LOCALAPPDATA%\Tatana\data` y los binarios salen de `resources`.
+- Caché del updater: `win-unpacked/resources/app-update.yml` sigue con
+  `updaterCacheDirName: tatana-agent-updater`, igual que `prueba-windows.ps1:45` y la SDD. No
+  cambia.
+- Ejecutable: `win-unpacked/Tatana.exe`. No cambia.
+- `git grep` de `Programs\tatana-agent`: no hay ninguna coincidencia en el repo. La guía (README),
+  las SDD y `prueba-windows.ps1` ya usan `Programs\Tatana`.
+
+### Verificación (ronda 4)
+
+- **Build real con electron-builder 24.13.3** (macOS, salida al scratchpad), con un wrapper de
+  makensis vía `ELECTRON_BUILDER_NSIS_DIR` que guarda el script y su preprocesado (`-PPO`). Las
+  dos pasadas compilaron con `-WX`, con rc=0. El script generado tiene, en `setInstallModePerUser`:
+  ```
+  ReadRegStr $perUserInstallationFolder HKCU "Software\a39fdb0f-678a-5423-aafc-b2d1044576a0" InstallLocation
+  ...
+  StrCpy $0 "$LocalAppData\Programs"
+  StrCpy $INSTDIR "$0\Tatana"
+  ```
+  No aparece `SHGetKnownFolderPath` (el parche de la ronda 3 sigue aplicado), y aparece la línea
+  `[nsis] preInit: inicio de .onInit`. El `-PPO` se corta más adelante con "Plugin not found
+  StdUtils" porque en modo preprocesado no se aplica `!addplugindir`. Es un artefacto del
+  wrapper y no afecta la compilación real.
+- La guarda de `PRODUCT_FILENAME` se probó con el arnés de makensis 3.04 `-WX`: con
+  `-DPRODUCT_FILENAME=Tatana` compila, y con `Otro` falla en `installer.nsh:23` (`!error`).
+- `npm test`: 18 pass, 0 fail. Los dos `tsc`: 0. `actionlint`: rc=0.
+- Qué mirar en el próximo ensayo: el log de NSIS y `Programs\Tatana\Uninstall Tatana.exe` en el
+  paso 2, la actualización encima de la misma carpeta en el paso de update, y que la
+  desinstalación deje vacía `Programs\Tatana`.
+
+Archivos tocados en la ronda 4: `agent-ui/build/installer.nsh` y este archivo. Sin commit.

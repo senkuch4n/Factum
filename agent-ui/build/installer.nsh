@@ -12,6 +12,21 @@
 ; La evidencia (%LOCALAPPDATA%\Tatana\data y C:\Factum\Evidencia) NUNCA se toca:
 ; no hay customUnInstall y `deleteAppDataOnUninstall` es false (D-T25).
 ;
+; Carpeta de instalación (D-T5, D-T25): %LOCALAPPDATA%\Programs\Tatana, la misma del portátil.
+; En oneClick per-user, electron-builder 24 arma APP_FILENAME con el `name` npm ("tatana-agent").
+; Ver getWindowsInstallationDirName en app-builder-lib/out/targets/targetUtil.js: usa
+; productFilename solo si !oneClick || perMachine. El `name` no se cambia, porque define
+; updaterCacheDirName (D-T26). Así que acá se redefine APP_FILENAME con el productFilename.
+; Es el mismo valor que electron-builder usa en los otros modos. Este archivo se incluye antes de
+; installer.nsi/multiUser.nsh, así que vale para INSTDIR del instalador y del desinstalador.
+!if "${PRODUCT_FILENAME}" != "Tatana"
+  !error "PRODUCT_FILENAME es '${PRODUCT_FILENAME}': la carpeta de instalación tiene que ser Programs\Tatana (D-T5)"
+!endif
+!ifdef APP_FILENAME
+  !undef APP_FILENAME
+!endif
+!define APP_FILENAME "${PRODUCT_FILENAME}"
+
 ; customInit y customUnInit corren en .onInit / un.onInit: todavía no hay ventana ni
 ; control de detalles. Acá solo se usan instrucciones del núcleo de NSIS, nsExec::ExecToStack
 ; (no toca la ventana) y MessageBox protegido con ${IfNot} ${Silent}. Nada de
