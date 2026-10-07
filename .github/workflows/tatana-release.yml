@@ -535,6 +535,9 @@ jobs:
           name: canal
           path: ${{ runner.temp }}/canal
       - name: Prueba del instalador
+        # Menor que el del job (40): si algo se cuelga, el paso falla por timeout y igual corren
+        # "Juntar logs" y "Subir logs".
+        timeout-minutes: 25
         env:
           VERSION: ${{ needs.preparar.outputs.version }}
           CLIENT_URL: ${{ needs.preparar.outputs.client_url }}
@@ -547,7 +550,7 @@ jobs:
           -Version $env:VERSION
           -OrigenWeb $env:CLIENT_URL
       - name: Juntar logs
-        if: failure()
+        if: always()
         run: |
           $dst = Join-Path $env:RUNNER_TEMP 'logs-prueba'
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
@@ -561,7 +564,7 @@ jobs:
           Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'Tatana') -Filter '*.log' -Recurse -ErrorAction SilentlyContinue |
             ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $dst }
       - name: Subir logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: logs-prueba

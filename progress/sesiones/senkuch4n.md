@@ -100,3 +100,4 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-07 — PR #24 mergeado; usuario tatana-pub creado en el VPS y clave de publicación probada (estado=ninguna, ls rechazado, sin PTY). PR develop→main abierto.
 - 2026-10-07 — PR #25 mergeado → deploy automático OK (e1f1fee1). Ensayo tatana-release falla en 'Instalador base 0.0.1': PowerShell parte -c.directories.output=dist-base sin comillas (ENOENT). Rama fix/tatana-release-pwsh; lanzado implementer-backend.
 - 2026-10-07 — fix tatana-release: comillas en -c.directories.output (demostrado con pwsh 7.6.2). PR con ensayo en Windows.
+- 2026-10-07 — PR #26 mergeado. Ensayo: el instalador ya se arma; la prueba (prueba-windows.ps1) se cuelga en el paso 1 esperando install-portable.bat, que deja Tatana y Edge corriendo; timeout de 40 min sin logs. Rama fix/prueba-windows-portable; lanzado implementer-backend.
