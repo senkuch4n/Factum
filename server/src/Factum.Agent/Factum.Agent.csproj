@@ -13,6 +13,22 @@
 
   <ItemGroup>
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.3.1" />
+    <!-- ZIP de evidencia AES-256 (WinZip AE-2), misma versión que el backend
+         (zip-local-informe-servidor D-T1; ver Refactorizaciones/zip-cifrado-real.md §3). -->
+    <PackageReference Include="SharpZipLib" Version="1.4.2" />
+  </ItemGroup>
+
+  <!-- Tests de Factum.Agent (server/tests/Factum.Agent.Tests): ToolResolver, DshowDevices,
+       VersionParser, WindowsConsoleSignal. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Factum.Agent.Tests" />
+  </ItemGroup>
+
+  <!-- Config local de desarrollo (fuera del repo, ej. "Mock": true): no se copia a bin/ ni a
+       publish/, así el portátil nunca se la lleva. -->
+  <ItemGroup>
+    <Content Remove="appsettings.Local.json" />
+    <None Remove="appsettings.Local.json" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,37 @@
+name: Historia de Usuario
+description: Alta de una HU para el arnés RDD/SDD (entra en Backlog del Project "Factum – HU")
+title: "[HU] "
+labels: ["hu"]
+projects: ["senkuch4n/3"]
+body:
+  - type: input
+    id: slug
+    attributes:
+      label: Slug
+      description: kebab-case. Define docs/hu-<slug>.md, Refactorizaciones/<slug>.md y la rama feat/<slug>.
+      placeholder: usuarios-locales
+    validations:
+      required: true
+  - type: textarea
+    id: borrador
+    attributes:
+      label: Borrador
+      description: Qué se quiere y por qué, en lenguaje llano. El afinador lo convierte en docs/hu-<slug>.md.
+    validations:
+      required: true
+  - type: checkboxes
+    id: toca
+    attributes:
+      label: Toca
+      options:
+        - label: backend (server/)
+        - label: client (client/)
+        - label: agent-ui (agent-ui/)
+  - type: markdown
+    attributes:
+      value: |
+        **Artefactos (los completa el orquestador a medida que avanza):**
+        - RDD: `docs/hu-<slug>.md`
+        - SDD: `Refactorizaciones/<slug>.md`
+        - Implementación: `progress/impl_{backend,frontend}_<slug>.md`
+        - Revisión: `progress/review_<slug>.md`

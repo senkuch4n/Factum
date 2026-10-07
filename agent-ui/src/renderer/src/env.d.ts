@@ -40,8 +40,11 @@ interface TatanaAPI {
   removeAllListeners(channel: string): void
 }
 
-declare global {
-  interface Window {
-    tatana: TatanaAPI
-  }
+// Este archivo es un script global (sin import/export), así que `Window` se
+// amplía directamente: un `declare global` acá TypeScript lo ignora.
+interface Window {
+  tatana: TatanaAPI
 }
+
+/** Versión de agent-ui (package.json), inyectada por `define` de Vite. */
+declare const __TATANA_VERSION__: string

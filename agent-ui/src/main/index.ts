@@ -50,12 +50,29 @@ function createWindow(): void {
   }
 }
 
+/**
+ * Ícono de bandeja (marca "Sello", generado por ops/brand/build-brand.mjs).
+ * - macOS: template monocromo (trayTemplate.png + @2x), que el sistema tiñe
+ *   según la barra clara u oscura. Sin resize: rompería la variante @2x.
+ * - Windows: tray.ico multitamaño. Linux: tray.png (+ @2x).
+ * Empaquetada, la carpeta viaja con `extraResources` → `<resources>/tray`.
+ */
 function createTray(): void {
   let icon = nativeImage.createEmpty()
   try {
-    const raw = nativeImage.createFromPath(join(__dirname, '../../resources/tray-icon.png'))
-    icon = process.platform === 'darwin' ? raw.resize({ width: 16, height: 16 }) : raw
-  } catch { /* icon stays empty — user can add resources/tray-icon.png */ }
+    const trayDir = app.isPackaged
+      ? join(process.resourcesPath, 'tray')
+      : join(__dirname, '../../resources/tray')
+    const file =
+      process.platform === 'darwin' ? 'trayTemplate.png'
+      : process.platform === 'win32' ? 'tray.ico'
+      : 'tray.png'
+    const raw = nativeImage.createFromPath(join(trayDir, file))
+    if (!raw.isEmpty()) {
+      if (process.platform === 'darwin') raw.setTemplateImage(true)
+      icon = raw
+    }
+  } catch { /* el ícono queda vacío: la bandeja sigue funcionando sin imagen */ }
 
   tray = new Tray(icon)
   tray.setToolTip('Factum — Agente Tatana')

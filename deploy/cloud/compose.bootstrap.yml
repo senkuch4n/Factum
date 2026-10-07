@@ -1,0 +1,10 @@
+# Superadmin inicial 0 (A1 de la SDD despliegue-nube). _comun.sh suma este archivo con -f SOLO si
+# FACTUM_SUPERADMIN_0_DNI tiene valor: un elemento de Auth:Local:BootstrapSuperadmins con DNI vacío
+# hace que el backend no arranque (AuthSettingsResolver lo trata como DNI inválido).
+# Después del primer ingreso se vacían las FACTUM_SUPERADMIN_0_* del factum.env (guía, sección 9).
+services:
+  backend:
+    environment:
+      Auth__Local__BootstrapSuperadmins__0__Dni: ${FACTUM_SUPERADMIN_0_DNI:?Falta FACTUM_SUPERADMIN_0_DNI}
+      Auth__Local__BootstrapSuperadmins__0__Name: ${FACTUM_SUPERADMIN_0_NOMBRE:?Falta FACTUM_SUPERADMIN_0_NOMBRE}
+      Auth__Local__BootstrapSuperadmins__0__TemporaryPassword: ${FACTUM_SUPERADMIN_0_TEMPORAL:?Falta FACTUM_SUPERADMIN_0_TEMPORAL}

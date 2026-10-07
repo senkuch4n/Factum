@@ -1,0 +1,20 @@
+{
+  "$schema_comment": "Hooks del arnés RDD/SDD. Corren por fuera del control del agente, así que no se pueden saltear con instrucciones en el chat.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./ops/harness/verify.sh > /tmp/factum_harness_verify.log 2>&1 && echo '[harness] verify.sh OK' || (echo '[harness] verify.sh FALLÓ — revisar /tmp/factum_harness_verify.log antes de declarar nada aprobada/lista' && tail -30 /tmp/factum_harness_verify.log)"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(./ops/harness/verify.sh)"
+    ]
+  }
+}

@@ -11,7 +11,7 @@ public sealed class TatanaUpdatesOptions
     // Id o "namespace%2Fproyecto" (URL-encoded) del proyecto en GitLab
     public string ProjectId { get; set; } = string.Empty;
 
-    // Base para armar URLs de "raw job artifacts" (ej: "https://gitlab.com/mpf/factum")
+    // Base para armar URLs de "raw job artifacts" (ej: "https://gitlab.com/<grupo>/factum")
     public string ProjectRawBaseUrl { get; set; } = string.Empty;
 
     // Token de acceso de solo lectura — solo hace falta si el proyecto es privado

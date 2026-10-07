@@ -14,10 +14,26 @@
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.3.0" />
     <PackageReference Include="QuestPDF" Version="2025.4.4" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.3.1" />
+    <!-- ZIP de evidencia cifrado AES-256 (WinZip AE-2). Versión fija: ver Refactorizaciones/zip-cifrado-real.md §3. -->
+    <PackageReference Include="SharpZipLib" Version="1.4.2" />
+    <!-- Markdown de los textos del informe (BSD-2-Clause). Versión fija: ver Refactorizaciones/editor-texto-enriquecido.md §6.1. -->
+    <PackageReference Include="Markdig" Version="1.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Factum.Backend.Tests" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Include="Templates\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Identidad real del cliente (fuera del repo): no se copia a bin/ ni a publish/. -->
+  <ItemGroup>
+    <Content Remove="appsettings.Local.json" />
+    <None Remove="appsettings.Local.json" />
+    <Content Remove="branding\**" />
+    <None Remove="branding\**" />
   </ItemGroup>
 
 </Project>

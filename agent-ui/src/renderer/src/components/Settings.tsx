@@ -69,7 +69,7 @@ export function Settings({ config, onSave }: Props) {
             type="url"
             value={serverUrl}
             onChange={(e) => { setServerUrl(e.target.value); setCheckResult(null) }}
-            placeholder="http://factum.mpfsalta.gob.ar"
+            placeholder="https://factum.example.com"
             className="flex-1 px-3 py-2 rounded-xl text-sm outline-none border transition-colors"
             style={{
               background: 'var(--bg-elevated)',

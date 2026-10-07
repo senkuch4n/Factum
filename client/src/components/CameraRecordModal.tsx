@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import {
-  X, Check, RotateCcw, AlertTriangle, RefreshCw, Monitor, Settings,
-  Camera, Mic, Info, Circle, Square,
-} from "lucide-react";
+import { Button } from "primereact/button";
+import { Dropdown } from "primereact/dropdown";
+import { Check, RotateCcw, RefreshCw, Camera, Mic, Info, Loader2 } from "lucide-react";
+import { FOCUS_RING } from "@/lib/prime/pt/shared";
+import { cn } from "@/lib/utils";
+import { MEDIA_ACTIONS, MediaErrorGuide } from "./capture/MediaErrorGuide";
+import { FxMediaDialog } from "./overlay/FxMediaDialog";
 
 type Phase = "live" | "recording" | "preview" | "error";
 type ErrKind = "NotAllowed" | "NotFound" | "InUse" | "Other";
 
 interface Props {
+  open: boolean;
   onCapture: (blob: Blob, filename: string) => void;
   onClose: () => void;
 }
@@ -64,7 +67,45 @@ function fmtTime(sec: number) {
   return `${m}:${s}`;
 }
 
-export function CameraRecordModal({ onCapture, onClose }: Props) {
+const RECORD_BUTTON = cn(
+  "relative flex h-16 w-16 items-center justify-center rounded-full border-[3px] border-fx-accent",
+  "transition-transform duration-fx-fast ease-fx motion-safe:enabled:active:scale-95",
+  "disabled:cursor-not-allowed disabled:opacity-40",
+  FOCUS_RING,
+);
+
+const SUCCESS_CHIP =
+  "absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full border border-fx-success bg-fx-success-soft px-2.5 py-1 text-xs font-semibold text-fx-success";
+
+/**
+ * Filmar con una cámara externa (respaldo cuando el audio digital no se puede
+ * capturar). El componente público es solo el diálogo; el `Body` (stream,
+ * MediaRecorder, cronómetro) se monta al abrir y se desmonta al terminar la
+ * salida. Mientras graba no hay X ni Escape (DP4 A), para no perder la
+ * grabación por accidente; la máscara nunca cierra.
+ */
+export function CameraRecordModal({ open, onCapture, onClose }: Props) {
+  const [recording, setRecording] = useState(false);
+  return (
+    <FxMediaDialog
+      visible={open}
+      onHide={onClose}
+      title="Filmar con cámara externa"
+      icon={<Camera className="h-4 w-4" aria-hidden="true" />}
+      closable={!recording}
+    >
+      <CameraRecordBody
+        onCapture={onCapture}
+        onClose={onClose}
+        onPhaseChange={p => setRecording(p === "recording")}
+      />
+    </FxMediaDialog>
+  );
+}
+
+function CameraRecordBody({
+  onCapture, onClose, onPhaseChange,
+}: Omit<Props, "open"> & { onPhaseChange: (phase: Phase) => void }) {
   const videoRef    = useRef<HTMLVideoElement>(null);
   const streamRef   = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -153,17 +194,6 @@ export function CameraRecordModal({ onCapture, onClose }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Escape cierra el modal — mismo comportamiento que ya tenía el click afuera
-  // (línea onClick del overlay), así que no suma un riesgo nuevo de perder una
-  // grabación en curso, solo lo hace alcanzable también por teclado.
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-
   function changeVideoDevice(id: string) {
     setVideoDeviceId(id);
     stopStream();
@@ -223,284 +253,127 @@ export function CameraRecordModal({ onCapture, onClose }: Props) {
     onCapture(recordedBlob, `grabacion_camara_${ts}.webm`);
   }
 
+  useEffect(() => { onPhaseChange(phase); }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const guide = errKind ? ERROR_GUIDES[errKind] : null;
+  const showSelectors = phase === "live" && (videoDevices.length > 1 || audioDevices.length > 1);
 
   return (
-    <div
-      className="webcam-overlay"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <motion.div
-        className="w-full max-w-lg rounded-lg overflow-hidden"
-        style={{ background: "#000", boxShadow: "0 32px 80px rgba(0,0,0,0.7)" }}
-        initial={{ opacity: 0, scale: 0.93, y: 20 }}
-        animate={{ opacity: 1, scale: 1,    y: 0  }}
-        exit={{   opacity: 0, scale: 0.93, y: 20  }}
-        transition={{ type: "spring", stiffness: 280, damping: 24 }}
-      >
-        {/* ── Close button ── */}
-        {phase !== "recording" && (
-          <div className="absolute top-3 right-3 z-20">
-            <button
-              onClick={onClose}
-              className="w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-sm transition-colors"
-              style={{ background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.15)" }}
-            >
-              <X className="w-4 h-4 text-white" />
-            </button>
-          </div>
-        )}
+    <>
+      {(phase === "live" || phase === "recording") && (
+        <>
+          <p className="m-3 flex items-start gap-2 rounded-fx-md border border-fx-info bg-fx-info-soft px-3 py-2 text-xs text-fx-text">
+            <Info className="mt-px h-3.5 w-3.5 shrink-0 text-fx-info" aria-hidden="true" />
+            Apoyá o apuntá la cámara al celular, reproducí el audio que necesitás capturar, y grabá.
+          </p>
 
-        {/* ── Label chip ── */}
-        <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full backdrop-blur-sm"
-          style={{ background: "rgba(0,0,0,0.5)", border: "1px solid rgba(255,255,255,0.12)" }}
-        >
-          <Camera className="w-3.5 h-3.5 text-white" />
-          <span className="text-white text-xs font-semibold">Filmar con cámara externa</span>
-        </div>
+          <div className="relative bg-fx-bg">
+            {/* contenido de imagen */}
+            <video ref={videoRef} autoPlay playsInline muted className="block max-h-[55vh] w-full object-cover" />
 
-        <AnimatePresence mode="wait">
-
-          {/* ─── LIVE / RECORDING ─── */}
-          {(phase === "live" || phase === "recording") && (
-            <motion.div
-              key="live"
-              className="relative"
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            >
-              <video
-                ref={videoRef}
-                autoPlay playsInline muted
-                className="w-full block"
-                style={{ maxHeight: "70vh", objectFit: "cover", background: "#111" }}
-              />
-
-              {/* Tip de uso (arriba, debajo del chip) */}
-              <div className="absolute top-12 left-3 right-3 z-10 flex items-start gap-1.5 px-2.5 py-2 rounded-md backdrop-blur-sm"
-                style={{ background: "rgba(245,158,11,0.18)", border: "1px solid rgba(245,158,11,0.35)" }}
-              >
-                <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#f2b544" }} />
-                <p className="text-[11px] leading-snug text-white/90">
-                  Apoyá o apuntá la cámara al celular, reproducí el audio que necesitás capturar, y grabá.
-                </p>
-              </div>
-
-              {/* Selectores de dispositivo (solo si hay más de una opción) */}
-              {phase === "live" && (videoDevices.length > 1 || audioDevices.length > 1) && (
-                <div className="absolute top-24 left-3 right-3 z-10 flex gap-2">
-                  {videoDevices.length > 1 && (
-                    <label className="flex-1 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] backdrop-blur-sm"
-                      style={{ background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.15)" }}
-                    >
-                      <Camera className="w-3 h-3 text-white/70 flex-shrink-0" />
-                      <select
-                        className="flex-1 bg-transparent text-white outline-none min-w-0 focus-visible:ring-2 focus-visible:ring-white/70 rounded"
-                        value={videoDeviceId}
-                        onChange={e => changeVideoDevice(e.target.value)}
-                      >
-                        {videoDevices.map(d => (
-                          <option key={d.deviceId} value={d.deviceId} style={{ color: "#000" }}>
-                            {d.label || "Cámara"}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                  {audioDevices.length > 1 && (
-                    <label className="flex-1 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] backdrop-blur-sm"
-                      style={{ background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.15)" }}
-                    >
-                      <Mic className="w-3 h-3 text-white/70 flex-shrink-0" />
-                      <select
-                        className="flex-1 bg-transparent text-white outline-none min-w-0 focus-visible:ring-2 focus-visible:ring-white/70 rounded"
-                        value={audioDeviceId}
-                        onChange={e => changeAudioDevice(e.target.value)}
-                      >
-                        {audioDevices.map(d => (
-                          <option key={d.deviceId} value={d.deviceId} style={{ color: "#000" }}>
-                            {d.label || "Micrófono"}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                </div>
-              )}
-
-              {/* REC badge + cronómetro */}
-              {phase === "recording" && (
-                <div className="absolute top-12 right-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full"
-                  style={{ background: "rgba(220,38,38,0.9)" }}
-                >
-                  <motion.span
-                    className="w-2 h-2 rounded-full bg-white"
-                    animate={{ opacity: [1, 0.3, 1] }}
-                    transition={{ duration: 1.1, repeat: Infinity }}
-                  />
-                  <span className="text-white text-[11px] font-bold tabular-nums">REC {fmtTime(elapsed)}</span>
-                </div>
-              )}
-
-              {/* Loading */}
-              {!videoReady && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70">
-                  <div className="w-9 h-9 rounded-full border-2 border-white/15 border-t-white animate-spin" />
-                  <p className="text-white/60 text-xs">Iniciando cámara...</p>
-                </div>
-              )}
-
-              {/* Controles */}
+            {phase === "recording" && (
               <div
-                className="absolute bottom-0 inset-x-0 flex items-center justify-between px-6 py-5"
-                style={{ background: "linear-gradient(to top, rgba(0,0,0,0.75) 0%, transparent 100%)" }}
+                role="timer"
+                aria-label="Tiempo de grabación"
+                className="absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-fx-danger-fill px-2.5 py-1 text-xs font-bold tabular-nums text-fx-on-danger"
               >
-                {phase === "live" ? (
-                  <>
-                    <button
-                      onClick={onClose}
-                      className="text-white/70 text-sm font-medium hover:text-white transition-colors py-2 px-3"
-                    >
-                      Cancelar
-                    </button>
-                    <motion.button
-                      onClick={startRecording}
-                      disabled={!videoReady}
-                      whileTap={{ scale: 0.88 }}
-                      whileHover={{ scale: 1.06 }}
-                      className="relative"
-                      style={{ opacity: videoReady ? 1 : 0.4, cursor: videoReady ? "pointer" : "not-allowed" }}
-                    >
-                      <div className="w-16 h-16 rounded-full flex items-center justify-center"
-                        style={{ border: "3px solid rgba(255,255,255,0.8)" }}
-                      >
-                        <Circle className="w-11 h-11 fill-red-600 text-red-600" />
-                      </div>
-                    </motion.button>
-                    <div className="w-20" />
-                  </>
-                ) : (
-                  <>
-                    <div className="flex-1" />
-                    <motion.button
-                      onClick={stopRecording}
-                      whileTap={{ scale: 0.88 }}
-                      whileHover={{ scale: 1.06 }}
-                      className="relative"
-                    >
-                      <div className="w-16 h-16 rounded-full flex items-center justify-center"
-                        style={{ border: "3px solid rgba(255,255,255,0.8)" }}
-                      >
-                        <Square className="w-9 h-9 fill-white text-white" />
-                      </div>
-                    </motion.button>
-                    <div className="flex-1" />
-                  </>
-                )}
+                <span className="h-2 w-2 rounded-full bg-fx-on-danger motion-safe:animate-pulse" aria-hidden="true" />
+                REC {fmtTime(elapsed)}
               </div>
-            </motion.div>
+            )}
+
+            {!videoReady && (
+              <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-fx-overlay">
+                <Loader2 className="h-8 w-8 animate-spin text-fx-text" aria-hidden="true" />
+                <p className="m-0 text-xs text-fx-text">Iniciando cámara…</p>
+              </div>
+            )}
+          </div>
+
+          {showSelectors && (
+            <div className="grid gap-2 px-3 pb-3 pt-3 sm:grid-cols-2">
+              {videoDevices.length > 1 && (
+                <div className="min-w-0">
+                  <label htmlFor="camrec-video" className="mb-1 flex items-center gap-1.5 text-fx-label uppercase text-fx-text-2">
+                    <Camera className="h-3.5 w-3.5" aria-hidden="true" /> Cámara
+                  </label>
+                  <Dropdown
+                    inputId="camrec-video"
+                    value={videoDeviceId}
+                    onChange={e => changeVideoDevice(e.value)}
+                    options={videoDevices.map(d => ({ label: d.label || "Cámara", value: d.deviceId }))}
+                    panelClassName="dark"
+                    className="w-full"
+                  />
+                </div>
+              )}
+              {audioDevices.length > 1 && (
+                <div className="min-w-0">
+                  <label htmlFor="camrec-audio" className="mb-1 flex items-center gap-1.5 text-fx-label uppercase text-fx-text-2">
+                    <Mic className="h-3.5 w-3.5" aria-hidden="true" /> Micrófono
+                  </label>
+                  <Dropdown
+                    inputId="camrec-audio"
+                    value={audioDeviceId}
+                    onChange={e => changeAudioDevice(e.value)}
+                    options={audioDevices.map(d => ({ label: d.label || "Micrófono", value: d.deviceId }))}
+                    panelClassName="dark"
+                    className="w-full"
+                  />
+                </div>
+              )}
+            </div>
           )}
 
-          {/* ─── PREVIEW ─── */}
-          {phase === "preview" && recordedURL && (
-            <motion.div
-              key="preview"
-              className="relative"
-              initial={{ opacity: 0, scale: 1.04 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
-            >
-              <video
-                src={recordedURL}
-                controls
-                className="w-full block"
-                style={{ maxHeight: "70vh", background: "#111" }}
-              />
-
-              <div className="absolute top-14 left-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold backdrop-blur-sm"
-                style={{ background: "rgba(16,185,129,0.25)", border: "1px solid rgba(16,185,129,0.5)", color: "#6ee7b7" }}
-              >
-                <Check className="w-3 h-3" /> Grabación lista — {fmtTime(elapsed)}
-              </div>
-
-              <div className="flex items-center justify-between gap-3 px-5 py-4" style={{ background: "var(--bg-surface)" }}>
-                <motion.button
-                  onClick={retake}
-                  whileTap={{ scale: 0.96 }}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-semibold"
-                  style={{ background: "var(--btn-secondary-bg)", border: "1px solid var(--border-md)", color: "var(--text-secondary)" }}
-                >
-                  <RotateCcw className="w-4 h-4" /> Repetir
-                </motion.button>
-                <motion.button
-                  onClick={confirm}
-                  whileTap={{ scale: 0.96 }}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-bold text-white"
-                  style={{ background: "var(--green)", boxShadow: "0 1px 2px rgba(0,0,0,0.12)" }}
-                >
-                  <Check className="w-4 h-4" /> Usar este video
-                </motion.button>
-              </div>
-            </motion.div>
-          )}
-
-          {/* ─── ERROR ─── */}
-          {phase === "error" && guide && (
-            <motion.div
-              key="error"
-              className="p-5 space-y-4"
-              style={{ background: "var(--bg-surface)", minHeight: 240 }}
-              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            >
-              <div className="h-6" />
-
-              <div className="flex items-start gap-3 p-3.5 rounded-md border border-red-500/20 bg-red-500/[0.07]">
-                <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-                <p className="font-semibold text-red-500 dark:text-red-300 text-sm">{guide.title}</p>
-              </div>
-
-              <div>
-                <p className="section-label mb-2.5 flex items-center gap-1.5">
-                  <Settings className="w-3 h-3" /> Cómo solucionarlo
-                </p>
-                <ol className="space-y-2">
-                  {guide.steps.map((step, i) => (
-                    <motion.li
-                      key={i}
-                      className="flex gap-3 text-sm"
-                      style={{ color: "var(--text-secondary)" }}
-                      initial={{ opacity: 0, x: -8 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.07 }}
-                    >
-                      <span
-                        className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5"
-                        style={{ background: "rgba(13,148,136,0.12)", color: "var(--blue)", border: "1px solid rgba(13,148,136,0.2)" }}
-                      >
-                        {i + 1}
-                      </span>
-                      {step}
-                    </motion.li>
-                  ))}
-                </ol>
-
-                {guide.extra && (
-                  <div className="mt-3 p-3 rounded-md text-xs flex gap-2" style={{ background: "var(--bg-elevated)", color: "var(--text-muted)" }}>
-                    <Monitor className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-teal-500" />
-                    {guide.extra}
-                  </div>
-                )}
-              </div>
-
-              <button className="btn-primary w-full" onClick={init}>
-                <RefreshCw className="w-4 h-4" /> Intentar de nuevo
+          <div className={MEDIA_ACTIONS}>
+            {phase === "live" ? (
+              <>
+                <div className="flex-1">
+                  <Button type="button" text severity="secondary" label="Cancelar" onClick={onClose} className="min-h-11" />
+                </div>
+                <button type="button" onClick={startRecording} disabled={!videoReady} aria-label="Iniciar grabación" className={RECORD_BUTTON}>
+                  <span className="h-11 w-11 rounded-full bg-fx-danger-fill" aria-hidden="true" />
+                </button>
+                {/* Espaciador: centra el botón de grabar */}
+                <span className="flex-1" aria-hidden="true" />
+              </>
+            ) : (
+              <button type="button" onClick={stopRecording} aria-label="Detener grabación" className={cn(RECORD_BUTTON, "mx-auto")}>
+                <span className="h-7 w-7 rounded-fx-sm bg-fx-text" aria-hidden="true" />
               </button>
+            )}
+          </div>
+        </>
+      )}
 
-              <button className="btn-ghost w-full text-sm" onClick={onClose}>
-                Cancelar
-              </button>
-            </motion.div>
-          )}
+      {phase === "preview" && recordedURL && (
+        <>
+          <div className="relative bg-fx-bg motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]">
+            {/* contenido de imagen */}
+            <video src={recordedURL} controls className="block max-h-[55vh] w-full" />
+            <span className={SUCCESS_CHIP}>
+              <Check className="h-3 w-3" aria-hidden="true" /> Grabación lista — {fmtTime(elapsed)}
+            </span>
+          </div>
+          <div className={MEDIA_ACTIONS}>
+            <Button type="button" severity="secondary" icon={<RotateCcw className="h-4 w-4" aria-hidden="true" />}
+              label="Repetir" onClick={retake} className="flex-1 min-h-11" />
+            <Button type="button" icon={<Check className="h-4 w-4" aria-hidden="true" />}
+              label="Usar este video" onClick={confirm} className="flex-1 min-h-11" />
+          </div>
+        </>
+      )}
 
-        </AnimatePresence>
-      </motion.div>
-    </div>
+      {phase === "error" && guide && (
+        <>
+          <MediaErrorGuide guide={guide} />
+          <div className={MEDIA_ACTIONS}>
+            <Button type="button" text severity="secondary" label="Cancelar" onClick={onClose} className="min-h-11" />
+            <Button type="button" icon={<RefreshCw className="h-4 w-4" aria-hidden="true" />}
+              label="Intentar de nuevo" onClick={init} className="min-h-11" />
+          </div>
+        </>
+      )}
+    </>
   );
 }

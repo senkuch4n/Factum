@@ -7,15 +7,22 @@ namespace Factum.Agent.Controllers;
 
 [ApiController]
 [Route("/")]
-public sealed class HealthController(IOptions<AgentOptions> opts, IIosService ios) : ControllerBase
+public sealed class HealthController(IOptions<AgentOptions> opts, IIosService ios,
+    ToolInventory inventory, ICaseZipService zips) : ControllerBase
 {
+    // tools: adb/scrcpy/ffmpeg/python con found/source/path/version (SDD grabacion-android-windows
+    // §4.2). La resolución es real también en mock. Sincrónico e instantáneo: las versiones salen
+    // de un caché que se llena en segundo plano.
     [HttpGet("health")]
     public IActionResult Health() => Ok(new
     {
         status = "ok",
         version = "2.0.0",
         mock = opts.Value.Mock,
-        ios_available = ios.IsAvailable
+        ios_available = ios.IsAvailable,
+        tools = inventory.Snapshot(),
+        // zip-local-informe-servidor §6.1: la web detecta un Tatana viejo por esta lista.
+        capabilities = new[] { "case_evidence_v1" },
     });
 
     // El client (que sí tiene el JWT del fiscal) usa esto para reenviar la
@@ -28,6 +35,9 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
         os_user = Environment.UserName,
         version = "2.0.0",
         mode = IsPortable() ? "portable" : "installed",
+        // Carpeta base del ZIP (DP4) y si cae dentro de OneDrive/iCloud (la web lo avisa).
+        evidence_directory = zips.EvidenceDirectory,
+        evidence_directory_synced = Factum.Agent.Common.AgentFileNames.IsSyncedFolder(zips.EvidenceDirectory),
     });
 
     // Distingue el modo portátil (zip descomprimido con adb/pymobiledevice3

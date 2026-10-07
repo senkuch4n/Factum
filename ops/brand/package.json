@@ -1,0 +1,13 @@
+{
+  "name": "factum-brand",
+  "private": true,
+  "type": "module",
+  "description": "Genera los assets de marca de Factum (logo Sello) de forma reproducible.",
+  "scripts": {
+    "build": "node build-brand.mjs"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "2.6.2",
+    "opentype.js": "1.3.4"
+  }
+}

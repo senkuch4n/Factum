@@ -1,0 +1,158 @@
+# Factum — deploy automático a producción (SDD despliegue-nube §6.6, D9). Ver docs/despliegue-nube.md, sección 11.
+#
+# En cada push a main (el merge de develop -> main):
+#   1. "imagenes": arma backend y frontend (linux/amd64) y los publica en GHCR con el tag sha-<commit>.
+#   2. "desplegar": solo si la variable FACTUM_DEPLOY_HABILITADO es 'true' (DT11). Entra por SSH al VPS
+#      con una clave limitada por command= a deploy-forzado.sh, que corre desplegar.sh --tag sha-<commit>
+#      (con chequeo de salud y rollback automático), y después chequea /health/ready desde afuera.
+#
+# Secrets: DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS, DEPLOY_HOST.
+# Variables: FACTUM_URL_PUBLICA (obligatoria), FACTUM_AGENT_URL, FACTUM_TATANA_DESCARGA_URL,
+#            DEPLOY_PORT, DEPLOY_USER, FACTUM_DEPLOY_HABILITADO.
+# Los valores de vars/secrets llegan a los "run:" por env:, nunca interpolados en el script.
+name: Desplegar producción
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: despliegue-produccion
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRO: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  imagenes:
+    name: Imágenes en GHCR
+    # Solo desde main, también con workflow_dispatch: lanzarlo desde otra rama no publica ni mueve latest.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Validar variables
+        env:
+          URL_PUBLICA: ${{ vars.FACTUM_URL_PUBLICA }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          if [[ ! "$URL_PUBLICA" =~ ^https://[a-z0-9.-]+$ ]]; then
+            echo "::error::Falta la variable FACTUM_URL_PUBLICA (https://<dominio>, en minúsculas y sin barra final). Cargala en Settings > Secrets and variables > Actions > Variables (guía, sección 7)."
+            exit 1
+          fi
+          if [[ "$OWNER" != "${OWNER,,}" ]]; then
+            echo "::error::El dueño del repo tiene mayúsculas; GHCR exige minúsculas. Ajustá REGISTRO en este workflow."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login en GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Backend
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: server/src/Factum.Backend
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.REGISTRO }}/factum-backend:sha-${{ github.sha }}
+            ${{ env.REGISTRO }}/factum-backend:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Frontend
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: client
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          build-args: |
+            NEXT_PUBLIC_BACKEND_URL=${{ vars.FACTUM_URL_PUBLICA }}
+            NEXT_PUBLIC_AGENT_URL=${{ vars.FACTUM_AGENT_URL || 'http://localhost:8765' }}
+            NEXT_PUBLIC_TATANA_DOWNLOAD_URL=${{ vars.FACTUM_TATANA_DESCARGA_URL }}
+          tags: |
+            ${{ env.REGISTRO }}/factum-frontend:sha-${{ github.sha }}
+            ${{ env.REGISTRO }}/factum-frontend:latest
+          # desplegar.sh compara factum.url_publica con https://$FACTUM_DOMINIO antes de tocar nada (DT2).
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            factum.url_publica=${{ vars.FACTUM_URL_PUBLICA }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  desplegar:
+    name: Desplegar en el VPS
+    needs: imagenes
+    # DT11: hasta que el VPS esté configurado, solo se publican imágenes (y el run queda en verde).
+    # Y, como "imagenes", solo desde main (aunque se lance a mano desde otra rama).
+    if: github.ref == 'refs/heads/main' && vars.FACTUM_DEPLOY_HABILITADO == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # DT12 / P3: el environment queda para el historial; la aprobación manual, si el plan la permite.
+    environment:
+      name: production
+      url: ${{ vars.FACTUM_URL_PUBLICA }}
+    steps:
+      - name: Preparar SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          if [[ -z "$DEPLOY_SSH_KEY" || -z "$DEPLOY_KNOWN_HOSTS" ]]; then
+            echo "::error::Faltan los secrets DEPLOY_SSH_KEY o DEPLOY_KNOWN_HOSTS (guía, sección 11)."
+            exit 1
+          fi
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Desplegar
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'deploy' }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [[ -z "$DEPLOY_HOST" ]]; then
+            echo "::error::Falta el secret DEPLOY_HOST (guía, sección 11)."
+            exit 1
+          fi
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "desplegar sha-$SHA"
+
+      - name: Chequeo externo
+        env:
+          URL_PUBLICA: ${{ vars.FACTUM_URL_PUBLICA }}
+        run: curl -fsS --retry 6 --retry-delay 10 --retry-all-errors "$URL_PUBLICA/health/ready"
+
+      - name: Limpiar clave
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

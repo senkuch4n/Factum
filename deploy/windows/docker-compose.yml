@@ -1,0 +1,111 @@
+# Factum — instalación local en una PC Windows (Docker Desktop + WSL2).
+# Se usa SIEMPRE a través de los scripts (scripts\_comun.ps1), que pasan
+# --project-directory, -f, --env-file C:\Factum\config\.env y -p $COMPOSE_PROJECT_NAME.
+# En el perfil de memoria "poca RAM" (FACTUM_PERFIL_MEMORIA=poca) los scripts suman además
+# -f docker-compose.poca-ram.yml (solo límites de memoria; ver ese archivo).
+# Tatana NO va acá: corre nativo en Windows (USB). Ver docs/instalacion-windows.md.
+#
+# Reglas de este archivo (SDD instalacion-local-docker, §6.4):
+# - Sin "name:" de proyecto, sin "container_name:" y sin volúmenes con nombre absoluto:
+#   el proyecto lo da -p (factum en el estudio).
+# - Imágenes con tag exacto y pull_policy: never (viajan en el paquete; nunca se descargan).
+#   armar-paquete.sh lee el tag de mongo de ESTE archivo: es la única fuente.
+# - Web y API publican solo en 127.0.0.1; Mongo no se publica.
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  mongo:
+    image: mongo:7.0.43
+    pull_policy: never
+    volumes:
+      - mongo-data:/data/db
+    networks: [datos]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging: *logging
+
+  backend:
+    image: factum-backend:${FACTUM_VERSION:?Falta FACTUM_VERSION en config/.env}
+    pull_policy: never
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      MongoDb__ConnectionString: mongodb://mongo:27017
+      MongoDb__DatabaseName: factum
+      Jwt__Secret: ${FACTUM_JWT_SECRET:?Falta FACTUM_JWT_SECRET en config/.env}
+      Jwt__ExpiryHours: ${FACTUM_JWT_EXPIRY_HOURS:-8}
+      Auth__Mode: ${FACTUM_AUTH_MODE:-dev}
+      # dev fuera de Development exige el flag. Default true: las instalaciones ya hechas no
+      # tienen la variable en config\.env y tienen que seguir arrancando (usuarios-locales D1).
+      Auth__AllowDevOutsideDevelopment: ${FACTUM_AUTH_ALLOW_DEV:-true}
+      Storage__DataDirectory: /data
+      Integrations__Support__Enabled: "false"
+    volumes:
+      # Sintaxis larga: evita el problema del "C:" en la corta y, con create_host_path: false,
+      # que Docker cree una CARPETA appsettings.Local.json si falta el archivo.
+      - type: bind
+        source: ${FACTUM_HOME:?Falta FACTUM_HOME en config/.env}/evidencia
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FACTUM_HOME}/config/appsettings.Local.json
+        target: /app/appsettings.Local.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FACTUM_HOME}/config/branding
+        target: /app/branding
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks: [web, datos]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 40s
+    logging: *logging
+
+  frontend:
+    image: factum-frontend:${FACTUM_VERSION}
+    pull_policy: never
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks: [web]
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    logging: *logging
+
+networks:
+  web: {}
+  datos:
+    internal: true # Mongo sin salida ni entrada fuera de Docker; solo el backend lo ve
+
+volumes:
+  mongo-data: {}

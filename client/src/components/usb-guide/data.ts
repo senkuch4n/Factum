@@ -65,7 +65,7 @@ export const IOS_STEPS: IOSStep[] = [
     type: "terminal",
     icon: Terminal,
     title: "Ejecutá el comando de activación en la Mac",
-    detail: "Abrí la Terminal en la Mac del gabinete y ejecutá el siguiente comando con el iPhone conectado por USB. Esto habilita el Modo Desarrollador sin necesidad de Xcode.",
+    detail: "Abrí la Terminal en la Mac y ejecutá el siguiente comando con el iPhone conectado por USB. Esto habilita el Modo Desarrollador sin necesidad de Xcode.",
     command: "/usr/bin/python3 -m pymobiledevice3 amfi enable-developer-mode",
     tip: "El comando tarda 5-10 segundos. Si dice 'Device is not connected': desconectá, desbloqueá el iPhone y volvé a conectar el cable.",
   },

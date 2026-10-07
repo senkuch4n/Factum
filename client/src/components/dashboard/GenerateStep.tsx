@@ -1,21 +1,53 @@
 "use client";
 
 import { useState } from "react";
-import { motion } from "framer-motion";
+import { Button } from "primereact/button";
+import { Tag } from "primereact/tag";
 import {
-  Loader2, Sparkles, RotateCcw, ShieldCheck, Shield, User,
+  ArrowLeft, FileCheck2, ShieldCheck, Shield, User,
   FileText, Video, ImageIcon, Paperclip, Check, Lock, Fingerprint, FolderClosed,
+  AlertTriangle, ArrowRight, Archive, HardDrive, CheckCircle2, Circle, Loader2, Server,
 } from "lucide-react";
 import type { Case, CapturedFile } from "@/types";
-import { agentFileURL } from "@/lib/agent";
+import { agent, agentFileURL, type ZipProgress } from "@/lib/agent";
+import { formatBytesPair } from "@/lib/format";
+import { useAgentIdentity } from "@/hooks/useAgentIdentity";
+import { usePublicConfig } from "@/hooks/usePublicConfig";
+import { describeMissing, getMissingRequirements, type MissingRequirement } from "@/lib/pericial";
+import { useReportImages } from "@/lib/report-images";
+import { StepHeader } from "@/components/wizard/StepHeader";
+import { StepActions } from "@/components/wizard/StepActions";
 
 interface Props {
   currentCase: Case;
   files: CapturedFile[];
   loading: boolean;
+  /** Claves `missing` del último `400` del servidor (se suman a las calculadas acá). */
+  serverMissing?: string[];
   onBack: () => void;
   onGenerate: () => void;
+  /** Lleva al paso del dato que falta y enfoca su campo. */
+  onGoToField: (step: number, fieldId: string) => void;
+  /**
+   * Flujo agent (zip-local-informe-servidor §7.7): por qué no se puede generar
+   * desde esta PC (Tatana caído/viejo u otra PC). Bloquea el botón.
+   */
+  agentBlocker?: string | null;
+  /** Progreso de la generación en dos tramos (solo flujo agent). */
+  progress?: GenerateProgress | null;
 }
+
+/** Tramo actual de la generación del flujo agent y, en el primero, el avance del ZIP (WS). */
+export interface GenerateProgress {
+  stage: "zip" | "report";
+  zip?: ZipProgress | null;
+}
+
+const ZIP_PHASE_LABEL: Record<ZipProgress["phase"], string> = {
+  hashing: "Verificando la evidencia",
+  zipping: "Armando el ZIP",
+  verifying: "Verificando el ZIP",
+};
 
 const isVideo = (n: string) => /\.(mp4|mkv|mov|avi)$/i.test(n);
 const isImage = (n: string) => /\.(png|jpe?g|webp|gif|bmp|heic)$/i.test(n);
@@ -24,19 +56,20 @@ const isDenunciante = (n: string) => n.includes("denunciante");
 const isIdentity = (n: string) => isFuncionario(n) || isDenunciante(n);
 const isCapture = (n: string) => !isIdentity(n) && (n.includes("screenshot") || n.includes("captura"));
 
+const BLOCK_TITLE = "m-0 text-fx-label uppercase text-fx-text-2";
+
 /* ── Miniatura con fallback a ícono (mismo criterio que el Paso 3). ── */
-function Thumb({ name, kind }: { name: string; kind: "image" | "video" | "doc" }) {
+function Thumb({ name, kind, url }: { name: string; kind: "image" | "video" | "doc"; url: string }) {
   const [errored, setErrored] = useState(false);
   const showImg = kind === "image" && !errored;
   return (
     <div
-      className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg"
-      style={{ border: "1px solid var(--border)", background: "var(--bg-elevated)" }}
+      className="relative h-14 w-14 shrink-0 overflow-hidden rounded-fx-md border border-fx-border bg-fx-surface-2"
       title={name}
     >
       {showImg ? (
         <img
-          src={agentFileURL(name)}
+          src={url}
           alt={name}
           className="h-full w-full object-cover"
           onError={() => setErrored(true)}
@@ -45,58 +78,53 @@ function Thumb({ name, kind }: { name: string; kind: "image" | "video" | "doc" }
       ) : (
         <div className="flex h-full w-full items-center justify-center">
           {kind === "video"
-            ? <Video className="h-5 w-5" style={{ color: "#8b5cf6" }} />
-            : <FileText className="h-5 w-5" style={{ color: "var(--text-muted)" }} />}
+            ? <Video className="h-5 w-5 text-fx-text-2" aria-hidden="true" />
+            : <FileText className="h-5 w-5 text-fx-text-3" aria-hidden="true" />}
         </div>
       )}
       {kind === "video" && showImg && (
-        <span className="absolute inset-0 flex items-center justify-center bg-black/30">
-          <Video className="h-4 w-4 text-white" />
+        /* contenido de imagen: velo sobre la miniatura del video */
+        <span className="absolute inset-0 flex items-center justify-center bg-black/40 text-white">
+          <Video className="h-4 w-4" aria-hidden="true" />
         </span>
       )}
     </div>
   );
 }
 
-/* ── Confirmación de una identidad (fiscal / denunciante) con su foto. ── */
+/* ── Confirmación de una identidad (perito / titular) con su foto. ── */
 function IdentityConfirm({
-  label, role, icon: Icon, file,
-}: { label: string; role: string; icon: React.ElementType; file?: CapturedFile }) {
+  label, role, icon: Icon, file, urlOf,
+}: { label: string; role: string; icon: React.ElementType; file?: CapturedFile; urlOf: (f: CapturedFile) => string }) {
   const [errored, setErrored] = useState(false);
   const showImg = !!file && !errored;
   return (
-    <div
-      className="flex items-center gap-3 rounded-xl px-3 py-2.5"
-      style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}
-    >
-      <div className="relative h-11 w-11 flex-shrink-0">
+    <div className="flex items-center gap-3 rounded-fx-lg border border-fx-border bg-fx-surface-2 px-3 py-2.5">
+      <div className="relative h-11 w-11 shrink-0">
         {showImg ? (
           <img
-            src={agentFileURL(file!.name)}
+            src={urlOf(file!)}
             alt={label}
-            className="h-full w-full rounded-full object-cover"
-            style={{ border: "1px solid var(--border)" }}
+            className="h-full w-full rounded-full border border-fx-border object-cover"
             onError={() => setErrored(true)}
             ref={el => { if (el?.complete && el.naturalWidth === 0 && !errored) setErrored(true); }}
           />
         ) : (
-          <span
-            className="flex h-full w-full items-center justify-center rounded-full border-2 border-dashed"
-            style={{ borderColor: file ? "var(--border-md)" : "var(--border)" }}
-          >
-            <Icon className="h-4 w-4" style={{ color: "var(--text-muted)" }} />
+          <span className="flex h-full w-full items-center justify-center rounded-full border-2 border-dashed border-fx-border-strong">
+            <Icon className="h-4 w-4 text-fx-text-3" aria-hidden="true" />
           </span>
         )}
         {file && (
-          <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 ring-2 ring-[var(--bg-elevated)]">
-            <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />
+          <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-fx-success text-fx-surface-1 ring-2 ring-fx-surface-2">
+            <Check className="h-2.5 w-2.5" strokeWidth={3} aria-hidden="true" />
+            <span className="sr-only">Foto cargada</span>
           </span>
         )}
       </div>
       <div className="min-w-0">
-        <p className="text-sm font-semibold leading-tight" style={{ color: "var(--text-primary)" }}>{label}</p>
-        <p className="text-xs" style={{ color: file ? "var(--text-muted)" : "#f59e0b" }}>
-          {file ? role : "Sin foto"}
+        <p className="m-0 text-fx-body-sm font-semibold leading-tight text-fx-text">{label}</p>
+        <p className="m-0 text-xs text-fx-text-3">
+          {file ? role : "Sin foto · opcional"}
         </p>
       </div>
     </div>
@@ -105,24 +133,47 @@ function IdentityConfirm({
 
 /* ── Grupo de evidencia — título + conteo + fila de miniaturas. ── */
 function EvidenceGroup({
-  title, icon: Icon, items, kind,
-}: { title: string; icon: React.ElementType; items: CapturedFile[]; kind: "image" | "video" | "doc" }) {
+  title, icon: Icon, items, kind, urlOf,
+}: { title: string; icon: React.ElementType; items: CapturedFile[]; kind: "image" | "video" | "doc"; urlOf: (f: CapturedFile) => string }) {
   if (items.length === 0) return null;
   return (
     <div>
-      <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-        <Icon className="h-3.5 w-3.5" style={{ color: "var(--text-muted)" }} />
+      <p className="m-0 mb-1.5 flex items-center gap-1.5 text-xs font-medium text-fx-text-2">
+        <Icon className="h-3.5 w-3.5 text-fx-text-3" aria-hidden="true" />
         {title}
-        <span style={{ color: "var(--text-muted)" }}>· {items.length}</span>
+        <span className="text-fx-text-3">· {items.length}</span>
       </p>
       <div className="flex flex-wrap gap-2">
-        {items.map(f => <Thumb key={f.name} name={f.name} kind={kind} />)}
+        {items.map(f => <Thumb key={f.name} name={f.name} kind={kind} url={urlOf(f)} />)}
       </div>
     </div>
   );
 }
 
-export function GenerateStep({ currentCase, files, loading, onBack, onGenerate }: Props) {
+export function GenerateStep({
+  currentCase, files, loading, serverMissing = [], onBack, onGenerate, onGoToField,
+  agentBlocker = null, progress = null,
+}: Props) {
+  // Solo se promete cifrado si el backend lo tiene activo (`encrypt_zip`).
+  const { encryptZip } = usePublicConfig();
+  const agentMode = currentCase.evidence_storage === "agent";
+  const identity = useAgentIdentity();
+  const sameHost = !agentMode ? null : identity.status === "loading" ? null : identity.isSameHost(currentCase);
+  // Miniaturas: guardado en la carpeta del caso (flujo agent) o raíz de Tatana.
+  const urlOf = (f: CapturedFile) =>
+    agentMode && f.storedInCase ? agent.caseFileURL(currentCase.id, f.name) : agentFileURL(f.name);
+  // Capturas insertadas en los textos que ya no están disponibles (editor-imagenes-informe, §7.8).
+  // Mientras carga o si falla, no suma nada: el 400 del servidor entra por `serverMissing`.
+  const reportImages = useReportImages(currentCase.id, { source: agentMode ? "agent" : "server", sameHost });
+  const missing: MissingRequirement[] = [
+    ...getMissingRequirements(currentCase, { reportImages: reportImages.status === "ready" ? reportImages.images : null }),
+  ];
+  serverMissing.forEach(k => {
+    const m = describeMissing(k);
+    if (m && !missing.some(x => x.label === m.label)) missing.push(m);
+  });
+  const blocked = missing.length > 0 || !!agentBlocker;
+
   const fiscalFile      = files.find(f => isFuncionario(f.name));
   const denuncianteFile = files.find(f => isDenunciante(f.name));
   const captures        = files.filter(f => isCapture(f.name));
@@ -145,148 +196,245 @@ export function GenerateStep({ currentCase, files, loading, onBack, onGenerate }
   ].filter(f => f.count > 0);
 
   const guarantees = [
-    { icon: Lock, text: "ZIP cifrado con AES-256 y contraseña única" },
+    encryptZip
+      ? { icon: Lock, text: "ZIP cifrado con AES-256 y contraseña única" }
+      : { icon: Archive, text: "ZIP de evidencia con hash SHA-256 verificable" },
     { icon: Fingerprint, text: "Hash SHA-256 calculado por cada archivo" },
-    { icon: FileText, text: "Informe oficial en Word con la cadena de custodia" },
+    { icon: FileText, text: "Informe pericial en Word con la tabla de valores hash" },
+    ...(agentMode
+      ? [{ icon: HardDrive, text: "El ZIP queda en esta PC; al servidor solo va el informe" }]
+      : []),
   ];
 
   return (
     <div className="mx-auto max-w-2xl space-y-5">
-      <div>
-        <h2 className="step-title">Revisá y generá el informe</h2>
-        <p className="mt-2 text-sm" style={{ color: "var(--text-secondary)" }}>
-          Confirmá que esté toda la evidencia. Al generar, el expediente queda cerrado para edición.
-        </p>
-      </div>
+      <StepHeader
+        title="Revisá y generá el informe"
+        description="Confirmá que esté toda la evidencia. Al generar, el caso queda cerrado para edición."
+      />
+
+      {/* ── Requisito "Tatana en esta PC" (flujo agent): no es un campo, no navega ── */}
+      {agentBlocker && (
+        <section
+          aria-labelledby="generate-agent-title"
+          className="rounded-fx-lg border border-fx-warning bg-fx-warning-soft p-4 sm:p-5 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]"
+        >
+          <h3 id="generate-agent-title" className="m-0 flex items-center gap-2 text-fx-body-sm font-semibold text-fx-text">
+            <HardDrive className="h-4 w-4 shrink-0 text-fx-warning" aria-hidden="true" />
+            Tatana disponible en esta PC
+          </h3>
+          <p className="m-0 mt-1.5 text-fx-body-sm text-fx-text-2">{agentBlocker}</p>
+        </section>
+      )}
+
+      {/* ── Obligatorios que faltan: cada uno lleva al campo ── */}
+      {missing.length > 0 && (
+        <section
+          aria-labelledby="generate-missing-title"
+          className="rounded-fx-lg border border-fx-warning bg-fx-warning-soft p-4 sm:p-5 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]"
+        >
+          <h3 id="generate-missing-title" className="m-0 flex items-center gap-2 text-fx-body-sm font-semibold text-fx-text">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-fx-warning" aria-hidden="true" />
+            Faltan {missing.length} {missing.length === 1 ? "dato obligatorio" : "datos obligatorios"} para generar el informe
+          </h3>
+          <ul className="m-0 mt-3 grid list-none grid-cols-1 gap-1.5 p-0 sm:grid-cols-2">
+            {missing.map(m => (
+              <li key={m.key}>
+                <button
+                  type="button"
+                  onClick={() => onGoToField(m.step, m.fieldId)}
+                  className="group flex w-full min-h-11 cursor-pointer items-center gap-2 rounded-fx-md border-0 bg-transparent px-2.5 py-2 text-left text-fx-body-sm font-medium text-fx-text underline-offset-2 hover:bg-fx-surface-1 hover:underline transition-colors duration-fx-fast ease-fx fx-focus-ring"
+                >
+                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-fx-warning" aria-hidden="true" />
+                  <span className="min-w-0 flex-1">{m.label}</span>
+                  <span className="shrink-0 text-xs font-normal text-fx-text-2">Paso {m.step}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* ── Datos del caso ── */}
-      <div
-        className="rounded-2xl p-4 sm:p-5"
-        style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
-      >
+      <div className="rounded-fx-lg border border-fx-border bg-fx-surface-2 p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-lg font-semibold leading-tight" style={{ color: "var(--text-primary)" }}>
-              {currentCase.nro_referencia}
-            </p>
-            <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
+            <p className="m-0 text-fx-h3 text-fx-text break-words">{currentCase.nro_referencia}</p>
+            {currentCase.caratula && (
+              <p className="m-0 mt-1 break-words text-fx-body-sm text-fx-text-2">{currentCase.caratula}</p>
+            )}
+            <p className="m-0 mt-0.5 text-xs text-fx-text-3">
               {currentCase.nombre_denunciante}
-              <span style={{ color: "var(--text-muted)" }}> · DNI {currentCase.dni_denunciante}</span>
+              {currentCase.dni_denunciante && <> · DNI {currentCase.dni_denunciante}</>}
             </p>
           </div>
-          {deviceName && (
-            <span
-              className="flex-shrink-0 rounded-lg px-2.5 py-1 text-xs font-medium"
-              style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
-            >
-              {deviceName}{deviceOS ? ` · ${deviceOS}` : ""}
-            </span>
-          )}
+          {deviceName && <Tag value={`${deviceName}${deviceOS ? ` · ${deviceOS}` : ""}`} />}
         </div>
         {currentCase.observaciones && (
-          <p className="mt-3 border-t pt-3 text-xs leading-relaxed" style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}>
+          <p className="m-0 mt-3 border-t border-fx-border pt-3 text-xs leading-relaxed text-fx-text-2">
             {currentCase.observaciones}
           </p>
         )}
       </div>
 
       {/* ── Identificación ── */}
-      <div>
-        <p className="section-label mb-2">Identificación</p>
+      <section aria-labelledby="generate-identity-title">
+        <h3 id="generate-identity-title" className={`${BLOCK_TITLE} mb-2`}>Identificación · opcional</h3>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <IdentityConfirm label="Fiscal" role="Funcionario" icon={Shield} file={fiscalFile} />
-          <IdentityConfirm label="Denunciante" role="Titular" icon={User} file={denuncianteFile} />
+          <IdentityConfirm label="Perito" role="Quien realiza la inspección" icon={Shield} file={fiscalFile} urlOf={urlOf} />
+          <IdentityConfirm label="Titular del dispositivo" role="Titular" icon={User} file={denuncianteFile} urlOf={urlOf} />
         </div>
-      </div>
+      </section>
 
       {/* ── Evidencia ── */}
-      <div>
-        <div className="mb-2 flex items-center justify-between">
-          <p className="section-label">Evidencia</p>
-          <span
-            className="rounded-full px-2 py-0.5 text-[11px] font-semibold"
-            style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-muted)" }}
-          >
-            {files.length} {files.length === 1 ? "archivo" : "archivos"}
-          </span>
+      <section aria-labelledby="generate-evidence-title">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h3 id="generate-evidence-title" className={BLOCK_TITLE}>Evidencia</h3>
+          <Tag value={`${files.length} ${files.length === 1 ? "archivo" : "archivos"}`} />
         </div>
         {captures.length + videos.length + attachments.length === 0 ? (
-          <div
-            className="rounded-xl px-4 py-6 text-center text-sm"
-            style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-muted)" }}
-          >
+          <div className="rounded-fx-lg border border-dashed border-fx-border-strong bg-fx-surface-2 px-4 py-6 text-center text-fx-body-sm text-fx-text-2">
             No se capturó evidencia del dispositivo. Podés volver atrás para agregarla.
           </div>
         ) : (
-          <div
-            className="space-y-3 rounded-xl p-3.5"
-            style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
-          >
-            <EvidenceGroup title="Capturas de pantalla" icon={ImageIcon} items={captures} kind="image" />
-            <EvidenceGroup title="Grabaciones" icon={Video} items={videos} kind="video" />
-            <EvidenceGroup title="Adjuntos" icon={Paperclip} items={attachments} kind="doc" />
+          <div className="space-y-3 rounded-fx-lg border border-fx-border bg-fx-surface-1 p-3.5">
+            <EvidenceGroup title="Capturas de pantalla" icon={ImageIcon} items={captures} kind="image" urlOf={urlOf} />
+            <EvidenceGroup title="Grabaciones" icon={Video} items={videos} kind="video" urlOf={urlOf} />
+            <EvidenceGroup title="Adjuntos" icon={Paperclip} items={attachments} kind="doc" urlOf={urlOf} />
           </div>
         )}
-      </div>
+      </section>
 
       {/* ── El paquete ── */}
-      <div
-        className="rounded-2xl p-4 sm:p-5"
-        style={{ background: "rgba(13,148,136,0.05)", border: "1px solid rgba(13,148,136,0.16)" }}
-      >
-        <p className="section-label" style={{ color: "var(--blue-lg)" }}>El paquete</p>
-        <div className="mt-2.5 space-y-2">
+      <section aria-labelledby="generate-package-title" className="rounded-fx-lg border border-fx-border bg-fx-surface-2 p-4 sm:p-5">
+        <h3 id="generate-package-title" className={BLOCK_TITLE}>El paquete</h3>
+        <ul className="m-0 mt-2.5 list-none space-y-2 p-0">
           {guarantees.map(({ icon: Icon, text }) => (
-            <p key={text} className="flex items-start gap-2 text-sm" style={{ color: "var(--text-secondary)" }}>
-              <Icon className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" style={{ color: "var(--blue-lg)" }} aria-hidden="true" />
+            <li key={text} className="flex items-start gap-2 text-fx-body-sm text-fx-text-2">
+              <Icon className="mt-0.5 h-4 w-4 shrink-0 text-fx-text-2" aria-hidden="true" />
               {text}
-            </p>
+            </li>
           ))}
-        </div>
+        </ul>
         {folders.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-1.5 border-t pt-3" style={{ borderColor: "rgba(13,148,136,0.16)" }}>
+          <div className="mt-3 flex flex-wrap gap-1.5 border-t border-fx-border pt-3">
             {folders.map(f => (
-              <span
+              <Tag
                 key={f.name}
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium"
-                style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
-              >
-                <FolderClosed className="h-3 w-3" style={{ color: "var(--blue-lg)" }} />
-                {f.name}/ <span style={{ color: "var(--text-muted)" }}>{f.count}</span>
-              </span>
+                icon={<FolderClosed className="h-3 w-3" aria-hidden="true" />}
+                value={`${f.name}/ ${f.count}`}
+              />
             ))}
           </div>
         )}
-      </div>
+      </section>
+
+      {/* ── Progreso en dos tramos (flujo agent) ── */}
+      {agentMode && loading && progress && <GenerateStages progress={progress} />}
 
       {/* ── Acciones ── */}
-      <div className="flex gap-3">
-        <motion.button className="btn-secondary" onClick={onBack} whileTap={{ scale: 0.98 }}>
-          <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /> Atrás
-        </motion.button>
-        <motion.button
-          className="btn-primary btn-xl flex flex-1 items-center justify-center gap-2"
+      <StepActions>
+        <Button
+          type="button"
+          severity="secondary"
+          icon={<ArrowLeft className="h-4 w-4" aria-hidden="true" />}
+          label="Atrás"
+          onClick={onBack}
+          className="w-full sm:w-auto min-h-11"
+        />
+        <Button
+          type="button"
+          size="large"
+          label={loading ? "Generando informe pericial…" : "Generar informe pericial"}
+          icon={<FileCheck2 className="h-5 w-5" aria-hidden="true" />}
+          loading={loading}
+          disabled={loading || blocked}
+          aria-describedby={missing.length > 0 ? "generate-missing-title" : agentBlocker ? "generate-agent-title" : undefined}
           onClick={onGenerate}
-          disabled={loading}
-          whileHover={{ scale: loading ? 1 : 1.02 }}
-          whileTap={{ scale: loading ? 1 : 0.98 }}
-        >
-          {loading
-            ? <><Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> Generando informe…</>
-            : <><Sparkles className="h-5 w-5" aria-hidden="true" /> Generar informe forense</>}
-        </motion.button>
-        <span className="sr-only" role="status" aria-live="polite">
-          {loading ? "Generando informe forense, esperá…" : ""}
-        </span>
-      </div>
+          className="w-full sm:flex-1 min-h-11"
+        />
+      </StepActions>
+      <span className="sr-only" role="status" aria-live="polite">
+        {loading
+          ? agentMode && progress
+            ? progress.stage === "zip" ? "Paso 1 de 2: armando y verificando el ZIP en esta PC…" : "Paso 2 de 2: generando el informe en el servidor…"
+            : "Generando informe pericial, esperá…"
+          : ""}
+      </span>
 
-      <p
-        className="flex items-center justify-center gap-1.5 text-[11px]"
-        style={{ color: "var(--text-muted)" }}
-      >
-        <ShieldCheck className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
-        Una vez generado, el expediente queda cerrado para edición
+      <p className="m-0 flex items-center justify-center gap-1.5 text-xs text-fx-text-3">
+        <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        Una vez generado, el caso queda cerrado para edición
       </p>
     </div>
+  );
+}
+
+/* ── Tramos de la generación del flujo agent (SDD §7.7). Sin animación decorativa:
+      solo el spinner del tramo en curso y la barra real del ZIP. ── */
+function GenerateStages({ progress }: { progress: GenerateProgress }) {
+  const zip = progress.zip;
+  const known = !!zip && zip.total_bytes > 0;
+  const ratio = known ? Math.min(1, zip!.done_bytes / zip!.total_bytes) : 0;
+  const stages = [
+    { id: "zip" as const, icon: HardDrive, label: "Armando y verificando el ZIP en esta PC…" },
+    { id: "report" as const, icon: Server, label: "Generando el informe en el servidor…" },
+  ];
+  const currentIdx = stages.findIndex(s => s.id === progress.stage);
+  return (
+    <section
+      aria-labelledby="generate-progress-title"
+      aria-busy="true"
+      className="rounded-fx-lg border border-fx-border bg-fx-surface-2 p-4 sm:p-5"
+    >
+      <h3 id="generate-progress-title" className={BLOCK_TITLE}>Generando · paso {currentIdx + 1} de 2</h3>
+      <ol className="m-0 mt-3 list-none space-y-3 p-0">
+        {stages.map((s, i) => {
+          const done = i < currentIdx;
+          const current = i === currentIdx;
+          const StateIcon = done ? CheckCircle2 : current ? Loader2 : Circle;
+          return (
+            <li key={s.id} aria-current={current ? "step" : undefined} className="flex items-start gap-2.5">
+              <StateIcon
+                className={`mt-0.5 h-4 w-4 shrink-0 ${done ? "text-fx-success" : current ? "text-fx-accent-text motion-safe:animate-spin" : "text-fx-text-3"}`}
+                aria-hidden="true"
+              />
+              <div className="min-w-0 flex-1">
+                <p className={`m-0 flex items-center gap-1.5 text-fx-body-sm ${current ? "font-semibold text-fx-text" : "text-fx-text-2"}`}>
+                  <s.icon className="h-3.5 w-3.5 shrink-0 text-fx-text-3" aria-hidden="true" />
+                  {s.label}
+                  {done && <span className="sr-only"> (listo)</span>}
+                </p>
+                {current && s.id === "zip" && zip && (
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-baseline justify-between gap-3 text-xs text-fx-text-2">
+                      <span>{ZIP_PHASE_LABEL[zip.phase]}</span>
+                      {known && <span className="tabular-nums">{formatBytesPair(zip.done_bytes, zip.total_bytes)}</span>}
+                    </div>
+                    <div
+                      role="progressbar"
+                      aria-label={ZIP_PHASE_LABEL[zip.phase]}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={known ? Math.round(ratio * 100) : undefined}
+                      className="relative h-1.5 w-full overflow-hidden rounded-full bg-fx-surface-3"
+                    >
+                      {known ? (
+                        <span
+                          className="absolute inset-0 origin-left rounded-full bg-fx-accent motion-safe:transition-transform motion-safe:duration-fx-base motion-safe:ease-fx"
+                          style={{ transform: `scaleX(${ratio})` }}
+                        />
+                      ) : (
+                        <span className="absolute inset-y-0 left-0 w-2/5 rounded-full bg-fx-accent motion-safe:animate-[fx-indeterminate_1.4s_var(--fx-ease-out)_infinite] motion-reduce:w-full motion-reduce:opacity-40" />
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }

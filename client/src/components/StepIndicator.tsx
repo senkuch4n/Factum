@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
+import { ProgressBar } from "primereact/progressbar";
 import { Check, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -10,154 +10,141 @@ interface Props {
   steps: Step[];
   current: number;
   /** Pasos completados con id < minJumpable no se pueden re-visitar (evita, p. ej., duplicar
-   *  un caso ya creado si se retrocede a "Dispositivo" o "Expediente" después de generar). */
+   *  un caso ya creado si se retrocede a "Dispositivo" o "Causa" después de generar). */
   minJumpable?: number;
   onSelect?: (id: number) => void;
 }
 
-const EASE = [0.4, 0, 0.2, 1] as const;
-
-/** Círculo relleno con check — estado "done". Usa el negro/teal de marca, no el verde
- *  del componente original de scrollxui (el design system de factum es monocromo). */
-function FilledCheck() {
-  return (
-    <span
-      className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full"
-      style={{ background: "var(--text-primary)" }}
-    >
-      <Check className="h-2.5 w-2.5" strokeWidth={3} style={{ color: "var(--bg-base)" }} aria-hidden="true" />
-    </span>
-  );
+function progressOf(current: number, total: number) {
+  const doneCount = Math.max(0, Math.min(current - 1, total));
+  return { doneCount, pct: (doneCount / total) * 100 };
 }
 
-/** Círculo del paso activo — anillo teal con punto central. */
-function ActiveDot() {
+function StepProgress({ doneCount, total, pct }: { doneCount: number; total: number; pct: number }) {
   return (
-    <span
-      className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border-2"
-      style={{ borderColor: "var(--blue-lg)" }}
-    >
-      <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--blue-lg)" }} />
-    </span>
-  );
-}
-
-/** Círculo vacío — estado "pending". */
-function EmptyCircle() {
-  return (
-    <span
-      className="h-[18px] w-[18px] shrink-0 rounded-full border"
-      style={{ borderColor: "var(--border-md)" }}
+    <ProgressBar
+      value={pct}
+      showValue={false}
+      aria-label="Progreso de la inspección"
+      aria-valuetext={`${doneCount} de ${total} pasos completados`}
     />
   );
 }
 
+/**
+ * Marcador del paso, distinguible sin color (por forma):
+ * hecho = círculo lleno con check; activo = anillo con punto; pendiente = círculo vacío.
+ */
+function Marker({ state }: { state: "done" | "active" | "pending" }) {
+  const base = "flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition-colors duration-fx-fast ease-fx";
+  if (state === "done") {
+    return (
+      <span aria-hidden="true" className={cn(base, "bg-fx-text text-fx-bg")}>
+        <Check className="h-3 w-3" strokeWidth={3} />
+      </span>
+    );
+  }
+  if (state === "active") {
+    return (
+      <span aria-hidden="true" className={cn(base, "border-2 border-fx-accent")}>
+        <span className="h-2 w-2 rounded-full bg-fx-accent" />
+      </span>
+    );
+  }
+  return <span aria-hidden="true" className={cn(base, "border border-fx-border-strong")} />;
+}
+
+/** Riel vertical de pasos (md+). Solo los pasos hechos con id >= minJumpable son botones. */
 export function StepIndicator({ steps, current, minJumpable = 1, onSelect }: Props) {
   const total = steps.length;
-  const doneCount = Math.max(0, Math.min(current - 1, total));
-  const pct = (doneCount / total) * 100;
+  const { doneCount, pct } = progressOf(current, total);
 
   return (
-    <nav className="flex flex-col gap-4">
-      {/* Cabecera: barra de progreso + contador con dígito que rueda (patrón checklist-cell). */}
-      <div className="flex items-center gap-3 px-2">
-        <div
-          className="h-1.5 flex-1 overflow-hidden rounded-full"
-          style={{ background: "var(--bg-elevated)" }}
-        >
-          <motion.div
-            className="h-full rounded-full"
-            style={{ background: "var(--text-primary)" }}
-            animate={{ width: `${pct}%` }}
-            transition={{ duration: 0.6, ease: EASE }}
-          />
-        </div>
-        <div
-          className="flex items-center whitespace-nowrap text-[11px]"
-          style={{ color: "var(--text-muted)" }}
-        >
-          <span className="relative flex h-4 items-center overflow-hidden" style={{ minWidth: 7 }}>
-            <AnimatePresence mode="popLayout" initial={false}>
-              <motion.span
-                key={doneCount}
-                initial={{ y: "100%", opacity: 0 }}
-                animate={{ y: "0%", opacity: 1 }}
-                exit={{ y: "-100%", opacity: 0 }}
-                transition={{ duration: 0.25, ease: EASE }}
-                className="absolute inset-0 flex items-center justify-end tabular-nums"
-              >
-                {doneCount}
-              </motion.span>
-            </AnimatePresence>
-          </span>
-          <span className="mx-0.5">/</span>
-          <span>{total} completados</span>
-        </div>
+    <nav aria-label="Pasos de la inspección" className="flex flex-col gap-4">
+      <div className="space-y-2 px-2">
+        <p className="m-0 flex items-baseline justify-between text-xs text-fx-text-2">
+          <span className="font-semibold text-fx-text">Paso {current} de {total}</span>
+          <span className="tabular-nums">{doneCount}/{total} completados</span>
+        </p>
+        <StepProgress doneCount={doneCount} total={total} pct={pct} />
       </div>
 
-      {/* Filas de pasos — planas, sin conector vertical, al estilo del componente de referencia. */}
-      <div className="flex flex-col gap-0.5">
-        {steps.map((step) => {
-          const done     = current > step.id;
-          const active   = current === step.id;
-          const state    = done ? "done" : active ? "active" : "pending";
+      <ol className="m-0 flex list-none flex-col gap-0.5 p-0">
+        {steps.map(step => {
+          const done = current > step.id;
+          const active = current === step.id;
+          const state = done ? "done" : active ? "active" : "pending";
           const jumpable = done && step.id >= minJumpable && !!onSelect;
 
-          return (
-            <button
-              key={step.id}
-              type="button"
-              disabled={!jumpable}
-              onClick={() => jumpable && onSelect?.(step.id)}
-              aria-current={active ? "step" : undefined}
-              className={cn(
-                "group relative flex items-center gap-2.5 rounded-lg px-2 py-2.5 text-left transition-colors",
-                jumpable ? "cursor-pointer" : "cursor-default",
-              )}
-              style={{ background: active ? "var(--bg-elevated)" : "transparent" }}
-              onMouseEnter={e => { if (jumpable) (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-elevated)"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = active ? "var(--bg-elevated)" : "transparent"; }}
-            >
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.span
-                  key={state}
-                  initial={{ scale: 0.4, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.4, opacity: 0 }}
-                  transition={{ type: "spring", stiffness: 320, damping: 18, mass: 0.8 }}
-                  className="flex"
-                >
-                  {state === "done" ? <FilledCheck /> : state === "active" ? <ActiveDot /> : <EmptyCircle />}
-                </motion.span>
-              </AnimatePresence>
-
+          const content = (
+            <>
+              <Marker state={state} />
               <span className="min-w-0 flex-1">
                 <span
-                  className="block text-[13px] font-medium leading-tight transition-colors"
-                  style={{ color: state === "pending" ? "var(--text-muted)" : "var(--text-primary)" }}
+                  className={cn(
+                    "block text-fx-body-sm font-semibold leading-tight",
+                    state === "pending" ? "text-fx-text-3" : "text-fx-text",
+                  )}
                 >
                   {step.label}
+                  <span className="sr-only">
+                    {done ? " (completado)" : active ? " (paso actual)" : " (pendiente)"}
+                  </span>
                 </span>
-                <span
-                  className="mt-0.5 block text-[11px] leading-tight"
-                  style={{ color: "var(--text-muted)" }}
-                >
-                  {step.sublabel}
-                </span>
+                <span className="mt-0.5 block text-xs leading-tight text-fx-text-3">{step.sublabel}</span>
               </span>
+            </>
+          );
 
-              <ChevronRight
-                className={cn(
-                  "h-3.5 w-3.5 shrink-0 transition-opacity",
-                  jumpable ? "opacity-0 group-hover:opacity-100" : "opacity-0",
-                )}
-                style={{ color: "var(--text-muted)" }}
-                aria-hidden="true"
-              />
-            </button>
+          const row = cn(
+            "flex w-full min-h-11 items-center gap-3 rounded-fx-md px-2 py-2.5 text-left",
+            active && "bg-fx-surface-2",
+          );
+
+          return (
+            <li key={step.id}>
+              {jumpable ? (
+                <button
+                  type="button"
+                  onClick={() => onSelect?.(step.id)}
+                  className={cn(
+                    row,
+                    "group cursor-pointer border-0 bg-transparent hover:bg-fx-surface-3 transition-colors duration-fx-fast ease-fx fx-focus-ring",
+                  )}
+                >
+                  {content}
+                  <ChevronRight
+                    className="h-3.5 w-3.5 shrink-0 text-fx-text-3 opacity-0 transition-opacity duration-fx-fast group-hover:opacity-100 group-focus-visible:opacity-100"
+                    aria-hidden="true"
+                  />
+                </button>
+              ) : (
+                <div className={row} aria-current={active ? "step" : undefined}>
+                  {content}
+                </div>
+              )}
+            </li>
           );
         })}
-      </div>
+      </ol>
     </nav>
+  );
+}
+
+/** Franja compacta (< md): "Paso N de 6 · <etiqueta>" + barra. No es navegable. */
+export function StepIndicatorCompact({ steps, current, className }: {
+  steps: Step[]; current: number; className?: string;
+}) {
+  const total = steps.length;
+  const { doneCount, pct } = progressOf(current, total);
+  return (
+    <div className={cn("fx-card space-y-2 px-4 py-3", className)}>
+      <p className="m-0 flex min-w-0 items-baseline gap-1.5 text-fx-body-sm">
+        <span className="shrink-0 font-semibold text-fx-text">Paso {current} de {total}</span>
+        <span aria-hidden="true" className="text-fx-text-3">·</span>
+        <span className="truncate text-fx-text-2">{steps[current - 1]?.label}</span>
+      </p>
+      <StepProgress doneCount={doneCount} total={total} pct={pct} />
+    </div>
   );
 }

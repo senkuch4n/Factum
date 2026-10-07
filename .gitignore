@@ -30,3 +30,25 @@ agent-ui/resources/agent/
 
 # OS
 .DS_Store
+
+# Claude Code: config local de cada usuario (no va al repo)
+.claude/settings.local.json
+
+# Identidad real del cliente (Branding): config local y logo, nunca al repo
+**/appsettings.Local.json
+server/src/Factum.Backend/branding/
+
+# Plantillas e informes del usuario con datos reales (la v4 se deriva con ops/plantilla/)
+docs/INFORME*
+docs/informe_modelo*
+docs/Logo_del_estudio*
+
+# Paquetes de instalación armados por deploy/windows/armar-paquete.sh
+deploy/windows/dist/
+
+# Despliegue en la nube: secretos y sitios locales de Caddy nunca al repo
+deploy/cloud/*.env
+!deploy/cloud/factum.env.example
+deploy/cloud/caddy-sitios/*.caddy
+# Tatana para la nube armado por deploy/cloud/armar-tatana-nube.sh
+deploy/cloud/dist/

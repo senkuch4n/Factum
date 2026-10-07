@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { LayoutDashboard, Package, Settings, Wifi, WifiOff, Server } from 'lucide-react'
+import { SelloMark } from './SelloMark'
 
 type View = 'dashboard' | 'libraries' | 'settings'
 
@@ -27,12 +28,7 @@ export function Sidebar({ view, onView, agentRunning, serverConnected }: Props) 
         className="drag-region h-12 flex items-center px-4 gap-2.5 border-b"
         style={{ borderColor: 'var(--border)' }}
       >
-        <div
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-          style={{ background: 'linear-gradient(135deg, #2563eb, #0891b2)' }}
-        >
-          T
-        </div>
+        <SelloMark size={28} className="flex-shrink-0" />
         <div className="no-drag">
           <p className="text-[0.78rem] font-bold leading-tight" style={{ color: 'var(--text-primary)' }}>
             Tatana
@@ -98,18 +94,10 @@ export function Sidebar({ view, onView, agentRunning, serverConnected }: Props) 
           failText="Sin conexión"
         />
 
-        {/* MPF footer */}
-        <div className="flex items-center gap-2 px-2 pt-2">
-          <div
-            className="w-5 h-5 rounded flex items-center justify-center text-[0.5rem] font-bold text-white flex-shrink-0"
-            style={{ background: '#003366' }}
-          >
-            MPF
-          </div>
-          <p className="text-[0.58rem] leading-tight" style={{ color: 'var(--text-muted)' }}>
-            Min. Público Fiscal<br />Salta
-          </p>
-        </div>
+        {/* Versión del agente (útil para soporte) */}
+        <p translate="no" className="px-2 pt-2 text-[0.58rem] leading-tight tabular-nums" style={{ color: 'var(--text-muted)' }}>
+          Factum · Tatana v{__TATANA_VERSION__}
+        </p>
       </div>
     </aside>
   )

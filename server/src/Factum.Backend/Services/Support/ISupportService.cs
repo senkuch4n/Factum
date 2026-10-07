@@ -15,6 +15,6 @@ public interface ISupportService
         User officer, int idToken, CalificarTokenRequest request, CancellationToken ct);
 
     // Genera el enlace para que el oficial entre a Faro ya autenticado, sin
-    // volver a poner su contraseña ahí (comparten la misma identidad de MPF).
+    // volver a poner su contraseña ahí (comparten la misma identidad (DNI)).
     Task<Result<FaroSsoLinkResponse>> ObtenerLinkFaroAsync(User officer, CancellationToken ct);
 }

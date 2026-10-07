@@ -1,85 +1,165 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { LogOut } from "lucide-react";
+import { useId, useMemo, useRef, useState } from "react";
+import { Menu } from "primereact/menu";
+import type { MenuItem } from "primereact/menuitem";
+import { KeyRound, LogOut, Palette, UserCog, Users } from "lucide-react";
+import { useMyBranding } from "@/hooks/useMyBranding";
+import { usePublicConfig } from "@/hooks/usePublicConfig";
+import { hasRealSigla } from "@/lib/format";
 
 interface Props {
   user: { name: string; sigla: string; dni: string } | null;
   onLogout: () => void;
+  /** Abre el diálogo "Mi perfil de perito". */
+  onOpenProfile?: () => void;
+  /** Abre el diálogo "Cambiar contraseña" (solo modo `local`). */
+  onChangePassword?: () => void;
+  /** Abre el diálogo "Marca del informe" (todos los modos, D7-A). */
+  onOpenBranding?: () => void;
+  /** Lleva al panel "Administrar cuentas" (solo superadmin en modo `local`). Sin la prop, no hay ítem. */
+  onOpenAdmin?: () => void;
 }
 
-export function UserMenu({ user, onLogout }: Props) {
+/**
+ * Menú de usuario sobre el `Menu` popup de PrimeReact (estilo en
+ * src/lib/prime/pt/menu.ts). Escape, click afuera, flechas (que saltean los
+ * ítems informativos `disabled`) y el foco que vuelve al disparador los
+ * resuelve Prime.
+ */
+export function UserMenu({ user, onLogout, onOpenProfile, onOpenBranding, onChangePassword, onOpenAdmin }: Props) {
+  const menuRef = useRef<Menu>(null);
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const menuId = `user-menu-${useId().replace(/:/g, "")}`;
+  const publicConfig = usePublicConfig();
+  const mine = useMyBranding(user?.dni ?? null);
+  /** Logo que no cargó (por src: si cambia el logo, se vuelve a intentar). */
+  const [failedLogoSrc, setFailedLogoSrc] = useState<string | null>(null);
+  /*
+   * Organización que se muestra (D5 / DT8): la marca de la cuenta si alguna vez
+   * la guardó (aunque esté vacía: sus informes tampoco usan la instalación); si
+   * no, la de la instalación (el fallback de sus informes). Mientras carga, nada,
+   * para no mostrar una marca que no es la suya.
+   */
+  let organizationName: string | null = null;
+  let organizationLogoSrc: string | null = null;
+  if (mine.status === "ready" && mine.branding?.exists) {
+    organizationName = mine.branding.organization_name.trim() || null;
+    organizationLogoSrc = mine.logoSrc;
+  } else if (mine.status === "ready" || mine.status === "error") {
+    organizationName = publicConfig.organizationName;
+    organizationLogoSrc = publicConfig.organizationLogoSrc;
+  }
 
-  useEffect(() => {
-    function onClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onClick);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onClick);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, []);
+  const items = useMemo<MenuItem[]>(() => {
+    if (!user) return [];
+    const showOrgLogo = !!organizationLogoSrc && organizationLogoSrc !== failedLogoSrc;
+    /* Organización emisora (Branding del backend): solo si hay nombre o logo. */
+    const orgItem: MenuItem[] = organizationName || showOrgLogo
+      ? [{
+          disabled: true,
+          className: "fx-menu-static",
+          template: () => (
+            <div className="flex min-w-0 items-center gap-2 border-t border-fx-border px-3.5 py-2.5">
+              {showOrgLogo && (
+                <img
+                  src={organizationLogoSrc}
+                  alt={organizationName ? "" : "Logo de la organización"}
+                  // Fondo blanco: el logo está pensado para el informe (hoja blanca) y en tema oscuro se perdería.
+                  className="h-5 w-auto max-w-[96px] shrink-0 rounded-fx-sm bg-white object-contain p-0.5"
+                  onError={() => setFailedLogoSrc(organizationLogoSrc)}
+                />
+              )}
+              {organizationName && (
+                <p translate="no" className="min-w-0 truncate text-[11px] font-medium uppercase tracking-wide text-fx-text-3" title={organizationName}>
+                  {organizationName}
+                </p>
+              )}
+            </div>
+          ),
+        }]
+      : [];
+    return [
+      {
+        disabled: true,
+        className: "fx-menu-static",
+        template: () => (
+          <div className="px-3.5 py-3">
+            <p className="truncate text-[13px] font-semibold text-fx-text">{user.name}</p>
+            <p className="mt-0.5 text-xs text-fx-text-3">
+              DNI {user.dni}
+              {hasRealSigla(user.sigla) && ` · ${user.sigla.trim()}`}
+            </p>
+          </div>
+        ),
+      },
+      ...orgItem,
+      { separator: true },
+      ...(onOpenAdmin
+        ? [{
+            label: "Administrar cuentas",
+            icon: <Users className="h-4 w-4" aria-hidden="true" />,
+            command: () => onOpenAdmin(),
+          }]
+        : []),
+      ...(onOpenProfile
+        ? [{
+            label: "Mi perfil de perito",
+            icon: <UserCog className="h-4 w-4" aria-hidden="true" />,
+            command: () => onOpenProfile(),
+          }]
+        : []),
+      ...(onOpenBranding
+        ? [{
+            label: "Marca del informe",
+            icon: <Palette className="h-4 w-4" aria-hidden="true" />,
+            command: () => onOpenBranding(),
+          }]
+        : []),
+      ...(onChangePassword
+        ? [{
+            label: "Cambiar contraseña",
+            icon: <KeyRound className="h-4 w-4" aria-hidden="true" />,
+            command: () => onChangePassword(),
+          }]
+        : []),
+      {
+        label: "Cerrar sesión",
+        icon: <LogOut className="h-4 w-4" aria-hidden="true" />,
+        className: "text-fx-danger",
+        command: () => onLogout(),
+      },
+    ];
+  }, [user, onLogout, onOpenProfile, onOpenBranding, onChangePassword, onOpenAdmin, organizationName, organizationLogoSrc, failedLogoSrc]);
 
   if (!user) return null;
 
   const initials = user.name.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase();
 
   return (
-    <div className="relative" ref={ref}>
+    <>
       <button
-        onClick={() => setOpen(o => !o)}
-        className="flex items-center justify-center w-8 h-8 rounded-full text-[11px] font-semibold flex-shrink-0 transition-colors"
-        style={{ background: "var(--bg-elevated)", border: "1px solid var(--border-md)", color: "var(--text-secondary)" }}
+        type="button"
+        onClick={(e) => menuRef.current?.toggle(e)}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-fx-border-strong bg-fx-surface-2 text-[11px] font-semibold text-fx-text-2 transition-colors duration-fx-fast ease-fx hover:bg-fx-surface-3 hover:text-fx-text fx-focus-ring"
         title={user.name}
-        aria-label={`Menú de usuario — ${user.name}`}
+        aria-label={`Menú de usuario: ${user.name}`}
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-controls={open ? `${menuId}_list` : undefined}
       >
         {initials}
       </button>
-
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            role="menu"
-            aria-label="Menú de usuario"
-            className="absolute right-0 top-[calc(100%+8px)] w-60 rounded-lg overflow-hidden z-30"
-            style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", boxShadow: "0 8px 24px rgba(0,0,0,0.16)", transformOrigin: "top right" }}
-            initial={{ opacity: 0, y: -6, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1, transition: { duration: 0.16 } }}
-            exit={{ opacity: 0, y: -6, scale: 0.98, transition: { duration: 0.12 } }}
-          >
-            <div className="px-3.5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
-              <p className="text-[13px] font-medium truncate" style={{ color: "var(--text-primary)" }}>{user.name}</p>
-              <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>DNI {user.dni} · {user.sigla}</p>
-            </div>
-            <div className="px-3.5 py-2.5 flex items-center gap-2" style={{ borderBottom: "1px solid var(--border)" }}>
-              <img src="/mpfs.png" alt="MPF" className="h-4 w-auto opacity-40 flex-shrink-0" />
-              <p className="text-[10px] font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                Min. Público Fiscal · Salta
-              </p>
-            </div>
-            <button
-              role="menuitem"
-              onClick={() => { setOpen(false); onLogout(); }}
-              className="w-full flex items-center gap-2 px-3.5 py-2.5 text-[13px] font-medium transition-colors"
-              style={{ color: "var(--red)" }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-elevated)"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-            >
-              <LogOut className="w-3.5 h-3.5" /> Cerrar sesión
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+      <Menu
+        ref={menuRef}
+        id={menuId}
+        model={items}
+        popup
+        popupAlignment="right"
+        pt={{ menu: { "aria-label": "Menú de usuario" } }}
+        onShow={() => setOpen(true)}
+        onHide={() => setOpen(false)}
+      />
+    </>
   );
 }

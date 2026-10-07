@@ -5,16 +5,20 @@ namespace Factum.Backend.Services.Auth;
 
 public sealed class DevAuthProvider : IAuthProvider
 {
-    public string Mode => "dev";
+    public string Mode => AuthModes.Dev;
 
-    public Task<Result<User>> AuthenticateAsync(string dni, string username, string password,
+    public Task<Result<AuthenticatedUser>> AuthenticateAsync(string dni, string? username, string password,
         CancellationToken ct = default)
     {
+        // username dejó de ser [Required] en el DTO (en local no se manda): se valida acá.
+        if (string.IsNullOrEmpty(username))
+            return Task.FromResult(Result.Fail<AuthenticatedUser>("Usuario requerido"));
+
         if (dni.Length is < 7 or > 8)
-            return Task.FromResult(Result.Fail<User>("DNI inválido: debe tener 7 u 8 dígitos"));
+            return Task.FromResult(Result.Fail<AuthenticatedUser>("DNI inválido: debe tener 7 u 8 dígitos"));
 
         if (string.IsNullOrEmpty(password))
-            return Task.FromResult(Result.Fail<User>("Contraseña requerida"));
+            return Task.FromResult(Result.Fail<AuthenticatedUser>("Contraseña requerida"));
 
         var user = new User
         {
@@ -22,10 +26,10 @@ public sealed class DevAuthProvider : IAuthProvider
             Name = FormatName(username),
             Sigla = "-"
         };
-        return Task.FromResult(Result.Ok(user));
+        return Task.FromResult(Result.Ok(new AuthenticatedUser(user, UserRoles.Cliente, false, null)));
     }
 
-    // Convención de prueba compartida con Faro: username = "nombre.apellido".
+    // Convención de prueba: username = "nombre.apellido".
     private static string FormatName(string username)
     {
         var partes = username.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
