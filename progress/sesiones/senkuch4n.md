@@ -63,3 +63,6 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-06 — #14 implementer-backend done -> progress/impl_backend_despliegue-nube.md (sin bloqueos; guía 834 líneas; sin secretos detectados; verify OK). en_revision; lanzado reviewer (sonnet).
 - 2026-10-06 — #14 reviewer APROBADA -> progress/review_despliegue-nube.md (Backend.Tests 794, Agent.Tests 139). Fase aprobada. Corriendo shellcheck/actionlint por docker.
 - 2026-10-06 — #14 ajustes post-review (workflow solo main; known_hosts con puerto). shellcheck/actionlint limpios. Commit + push + PR; prueba real = seguir la guía en DonWeb.
+- 2026-10-06 — #14 cerrada: PR contra develop + resumen de cierre en el issue. Sin HU activa.
+- 2026-10-06 — PR #18 mergeado. Local en develop actualizado. Próximo: usuario sigue docs/despliegue-nube.md en DonWeb.
+- 2026-10-07 — Guía DonWeb en vivo: SSH key del panel falla (QueryException de DonWeb) → root+contraseña; firewall del panel bloqueaba 22 → reglas 22/80/443 tcp + 443 udp; sudo -v pide contraseña por %admin de la imagen → guía corregida a sudo -n whoami (rama fix/guia-donweb).
