@@ -690,6 +690,7 @@ export default function Dashboard() {
         user={user}
         onLogout={handleLogout}
         showThemeSwitch
+        maxWidthClass={mode === "wizard" ? "max-w-6xl" : "max-w-5xl"}
         center={
           <div className="flex items-center justify-center gap-1.5 min-w-0">
             {mode === "wizard" && (
