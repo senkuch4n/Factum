@@ -22,6 +22,7 @@ import { enterMaintenance, type AgentOperation } from '../agent-api'
 import { readDistConfig } from './dist-config'
 import { allTrustedKeys } from './trusted-keys'
 import { updaterLog } from './logger'
+import { MANIFEST_NO_CACHE_HEADERS, classifyManifestStatus, manifestRequestOptions } from './manifest-request'
 import {
   decide, matchesUpdateInfo, parseEnvelope, sanitizeUpdateUrls, verifyEnvelope,
   type TrustedKey, type UpdatePayload,
@@ -66,6 +67,7 @@ function uniqueKinds(ops: ReadonlyArray<AgentOperation>): string[] {
 /**
  * GET del manifiesto con `net.request` de Electron (proxy del sistema, D-T9):
  * timeout de 10 s, tope de 64 KB y redirecciones solo a `https` (D-T8).
+ * Sin caché HTTP (`no-store` + `Cache-Control`/`Pragma: no-cache`): ver manifest-request.ts.
  */
 function fetchManifest(url: string): Promise<FetchResult> {
   return new Promise((resolve) => {
@@ -79,7 +81,8 @@ function fetchManifest(url: string): Promise<FetchResult> {
     }
     let req: Electron.ClientRequest
     try {
-      req = net.request({ url, method: 'GET', redirect: 'manual', useSessionCookies: false, cache: 'no-cache' })
+      req = net.request(manifestRequestOptions(url))
+      for (const [name, value] of Object.entries(MANIFEST_NO_CACHE_HEADERS)) req.setHeader(name, value)
     } catch {
       resolve({ ok: false, kind: 'network' })
       return
@@ -96,8 +99,11 @@ function fetchManifest(url: string): Promise<FetchResult> {
       req.followRedirect()
     })
     req.on('response', (res) => {
-      if (res.statusCode >= 400) {
-        updaterLog.warn(`${url} respondió HTTP ${res.statusCode}`)
+      const status = classifyManifestStatus(res.statusCode)
+      if (status !== 'body') {
+        updaterLog.warn(status === 'not_modified'
+          ? `${url} respondió 304 sin pedido condicional; no se reutiliza ningún manifiesto guardado`
+          : `${url} respondió HTTP ${res.statusCode}`)
         res.on('data', () => {})
         done({ ok: false, kind: 'network' })
         return

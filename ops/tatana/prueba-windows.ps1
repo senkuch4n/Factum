@@ -47,7 +47,10 @@ $Base = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath
 $Trabajo = Join-Path $Base 'tatana-prueba'
 $CanalServido = Join-Path $Trabajo 'canal'
 $AgenteUrl = 'http://localhost:8765'
-$CaseId = '0123456789abcdef01234567'
+# Los ids de caso del agente son Guid "D" en minúscula (AgentFileNames.TryParseCaseId), no ObjectId:
+# con un id de 24 hex el agente responde 400 invalid_case_id. En minúscula porque es la forma
+# canónica de la carpeta del caso (cases\<id>).
+$CaseId = '0c1a5e00-ca5e-4000-8000-0000000000c1'
 $resumen = [System.Collections.Generic.List[string]]::new()
 $servidor = $null
 
@@ -122,11 +125,57 @@ function Esperar-Fase([string]$Fase, [datetime]$Desde = [datetime]::MinValue, [i
     Falla "update-state.json no llegó a '$Fase' en $Segundos s (última fase: $ultima)"
 }
 
+# Ojo: una función que devuelve @(...) igual se desenrolla al salir. Con 1 elemento llega el objeto
+# suelto y con 0 llega $null; con Set-StrictMode, `$null.Count` falla ("The property 'Count' cannot
+# be found"). Siempre envolver la llamada: @(Procesos-Tatana), @(Duenos-8765).
 function Procesos-Tatana { @(Get-Process -Name 'Tatana' -ErrorAction SilentlyContinue) }
 
+# PIDs que escuchan en 8765. Si Get-NetTCPConnection (CIM) no devuelve nada, se usa netstat como
+# respaldo. Se toman las filas TCP con dirección local :8765 y remota :0, que son las de escucha;
+# así no depende del idioma de la columna de estado.
 function Duenos-8765 {
-    @(Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue |
+    $ids = @(Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue |
         Select-Object -ExpandProperty OwningProcess -Unique)
+    if ($ids.Count -eq 0) {
+        $ids = @(netstat -ano -p TCP; netstat -ano -p TCPv6) |
+            ForEach-Object { if ($_ -match '^\s*TCP\s+\S+:8765\s+\S+:0\s+\S+\s+(\d+)\s*$') { [int]$Matches[1] } } |
+            Select-Object -Unique
+        $ids = @($ids)
+    }
+    $ids
+}
+
+# Para los mensajes de falla: quién escucha en 8765 según netstat.
+function Netstat-8765 { (@(netstat -ano -p TCP; netstat -ano -p TCPv6) | Where-Object { $_ -match ':8765\s' }) -join '; ' }
+
+# Espera SOLO a ese proceso, con tope. No usar `Start-Process -Wait`: en pwsh 7 espera también a los
+# descendientes, y install-portable.bat deja corriendo Factum.Agent y el navegador (el job se colgó
+# hasta el timeout). Si se pasa del tope, mata solo ese proceso (no el árbol) y falla con un mensaje claro.
+function Iniciar-Proceso([string]$Archivo, [string[]]$Argumentos, [string]$Directorio = $null) {
+    $opc = @{ FilePath = $Archivo; ArgumentList = $Argumentos; PassThru = $true; WindowStyle = 'Hidden' }
+    if ($Directorio) { $opc.WorkingDirectory = $Directorio }
+    $p = Start-Process @opc
+    $null = $p.Handle   # retiene el handle: sin esto ExitCode puede quedar vacío al terminar
+    return $p
+}
+
+function Esperar-Salida([System.Diagnostics.Process]$Proceso, [string]$Que, [int]$Segundos) {
+    if (-not $Proceso.WaitForExit($Segundos * 1000)) {
+        Stop-Process -Id $Proceso.Id -Force -ErrorAction SilentlyContinue
+        Falla "$Que no terminó en $Segundos s (PID $($Proceso.Id), se lo detuvo)"
+    }
+    return $Proceso.ExitCode
+}
+
+# Navegadores que ya estaban antes de la prueba: al final se cierran solo los que abrió ella
+# (launch-tatana.bat abre CLIENT_URL; el portátil de los peritos no tiene un modo sin navegador
+# para la nube y no se cambia).
+$NombresNavegador = @('msedge', 'chrome', 'firefox')
+$navegadoresPrevios = @(Get-Process -Name $NombresNavegador -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+function Cerrar-Navegadores-De-La-Prueba {
+    Get-Process -Name $NombresNavegador -ErrorAction SilentlyContinue |
+        Where-Object { $navegadoresPrevios -notcontains $_.Id } |
+        Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
 function Lanzar-App {
@@ -136,19 +185,31 @@ function Lanzar-App {
 }
 
 function Cerrar-App([int]$Segundos = 60) {
-    if ((Procesos-Tatana).Count -eq 0) { return }
+    if (@(Procesos-Tatana).Count -eq 0) { return }
     Start-Process -FilePath $AppExe -ArgumentList '--quit' | Out-Null
     $limite = (Get-Date).AddSeconds($Segundos)
     while ((Get-Date) -lt $limite) {
-        if ((Procesos-Tatana).Count -eq 0 -and (Duenos-8765).Count -eq 0) { return }
+        if (@(Procesos-Tatana).Count -eq 0 -and @(Duenos-8765).Count -eq 0) { return }
         Start-Sleep -Seconds 1
     }
     Falla "Tatana no se cerró con --quit en $Segundos s"
 }
 
+# Copy-Item conserva la mtime del original. Si se restaura un manifiesto con la misma mtime (o con
+# otra dentro del mismo segundo), http.server contesta 304 a un pedido condicional y un cliente con
+# caché reusaría el cuerpo anterior (run 37637630657). Cada publicación lleva una mtime nueva y
+# estrictamente creciente: al menos 2 s más que la anterior, porque Last-Modified tiene resolución
+# de 1 s.
+$script:ultimaMtimeCanal = [datetime]::MinValue
 function Servir-Canal([string[]]$Archivos) {
     Get-ChildItem -LiteralPath $CanalServido -Force | Remove-Item -Force -Recurse
-    foreach ($a in $Archivos) { Copy-Item -LiteralPath $a -Destination $CanalServido }
+    $mtime = Get-Date
+    if ($mtime -lt $script:ultimaMtimeCanal.AddSeconds(2)) { $mtime = $script:ultimaMtimeCanal.AddSeconds(2) }
+    $script:ultimaMtimeCanal = $mtime
+    foreach ($a in $Archivos) {
+        Copy-Item -LiteralPath $a -Destination $CanalServido
+        (Get-Item -LiteralPath (Join-Path $CanalServido (Split-Path -Leaf $a))).LastWriteTime = $mtime
+    }
 }
 
 $centinelas = @{}
@@ -178,10 +239,18 @@ try {
     Expand-Archive -LiteralPath $PayloadZip -DestinationPath $portable -Force
     $ini = Get-Content -LiteralPath (Join-Path $portable 'tatana-portable.ini') -Raw
     if ($ini -notmatch 'CLIENT_URL=https://') { Falla "el .ini del payload no es para la nube:`n$ini" }
-    $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'install-portable.bat' -WorkingDirectory $portable -PassThru -Wait -WindowStyle Hidden
-    if ($p.ExitCode -ne 0) { Falla "install-portable.bat salió con $($p.ExitCode)" }
+    # Se espera solo al cmd del .bat: Factum.Agent (lanzado por launch-tatana.bat) queda corriendo a
+    # propósito, porque el paso 2 prueba que el instalador detenga un portátil EN USO antes de migrarlo.
+    $p = Iniciar-Proceso 'cmd.exe' @('/c', 'install-portable.bat') $portable
+    $codigo = Esperar-Salida $p 'install-portable.bat' 180
+    if ($codigo -ne 0) { Falla "install-portable.bat salió con '$codigo'" }
     $h = Esperar-Health $Version
     Ok "portátil $($h.version) corriendo desde $Programas"
+    $agentePortable = @(Get-Process -Name 'Factum.Agent' -ErrorAction SilentlyContinue | Where-Object {
+            $r = $null; try { $r = $_.Path } catch { }
+            $r -and $r.StartsWith($Programas + '\', [StringComparison]::OrdinalIgnoreCase) })
+    if ($agentePortable.Count -eq 0) { Falla "no hay un Factum.Agent corriendo desde $Programas" }
+    Ok "Factum.Agent del portátil en uso (PID $($agentePortable[0].Id)): lo tiene que detener el instalador"
     if (-not (Test-Path -LiteralPath $Startup)) { Falla "el portátil no creó $Startup" }
 
     $centinelaDatos = Join-Path $DataDir 'cases\ci-centinela\evidencia.bin'
@@ -199,9 +268,15 @@ try {
 
     # ── 2. Instalar la base 0.0.1 (migra el portátil) ────────────────────────
     Paso '2. Instalar la base 0.0.1 en silencio'
-    $p = Start-Process -FilePath $InstaladorBase -ArgumentList '/S' -PassThru -Wait
-    if ($p.ExitCode -ne 0) { Falla "el instalador base salió con $($p.ExitCode) (ver %APPDATA%\Tatana\logs\instalador.log)" }
+    # Solo el proceso del instalador (si NSIS arrancara la app al terminar, no se la espera).
+    $p = Iniciar-Proceso $InstaladorBase @('/S')
+    $codigo = Esperar-Salida $p 'el instalador base' 300
+    if ($codigo -ne 0) { Falla "el instalador base salió con '$codigo' (ver %APPDATA%\Tatana\logs\instalador.log)" }
     Ok 'instalador base: exit 0'
+    $limite = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $limite -and @($agentePortable | Where-Object { -not $_.HasExited }).Count -gt 0) { Start-Sleep -Seconds 1 }
+    if (@($agentePortable | Where-Object { -not $_.HasExited }).Count -gt 0) { Falla 'el instalador no detuvo el Factum.Agent del portátil' }
+    Ok 'el instalador detuvo el Factum.Agent del portátil'
     if (-not (Test-Path -LiteralPath $Desinstalador)) { Falla "no existe $Desinstalador" }
     $archivado = @(Get-ChildItem -LiteralPath $TatanaLocal -Directory -Filter 'portable-anterior-*' -ErrorAction SilentlyContinue)
     if ($archivado.Count -ne 1) { Falla "se esperaba una carpeta portable-anterior-* en $TatanaLocal (hay $($archivado.Count))" }
@@ -245,10 +320,10 @@ try {
     }
     if ($estado.local_config.path -ne $LocalConfigInstalado) { Falla "local_config.path = $($estado.local_config.path)" }
     Ok '/agent/state: config local cargada y fija los orígenes (D9)'
-    $duenos = Duenos-8765
-    if ($duenos.Count -ne 1) { Falla "8765 tiene $($duenos.Count) dueños" }
-    $ruta = (Get-Process -Id $duenos[0]).Path
-    if (-not $ruta.StartsWith($AgentDir, [StringComparison]::OrdinalIgnoreCase)) { Falla "8765 lo escucha $ruta" }
+    $duenos = @(Duenos-8765)
+    if ($duenos.Count -ne 1) { Falla "8765 tiene $($duenos.Count) dueños (PIDs: $($duenos -join ', '); netstat: $(Netstat-8765))" }
+    $ruta = (Get-Process -Id $duenos[0] -ErrorAction SilentlyContinue).Path
+    if (-not $ruta -or -not $ruta.StartsWith($AgentDir, [StringComparison]::OrdinalIgnoreCase)) { Falla "8765 lo escucha $ruta" }
     Ok "un solo agente en 8765 ($ruta)"
     $run = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue
     $enRun = $false
@@ -309,30 +384,53 @@ fs.writeFileSync(dst, JSON.stringify({ ...env, signature: sig.toString('base64')
     Nuevo-Aleatorio $subida 4MB
     $hashSubida = Hash $subida
     $codigoSubida = Join-Path $Trabajo 'subida.code'
-    $curl = Start-Process -FilePath 'curl.exe' -PassThru -RedirectStandardOutput $codigoSubida -ArgumentList @(
-        '-s', '-o', 'NUL', '-w', '%{http_code}', '--limit-rate', '100k', '-X', 'POST',
-        '--data-binary', "@$subida", '-H', 'Content-Type: application/octet-stream',
-        "$AgenteUrl/cases/$CaseId/evidence/upload?filename=ci-subida.bin")
+    $errorSubida = Join-Path $Trabajo 'subida.stderr'
+    $cuerpoSubida = Join-Path $Trabajo 'subida.body'
+    $urlSubida = "$AgenteUrl/cases/$CaseId/evidence/upload?filename=ci-subida.bin"
+    # Start-Process une -ArgumentList con espacios y NO pone comillas. Con un array,
+    # 'Content-Type: application/octet-stream' llegaba a curl partido en dos: un `-H Content-Type:`
+    # vacío y una URL extra, `application/octet-stream`, que curl intentaba resolver primero. Por eso
+    # se arma una sola línea con las comillas explícitas.
+    # Es la misma subida que hace la web: POST con Content-Length del archivo, sin upload-check
+    # previo (es opcional). Sin Origin la guarda no aplica; con Origin tendría que estar en
+    # AllowedOrigins. `Expect:` vacío evita la espera de "100 Continue".
+    $argsCurl = '-sS -o "' + $cuerpoSubida + '" -w "%{http_code}" --limit-rate 100k -X POST -H "Expect:" ' +
+        '-H "Content-Type: application/octet-stream" --data-binary "@' + $subida + '" "' + $urlSubida + '"'
+    $curl = Start-Process -FilePath 'curl.exe' -PassThru -ArgumentList $argsCurl `
+        -RedirectStandardOutput $codigoSubida -RedirectStandardError $errorSubida
+    $null = $curl.Handle   # sin el handle, ExitCode puede quedar vacío
+    function Detalle-Subida {
+        $estado = if ($curl.HasExited) { "terminó con exit $($curl.ExitCode)" } else { 'sigue corriendo' }
+        $http = if (Test-Path -LiteralPath $codigoSubida) { "$(Get-Content -LiteralPath $codigoSubida -Raw)".Trim() } else { '' }
+        $err = if (Test-Path -LiteralPath $errorSubida) { "$(Get-Content -LiteralPath $errorSubida -Raw)".Trim() } else { '' }
+        $cuerpo = if (Test-Path -LiteralPath $cuerpoSubida) { "$(Get-Content -LiteralPath $cuerpoSubida -Raw)".Trim() } else { '' }
+        if ($cuerpo.Length -gt 500) { $cuerpo = $cuerpo.Substring(0, 500) + '…' }
+        "curl $estado; HTTP '$http'; body: '$cuerpo'; stderr: '$err'"
+    }
     $limite = (Get-Date).AddSeconds(15)
     $ocupado = $false
     while ((Get-Date) -lt $limite -and -not $ocupado) {
         $s = Obtener '/agent/state'
         if ($null -ne $s -and $s.busy) { $ocupado = $true } else { Start-Sleep -Milliseconds 300 }
     }
-    if (-not $ocupado) { Falla '/agent/state.busy no se puso en true durante la subida' }
+    if (-not $ocupado) { Falla "/agent/state.busy no se puso en true durante la subida ($(Detalle-Subida))" }
     Ok '/agent/state.busy = true durante la subida'
     Start-Process -FilePath $AppExe -ArgumentList '--install-update' | Out-Null
     Start-Sleep -Seconds 10
-    if ($curl.HasExited) { Falla 'la subida terminó antes de comprobar el bloqueo (subí el tamaño o bajá --limit-rate)' }
+    if ($curl.HasExited) { Falla "la subida terminó antes de comprobar el bloqueo: $(Detalle-Subida) (si fue 200, subí el tamaño o bajá --limit-rate)" }
     if ((Obtener '/health').version -ne '0.0.1') { Falla 'se instaló con una operación en curso' }
     $e = Leer-Estado
     if ($e.phase -ne 'ready' -or -not (Tiene $e 'busyOperations') -or @($e.busyOperations).Count -eq 0) {
         Falla "con la subida en curso: phase=$($e.phase), busyOperations=$(@($e.busyOperations) -join ',')"
     }
     Ok "no instala con operaciones en curso (busyOperations: $(@($e.busyOperations) -join ', '))"
-    $curl.WaitForExit()
-    $codigo = (Get-Content -LiteralPath $codigoSubida -Raw).Trim()
-    if ($codigo -ne '200') { Falla "la subida terminó con HTTP $codigo" }
+    if (-not $curl.WaitForExit(180000)) {
+        Stop-Process -Id $curl.Id -Force -ErrorAction SilentlyContinue
+        Falla "la subida no terminó en 180 s ($(Detalle-Subida))"
+    }
+    $curl.WaitForExit()   # vacía la salida redirigida
+    $codigo = "$(Get-Content -LiteralPath $codigoSubida -Raw)".Trim()   # vacío -> $null con -Raw
+    if ($codigo -ne '200') { Falla "la subida no dio 200: $(Detalle-Subida)" }
     $subidaDestino = Join-Path $DataDir "cases\$CaseId\ci-subida.bin"
     if ((Hash $subidaDestino) -ne $hashSubida) { Falla 'la subida no quedó idéntica' }
     $centinelas[$subidaDestino] = $hashSubida
@@ -342,7 +440,7 @@ fs.writeFileSync(dst, JSON.stringify({ ...env, signature: sig.toString('base64')
     $h = Esperar-Health $Version -Segundos 180
     $s = Obtener '/agent/state'
     if ($s.version -ne $Version) { Falla "/agent/state.version = $($s.version)" }
-    if ((Procesos-Tatana).Count -eq 0) { Falla 'la app no se relanzó después de actualizar' }
+    if (@(Procesos-Tatana).Count -eq 0) { Falla 'la app no se relanzó después de actualizar' }
     $e = Esperar-Fase 'up_to_date' -Segundos 120
     Ok "actualizado a $Version, la app siguió corriendo y quedó up_to_date"
     Verificar-Centinelas 'después de actualizar'
@@ -371,8 +469,9 @@ fs.writeFileSync(dst, JSON.stringify({ ...env, signature: sig.toString('base64')
     # ── 8. Desinstalar ───────────────────────────────────────────────────────
     Paso '8. Desinstalar'
     Cerrar-App
-    $p = Start-Process -FilePath $Desinstalador -ArgumentList '/S' -PassThru -Wait
-    if ($p.ExitCode -ne 0) { Falla "el desinstalador salió con $($p.ExitCode)" }
+    $p = Iniciar-Proceso $Desinstalador @('/S')
+    $codigo = Esperar-Salida $p 'el desinstalador' 120
+    if ($codigo -ne 0) { Falla "el desinstalador salió con '$codigo'" }
     # El desinstalador de NSIS se copia a %TEMP% y sigue: se espera a que termine de borrar.
     $limite = (Get-Date).AddSeconds(90)
     while ((Get-Date) -lt $limite -and (Test-Path -LiteralPath $Programas) -and
@@ -385,7 +484,7 @@ fs.writeFileSync(dst, JSON.stringify({ ...env, signature: sig.toString('base64')
     }
     Ok "se borró $Programas"
     Verificar-Centinelas 'después de desinstalar'
-    if ((Duenos-8765).Count -ne 0) { Falla 'algo sigue escuchando en 8765' }
+    if (@(Duenos-8765).Count -ne 0) { Falla 'algo sigue escuchando en 8765' }
     Ok 'nada escucha en 8765'
 
     $resumen.Insert(0, "### Tatana ${Version}: prueba del instalador OK`n")
@@ -395,6 +494,7 @@ catch {
     throw
 }
 finally {
+    Cerrar-Navegadores-De-La-Prueba
     if ($null -ne $servidor -and -not $servidor.HasExited) { Stop-Process -Id $servidor.Id -Force -ErrorAction SilentlyContinue }
     if ($env:GITHUB_STEP_SUMMARY) { $resumen -join "`n" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 }
 }

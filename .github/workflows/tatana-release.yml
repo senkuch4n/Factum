@@ -355,6 +355,11 @@ jobs:
         run: |
           npm ci
           if ($LASTEXITCODE -ne 0) { throw 'npm ci' }
+          # El postinstall ya parchó multiUser.nsh de electron-builder (0xC0000005 en System.dll,
+          # PR #9769). Se vuelve a correr para que el log lo confirme ("ya está parchado"); falla si
+          # cambió la plantilla.
+          node scripts/parchar-electron-builder.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'parche de electron-builder' }
           npm version $env:VERSION --no-git-tag-version --allow-same-version
           npx electron-vite build
           if ($LASTEXITCODE -ne 0) { throw 'electron-vite build' }
@@ -373,7 +378,7 @@ jobs:
           npx electron-vite build
           if ($LASTEXITCODE -ne 0) { throw 'electron-vite build (base)' }
           $primera = @($env:UPDATE_URLS_HORNEADAS | ConvertFrom-Json)[0]
-          npx electron-builder --win nsis --x64 --publish never "-c.publish.url=$primera" -c.directories.output=dist-base
+          npx electron-builder --win nsis --x64 --publish never "-c.publish.url=$primera" "-c.directories.output=dist-base"
           if ($LASTEXITCODE -ne 0) { throw 'electron-builder (base)' }
           if (-not (Test-Path -LiteralPath 'dist-base/Tatana-Setup-0.0.1.exe')) { throw 'falta dist-base/Tatana-Setup-0.0.1.exe' }
 
@@ -535,6 +540,9 @@ jobs:
           name: canal
           path: ${{ runner.temp }}/canal
       - name: Prueba del instalador
+        # Menor que el del job (40): si algo se cuelga, el paso falla por timeout y igual corren
+        # "Juntar logs" y "Subir logs".
+        timeout-minutes: 25
         env:
           VERSION: ${{ needs.preparar.outputs.version }}
           CLIENT_URL: ${{ needs.preparar.outputs.client_url }}
@@ -547,7 +555,7 @@ jobs:
           -Version $env:VERSION
           -OrigenWeb $env:CLIENT_URL
       - name: Juntar logs
-        if: failure()
+        if: always()
         run: |
           $dst = Join-Path $env:RUNNER_TEMP 'logs-prueba'
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
@@ -560,8 +568,29 @@ jobs:
           }
           Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'Tatana') -Filter '*.log' -Recurse -ErrorAction SilentlyContinue |
             ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $dst }
+          # %APPDATA%\Tatana\logs\*.log ya entra arriba (recursivo). El instalador.log, que escriben
+          # migrar-portable.ps1 y las líneas [nsis] de installer.nsh, se muestra además en la salida
+          # del job, así se lee sin bajar el artefacto.
+          $logInstalador = Join-Path $env:APPDATA 'Tatana\logs\instalador.log'
+          if (Test-Path -LiteralPath $logInstalador) {
+            Write-Host '::group::instalador.log'
+            Get-Content -LiteralPath $logInstalador | Write-Host
+            Write-Host '::endgroup::'
+          } else {
+            Write-Host "::warning::No existe $logInstalador (el instalador no llegó a escribirlo)"
+          }
+          # Caídas de procesos (0xC0000005 y similares): el evento 1000 de "Application Error" dice
+          # qué módulo falló (por ejemplo nsExec.dll en %TEMP%\nsXXXX.tmp, o el propio instalador).
+          $eventos = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'Application Error', 'Windows Error Reporting'; StartTime = (Get-Date).AddHours(-2) } -ErrorAction SilentlyContinue)
+          if ($eventos.Count -gt 0) {
+            $eventos | Format-List TimeCreated, ProviderName, Id, Message |
+              Out-File -LiteralPath (Join-Path $dst 'eventos-application-error.txt') -Width 400 -Encoding utf8
+            Write-Host '::group::Eventos Application Error / WER'
+            $eventos | Format-List TimeCreated, ProviderName, Id, Message | Out-String -Width 400 | Write-Host
+            Write-Host '::endgroup::'
+          }
       - name: Subir logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: logs-prueba
