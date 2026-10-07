@@ -377,6 +377,11 @@
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+/* Entrada escalonada del saludo del dashboard (GreetingHeadline; solo con motion-safe:). */
+@keyframes fx-word-in {
+  from { opacity: 0; filter: blur(8px); transform: translateY(12px); }
+  to   { opacity: 1; filter: blur(0); transform: none; }
+}
 /* Barra indeterminada del envío de evidencia (UploadProgressPanel; solo con motion-safe:). */
 @keyframes fx-indeterminate {
   from { transform: translateX(-100%); }
@@ -388,6 +393,30 @@
    (ver punto 2e de la cabecera).
 ═══════════════════════════════════════════════════════════════ */
 .dark { color-scheme: dark; }
+
+/* Theme switch: crossfade of the whole page (View Transitions, see lib/theme.ts).
+   It only animates opacity of two snapshots, so it runs on the compositor with no
+   per-frame style recalculation. */
+.fx-theme-switching,
+.fx-theme-switching *,
+.fx-theme-switching *::before,
+.fx-theme-switching *::after {
+  transition: none !important;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 400ms;
+  animation-timing-function: cubic-bezier(.4, 0, .2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
 
 body {
   font-family: var(--fx-font-sans);

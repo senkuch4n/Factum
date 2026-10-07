@@ -26,6 +26,7 @@ import { useRecording } from "@/hooks/useRecording";
 import { useAirplayShotSession } from "@/hooks/useAirplayShotSession";
 import { AgentChip } from "@/components/dashboard/AgentChip";
 import { DashboardStats } from "@/components/dashboard/DashboardStats";
+import { GreetingHeadline } from "@/components/dashboard/GreetingHeadline";
 import { ResumeDeviceModal } from "@/components/dashboard/ResumeDeviceModal";
 import { SoporteModal } from "@/components/dashboard/SoporteModal";
 import { GenerateStep } from "@/components/dashboard/GenerateStep";
@@ -67,6 +68,39 @@ function newCaseForm(historyCases: Case[]): CaseFormData {
     tipo_dispositivo: DEFAULT_TIPO_DISPOSITIVO,
     fecha_intervencion: todayIso(),
   };
+}
+
+/** Saludo según la hora local: mañana 6–12, tarde 12–20, noche 20–6. */
+function greetingFor(hour: number): string {
+  if (hour >= 6 && hour < 12) return "Buenos días";
+  if (hour >= 12 && hour < 20) return "Buenas tardes";
+  return "Buenas noches";
+}
+
+function formatLongDate(date: Date): string {
+  return date.toLocaleDateString("es-AR", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
+  });
+}
+
+/**
+ * Saludo y fecha del encabezado. Se revisan cada minuto para que sigan al reloj
+ * con la pestaña abierta; como son strings, solo re-renderiza cuando cambian.
+ */
+function useGreetingClock() {
+  const [greeting, setGreeting] = useState(() => greetingFor(new Date().getHours()));
+  const [formattedDate, setFormattedDate] = useState(() => formatLongDate(new Date()));
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const now = new Date();
+      setGreeting(greetingFor(now.getHours()));
+      setFormattedDate(formatLongDate(now));
+    }, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  return { greeting, formattedDate };
 }
 
 export default function Dashboard() {
@@ -610,16 +644,7 @@ export default function Dashboard() {
     proceedResume(cas);
   }
 
-  const greeting = useMemo(() => {
-    const h = new Date().getHours();
-    if (h < 12) return "Buenos días";
-    if (h < 19) return "Buenas tardes";
-    return "Buenas noches";
-  }, []);
-
-  const formattedDate = useMemo(() => new Date().toLocaleDateString("es-AR", {
-    weekday: "long", day: "numeric", month: "long", year: "numeric",
-  }), []);
+  const { greeting, formattedDate } = useGreetingClock();
 
   const draftCases = useMemo(() => historyCases.filter(c => c.status === "draft"), [historyCases]);
 
@@ -750,19 +775,18 @@ export default function Dashboard() {
           <div className="p-4 sm:p-6 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]">
             <div className="max-w-5xl mx-auto space-y-8">
               {user && (
-                <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 motion-safe:animate-[fx-rise-in_var(--fx-dur-slow)_var(--fx-ease-out)_both]">
+                <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
                   <div className="min-w-0">
-                    <h1 className="text-fx-display text-fx-text break-words text-balance">
-                      {greeting}, <span className="text-fx-accent-text">{user.name}</span>
-                    </h1>
-                    <p className="mt-2 text-fx-body text-fx-text-2 first-letter:uppercase">{formattedDate}</p>
+                    <GreetingHeadline greeting={greeting} name={user.name} />
+                    {/* Fecha y botón entran como secciones, después de las palabras del saludo. */}
+                    <p className="mt-2 text-fx-body text-fx-text-2 first-letter:uppercase motion-safe:animate-[fx-word-in_600ms_var(--fx-ease-out)_400ms_both]">{formattedDate}</p>
                   </div>
                   <Button
                     size="large"
                     icon={<Plus className="h-5 w-5" aria-hidden="true" />}
                     label="Nueva inspección"
                     onClick={startWizard}
-                    className="w-full sm:w-auto min-h-11 shrink-0"
+                    className="w-full sm:w-auto min-h-11 shrink-0 motion-safe:animate-[fx-word-in_600ms_var(--fx-ease-out)_500ms_both]"
                   />
                 </div>
               )}
