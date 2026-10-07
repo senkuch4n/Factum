@@ -373,7 +373,7 @@ jobs:
           npx electron-vite build
           if ($LASTEXITCODE -ne 0) { throw 'electron-vite build (base)' }
           $primera = @($env:UPDATE_URLS_HORNEADAS | ConvertFrom-Json)[0]
-          npx electron-builder --win nsis --x64 --publish never "-c.publish.url=$primera" -c.directories.output=dist-base
+          npx electron-builder --win nsis --x64 --publish never "-c.publish.url=$primera" "-c.directories.output=dist-base"
           if ($LASTEXITCODE -ne 0) { throw 'electron-builder (base)' }
           if (-not (Test-Path -LiteralPath 'dist-base/Tatana-Setup-0.0.1.exe')) { throw 'falta dist-base/Tatana-Setup-0.0.1.exe' }
 

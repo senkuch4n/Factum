@@ -96,3 +96,7 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-07 — #21 re-revisión APROBADA. aprobada; pendiente: regresión Mac del usuario + pasos manuales §18 (clave de firma, environment tatana-release, clave SSH de publicación, primera release 1.4.0).
 - 2026-10-07 — #21 OK del usuario (regresión Mac). Commit + push + PR.
 - 2026-10-07 — #21 cerrada: PR contra develop + resumen en el issue. Sin HU activa. Próximo: pasos §18 con el usuario.
+- 2026-10-07 — §18 Tatana: clave de firma generada (~/Seguro/tatana-firma.pem), pública en trusted-keys.ts (PR #24), environment tatana-release (main + tatana-v*), secrets TATANA_FIRMA_CLAVE_PRIVADA y TATANA_PUB_SSH_KEY, vars TATANA_FIRMA_KEY_ID y TATANA_ORIGENES. Falta VPS (tatana-pub).
+- 2026-10-07 — PR #24 mergeado; usuario tatana-pub creado en el VPS y clave de publicación probada (estado=ninguna, ls rechazado, sin PTY). PR develop→main abierto.
+- 2026-10-07 — PR #25 mergeado → deploy automático OK (e1f1fee1). Ensayo tatana-release falla en 'Instalador base 0.0.1': PowerShell parte -c.directories.output=dist-base sin comillas (ENOENT). Rama fix/tatana-release-pwsh; lanzado implementer-backend.
+- 2026-10-07 — fix tatana-release: comillas en -c.directories.output (demostrado con pwsh 7.6.2). PR con ensayo en Windows.
