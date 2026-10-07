@@ -77,8 +77,18 @@ Var tatanaPowerShell
   !insertmacro tatanaLog `resultado de ${ARGS}: ${RESULT}`
 !macroend
 
+; preInit: lo inserta electron-builder al principio de .onInit, antes de check64BitAndSetRegView,
+; ALLOW_ONLY_ONE_INSTALLER_INSTANCE e initMultiUser, que usan System.dll. Es lo más temprano en
+; que se puede escribir el log. Se excluye la pasada BUILD_UNINSTALLER: es la que electron-builder
+; ejecuta en la máquina de build para generar el desinstalador.
+!macro preInit
+  !ifndef BUILD_UNINSTALLER
+    !insertmacro tatanaLog `preInit: inicio de .onInit`
+  !endif
+!macroend
+
 !macro customInit
-  ; Primera línea: si falta en el log, la falla fue antes de customInit.
+  ; Si esta línea falta pero está la de preInit, la falla fue en el .onInit de electron-builder.
   !insertmacro tatanaLog `customInit: inicio`
   InitPluginsDir
   File /oname=$PLUGINSDIR\migrar-portable.ps1 "${BUILD_RESOURCES_DIR}\migrar-portable.ps1"

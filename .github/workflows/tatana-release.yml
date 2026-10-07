@@ -355,6 +355,11 @@ jobs:
         run: |
           npm ci
           if ($LASTEXITCODE -ne 0) { throw 'npm ci' }
+          # El postinstall ya parchó multiUser.nsh de electron-builder (0xC0000005 en System.dll,
+          # PR #9769). Se vuelve a correr para que el log lo confirme ("ya está parchado"); falla si
+          # cambió la plantilla.
+          node scripts/parchar-electron-builder.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'parche de electron-builder' }
           npm version $env:VERSION --no-git-tag-version --allow-same-version
           npx electron-vite build
           if ($LASTEXITCODE -ne 0) { throw 'electron-vite build' }

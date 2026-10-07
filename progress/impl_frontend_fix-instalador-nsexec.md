@@ -216,3 +216,111 @@ incluido `Factum.Agent.exe`, que es lo que la SDD ya pedía.
 
 Archivos tocados en la ronda 2: `agent-ui/build/migrar-portable.ps1`, `agent-ui/build/installer.nsh`
 y este archivo. Sin commit.
+
+## Ronda 3: 0xC0000005 en System.dll antes de customInit
+
+Fuente: run 37628522838. El evento de Windows dice `Faulting module: ...\Temp\nsvXXXX.tmp\System.dll`
+(timestamp de 2018, NSIS 3.04), y no hay ninguna línea `[nsis]`. Es intermitente: en la ronda 1
+el instalador llegó hasta Migrar.
+
+### Causa (confirmada): bug de la plantilla de electron-builder, no del binario de NSIS
+
+- **La hipótesis CET/ASLR no se sostiene.** El código del plugin System entre NSIS v3.04 y
+  v3.13 casi no cambió: `git log v304..master -- Contrib/System` en `kichik/nsis` solo trae docs,
+  copyright, `System::Store` con flags, path con comillas y un `Resource.dll` reproducible. El
+  changelog (`Docs/src/history.but`, 3.05 a 3.13) no tiene ningún arreglo de caídas de System.dll
+  ni de compatibilidad con CET. Lo que sí trae es "Fixed nsExec::ExecToLog crash (bug #1323)" en
+  3.13, que valida el cambio de la ronda 1. Actualizar NSIS no corrige esta caída.
+- **La causa real está en `app-builder-lib/templates/nsis/multiUser.nsh`, macro
+  `setInstallModePerUser`.** La ejecuta `initMultiUser` en `.onInit`, antes de `customInit`, en
+  cada instalación per-user **sin** `InstallLocation` previa en HKCU. Ese es justo el caso del
+  ensayo: portátil pero no instalado. El código es:
+  ```
+  System::Call 'SHELL32::SHGetKnownFolderPath(g "${FOLDERID_UserProgramFiles}", ..., *p .r2)i.r1'
+  System::Call '*$2(&w${NSIS_MAX_STRLEN} .s)'
+  ```
+  La segunda línea hace que System.dll copie siempre `NSIS_MAX_STRLEN` WCHAR (2 KB) desde un
+  buffer del Shell que solo mide lo que mide la ruta. Según cómo quede el heap, lee memoria no
+  mapeada y da 0xC0000005 dentro de System.dll, de forma **intermitente**.
+- **Referencia:** electron-builder **PR #9769** "fix(nsis): safely copy UserProgramFiles path",
+  commit `a356198e`, merge 2026-05-27, incluido desde **electron-builder 26.12.0**:
+  https://github.com/electron-userland/electron-builder/pull/9769. Su validación dice textual
+  "unsafe fixed-size read: exits `-1073741819` / `0xc0000005`", el mismo código del ensayo.
+  Referencia también el issue #8536 ("NSIS Installer doesn't launch on Windows 11 when perUser
+  is set by default") y el PR #9564.
+- Esto también puede pasar en PCs reales con Windows 10 u 11, no solo en CI.
+
+### Opciones evaluadas
+
+| Opción | Corrige | Riesgo |
+|---|---|---|
+| `nsis.customNsisBinary` con NSIS 3.10 o superior | **No**: el bug está en la plantilla, no en el binario | — |
+| Actualizar electron-builder 24.13.3 a 26.12 o superior | Sí | Dos versiones mayores: cambian plantillas NSIS (oneClick, detección de versión de Windows del PR #9564), `latest.yml`/blockmap, el binario app-builder y el directorio de instalación (ver abajo). Hay que revalidar todo el ciclo instalar/actualizar/desinstalar |
+| **Parche puntual de `multiUser.nsh` en `postinstall`** | Sí | Mínimo: un bloque de 9 líneas, sin cambio de comportamiento, idempotente, y falla fuerte si cambia la plantilla |
+
+**Elegí el parche.** Es el cambio más chico que elimina la lectura de más, y no mueve nada más
+del pipeline de release. Actualizar electron-builder queda como tarea aparte. Cuando se haga,
+se borran el script y el `postinstall`. El script lo avisa si la plantilla ya no coincide.
+
+**Detalle importante: el parche no copia el de upstream, a propósito.** En el original, la ruta
+leída se guardaba en `$0` **entre** `System::Store S` y `System::Store L`, y `L` restauraba
+`$0`. El resultado se descartaba siempre e `INSTDIR` quedaba en
+`$LocalAppData\Programs\<app>` (lo confirma la doc de `System::Store` de v3.04: `s`/`l`
+apilan y desapilan $0-$9 y $R0-$R9, y lo dice también el PR #9769). Upstream arregla ese bug
+también y pasa a usar de verdad `FOLDERID_UserProgramFiles`. Eso cambiaría la carpeta de
+instalación si esa carpeta conocida está redirigida, y `migrar-portable.ps1` asume
+`%LOCALAPPDATA%\Programs\Tatana` (D10). Por eso mi parche **saca las llamadas a System**
+y deja `$0 = "$LocalAppData\Programs"`: el mismo resultado efectivo que antes y sin System.dll en
+ese camino. **Ojo al actualizar a 26.12 o superior:** ahí sí cambia el comportamiento con carpetas
+redirigidas.
+
+### Cambios
+
+- `agent-ui/scripts/parchar-electron-builder.mjs` (nuevo). Resuelve `app-builder-lib` desde
+  `electron-builder` y reemplaza el bloque exacto en `templates/nsis/multiUser.nsh`
+  (respeta CRLF/LF). Deja una marca `# Parche Factum: electron-builder PR #9769`. Si encuentra
+  la marca, no hace nada. Si no encuentra ni el bloque viejo ni la marca, sale con 1 y un
+  mensaje que explica qué revisar.
+- `agent-ui/package.json`: `"postinstall": "node scripts/parchar-electron-builder.mjs"`.
+  `npm ci` lo corre en CI y en local.
+- `agent-ui/package-lock.json`: solo `"hasInstallScript": true` en la raíz. Es lo que npm
+  registra cuando hay `postinstall`; lo regeneré con `npm install --package-lock-only`. No
+  cambia ninguna dependencia.
+- `.github/workflows/tatana-release.yml`, paso "Instalador vX": después de `npm ci` vuelve a
+  correr el script. Es idempotente y deja en el log "ya está parchado". Si alguien agrega
+  `--ignore-scripts` o cambia la plantilla, el build falla en vez de generar un instalador con
+  el bug. El paso "Instalador base 0.0.1" usa el mismo `node_modules`.
+- `agent-ui/build/installer.nsh`: macro `preInit`. electron-builder la inserta al principio de
+  `.onInit`, antes de `check64BitAndSetRegView`, `ALLOW_ONLY_ONE_INSTALLER_INSTANCE` e
+  `initMultiUser`. Escribe `[nsis] preInit: inicio de .onInit`, que es lo más temprano posible.
+  Está excluida con `!ifndef BUILD_UNINSTALLER` de la pasada que electron-builder ejecuta en la
+  máquina de build para generar el desinstalador. Cómo leer el log:
+  - sin `preInit`: la falla fue antes de `.onInit` (stub o extracción de plugins);
+  - con `preInit` pero sin `customInit: inicio`: la falla fue en el `.onInit` de electron-builder;
+  - con las dos: la falla es nuestra.
+
+### Verificación (ronda 3)
+
+- **Build real con electron-builder 24.13.3 en macOS**
+  (`npx electron-builder --win nsis --x64 --publish never`, salida al scratchpad). Las **dos**
+  pasadas de makensis 3.04 corren con `-WX` (así las lanza electron-builder) y salen con
+  **code=0**. Se generaron `Tatana-Setup-1.0.0.exe`, `.blockmap` y `latest.yml`. La plantilla
+  usada es la de `node_modules` ya parchada (cwd de makensis = `templates/nsis`). 7-Zip lista
+  bien el contenido del instalador.
+- Probé ejecutarlo con `/S` bajo el wine de electron-builder, pero se colgó en la creación del
+  prefijo y no sirve como prueba. **No se ejecutó el instalador en Windows:** el ensayo del PR lo
+  confirma.
+- El script corrió sobre la plantilla prístina (`npm pack app-builder-lib@24.13.3`): la primera
+  vez parcha y la segunda dice "ya está parchado". El diff contra la prístina es solo el bloque.
+- `npm test`: 18 pass, 0 fail. `tsc -p tsconfig.web.json`: 0. `tsc -p tsconfig.node.json`: 0.
+- `actionlint`: rc=0.
+- No compilé con NSIS 3.10 o superior porque no se cambia el binario: esta corrección no lo
+  necesita.
+- Qué mirar en el próximo ensayo: que aparezcan `[nsis] preInit: inicio de .onInit` y
+  `[nsis] customInit: inicio`, que no haya evento Application Error de System.dll, y que se
+  repita varias veces si se quiere descartar la intermitencia.
+
+Archivos tocados en la ronda 3: `agent-ui/scripts/parchar-electron-builder.mjs` (nuevo),
+`agent-ui/package.json`, `agent-ui/package-lock.json`, `agent-ui/build/installer.nsh`,
+`.github/workflows/tatana-release.yml` y este archivo. Sin commit. `node_modules` local quedó
+parchado (lo hace el `postinstall`).
