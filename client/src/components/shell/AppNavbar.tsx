@@ -30,9 +30,8 @@ interface AppNavbarProps {
 
 const SELF_TARGET = { kind: "self" } as const;
 
-/* Marca dentro de la tapa clara izquierda: la variante para fondo claro
-   (cuadrado verde #2f6f12 con la "F" blanca) contrasta en los dos temas,
-   porque la tapa es clara siempre. Decorativa: el nombre accesible lo pone
+/* Marca dentro de la tapa clara izquierda: la "F" en degradé (PNG con fondo
+   transparente) contrasta en los dos temas, porque la tapa es clara siempre. Decorativa: el nombre accesible lo pone
    el contenedor. width/height = proporción del SVG, para reservar el lugar. */
 const BRAND_CAP = "fx-nav-cap flex h-10 w-10 shrink-0 items-center justify-center rounded-full";
 
@@ -43,7 +42,7 @@ const THEME_AS_CAP =
   "h-10 w-10 rounded-full fx-nav-cap bg-[var(--fx-nav-cap-bg)] text-[color:var(--fx-nav-cap-text-2)] hover:bg-[var(--fx-nav-cap-hover)] hover:text-[color:var(--fx-nav-cap-text)]";
 
 function BrandMark() {
-  return <img src="/logo-mark-white.svg" alt="" aria-hidden="true" width={64} height={64} className="h-6 w-6" />;
+  return <img src="/logo-mark-f.png" alt="" aria-hidden="true" width={256} height={256} className="h-7 w-7" />;
 }
 
 /**
