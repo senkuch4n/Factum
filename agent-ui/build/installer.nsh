@@ -40,6 +40,20 @@
   Pop $R8
 !macroend
 
+; PowerShell de 64 bits. NSIS es un proceso de 32 bits: "powershell.exe" a secas termina en
+; SysWOW64 (32 bits), y desde ahí Get-Process no ve la ruta de procesos de 64 bits como
+; Factum.Agent.exe. $WINDIR\Sysnative solo existe para procesos de 32 bits en Windows de 64 bits.
+; Si no está (Windows de 32 bits), se usa el de System32.
+Var tatanaPowerShell
+
+!macro tatanaElegirPowerShell
+  StrCpy $tatanaPowerShell "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
+  ${If} ${FileExists} "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+    StrCpy $tatanaPowerShell "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  ${EndIf}
+  !insertmacro tatanaLog `PowerShell: $tatanaPowerShell`
+!macroend
+
 ; Corre migrar-portable.ps1 y deja en RESULT el código de salida de PowerShell como texto
 ; ("0", "20"...), o "error"/"timeout" si nsExec no pudo ejecutarlo.
 ; nsExec::ExecToStack apila primero la salida y encima el código. Así que el primer Pop es el
@@ -50,7 +64,7 @@
   !insertmacro tatanaLog `ejecuta migrar-portable.ps1 ${ARGS}`
   Push $R9
   Push "tatana:sin-salida"
-  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\migrar-portable.ps1" ${ARGS}'
+  nsExec::ExecToStack '"$tatanaPowerShell" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\migrar-portable.ps1" ${ARGS}'
   Pop ${RESULT}
   Pop $R9
   ${If} $R9 != "tatana:sin-salida"
@@ -68,6 +82,7 @@
   !insertmacro tatanaLog `customInit: inicio`
   InitPluginsDir
   File /oname=$PLUGINSDIR\migrar-portable.ps1 "${BUILD_RESOURCES_DIR}\migrar-portable.ps1"
+  !insertmacro tatanaElegirPowerShell
 
   !insertmacro tatanaPs1 '-Accion Detectar' $0
 
@@ -129,5 +144,6 @@
   !insertmacro tatanaLog `customUnInit: inicio`
   InitPluginsDir
   File /oname=$PLUGINSDIR\migrar-portable.ps1 "${BUILD_RESOURCES_DIR}\migrar-portable.ps1"
+  !insertmacro tatanaElegirPowerShell
   !insertmacro tatanaPs1 '-Accion DetenerInstalado -Carpeta "$INSTDIR"' $0
 !macroend

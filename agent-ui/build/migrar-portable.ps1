@@ -32,6 +32,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# NSIS hereda el entorno de quien lo lanzo. Si es pwsh 7 (como en CI), PSModulePath trae las
+# rutas de modulos de pwsh 7 y Windows PowerShell 5.1 no puede autocargar modulos de script
+# (Get-FileHash, Expand-Archive, CimCmdlets...): "The term 'Get-FileHash' is not recognized".
+# Para este proceso se fija PSModulePath a las rutas propias de 5.1. De todos modos este script no
+# usa cmdlets de modulos con autocarga: solo los del nucleo y .NET (ver Get-Sha256 y Get-RutasProcesos).
+if ($PSVersionTable.PSEdition -ne 'Core') {
+  $env:PSModulePath = @(
+    (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\Modules'),
+    (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'),
+    (Join-Path $PSHOME 'Modules')
+  ) -join ';'
+}
+
 $PortableDir = Join-Path $env:LOCALAPPDATA 'Programs\Tatana'
 $ConfigDir   = Join-Path $env:APPDATA 'Tatana'
 $LogDir      = Join-Path $ConfigDir 'logs'
@@ -45,21 +58,67 @@ function Write-Log([string]$Mensaje) {
   } catch { }
 }
 
+# PID -> ruta completa del ejecutable de cada proceso visible.
+# Fuente principal: WMI (Win32_Process.ExecutablePath) via System.Management de .NET, sin
+# CimCmdlets. Funciona sin importar la arquitectura: Get-Process.Path lee MainModule, y desde un
+# PowerShell de 32 bits (el que lanza NSIS si no se usa Sysnative) queda vacio para todo proceso
+# de 64 bits, como Factum.Agent.exe. Respaldo: MainModule, para los PID sin ruta en WMI.
+# Un proceso sin ruta conocida no se incluye: nunca se detiene algo cuya carpeta no se conoce.
+function Get-RutasProcesos {
+  $rutas = @{}
+  try {
+    Add-Type -AssemblyName System.Management -ErrorAction Stop
+    $buscador = New-Object System.Management.ManagementObjectSearcher('SELECT ProcessId, ExecutablePath FROM Win32_Process')
+    try {
+      $resultados = $buscador.Get()
+      try {
+        foreach ($o in $resultados) {
+          try {
+            $ruta = [string]$o['ExecutablePath']
+            if ($ruta) { $rutas[[int]$o['ProcessId']] = $ruta }
+          } finally { $o.Dispose() }
+        }
+      } finally { $resultados.Dispose() }
+    } finally { $buscador.Dispose() }
+  } catch { Write-Log ("WMI no disponible para leer rutas de procesos: {0}" -f $_.Exception.Message) }
+  foreach ($proc in @(Get-Process -ErrorAction SilentlyContinue)) {
+    if (-not $rutas.ContainsKey([int]$proc.Id)) {
+      try { if ($proc.MainModule -and $proc.MainModule.FileName) { $rutas[[int]$proc.Id] = $proc.MainModule.FileName } } catch { }
+    }
+  }
+  return $rutas
+}
+
+# Procesos cuyo ejecutable esta bajo $Raiz, como objetos @{ Id; Path }.
 function Get-ProcesosBajo([string]$Raiz) {
   $prefijo = $Raiz.TrimEnd('\') + '\'
-  Get-Process -ErrorAction SilentlyContinue | Where-Object {
-    $p = $null
-    try { $p = $_.Path } catch { }
-    $p -and $p.StartsWith($prefijo, [System.StringComparison]::OrdinalIgnoreCase)
+  $rutas = Get-RutasProcesos
+  foreach ($procId in @($rutas.Keys)) {
+    $ruta = $rutas[$procId]
+    if ($procId -ne $PID -and $ruta.StartsWith($prefijo, [System.StringComparison]::OrdinalIgnoreCase)) {
+      New-Object PSObject -Property @{ Id = $procId; Path = $ruta }
+    }
   }
 }
 
 function Stop-ProcesosBajo([string]$Raiz) {
-  foreach ($proc in @(Get-ProcesosBajo $Raiz)) {
+  $procesos = @(Get-ProcesosBajo $Raiz)
+  if ($procesos.Count -eq 0) { Write-Log "No hay procesos corriendo bajo $Raiz." }
+  foreach ($proc in $procesos) {
     try {
       Write-Log ("Deteniendo {0} (PID {1})" -f $proc.Path, $proc.Id)
       Stop-Process -Id $proc.Id -Force -ErrorAction Stop
     } catch { Write-Log ("No se pudo detener PID {0}: {1}" -f $proc.Id, $_.Exception.Message) }
+  }
+  # Espera (hasta 10 s) a que terminen, para que la carpeta quede libre.
+  $limite = (Get-Date).AddSeconds(10)
+  foreach ($proc in $procesos) {
+    try {
+      $p = [System.Diagnostics.Process]::GetProcessById([int]$proc.Id)
+      $resta = [int][Math]::Max(0, ($limite - (Get-Date)).TotalMilliseconds)
+      if (-not $p.WaitForExit($resta)) { Write-Log ("PID {0} sigue corriendo despues de detenerlo." -f $proc.Id) }
+      $p.Dispose()
+    } catch { }   # ya termino
   }
 }
 
@@ -86,8 +145,14 @@ function Invoke-Detectar {
   return 30
 }
 
+# SHA-256 con .NET: Get-FileHash vive en un modulo de script que puede no cargarse (ver arriba).
 function Get-Sha256([string]$Path) {
-  (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $fs = [System.IO.File]::OpenRead($Path)
+    try { return [System.BitConverter]::ToString($sha.ComputeHash($fs)).Replace('-', '') }
+    finally { $fs.Dispose() }
+  } finally { $sha.Dispose() }
 }
 
 function Invoke-Migrar {
@@ -184,6 +249,7 @@ function Invoke-Migrar {
   return 0
 }
 
+Write-Log ("Arranca: PowerShell {0}, proceso de {1} bits." -f $PSVersionTable.PSVersion, $(if ([Environment]::Is64BitProcess) { 64 } else { 32 }))
 $codigo = 0
 try {
   switch ($Accion) {

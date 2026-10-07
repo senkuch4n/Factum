@@ -129,3 +129,90 @@ No hay SDD ni contrato compartido. Se mantiene el contrato de códigos de salida
 En el working tree también había cambios previos ajenos a esta tarea, que no toqué:
 `agent-ui/tsconfig.*.tsbuildinfo`, `progress/sesiones/senkuch4n.md` y
 `server/src/Factum.Agent/appsettings.json`. No hay que incluirlos en el commit.
+
+## Ronda 2: código 41 (Get-FileHash) y Factum.Agent sin detener
+
+Fuente: ensayo del PR #28 (run 37626862941). Sin crash. `Detectar` = 20 y `Migrar` = 41,
+con `The term 'Get-FileHash' is not recognized` y la detención de `adb.exe` solamente.
+
+### Diagnóstico
+
+- **Factum.Agent no detenido: PowerShell de 32 bits.** NSIS es un proceso de 32 bits, así que
+  `powershell.exe` a secas resuelve, vía WOW64, a `SysWOW64\WindowsPowerShell\v1.0\powershell.exe`.
+  En PS 5.1, `Get-Process` lee `.Path` de `MainModule`, que un proceso de 32 bits no puede leer
+  en uno de 64 bits: la ruta queda vacía y se filtra. `adb.exe` (32 bits) sí se veía y
+  `Factum.Agent.exe` (x64 self-contained) no. Coincide exactamente con el log.
+- **Get-FileHash no reconocido.** En Windows PowerShell 5.1, `Get-FileHash` (igual que
+  `New-TemporaryFile`, `Format-Hex`, etc.) está en `Microsoft.PowerShell.Utility.psm1`, la
+  parte de script del módulo. Se autocarga recorriendo `PSModulePath`. Los cmdlets binarios del
+  núcleo (`Get-Date`, `ConvertTo-Json`, `New-Object`, `Start-Sleep`, `Add-Type`, que vienen de
+  `Microsoft.PowerShell.Commands.Utility.dll`) se cargan siempre. `Get-Date` funcionó: las
+  líneas del log tienen fecha. La causa más probable es que el instalador hereda el
+  `PSModulePath` de pwsh 7 (el shell del job): 5.1 encuentra primero el módulo `Utility` de
+  pwsh 7, no lo puede cargar y no expone la parte de script. `Expand-Archive`/`Compress-Archive`
+  (módulo de script) y `Get-CimInstance` (CimCmdlets) tienen el mismo riesgo.
+
+### Cambios
+
+`agent-ui/build/migrar-portable.ps1`
+- `Get-Sha256` con .NET: `SHA256.Create()` + `File.OpenRead`, que cierra el stream y libera el
+  hash en `finally`. Devuelve hex en mayúsculas sin guiones, como `Get-FileHash`. Probado contra
+  `shasum -a 256` sobre 10 MB aleatorios: idénticos.
+- Repasé todos los cmdlets del script. Quedan `Copy-Item`, `Get-ChildItem`, `Get-Content`,
+  `Get-Date`, `Get-Process`, `Join-Path`, `Move-Item`, `New-Item`, `New-Object`, `Out-Null`,
+  `Remove-Item`, `Start-Sleep`, `Stop-Process`, `Test-Path`, `Add-Type` y `ConvertTo-Json`.
+  Todos son cmdlets binarios del núcleo (Management/Utility dll), no módulos con autocarga.
+  `ConvertTo-Json` se mantiene: es del mismo dll que `Get-Date`, que funcionó en el run. No se
+  usan `Expand-Archive`, `Compress-Archive` ni `Get-CimInstance`.
+- Al inicio, si `PSEdition` no es `Core`, `$env:PSModulePath` del proceso se fija a las rutas
+  propias de 5.1: `Documentos\WindowsPowerShell\Modules`, `%ProgramFiles%\WindowsPowerShell\Modules`
+  y `$PSHOME\Modules`. **Por qué en el .ps1 y no en NSIS:** en NSIS habría que usar el plugin
+  `System` (`SetEnvironmentVariable`) en `.onInit`, y ese cambio de entorno lo heredaría también
+  la app que se lanza al terminar (`runAfterFinish`). En el script es una línea, afecta solo a
+  ese proceso, sirve para las tres acciones y también si se corre a mano desde pwsh 7.
+  PowerShell vuelve a leer `$env:PSModulePath` en cada autocarga, así que el cambio tiene efecto
+  para el resto del script.
+- `Get-RutasProcesos` (nueva) arma un mapa PID → ruta del ejecutable. La fuente principal es WMI
+  `Win32_Process.ExecutablePath`, consultado con `System.Management.ManagementObjectSearcher` de
+  .NET (sin CimCmdlets), que no depende de la arquitectura. El respaldo es `MainModule.FileName`,
+  para los PID sin ruta en WMI. Se liberan buscador, colección y objetos.
+- `Get-ProcesosBajo` usa ese mapa. Solo devuelve procesos con ruta **conocida** que empiece con
+  `<Raiz>\`. La comparación es ordinal y no distingue mayúsculas; la barra final evita `Tatana2\`.
+  Excluye el propio `$PID`. Un proceso sin ruta nunca se detiene. Probado con rutas simuladas en
+  pwsh: incluye `Tatana\Factum.Agent.exe`, `Tatana\tools\...\adb.exe` y la variante en otra
+  capitalización, y excluye `Tatana2\x.exe` y `C:\Windows\explorer.exe`.
+- `Stop-ProcesosBajo` deja en el log `No hay procesos corriendo bajo ...` cuando no encuentra
+  ninguno, y después de `Stop-Process -Force` espera hasta 10 s en total a que salgan
+  (`Process.WaitForExit`). Si alguno sigue corriendo, lo anota. El `Start-Sleep 2` de Migrar no
+  cambia.
+- Nueva línea `Arranca: PowerShell <versión>, proceso de <32|64> bits.` en el log.
+
+`agent-ui/build/installer.nsh`
+- `tatanaElegirPowerShell` + `Var tatanaPowerShell`: usa `$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe`
+  (PowerShell de 64 bits desde un proceso de 32 bits) si existe, y si no
+  `$SYSDIR\WindowsPowerShell\v1.0\powershell.exe` (Windows de 32 bits). electron-builder no
+  desactiva la redirección del sistema de archivos (no hay `DisableX64FSRedirection` en sus
+  plantillas), así que `Sysnative` resuelve. Se llama en `customInit` y `customUnInit` después
+  de `File` y queda en el log (`[nsis] PowerShell: ...`). `tatanaPs1` lanza `"$tatanaPowerShell"`
+  entre comillas.
+
+`ops/tatana/prueba-windows.ps1`: no cambia. Usa `Get-FileHash`, `Expand-Archive` y
+`ConvertTo-Json`, pero corre en pwsh 7 (`shell: pwsh` del job), no en el `powershell.exe` 5.1 que
+lanza NSIS, así que no está en el mismo contexto.
+
+Comportamiento: detectar, migrar o abortar, con los mismos códigos. La evidencia no se toca.
+El único cambio intencional es que ahora se detienen **todos** los procesos bajo la carpeta,
+incluido `Factum.Agent.exe`, que es lo que la SDD ya pedía.
+
+### Verificación (ronda 2)
+
+- `migrar-portable.ps1`: parser de PowerShell (pwsh 7.4 en Docker), **0 errores**. `Get-Sha256`
+  coincide con `shasum`. El filtro de `Get-ProcesosBajo` se probó con un `Get-RutasProcesos`
+  simulado. La parte de WMI no se puede ejecutar fuera de Windows: la confirma el ensayo del PR.
+- `installer.nsh`: makensis 3.04 (el de electron-builder) con `-WX` sobre el arnés: **rc=0, sin warnings**.
+- `actionlint`: **rc=0**.
+- Qué mirar en el próximo ensayo: `[nsis] PowerShell: C:\Windows\Sysnative\...`,
+  `Arranca: ... 64 bits`, `Deteniendo ...\Factum.Agent.exe` y `resultado de -Accion Migrar ...: 0`.
+
+Archivos tocados en la ronda 2: `agent-ui/build/migrar-portable.ps1`, `agent-ui/build/installer.nsh`
+y este archivo. Sin commit.
