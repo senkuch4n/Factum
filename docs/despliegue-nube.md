@@ -180,7 +180,7 @@ Pregunta antes de cada bloque (contestá `s`). Qué hace cada uno:
 
 ```bash
 ssh admin@<IP>
-sudo -v        # no tiene que pedir contraseña
+sudo -n whoami # tiene que decir root sin pedir contraseña (no uses sudo -v: la imagen trae %admin ALL=(ALL) ALL y -v igual la pide)
 uname -m       # tiene que decir x86_64
 ```
 
@@ -318,7 +318,14 @@ repository variable**:
 
 **Todavía no** cargues `FACTUM_DEPLOY_HABILITADO`.
 
-**7.2 Publicar las imágenes** [A mano]. Repo › **Actions › Desplegar producción › Run workflow** (rama `main`). Esperá
+**7.2 Publicar las imágenes** [A mano].
+
+**La primera vez, `main` todavía no tiene `deploy/cloud/` ni el workflow:** promové `develop` a `main` con un PR
+`develop → main` y mergealo **después** de cargar la variable del 7.1, porque el frontend la usa al armarse. El push a
+`main` dispara el workflow solo. Si el clon del servidor (sección 5) se hizo antes de esta promoción, actualizalo con
+`git -C /srv/factum/repo pull`.
+
+Las veces siguientes, o para reintentar: Repo › **Actions › Desplegar producción › Run workflow** (rama `main`). Esperá
 a que el job "Imágenes en GHCR" termine en verde (el job "Desplegar en el VPS" aparece salteado: es lo esperado).
 Anotá el **SHA completo** del commit (40 caracteres; se ve en el run, o con `git rev-parse origin/main`).
 
