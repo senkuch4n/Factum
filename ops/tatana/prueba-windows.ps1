@@ -381,35 +381,50 @@ fs.writeFileSync(dst, JSON.stringify({ ...env, signature: sig.toString('base64')
     Nuevo-Aleatorio $subida 4MB
     $hashSubida = Hash $subida
     $codigoSubida = Join-Path $Trabajo 'subida.code'
-    $curl = Start-Process -FilePath 'curl.exe' -PassThru -RedirectStandardOutput $codigoSubida -ArgumentList @(
-        '-s', '-o', 'NUL', '-w', '%{http_code}', '--limit-rate', '100k', '-X', 'POST',
-        '--data-binary', "@$subida", '-H', 'Content-Type: application/octet-stream',
-        "$AgenteUrl/cases/$CaseId/evidence/upload?filename=ci-subida.bin")
+    $errorSubida = Join-Path $Trabajo 'subida.stderr'
+    $urlSubida = "$AgenteUrl/cases/$CaseId/evidence/upload?filename=ci-subida.bin"
+    # Start-Process une -ArgumentList con espacios y NO pone comillas. Con un array,
+    # 'Content-Type: application/octet-stream' llegaba a curl partido en dos: un `-H Content-Type:`
+    # vacío y una URL extra, `application/octet-stream`, que curl intentaba resolver primero. Por eso
+    # se arma una sola línea con las comillas explícitas.
+    # Es la misma subida que hace la web: POST con Content-Length del archivo, sin upload-check
+    # previo (es opcional). Sin Origin la guarda no aplica; con Origin tendría que estar en
+    # AllowedOrigins. `Expect:` vacío evita la espera de "100 Continue".
+    $argsCurl = '-sS -o NUL -w "%{http_code}" --limit-rate 100k -X POST -H "Expect:" ' +
+        '-H "Content-Type: application/octet-stream" --data-binary "@' + $subida + '" "' + $urlSubida + '"'
+    $curl = Start-Process -FilePath 'curl.exe' -PassThru -ArgumentList $argsCurl `
+        -RedirectStandardOutput $codigoSubida -RedirectStandardError $errorSubida
+    $null = $curl.Handle   # sin el handle, ExitCode puede quedar vacío
+    function Detalle-Subida {
+        $estado = if ($curl.HasExited) { "terminó con exit $($curl.ExitCode)" } else { 'sigue corriendo' }
+        $http = if (Test-Path -LiteralPath $codigoSubida) { "$(Get-Content -LiteralPath $codigoSubida -Raw)".Trim() } else { '' }
+        $err = if (Test-Path -LiteralPath $errorSubida) { "$(Get-Content -LiteralPath $errorSubida -Raw)".Trim() } else { '' }
+        "curl $estado; HTTP '$http'; stderr: '$err'"
+    }
     $limite = (Get-Date).AddSeconds(15)
     $ocupado = $false
     while ((Get-Date) -lt $limite -and -not $ocupado) {
         $s = Obtener '/agent/state'
         if ($null -ne $s -and $s.busy) { $ocupado = $true } else { Start-Sleep -Milliseconds 300 }
     }
-    if (-not $ocupado) { Falla '/agent/state.busy no se puso en true durante la subida' }
+    if (-not $ocupado) { Falla "/agent/state.busy no se puso en true durante la subida ($(Detalle-Subida))" }
     Ok '/agent/state.busy = true durante la subida'
     Start-Process -FilePath $AppExe -ArgumentList '--install-update' | Out-Null
     Start-Sleep -Seconds 10
-    if ($curl.HasExited) { Falla 'la subida terminó antes de comprobar el bloqueo (subí el tamaño o bajá --limit-rate)' }
+    if ($curl.HasExited) { Falla "la subida terminó antes de comprobar el bloqueo: $(Detalle-Subida) (si fue 200, subí el tamaño o bajá --limit-rate)" }
     if ((Obtener '/health').version -ne '0.0.1') { Falla 'se instaló con una operación en curso' }
     $e = Leer-Estado
     if ($e.phase -ne 'ready' -or -not (Tiene $e 'busyOperations') -or @($e.busyOperations).Count -eq 0) {
         Falla "con la subida en curso: phase=$($e.phase), busyOperations=$(@($e.busyOperations) -join ',')"
     }
     Ok "no instala con operaciones en curso (busyOperations: $(@($e.busyOperations) -join ', '))"
-    $null = $curl.Handle
     if (-not $curl.WaitForExit(180000)) {
         Stop-Process -Id $curl.Id -Force -ErrorAction SilentlyContinue
-        Falla 'la subida no terminó en 180 s'
+        Falla "la subida no terminó en 180 s ($(Detalle-Subida))"
     }
     $curl.WaitForExit()   # vacía la salida redirigida
-    $codigo = (Get-Content -LiteralPath $codigoSubida -Raw).Trim()
-    if ($codigo -ne '200') { Falla "la subida terminó con HTTP $codigo" }
+    $codigo = "$(Get-Content -LiteralPath $codigoSubida -Raw)".Trim()   # vacío -> $null con -Raw
+    if ($codigo -ne '200') { Falla "la subida no dio 200: $(Detalle-Subida)" }
     $subidaDestino = Join-Path $DataDir "cases\$CaseId\ci-subida.bin"
     if ((Hash $subidaDestino) -ne $hashSubida) { Falla 'la subida no quedó idéntica' }
     $centinelas[$subidaDestino] = $hashSubida

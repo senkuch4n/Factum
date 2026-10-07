@@ -114,3 +114,5 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-07 — Ronda 5: @() en Duenos-8765/Procesos-Tatana + respaldo netstat y mensajes con PIDs (el error venía de 0 PIDs). Push al PR #28.
 - 2026-10-07 — Ronda 5: pasos 1-4 OK (firma inválida rechazada). Paso 5 falla: el canal devuelve 304 al restaurar el manifiesto válido (misma mtime) y el updater usa el manifiesto inválido cacheado. Ronda 6: no usar caché HTTP para el manifiesto + la prueba fuerza mtime nueva.
 - 2026-10-07 — Ronda 6: fetchManifest con cache no-store + headers no-cache; 304 = falla; manifest-request.ts con 4 tests (22/22); prueba con mtime creciente. Push al PR #28.
+- 2026-10-07 — Ronda 6: paso 5 ya descarga y verifica 0.9.0 (ready). Falla: /agent/state.busy nunca true durante la subida de prueba (el tracker sí cuenta POST: probable que la subida falle rápido por origen/caso/upload-check). Ronda 7.
+- 2026-10-07 — Ronda 7: bug de la prueba (Start-Process -ArgumentList parte 'Content-Type: application/octet-stream'); Tatana sin bug. curl con línea citada, Expect vacío, stderr y códigos en las fallas. Push al PR #28.

@@ -534,3 +534,71 @@ Archivos tocados en la ronda 6: `agent-ui/src/main/updater/manifest-request.ts` 
 `agent-ui/src/main/updater/manifest-request.test.ts` (nuevo),
 `agent-ui/src/main/updater/update-manager.ts`, `ops/tatana/prueba-windows.ps1` y este archivo.
 Sin commit.
+
+## Ronda 7: `/agent/state.busy` no se ponía en true durante la subida
+
+Fuente: run 37640748000. El paso 5 llega a `ready` y después falla con
+`/agent/state.busy no se puso en true durante la subida`.
+
+### Qué necesita la subida (lectura del código del agente; no cambié nada en `server/`)
+
+- `Program.cs:178-219`, guarda de origen: **solo** actúa si viene `Origin`. Sin `Origin` (curl)
+  no rechaza nada. Con `Origin`, tendría que estar en `AllowedOrigins` o devuelve 403.
+- `Program.cs:225-252`, tracker: corre **después** de la guarda de origen y del `OPTIONS`, y
+  **antes** de los controllers. Todo POST/PUT/PATCH/DELETE (salvo `/agent/maintenance`) entra a
+  `OperationTracker` en cuanto llegan los headers, y sale en el `finally`, cuando termina la
+  respuesta. Un pedido rechazado por origen no cuenta. Uno rechazado por validación cuenta solo
+  los milisegundos que tarda el 400. Una subida válida cuenta mientras se lee el body.
+- `CaseEvidenceController.Upload` llama a `StageAndCommitUploadAsync` (`CaseEvidenceStore.cs:216`),
+  que antes de leer el body ejecuta `CheckUpload`. Ahí se valida: `caseId` de 24 hex
+  (`'0123456789abcdef01234567'` es válido), que la carpeta del caso **no** tenga que existir
+  (se crea al confirmar), un nombre válido y `Content-Length` presente y menor que
+  `max_upload_bytes`. También hay que tener espacio libre. `upload-check` es un GET
+  opcional y no hace falta llamarlo antes. Después lee el body hasta `Content-Length`.
+- **Conclusión:** una subida válida en curso **sí** marca `busy`. No es un bug de Tatana.
+  `dotnet test` no aplica porque no toqué `server/`, que además está fuera de mi alcance como
+  implementador frontend.
+- Tampoco era el modo mantenimiento: la app solo llama a `installNow` al arrancar (si había
+  `ready` previo), desde "Salir" o con `--install-update`. Durante el sondeo no entra en
+  mantenimiento.
+
+### Causa real: el pedido de curl salía mal armado
+
+`Start-Process -ArgumentList @(...)` **une los elementos con espacios y no agrega comillas**.
+`'Content-Type: application/octet-stream'` llegaba a curl como `-H Content-Type:` (sin valor,
+así que curl saca el header) más una **URL extra**, `application/octet-stream`. curl procesa
+las URLs en orden: primero intenta resolver el host `application`, que en el runner falla o
+tarda por la búsqueda de sufijos DNS, y recién después hace el POST real. En los 15 s del sondeo
+la subida todavía no había empezado. Lo reproduje con pwsh 7.4:
+`Start-Process /usr/bin/printf -ArgumentList @('[%s]\n','Content-Type: application/octet-stream','URL')`
+imprime `[Content-Type:]`, `[application/octet-stream]` y `[URL]`. Con una sola línea
+entrecomillada imprime `[Content-Type: application/octet-stream]` y `[URL]`.
+
+### Cambios en `ops/tatana/prueba-windows.ps1` (paso 5)
+
+- curl recibe **una sola línea de argumentos con comillas explícitas**:
+  `-sS -o NUL -w "%{http_code}" --limit-rate 100k -X POST -H "Expect:" -H "Content-Type: application/octet-stream" --data-binary "@<archivo>" "<url>"`.
+  - `-sS`: silencioso, pero los errores van a stderr, que ahora se redirige a `subida.stderr`.
+  - `-H "Expect:"`: evita esperar el `100 Continue`. Kestrel lo maneja, pero así no hay demora.
+  - Sin `Origin`, igual que antes. La guarda no aplica, y el flujo de la web solo agrega `Origin`
+    permitido y el mismo POST con `Content-Length`. No hace falta crear el caso: la carpeta se
+    crea al confirmar.
+- `$null = $curl.Handle` apenas arranca, para que `ExitCode` quede disponible.
+- `Detalle-Subida` informa si curl sigue corriendo o con qué exit code terminó, el HTTP code
+  (`-w`) y su stderr. Se usa en todas las fallas del paso: busy no visto, subida terminada antes
+  de comprobar el bloqueo, más de 180 s, y resultado distinto de 200.
+- La lectura del HTTP code ya no falla si el archivo está vacío: `"$(Get-Content -Raw)".Trim()`,
+  porque con StrictMode `$null.Trim()` lanzaría una excepción.
+- Revisé los otros `Start-Process` con array. `@('/c','install-portable.bat')` y `@('/S')` no
+  tienen espacios. El de `python -m http.server` pasa `$CanalServido` (`$RUNNER_TEMP\tatana-prueba\canal`),
+  que en el runner no tiene espacios, y no lo cambié.
+
+### Verificación (ronda 7)
+
+- Parser de pwsh sobre `prueba-windows.ps1`: 0 errores. El comportamiento de `Start-Process`
+  se reprodujo en pwsh 7.4 (arriba).
+- `npm test` 22/22. Los dos `tsc`: 0. `actionlint`: rc=0.
+- El curl real contra el agente instalado lo confirma el ensayo. Si vuelve a fallar, ahora el
+  mensaje trae el exit code, el HTTP y el stderr de curl.
+
+Archivos tocados en la ronda 7: `ops/tatana/prueba-windows.ps1` y este archivo. Sin commit.
