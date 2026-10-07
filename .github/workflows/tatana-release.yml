@@ -563,6 +563,27 @@ jobs:
           }
           Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'Tatana') -Filter '*.log' -Recurse -ErrorAction SilentlyContinue |
             ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $dst }
+          # %APPDATA%\Tatana\logs\*.log ya entra arriba (recursivo). El instalador.log, que escriben
+          # migrar-portable.ps1 y las líneas [nsis] de installer.nsh, se muestra además en la salida
+          # del job, así se lee sin bajar el artefacto.
+          $logInstalador = Join-Path $env:APPDATA 'Tatana\logs\instalador.log'
+          if (Test-Path -LiteralPath $logInstalador) {
+            Write-Host '::group::instalador.log'
+            Get-Content -LiteralPath $logInstalador | Write-Host
+            Write-Host '::endgroup::'
+          } else {
+            Write-Host "::warning::No existe $logInstalador (el instalador no llegó a escribirlo)"
+          }
+          # Caídas de procesos (0xC0000005 y similares): el evento 1000 de "Application Error" dice
+          # qué módulo falló (por ejemplo nsExec.dll en %TEMP%\nsXXXX.tmp, o el propio instalador).
+          $eventos = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'Application Error', 'Windows Error Reporting'; StartTime = (Get-Date).AddHours(-2) } -ErrorAction SilentlyContinue)
+          if ($eventos.Count -gt 0) {
+            $eventos | Format-List TimeCreated, ProviderName, Id, Message |
+              Out-File -LiteralPath (Join-Path $dst 'eventos-application-error.txt') -Width 400 -Encoding utf8
+            Write-Host '::group::Eventos Application Error / WER'
+            $eventos | Format-List TimeCreated, ProviderName, Id, Message | Out-String -Width 400 | Write-Host
+            Write-Host '::endgroup::'
+          }
       - name: Subir logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
