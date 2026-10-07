@@ -112,3 +112,5 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-07 — Ronda 4: pasos 1-3 OK (INSTDIR Programs\Tatana); falla bug .Count en prueba-windows.ps1:293 → ronda 5. Leo (imleticio) subió rama ui/ux: 4 commits de diseño en client/, base 42fa825 (10 detrás de develop), sin PR.
 - 2026-10-07 — ui/ux de Leo: merge de prueba con develop sin conflictos y tsc de client OK (worktree temporal, borrado).
 - 2026-10-07 — Ronda 5: @() en Duenos-8765/Procesos-Tatana + respaldo netstat y mensajes con PIDs (el error venía de 0 PIDs). Push al PR #28.
+- 2026-10-07 — Ronda 5: pasos 1-4 OK (firma inválida rechazada). Paso 5 falla: el canal devuelve 304 al restaurar el manifiesto válido (misma mtime) y el updater usa el manifiesto inválido cacheado. Ronda 6: no usar caché HTTP para el manifiesto + la prueba fuerza mtime nueva.
+- 2026-10-07 — Ronda 6: fetchManifest con cache no-store + headers no-cache; 304 = falla; manifest-request.ts con 4 tests (22/22); prueba con mtime creciente. Push al PR #28.

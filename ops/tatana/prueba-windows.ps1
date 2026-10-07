@@ -192,9 +192,21 @@ function Cerrar-App([int]$Segundos = 60) {
     Falla "Tatana no se cerró con --quit en $Segundos s"
 }
 
+# Copy-Item conserva la mtime del original. Si se restaura un manifiesto con la misma mtime (o con
+# otra dentro del mismo segundo), http.server contesta 304 a un pedido condicional y un cliente con
+# caché reusaría el cuerpo anterior (run 37637630657). Cada publicación lleva una mtime nueva y
+# estrictamente creciente: al menos 2 s más que la anterior, porque Last-Modified tiene resolución
+# de 1 s.
+$script:ultimaMtimeCanal = [datetime]::MinValue
 function Servir-Canal([string[]]$Archivos) {
     Get-ChildItem -LiteralPath $CanalServido -Force | Remove-Item -Force -Recurse
-    foreach ($a in $Archivos) { Copy-Item -LiteralPath $a -Destination $CanalServido }
+    $mtime = Get-Date
+    if ($mtime -lt $script:ultimaMtimeCanal.AddSeconds(2)) { $mtime = $script:ultimaMtimeCanal.AddSeconds(2) }
+    $script:ultimaMtimeCanal = $mtime
+    foreach ($a in $Archivos) {
+        Copy-Item -LiteralPath $a -Destination $CanalServido
+        (Get-Item -LiteralPath (Join-Path $CanalServido (Split-Path -Leaf $a))).LastWriteTime = $mtime
+    }
 }
 
 $centinelas = @{}

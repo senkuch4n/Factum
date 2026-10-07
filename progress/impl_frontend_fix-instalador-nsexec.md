@@ -472,3 +472,65 @@ llamada. `Get-RutasProcesos` devuelve un hashtable, que no se desenrolla.
   resuelto el PID.
 
 Archivos tocados en la ronda 5: `ops/tatana/prueba-windows.ps1` y este archivo. Sin commit.
+
+## Ronda 6: el paso 5 reusó el manifiesto rechazado (304)
+
+Fuente: run 37637630657. Los pasos 1 a 4 pasan. En el paso 5, `tatana-update.json` vuelve como
+**304** y el actualizador vuelve a ver `firma_invalida` (el manifiesto del paso 4).
+
+### Causa
+
+`fetchManifest` (`update-manager.ts`) pedía con `net.request({ ..., cache: 'no-cache' })`. En
+Electron/Chromium, `no-cache` sigue la semántica de Fetch: **revalida** con la caché, mandando
+`If-Modified-Since`/`If-None-Match`. Si la respuesta es 304, entrega el cuerpo **guardado**.
+`Copy-Item` conserva la mtime del original, así que el manifiesto restaurado tenía una mtime vieja.
+`http.server` de Python contesta 304 cuando `mtime <= If-Modified-Since`, y Chromium devolvió el
+cuerpo del paso 4. El updater no guarda manifiestos en memoria: todo el reuso venía de la caché HTTP.
+
+### Cambios
+
+- `agent-ui/src/main/updater/manifest-request.ts` (nuevo, puro, sin Electron):
+  - `manifestRequestOptions(url)`: `cache: 'no-store'` (no lee ni guarda en caché, así que no
+    manda pedidos condicionales), `useSessionCookies: false` y `redirect: 'manual'`. Mantiene las
+    reglas D-T8.
+  - `MANIFEST_NO_CACHE_HEADERS`: `Cache-Control: no-cache` y `Pragma: no-cache`, para los proxies
+    del medio (D-T9).
+  - `classifyManifestStatus`: 2xx → `body`; 304 → `not_modified`; cualquier otro → `error`.
+- `update-manager.ts` / `fetchManifest`: usa esas opciones y cabeceras (`req.setHeader`). Ante un
+  **304** o cualquier status que no sea 2xx, devuelve `network` y deja en el log el motivo
+  ("respondió 304 sin pedido condicional; no se reutiliza ningún manifiesto guardado"). Nunca
+  toma un cuerpo que no llegó en esa respuesta. Antes se aceptaba todo lo menor a 400; los 3xx
+  igual pasaban por el evento `redirect`.
+- `agent-ui/src/main/updater/manifest-request.test.ts` (nuevo, 4 tests): verifica `no-store`,
+  las cabeceras, que 304 nunca sea `body`, y cómo se clasifican 2xx/4xx/5xx/1xx/301.
+- **`latest.yml` (electron-updater): no hizo falta tocar nada.** `GenericProvider.getLatestVersion`
+  arma la URL con `newUrlFromBase(channelFile, baseUrl, isAddNoCacheQuery)`
+  (`electron-updater/out/providers/GenericProvider.js:20`). `isAddNoCacheQuery` es `true` cuando
+  no hay `requestHeaders` (`AppUpdater.js:528`), y nosotros no los fijamos. Por eso cada pedido
+  lleva `?noCache=<Date.now() base 32>` (`util.js:26`), una URL nueva sin entrada en caché, y su
+  `ElectronHttpExecutor` usa además `cache: false`.
+- `deploy/cloud/Caddyfile`: **ya estaba bien**. `handle_path /tatana/updates/*` aplica
+  `header @manifiestos Cache-Control "no-cache"` con `@manifiestos path /latest.yml /tatana-update.json`
+  (líneas 47-53). `no-cache` es lo correcto del lado del servidor: los proxies pueden guardar,
+  pero revalidan. El problema era el cliente, que aceptaba un 304. No lo cambié.
+- `ops/tatana/prueba-windows.ps1` / `Servir-Canal`: después de cada `Copy-Item` le fija al
+  archivo una `LastWriteTime` nueva y estrictamente creciente. Es `Get-Date`, pero al menos 2 s
+  más que la publicación anterior, porque `Last-Modified` tiene resolución de 1 s. Así la prueba
+  no depende solo del cliente.
+
+### Verificación (ronda 6)
+
+- `npm test`: **22 pass**, 0 fail (18 de antes + 4 nuevos). `tsc -p tsconfig.web.json`: 0.
+  `tsc -p tsconfig.node.json`: 0.
+- Parser de pwsh sobre `prueba-windows.ps1`: 0 errores. `actionlint`: rc=0.
+- No ejecuté `net.request` con `no-store` contra un servidor: hace falta Electron en Windows. El
+  ensayo lo confirma. En el log de `http.server` se debería ver **200** (no 304) en el
+  `GET /tatana-update.json` del paso 5.
+- Skills: el cambio es del proceso main (red del updater) y del script de CI, sin UI. Revisado
+  con ui-ux-pro-max, senior-frontend, 3d-web-experience y web-design-guidelines: sin hallazgos
+  aplicables.
+
+Archivos tocados en la ronda 6: `agent-ui/src/main/updater/manifest-request.ts` (nuevo),
+`agent-ui/src/main/updater/manifest-request.test.ts` (nuevo),
+`agent-ui/src/main/updater/update-manager.ts`, `ops/tatana/prueba-windows.ps1` y este archivo.
+Sin commit.
