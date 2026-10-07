@@ -23,6 +23,21 @@ public sealed class OriginPolicyTests
         Assert.Equal(["https://factum.ejemplo.com", "http://localhost:3001"], origins);
     }
 
+    /// <summary>
+    /// despliegue-nube §6.8: la lista que hornea deploy/windows/hornear-origenes-tatana.py (localhost + la nube)
+    /// es válida para Tatana y deja pasar la web en la nube sin perder los localhost.
+    /// </summary>
+    [Fact]
+    public void Parse_BakedCloudList()
+    {
+        var (origins, errors) = OriginPolicy.Parse(["http://localhost:3000", "http://127.0.0.1:3000",
+            "https://factum-piloto.duckdns.org"]);
+        Assert.Empty(errors);
+        Assert.Equal(["http://localhost:3000", "http://127.0.0.1:3000", "https://factum-piloto.duckdns.org"], origins);
+        Assert.True(OriginPolicy.IsAllowed("https://factum-piloto.duckdns.org", origins));
+        Assert.True(OriginPolicy.IsAllowed("http://localhost:3000", origins));
+    }
+
     [Theory]
     [InlineData("*")]
     [InlineData("https://factum.ejemplo.com/app")]

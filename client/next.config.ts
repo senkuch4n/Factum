@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_BACKEND_URL: process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080",
     NEXT_PUBLIC_AGENT_URL: process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:8765",
+    NEXT_PUBLIC_TATANA_DOWNLOAD_URL: process.env.NEXT_PUBLIC_TATANA_DOWNLOAD_URL || "",
   },
 };
 

@@ -103,6 +103,20 @@ explica en la siguiente sección.
 > `deploy/windows/` (paquete sin internet, backups, actualización): ver
 > [docs/instalacion-windows.md](docs/instalacion-windows.md).
 
+### Despliegue en la nube
+
+Factum como SaaS en un VPS (DonWeb, Argentina) con HTTPS: compose de producción en `deploy/cloud/` (Caddy + frontend +
+backend + Mongo con autenticación), deploy automático desde GitHub Actions al mergear a `main`, backups cifrados fuera
+del servidor y Tatana local en la PC de cada perito. Guía paso a paso:
+**[docs/despliegue-nube.md](docs/despliegue-nube.md)**.
+
+### Chequeos de salud del backend
+
+| Endpoint | Qué responde | Lo usan |
+|---|---|---|
+| `GET /health` | `{ status, version, auth_mode }`. **No** toca Mongo (liveness): si Mongo se cae, sigue en 200 y el contenedor no se reinicia en bucle | Healthcheck de los compose, scripts de `deploy/windows/` |
+| `GET /health/ready` | `200 {"status":"ok","mongo":"ok"}` o `503 {"status":"unavailable","mongo":"down"}`: hace un `ping` a Mongo con timeout de 3 s, sin detalle del error (readiness) | Monitor externo y script de deploy de la nube (`deploy/cloud/`) |
+
 ## Puesta en marcha en modo desarrollo (sin Docker)
 
 Útil para desarrollar con hot-reload en las 4 partes.
@@ -219,6 +233,7 @@ Las subidas en curso se escriben en `<DataDirectory>/.upload-tmp/` y recién al 
 |---|---|
 | `NEXT_PUBLIC_BACKEND_URL` | URL del backend |
 | `NEXT_PUBLIC_AGENT_URL` | URL del agente local (Tatana) |
+| `NEXT_PUBLIC_TATANA_DOWNLOAD_URL` | Opcional. Link de descarga del Tatana vigente (p. ej. `https://<dominio>/descargas/Tatana-Portable-Windows-nube.zip`). Si está, el mensaje "origen no permitido" de Tatana dice dónde descargar la versión actual; vacío (default, instalación local) deja el mensaje de siempre. Se hornea en el bundle en `next build` (build arg del `client/Dockerfile`) |
 
 **`server/src/Factum.Agent/appsettings.json`**
 
@@ -642,7 +657,11 @@ factum/
 │   │   └── Models/
 │   └── Factum.Agent/           # Agente local "Tatana" (.NET)
 ├── agent-ui/                      # UI de escritorio del agente (Electron)
-├── docker-compose.yml             # mongo + backend + frontend
+├── deploy/
+│   ├── windows/                   # Instalación local en la PC de un estudio
+│   └── cloud/                     # Producción en la nube (VPS): compose, Caddy, scripts
+├── .github/workflows/             # Verificación de PRs y deploy a producción
+├── docker-compose.yml             # mongo + backend + frontend (desarrollo)
 └── AGENTE_TATANA.md               # Casos de uso del agente
 ```
 
@@ -664,7 +683,10 @@ y ambas se actualizan solas sin que el fiscal tenga que hacer nada:
   Se actualiza sola vía `update-portable.ps1` contra el mismo backend.
 
 CI (`.gitlab-ci.yml`) arma ambos artifacts por tag (`v*`) y los publica como
-GitLab Release. El backend expone `/tatana/updates/` (`TatanaUpdatesService`)
+GitLab Release (ese CI de Tatana sigue en GitLab; el deploy de la web en la nube es
+GitHub Actions, `.github/workflows/`). Para Factum en la nube, el Tatana portátil con
+el origen del dominio horneado se arma con `deploy/cloud/armar-tatana-nube.sh` (ver
+[docs/despliegue-nube.md](docs/despliegue-nube.md), sección 10). El backend expone `/tatana/updates/` (`TatanaUpdatesService`)
 para espejar esa release sin que la PC del fiscal necesite salida directa a
 internet.
 

@@ -9,8 +9,12 @@ WORKDIR /app
 # Para la instalación de una sola PC los valores correctos son los defaults.
 ARG NEXT_PUBLIC_BACKEND_URL=http://localhost:8080
 ARG NEXT_PUBLIC_AGENT_URL=http://localhost:8765
+# Opcional: link de descarga de Tatana que muestra el mensaje `origin_not_allowed`.
+# Vacío (instalación local) = se muestra el texto de siempre.
+ARG NEXT_PUBLIC_TATANA_DOWNLOAD_URL=
 ENV NEXT_PUBLIC_BACKEND_URL=$NEXT_PUBLIC_BACKEND_URL \
     NEXT_PUBLIC_AGENT_URL=$NEXT_PUBLIC_AGENT_URL \
+    NEXT_PUBLIC_TATANA_DOWNLOAD_URL=$NEXT_PUBLIC_TATANA_DOWNLOAD_URL \
     NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

@@ -45,3 +45,10 @@ docs/Logo_del_estudio*
 
 # Paquetes de instalación armados por deploy/windows/armar-paquete.sh
 deploy/windows/dist/
+
+# Despliegue en la nube: secretos y sitios locales de Caddy nunca al repo
+deploy/cloud/*.env
+!deploy/cloud/factum.env.example
+deploy/cloud/caddy-sitios/*.caddy
+# Tatana para la nube armado por deploy/cloud/armar-tatana-nube.sh
+deploy/cloud/dist/

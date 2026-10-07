@@ -117,6 +117,8 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 // ── Infraestructura ───────────────────────────────────────────────────────────
 builder.Services.AddSingleton<ICaseRepository, CaseRepository>();
 builder.Services.AddSingleton<IAgentEventRepository, AgentEventRepository>();
+// despliegue-nube DT3: ping a Mongo con timeouts cortos para GET /health/ready.
+builder.Services.AddSingleton<IMongoHealthProbe, MongoHealthProbe>();
 builder.Services.AddSingleton<IDiskSpaceProbe, DriveInfoDiskSpaceProbe>();
 builder.Services.AddSingleton<IStorageService, StorageService>();
 builder.Services.AddSingleton<IBrandingService, BrandingService>();
@@ -268,6 +270,13 @@ app.MapGet("/health", () => Results.Ok(new
     version = "2.0.0",
     auth_mode = authSettings.Mode
 }));
+
+// despliegue-nube DT3: readiness para el monitor externo y el script de deploy. /health sigue siendo liveness.
+app.MapGet("/health/ready", async (IMongoHealthProbe probe, CancellationToken ct) =>
+{
+    var (code, body) = HealthReady.ToResult(await probe.PingAsync(ct));
+    return Results.Json(body, statusCode: code);
+});
 
 app.MapControllers();
 await app.RunAsync();

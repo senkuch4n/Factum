@@ -1,0 +1,66 @@
+# Factum — verificación de PRs a develop y main (SDD despliegue-nube §6.7, DT18).
+# .NET: build y tests de backend y Tatana (los tests no usan Mongo). Node: tsc de client/ y agent-ui/.
+name: Verificar
+
+on:
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: verificar-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dotnet:
+    name: .NET (build + tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Build backend
+        run: dotnet build server/src/Factum.Backend/Factum.Backend.csproj
+      - name: Build Tatana
+        run: dotnet build server/src/Factum.Agent/Factum.Agent.csproj
+      - name: Tests backend
+        run: dotnet test server/tests/Factum.Backend.Tests/Factum.Backend.Tests.csproj
+      - name: Tests Tatana
+        run: dotnet test server/tests/Factum.Agent.Tests/Factum.Agent.Tests.csproj
+
+  node:
+    name: TypeScript (client + agent-ui)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            agent-ui/package-lock.json
+      - name: client
+        working-directory: client
+        run: |
+          npm ci
+          npx tsc --noEmit
+      - name: agent-ui
+        working-directory: agent-ui
+        env:
+          # Electron no hace falta para type-checkear.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: |
+          npm ci
+          npx tsc --noEmit -p tsconfig.web.json
+          npx tsc --noEmit -p tsconfig.node.json

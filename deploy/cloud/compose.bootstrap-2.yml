@@ -1,0 +1,8 @@
+# Superadmin inicial 1 (el segundo). Igual que compose.bootstrap.yml: _comun.sh lo suma solo si
+# FACTUM_SUPERADMIN_1_DNI tiene valor, independientemente del 0.
+services:
+  backend:
+    environment:
+      Auth__Local__BootstrapSuperadmins__1__Dni: ${FACTUM_SUPERADMIN_1_DNI:?Falta FACTUM_SUPERADMIN_1_DNI}
+      Auth__Local__BootstrapSuperadmins__1__Name: ${FACTUM_SUPERADMIN_1_NOMBRE:?Falta FACTUM_SUPERADMIN_1_NOMBRE}
+      Auth__Local__BootstrapSuperadmins__1__TemporaryPassword: ${FACTUM_SUPERADMIN_1_TEMPORAL:?Falta FACTUM_SUPERADMIN_1_TEMPORAL}
