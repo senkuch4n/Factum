@@ -91,7 +91,14 @@
   --fx-z-nav:        40;
 }
 
-.dark {
+/* `.fx-nav-pill` comparte la paleta oscura: la navbar flotante es una
+   superficie oscura en los dos temas, así que todo lo que las páginas le
+   pasan (breadcrumb, AgentChip, botones con text-fx-* / bg-fx-*) se lee bien
+   sin tocar cada página. No es la clase `.dark` (los `dark:` de Tailwind no
+   se activan): solo se heredan los valores de los tokens. Las superficies y
+   el borde se ajustan más abajo, en el bloque de la navbar. */
+.dark,
+.fx-nav-pill {
   /* Color — modo oscuro */
   --fx-bg:                #0b0c0e;
   --fx-surface-1:         #141619;
@@ -130,6 +137,50 @@
   --fx-shadow-3: 0 16px 40px rgba(0,0,0,.55);
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   NAVBAR FLOTANTE (AppNavbar) — píldora oscura con dos "tapas" claras
+   (marca a la izquierda, usuario a la derecha). Claro: barra casi negra
+   sobre la página clara. Oscuro: la barra se eleva por luminosidad (más
+   clara que el fondo, con borde sutil) y las tapas siguen claras.
+   Contrastes: texto #f3f5f7 / #c0c6cd / #949ca6 sobre #17191c y #1f2226
+   ≥ 5.8:1; texto de la tapa #0e1013 sobre #ffffff / #f3f5f7 ≥ 17:1.
+═══════════════════════════════════════════════════════════════ */
+:root {
+  --fx-nav-pill-bg:       #17191c;
+  --fx-nav-pill-border:   #17191c;
+  --fx-nav-pill-hover:    #2a2e33;
+  --fx-nav-pill-divider:  #34383e;
+  --fx-nav-cap-bg:        #ffffff;
+  --fx-nav-cap-hover:     #eef0f2;
+  --fx-nav-cap-avatar:    #e3e6e9;
+  --fx-nav-cap-text:      #0e1013;
+  --fx-nav-cap-text-2:    #3d444c;
+  --fx-nav-shadow: 0 2px 6px rgba(14,16,19,.10), 0 18px 40px -12px rgba(14,16,19,.40);
+}
+
+.dark {
+  /* Mismo material que las tarjetas (surface-1 + border del tema oscuro). */
+  --fx-nav-pill-bg:       #141619;
+  --fx-nav-pill-border:   #2c3036;
+  --fx-nav-pill-hover:    #1c1f23;
+  --fx-nav-pill-divider:  #2c3036;
+  --fx-nav-cap-bg:        #f3f5f7;
+  --fx-nav-cap-hover:     #e3e7eb;
+  --fx-nav-cap-avatar:    #d6dbe0;
+  --fx-nav-cap-text:      #0e1013;
+  --fx-nav-cap-text-2:    #3d444c;
+  --fx-nav-shadow: 0 2px 6px rgba(0,0,0,.45), 0 18px 40px -12px rgba(0,0,0,.75);
+}
+
+/* Va después de `.dark, .fx-nav-pill`: pisa solo superficies y borde para que
+   los hover (bg-fx-surface-3) y divisores contrasten con la barra. */
+.fx-nav-pill {
+  --fx-surface-1: var(--fx-nav-pill-bg);
+  --fx-surface-2: var(--fx-nav-pill-hover);
+  --fx-surface-3: var(--fx-nav-pill-hover);
+  --fx-border:    var(--fx-nav-pill-divider);
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root { --fx-lift: 0px; }
 }
@@ -141,6 +192,28 @@
    Todas con prefijo fx-, dentro de @layer components.
 ═══════════════════════════════════════════════════════════════ */
 @layer components {
+  /* Navbar flotante (tokens en el bloque NAVBAR FLOTANTE de arriba). */
+  .fx-nav-pill {
+    color: var(--fx-text);
+    background: var(--fx-nav-pill-bg);
+    border: 1px solid var(--fx-nav-pill-border);
+    border-radius: var(--fx-radius-pill);
+    box-shadow: var(--fx-nav-shadow);
+  }
+
+  /* Tapa clara (marca y usuario): hover y presión sutiles. */
+  .fx-nav-cap {
+    background: var(--fx-nav-cap-bg);
+    color: var(--fx-nav-cap-text);
+    transition:
+      background-color var(--fx-dur-fast) var(--fx-ease-out),
+      transform var(--fx-dur-fast) var(--fx-ease-out);
+  }
+  .fx-nav-cap:hover { background: var(--fx-nav-cap-hover); }
+  @media (prefers-reduced-motion: no-preference) {
+    .fx-nav-cap:active { transform: scale(.96); }
+  }
+
   .fx-focus-ring:focus-visible,
   .fx-card-interactive:focus-visible {
     outline: 2px solid var(--fx-focus);
@@ -373,9 +446,19 @@
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: none; }
 }
+/* Entrada única de la navbar flotante (solo con motion-safe:, ver AppNavbar.tsx). */
+@keyframes fx-nav-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: none; }
+}
 @keyframes fx-fade-in {
   from { opacity: 0; }
   to   { opacity: 1; }
+}
+/* Entrada escalonada del saludo del dashboard (GreetingHeadline; solo con motion-safe:). */
+@keyframes fx-word-in {
+  from { opacity: 0; filter: blur(8px); transform: translateY(12px); }
+  to   { opacity: 1; filter: blur(0); transform: none; }
 }
 /* Barra indeterminada del envío de evidencia (UploadProgressPanel; solo con motion-safe:). */
 @keyframes fx-indeterminate {
@@ -388,6 +471,30 @@
    (ver punto 2e de la cabecera).
 ═══════════════════════════════════════════════════════════════ */
 .dark { color-scheme: dark; }
+
+/* Theme switch: crossfade of the whole page (View Transitions, see lib/theme.ts).
+   It only animates opacity of two snapshots, so it runs on the compositor with no
+   per-frame style recalculation. */
+.fx-theme-switching,
+.fx-theme-switching *,
+.fx-theme-switching *::before,
+.fx-theme-switching *::after {
+  transition: none !important;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 400ms;
+  animation-timing-function: cubic-bezier(.4, 0, .2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
 
 body {
   font-family: var(--fx-font-sans);

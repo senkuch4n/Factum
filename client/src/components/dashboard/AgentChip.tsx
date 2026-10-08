@@ -10,7 +10,11 @@ interface Props {
   recording: boolean;
 }
 
-const PILL = "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium select-none";
+/* Vive sobre la barra oscura de la navbar flotante: fondo *-soft y un borde
+   del mismo tono al 35% (color-mix sobre currentColor), para que el estado se
+   lea sin el contorno saturado que en la barra oscura quedaba "pegado". */
+const PILL =
+  "inline-flex h-8 items-center gap-1.5 rounded-full border border-[color:color-mix(in_srgb,currentColor_35%,transparent)] px-3 text-xs font-medium select-none";
 
 /**
  * Estado del agente Tatana en la navbar (desde `sm`). Conectado usa el tono
@@ -33,18 +37,18 @@ export function AgentChip({ online, device, recording }: Props) {
       aria-live="polite"
     >
       {online ? (
-        <span className={cn(PILL, "min-w-0 bg-fx-success-soft border-fx-success text-fx-success")}>
+        <span className={cn(PILL, "min-w-0 bg-fx-success-soft text-fx-success")}>
           <Wifi className="h-3 w-3 shrink-0" aria-hidden="true" />
-          <span className="truncate max-w-[280px]">{deviceLabel}</span>
+          <span className="truncate max-w-[160px] lg:max-w-[280px]">{deviceLabel}</span>
         </span>
       ) : (
-        <span className={cn(PILL, "bg-fx-warning-soft border-fx-warning text-fx-warning")}>
+        <span className={cn(PILL, "bg-fx-warning-soft text-fx-warning")}>
           <WifiOff className="h-3 w-3 shrink-0" aria-hidden="true" />
           Tatana no disponible
         </span>
       )}
       {recording && (
-        <span className={cn(PILL, "bg-fx-danger-soft border-fx-danger text-fx-danger font-bold")}>
+        <span className={cn(PILL, "bg-fx-danger-soft text-fx-danger font-bold")}>
           <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-fx-danger motion-safe:animate-pulse" />
           REC
         </span>
