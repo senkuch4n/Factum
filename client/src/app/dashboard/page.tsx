@@ -13,7 +13,7 @@ import type { GenerateProgress } from "@/components/dashboard/GenerateStep";
 import type { Device, AgentEvent, Case, CaseFormData, ProfileFormData } from "@/types";
 import {
   CASE_MESSAGES, EMPTY_CASE_FORM, PROFILE_REQUIRED_KEYS, PROFILE_MESSAGES,
-  caseToForm, formToCaseRequest, isPhoneLike, prefillFromLastCase, profileErrorKey,
+  caseToForm, formToCaseRequest, isImeiMissing, isPhoneLike, prefillFromLastCase, profileErrorKey,
   todayIso, validateCaseForm, validateProfile,
 } from "@/lib/pericial";
 import { useExpertProfile, profileToForm, sameProfile } from "@/hooks/useExpertProfile";
@@ -369,7 +369,7 @@ export default function Dashboard() {
   /** Paso 2: perfil (si cambió o está incompleto) → crear (POST) o editar (PUT) el caso. */
   async function handleSaveCase() {
     if (!selDevice) return;
-    const imeiManual = selDevice.imei === "INGRESAR_MANUALMENTE";
+    const imeiManual = isImeiMissing(selDevice.imei);
     const localErr = { ...validateProfile(profileForm), ...validateCaseForm(caseForm, { imeiManual }) };
     setCaseErr(localErr);
     if (Object.keys(localErr).length > 0) { setFocusErrorsTick(t => t + 1); return; }
