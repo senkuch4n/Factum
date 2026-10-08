@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { agent, type Device } from "@/lib/agent";
 import {
   CASE_FORM_FOCUS_ORDER, CASE_REQUIRED_KEYS, PROFILE_REQUIRED_KEYS,
-  MAX_LEN_LINE, MAX_LEN_LONG, caseFieldId, errorKeyToFieldId,
+  MAX_LEN_LINE, MAX_LEN_LONG, caseFieldId, errorKeyToFieldId, isImeiMissing,
 } from "@/lib/pericial";
 import { CATALOG_LABELS } from "@/lib/catalogs";
 import { useCatalogs } from "@/hooks/useCatalogs";
@@ -217,7 +217,10 @@ export function CaseFormStep({
     : `Android ${device.android_version}`;
 
   const imeiDisplay = form.imeiOverride.trim() || device.imei;
-  const imeiManual  = device.imei === "INGRESAR_MANUALMENTE";
+  // Carga manual también cuando el equipo no expuso el IMEI (viene vacío), no solo
+  // con el centinela INGRESAR_MANUALMENTE: si no, el form manda IMEI vacío y el backend
+  // rechaza con 400 sin que el perito tenga dónde cargarlo.
+  const imeiManual  = isImeiMissing(device.imei);
 
   const agentBase = process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:8765";
 
@@ -436,7 +439,7 @@ export function CaseFormStep({
           <div className="border-t border-fx-border bg-fx-surface-2 px-5 pb-4">
             <h3 className="m-0 py-3 text-fx-label uppercase text-fx-text-2">Especificaciones</h3>
             <dl className="m-0">
-              <SpecRow icon={Hash}     label="IMEI"   value={imeiDisplay !== "INGRESAR_MANUALMENTE" ? imeiDisplay : "—"} mono accent={!imeiManual} />
+              <SpecRow icon={Hash}     label="IMEI"   value={!isImeiMissing(imeiDisplay) ? imeiDisplay : "—"} mono accent={!imeiManual} />
               <SpecRow icon={FileText} label="Serial" value={device.serial.slice(0, 24)} mono />
               {device.name && device.name !== device.model && (
                 <SpecRow icon={User} label="Nombre" value={device.name} />
