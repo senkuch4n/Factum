@@ -113,7 +113,31 @@ verificación confirma que es correcto.
   `.next` del `npm run dev` del usuario en el checkout principal) → ver
   resultado abajo.
 
-RESULTADO_BUILD_PLACEHOLDER
+Resultado de `npm run build` (Next.js 16.2.10, Turbopack), corrido en un
+`git worktree` sobre el commit del merge con una copia APFS (clonefile) de
+`node_modules`:
+
+```
+✓ Compiled successfully in 16.3s
+  Finished TypeScript in 25.6s
+✓ Generating static pages using 8 workers (7/7)
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /admin/cuentas
+├ ○ /cambiar-contrasena
+├ ○ /dashboard
+└ ○ /design-system
+```
+
+Build **exitoso** (incluye `/dashboard`, el archivo integrado). El worktree
+y su copia de `node_modules` se borraron al terminar; el `.next` del
+checkout principal (el del `npm run dev` del usuario) no se tocó.
+
+Nota de proceso: el primer intento usó un symlink a `node_modules`, pero
+Turbopack lo rechaza ("Symlink points out of the filesystem root"); se
+resolvió copiando `node_modules` dentro del worktree con `cp -c` (clonefile
+de APFS, instantáneo).
 
 No hizo falta ningún ajuste adicional para que compilara: el rediseño de Leo
 no chocó con props renombradas ni exports faltantes de los 19 commits que
