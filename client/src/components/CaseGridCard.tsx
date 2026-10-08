@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { Button } from "primereact/button";
 import { Smartphone, Calendar, Clock, UserCheck, Archive, FileText, Play, HardDrive } from "lucide-react";
 import type { Case } from "@/lib/api";
@@ -9,11 +10,11 @@ import { formatDate, formatTime } from "@/lib/format";
 import { caseStatusOf } from "@/lib/case-status";
 import { FX_BUTTON_PRIMARY, FX_BUTTON_SECONDARY } from "@/lib/prime/pt/shared";
 import { StatusBadge } from "./StatusBadge";
-import { useAgentIdentity } from "@/hooks/useAgentIdentity";
-import { EvidenceHostChip } from "./CaseCard";
 import { ZipLocalActions } from "./ZipLocalActions";
+import { EvidenceHostChip } from "./case-detail/EvidenceHostChip";
+import { useCaseAgentFlow } from "./case-detail/useCaseAgentFlow";
 
-/* La tarjeta no es un control: se eleva al hover y cuando el foco está en sus
+/* La tarjeta se eleva al hover y cuando el foco está en su título o sus
    acciones. Con reduced motion, --fx-lift vale 0 y solo cambian sombra y borde. */
 const LIFT = [
   "transition-[transform,box-shadow,border-color] duration-fx-base ease-fx",
@@ -25,28 +26,60 @@ const LIFT = [
 
 const LINK_SMALL = "flex-1 min-h-11 px-3 py-1.5 text-xs";
 
-/** Inspección en la vista cuadrícula. El padre es un `ul`. */
-export function CaseGridCard({ cas, onResume }: { cas: Case; onResume: (c: Case) => void }) {
+/**
+ * Inspección en la vista cuadrícula. El padre es un `ul`.
+ *
+ * Abre el detalle (modal compartido) con un clic en cualquier parte de la
+ * tarjeta; para teclado y lector de pantalla el disparador es el botón del
+ * N° de causa. Las acciones rápidas (Retomar, ZIP, Word, acciones locales)
+ * son blancos propios y no abren el detalle.
+ */
+export function CaseGridCard({
+  cas, onResume, onOpen,
+}: {
+  cas: Case;
+  onResume: (c: Case) => void;
+  /** `origin`: la tarjeta entera (de ahí sale y ahí vuelve el detalle). */
+  onOpen: (c: Case, trigger: HTMLElement, origin: HTMLElement) => void;
+}) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const dlURL = (filename: string) => api.downloadURL(cas.id, filename);
   const isDone = cas.status === "completed";
   const isDraft = cas.status === "draft";
   const hasDownloads = isDone && (cas.zip_filename || cas.pdf_filename);
   // Flujo agent (zip-local-informe-servidor §7.7): sin consultar el estado; el botón reacciona al 404.
-  const agentFlow = cas.evidence_storage === "agent";
-  const identity = useAgentIdentity();
-  const sameHost = agentFlow && identity.isSameHost(cas);
-  const draftHost = agentFlow && isDraft && cas.evidence_host?.hostname && identity.status === "online" && !sameHost
-    ? cas.evidence_host.hostname
-    : null;
+  const { agentFlow, sameHost, draftHost } = useCaseAgentFlow(cas);
+
+  function handleCardClick(e: React.MouseEvent<HTMLLIElement>) {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    // Clic en una acción propia (link/botón que no es el título, o la franja
+    // de acciones con sus mensajes de error): no se abre.
+    const hit = (e.target as Element).closest("a, button, input, select, textarea, [role='button'], [data-card-actions]");
+    if (hit && hit !== trigger) return;
+    // Si arrastró para seleccionar texto (p. ej. copiar la causa), tampoco.
+    if (window.getSelection()?.toString()) return;
+    onOpen(cas, trigger, e.currentTarget);
+  }
 
   return (
-    <li className={cn("fx-card relative flex flex-col overflow-hidden", LIFT)}>
+    // El clic en la tarjeta es un atajo de puntero: el equivalente de teclado
+    // es el botón del título (el evento de ese botón burbujea hasta acá).
+    <li className={cn("fx-card relative flex flex-col overflow-hidden cursor-pointer", LIFT)} onClick={handleCardClick}>
       <span className={cn("h-1 w-full", caseStatusOf(cas.status).stripe)} aria-hidden="true" />
 
       <div className="flex-1 p-5 space-y-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-fx-h3 text-fx-text truncate">{cas.nro_referencia}</p>
+            <button
+              ref={triggerRef}
+              type="button"
+              aria-haspopup="dialog"
+              aria-label={`Causa ${cas.nro_referencia} — ver detalle`}
+              className="block max-w-full truncate rounded-fx-sm text-left text-fx-h3 text-fx-text fx-focus-ring"
+            >
+              {cas.nro_referencia}
+            </button>
             <p className="mt-0.5 text-fx-body-sm text-fx-text-2 truncate">
               {cas.caratula || cas.nombre_denunciante}
               {cas.dni_denunciante && ` · DNI ${cas.dni_denunciante}`}
@@ -85,7 +118,7 @@ export function CaseGridCard({ cas, onResume }: { cas: Case; onResume: (c: Case)
       </div>
 
       {isDone && agentFlow && sameHost && cas.zip_filename && (
-        <div className="px-4 pt-3 border-t border-fx-border">
+        <div data-card-actions className="px-4 pt-3 border-t border-fx-border cursor-auto">
           <ZipLocalActions
             caseId={cas.id}
             caseRef={cas.nro_referencia}
@@ -96,7 +129,7 @@ export function CaseGridCard({ cas, onResume }: { cas: Case; onResume: (c: Case)
         </div>
       )}
       {(hasDownloads || isDraft) && (
-        <div className={cn("px-4 pb-4 pt-3 flex gap-2", !(isDone && agentFlow && sameHost && cas.zip_filename) && "border-t border-fx-border")}>
+        <div data-card-actions className={cn("px-4 pb-4 pt-3 flex gap-2 cursor-auto", !(isDone && agentFlow && sameHost && cas.zip_filename) && "border-t border-fx-border")}>
           {isDraft && (
             <Button
               size="small"

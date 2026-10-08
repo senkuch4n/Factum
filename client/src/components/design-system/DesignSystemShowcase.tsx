@@ -260,6 +260,7 @@ export function DesignSystemShowcase() {
       <AppNavbar
         showThemeSwitch
         brandHref="/design-system"
+        maxWidthClass="max-w-[1200px]"
         user={DEMO_USER}
         onLogout={() => fxToast.info("Cierre de sesión de ejemplo", "En el showcase no se cierra la sesión real.")}
         center={
