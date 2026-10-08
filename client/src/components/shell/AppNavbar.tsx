@@ -24,31 +24,37 @@ interface AppNavbarProps {
   showThemeSwitch?: boolean;
   /** Si viene, la marca es un <Link>; si no, es estática. */
   brandHref?: string;
+  /** Ancho máximo de la píldora (clase literal de Tailwind): igual a la columna de contenido de la página, así los bordes quedan alineados. */
+  maxWidthClass?: string;
 }
 
 const SELF_TARGET = { kind: "self" } as const;
 
-/* Logo "Sello": horizontal (marca + "Factum" en trazos) desde sm; en móvil,
-   solo la marca. Las imágenes son decorativas: el nombre accesible lo pone
+/* Marca dentro de la tapa clara izquierda: la "F" en degradé (PNG con fondo
+   transparente) contrasta en los dos temas, porque la tapa es clara siempre. Decorativa: el nombre accesible lo pone
    el contenedor. width/height = proporción del SVG, para reservar el lugar. */
-function Brand() {
-  return (
-    <>
-      <img src="/logo-theme-dark.svg" alt="" aria-hidden="true" width={289} height={64} className="hidden h-6 w-auto sm:dark:block" />
-      <img src="/logo-theme-white.svg" alt="" aria-hidden="true" width={289} height={64} className="hidden h-6 w-auto sm:block sm:dark:hidden" />
-      <img src="/logo-mark-dark.svg" alt="" aria-hidden="true" width={64} height={64} className="hidden h-6 w-6 dark:block sm:dark:hidden" />
-      <img src="/logo-mark-white.svg" alt="" aria-hidden="true" width={64} height={64} className="block h-6 w-6 dark:hidden sm:hidden" />
-    </>
-  );
+const BRAND_CAP = "fx-nav-cap flex h-10 w-10 shrink-0 items-center justify-center rounded-full";
+
+/* Sin menú de usuario, el cambio de tema hace de tapa clara derecha para que
+   la píldora siga enmarcada (utilidades explícitas: las de ThemeSwitch pisarían
+   el fondo de `.fx-nav-cap`, que vive en @layer components). */
+const THEME_AS_CAP =
+  "h-10 w-10 rounded-full fx-nav-cap bg-[var(--fx-nav-cap-bg)] text-[color:var(--fx-nav-cap-text-2)] hover:bg-[var(--fx-nav-cap-hover)] hover:text-[color:var(--fx-nav-cap-text)]";
+
+function BrandMark() {
+  return <img src="/logo-mark-f.png" alt="" aria-hidden="true" width={256} height={256} className="h-7 w-7" />;
 }
 
 /**
- * Navbar global del sistema de diseño nuevo: sólida, rectangular y siguiendo
- * al tema (sin el `.dark` forzado ni el clip-path de la barra anterior).
+ * Navbar global: píldora flotante (rounded-full) despegada de los bordes, con
+ * dos tapas claras (marca a la izquierda, usuario a la derecha) que enmarcan
+ * la barra oscura. La barra es oscura en los dos temas: `.fx-nav-pill` hereda
+ * la paleta oscura de tokens (globals.css), así el `center` y las `actions`
+ * que pasa cada página se leen bien sin tocarlas.
  * `sticky` y no `fixed`: en el dashboard (h-screen con scroll interno) el
- * header ya está fuera del contenedor que scrollea, y en páginas con scroll
- * del documento queda arriba sin compensar con padding. Alto 56px (h-14),
- * igual que la barra anterior.
+ * header queda fuera del contenedor que scrollea, y en páginas con scroll del
+ * documento ocupa su lugar arriba sin compensar con padding. El header es
+ * transparente y no captura clicks (pointer-events-none): solo la píldora.
  */
 export function AppNavbar({
   center,
@@ -57,6 +63,7 @@ export function AppNavbar({
   onLogout,
   showThemeSwitch = false,
   brandHref,
+  maxWidthClass = "max-w-[1400px]",
 }: AppNavbarProps) {
   const showUserMenu = !!user && !!onLogout;
   const [profileOpen, setProfileOpen] = useState(false);
@@ -73,33 +80,31 @@ export function AppNavbar({
   const openAdmin = useCallback(() => router.push("/admin/cuentas"), [router]);
 
   return (
-    <header className="sticky top-0 z-fx-nav h-14 shrink-0 border-b border-fx-border bg-fx-nav-bg shadow-fx-1">
-      <div className="mx-auto grid h-full max-w-[1400px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-4 sm:gap-3 sm:px-6">
-        {/* Izquierda: marca */}
+    <header className="pointer-events-none sticky top-0 z-fx-nav shrink-0 px-4 pt-3 sm:px-6 sm:pt-4">
+      <div className={`fx-nav-pill pointer-events-auto mx-auto flex h-14 ${maxWidthClass} items-center gap-2 p-2 motion-safe:animate-[fx-nav-in_var(--fx-dur-slow)_var(--fx-ease-out)_backwards]`}>
+        {/* Izquierda: marca en la tapa clara */}
         {brandHref ? (
-          <Link
-            href={brandHref}
-            aria-label="Factum, ir al inicio"
-            className="flex min-w-0 items-center gap-2.5 rounded-fx-sm no-underline fx-focus-ring"
-          >
-            <Brand />
+          <Link href={brandHref} aria-label="Factum, ir al inicio" className={`${BRAND_CAP} no-underline fx-focus-ring`}>
+            <BrandMark />
           </Link>
         ) : (
-          <div className="flex min-w-0 items-center gap-2.5" role="img" aria-label="Factum">
-            <Brand />
+          <div className={BRAND_CAP} role="img" aria-label="Factum">
+            <BrandMark />
           </div>
         )}
 
         {/* Centro: contexto de navegación (trunca) */}
-        <div className="flex min-w-0 items-center justify-center">{center}</div>
+        <div className="flex min-w-0 flex-1 items-center px-1 sm:px-2">{center}</div>
 
-        {/* Derecha: acciones + tema + usuario */}
-        <div className="flex min-w-0 items-center gap-2 justify-self-end">
+        {/* Derecha: acciones + tema + usuario (tapa clara) */}
+        <div className="flex min-w-0 items-center gap-1 sm:gap-1.5">
           {actions}
-          {(showThemeSwitch || showUserMenu) && (
-            <span aria-hidden="true" className="h-5 w-px shrink-0 bg-fx-border" />
+          {actions && (showThemeSwitch || showUserMenu) && (
+            <span aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-fx-border sm:block" />
           )}
-          {showThemeSwitch && <ThemeSwitch />}
+          {showThemeSwitch && (
+            <ThemeSwitch className={showUserMenu ? "h-10 w-10 rounded-full" : THEME_AS_CAP} />
+          )}
           {showUserMenu && (
             <UserMenu
               user={user}

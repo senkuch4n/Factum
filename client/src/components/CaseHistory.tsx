@@ -19,6 +19,7 @@ import { FxTip } from "@/components/overlay/FxTip";
 import { CaseCard } from "./CaseCard";
 import { CaseGridCard } from "./CaseGridCard";
 import { StatusBadge } from "./StatusBadge";
+import { CaseDetailModal } from "./case-detail/CaseDetailModal";
 
 /** Carátula del caso; los casos previos al informe pericial muestran el titular. */
 const caratulaOf = (c: Case) => c.caratula || c.nombre_denunciante;
@@ -73,6 +74,19 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
   const [view,        setView]        = useState<View>("list");
   const [tableSort,   setTableSort]   = useState<SortState>({ key: "fecha", dir: "desc" });
   const searchRef = useRef<HTMLInputElement>(null);
+
+  // ── Detalle (modal compartido por las tres vistas) ─────────────────
+  // Se guarda el id y no el objeto: si la lista se refresca con el modal
+  // abierto, el detalle muestra los datos nuevos (y se cierra si el caso ya
+  // no está). `trigger` recibe el foco al cerrar; `origin` es el elemento
+  // visual de donde sale y a donde vuelve la superficie (fila, `<tr>`,
+  // tarjeta). `key` cambia en cada apertura: reabrir a mitad de un cierre
+  // remonta el modal limpio en lugar de heredar la animación en curso.
+  const [detail, setDetail] = useState<{ id: string; trigger: HTMLElement; origin: HTMLElement; key: number } | null>(null);
+  const detailSeq = useRef(0);
+  const detailCase = detail ? cases.find(c => c.id === detail.id) ?? null : null;
+  const openDetail = (cas: Case, trigger: HTMLElement, origin: HTMLElement = trigger) =>
+    setDetail({ id: cas.id, trigger, origin, key: ++detailSeq.current });
 
   const hasDateFilter = !!dateFrom || !!dateTo;
   const hasQuery      = query.trim().length > 0;
@@ -327,7 +341,7 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
         ) : view === "list" ? (
           <ul key="list" className={cn("space-y-2.5", FADE_IN)}>
             {paged.map((cas) => (
-              <CaseCard key={cas.id} cas={cas} onResume={onResume} />
+              <CaseCard key={cas.id} cas={cas} onOpen={openDetail} />
             ))}
           </ul>
 
@@ -345,6 +359,18 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
                 setPage(1);
               }}
               removableSort={false}
+              // Clic en la fila = atajo de puntero para abrir el detalle; el
+              // disparador de teclado es el botón del N° de causa (que también
+              // recibe el foco al cerrar). Botones y links de la fila no abren.
+              onRowClick={(e) => {
+                const target = e.originalEvent.target as Element;
+                if (target.closest("a, button")) return;
+                if (window.getSelection()?.toString()) return;
+                const row = target.closest("tr");
+                const trigger = row?.querySelector<HTMLElement>("[data-case-trigger]");
+                if (row && trigger) openDetail(e.data as Case, trigger, row);
+              }}
+              rowClassName={() => "cursor-pointer"}
               sortIcon={(opts: { sorted?: boolean; sortOrder?: number | null }) =>
                 opts.sorted
                   ? opts.sortOrder === 1
@@ -361,7 +387,18 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
                 sortField="causa"
                 sortable
                 header="N° de causa"
-                body={(c: Case) => <span className="font-medium">{c.nro_referencia}</span>}
+                body={(c: Case) => (
+                  <button
+                    type="button"
+                    data-case-trigger
+                    aria-haspopup="dialog"
+                    aria-label={`Causa ${c.nro_referencia} — ver detalle`}
+                    onClick={(e) => openDetail(c, e.currentTarget, e.currentTarget.closest("tr") ?? e.currentTarget)}
+                    className="-mx-1.5 rounded-fx-md px-1.5 py-1 text-left font-medium text-fx-text underline-offset-4 hover:underline fx-focus-ring"
+                  >
+                    {c.nro_referencia}
+                  </button>
+                )}
               />
               <Column
                 columnKey="caratula"
@@ -413,7 +450,7 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
         ) : (
           <ul key="grid" className={cn("grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4", FADE_IN)}>
             {paged.map((cas) => (
-              <CaseGridCard key={cas.id} cas={cas} onResume={onResume} />
+              <CaseGridCard key={cas.id} cas={cas} onResume={onResume} onOpen={openDetail} />
             ))}
           </ul>
         )}
@@ -434,6 +471,15 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
           </p>
         </nav>
       )}
+
+      <CaseDetailModal
+        cas={detailCase}
+        openKey={detail?.key ?? 0}
+        origin={detail?.origin ?? null}
+        returnFocusTo={detail?.trigger ?? null}
+        onClose={() => setDetail(null)}
+        onResume={onResume}
+      />
     </section>
   );
 }

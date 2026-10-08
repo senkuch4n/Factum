@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { flushSync } from "react-dom";
 
 type Theme = "light" | "dark";
 
@@ -31,6 +32,33 @@ function persistTheme(theme: Theme) {
   }
 }
 
+/** Disables CSS transitions while the theme swaps, so hover/transition-colors don't stagger it. */
+const SWITCHING_CLASS = "fx-theme-switching";
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/**
+ * Applies the theme change with a compositor-only crossfade (View Transitions API).
+ * Without support or with prefers-reduced-motion, the change is instant.
+ */
+function runThemeSwap(commit: () => void) {
+  const root = document.documentElement;
+  root.classList.add(SWITCHING_CLASS);
+
+  if (typeof document.startViewTransition !== "function" || prefersReducedMotion()) {
+    commit();
+    // Force a style flush so the new colors land without transitions, then re-enable them.
+    void window.getComputedStyle(root).color;
+    requestAnimationFrame(() => root.classList.remove(SWITCHING_CLASS));
+    return;
+  }
+
+  const transition = document.startViewTransition(commit);
+  transition.finished.finally(() => root.classList.remove(SWITCHING_CLASS));
+}
+
 /* ── Shared context ──────────────────────────────────────────────── */
 interface ThemeContextValue {
   theme: Theme;
@@ -57,11 +85,13 @@ export function useThemeProviderValue(): ThemeContextValue {
   }, []);
 
   const toggle = useCallback(() => {
-    setTheme(prev => {
-      const next = prev === "dark" ? "light" : "dark";
+    // Read from <html> rather than state so rapid clicks never act on a stale value.
+    const next: Theme = document.documentElement.classList.contains("dark") ? "light" : "dark";
+    persistTheme(next);
+    runThemeSwap(() => {
       applyThemeClass(next);
-      persistTheme(next);
-      return next;
+      // Commit React synchronously so the "new" snapshot already has theme-dependent UI (logos, icons).
+      flushSync(() => setTheme(next));
     });
   }, []);
 

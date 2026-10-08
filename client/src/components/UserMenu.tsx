@@ -3,7 +3,7 @@
 import { useId, useMemo, useRef, useState } from "react";
 import { Menu } from "primereact/menu";
 import type { MenuItem } from "primereact/menuitem";
-import { KeyRound, LogOut, Palette, UserCog, Users } from "lucide-react";
+import { ChevronDown, KeyRound, LogOut, Palette, UserCog, Users } from "lucide-react";
 import { useMyBranding } from "@/hooks/useMyBranding";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { hasRealSigla } from "@/lib/format";
@@ -138,17 +138,31 @@ export function UserMenu({ user, onLogout, onOpenProfile, onOpenBranding, onChan
 
   return (
     <>
+      {/* Tapa clara derecha de la navbar flotante (ver AppNavbar): iniciales
+          siempre; nombre y chevron desde lg, donde hay lugar. */}
       <button
         type="button"
         onClick={(e) => menuRef.current?.toggle(e)}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-fx-border-strong bg-fx-surface-2 text-[11px] font-semibold text-fx-text-2 transition-colors duration-fx-fast ease-fx hover:bg-fx-surface-3 hover:text-fx-text fx-focus-ring"
+        className="fx-nav-cap group flex h-10 min-w-0 shrink-0 items-center gap-2 rounded-full p-1 lg:pr-3 fx-focus-ring"
         title={user.name}
         aria-label={`Menú de usuario: ${user.name}`}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? `${menuId}_list` : undefined}
       >
-        {initials}
+        <span
+          aria-hidden="true"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--fx-nav-cap-avatar)] text-[11px] font-semibold"
+        >
+          {initials}
+        </span>
+        <span aria-hidden="true" className="hidden max-w-[12rem] truncate text-sm font-medium lg:block">
+          {user.name}
+        </span>
+        <ChevronDown
+          aria-hidden="true"
+          className="hidden h-3.5 w-3.5 shrink-0 text-[color:var(--fx-nav-cap-text-2)] transition-transform duration-fx-fast ease-fx group-aria-expanded:rotate-180 motion-reduce:transition-none lg:block"
+        />
       </button>
       <Menu
         ref={menuRef}
