@@ -43,7 +43,7 @@ export function VersionDiff({ before, after }: { before: string; after: string }
   if (!parts) {
     return (
       <div role="status" className="flex items-center gap-2 py-4 text-fx-body-sm text-fx-text-2">
-        <Loader2 className="h-4 w-4 animate-spin text-fx-text-3" aria-hidden="true" /> Calculando diferencias…
+        <Loader2 className="h-4 w-4 motion-safe:animate-spin text-fx-text-3" aria-hidden="true" /> Calculando diferencias…
       </div>
     );
   }

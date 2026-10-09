@@ -155,7 +155,7 @@ export default function ReportVersionHistory({
       >
         {state.kind === "loading" && (
           <div role="status" className="flex items-center justify-center gap-2 py-10 text-fx-body-sm text-fx-text-2">
-            <Loader2 className="h-4 w-4 animate-spin text-fx-text-3" aria-hidden="true" /> Cargando el historial…
+            <Loader2 className="h-4 w-4 motion-safe:animate-spin text-fx-text-3" aria-hidden="true" /> Cargando el historial…
           </div>
         )}
 
