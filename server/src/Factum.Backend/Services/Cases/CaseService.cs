@@ -12,6 +12,11 @@ namespace Factum.Backend.Services.Cases;
 public interface ICaseService
 {
     Task<List<Case>> ListAsync(string officerDni, CancellationToken ct = default);
+    /// <summary>dashboard-kpis-tendencias: KPIs + tendencia mensual del perito (GET …/stats).</summary>
+    Task<CaseStatsResponse> GetStatsAsync(string officerDni, int tzOffsetMinutes, CancellationToken ct = default);
+    /// <summary>dashboard-breakdown: distribución por dimensión del perito (GET …/breakdown).</summary>
+    Task<Result<BreakdownResponse>> BreakdownAsync(string officerDni, string? dimension, DateOnly? from,
+        DateOnly? to, CancellationToken ct = default);
     Task<Result<(Case Case, List<FileInfoDto> Files)>> GetAsync(string id, string officerDni,
         CancellationToken ct = default);
     Task<Result<Case>> CreateAsync(CreateCaseRequest request, User officer, CancellationToken ct = default);
@@ -20,6 +25,19 @@ public interface ICaseService
     Task<Result<ReportTextsDto>> GetReportTextDefaultsAsync(string id, string officerDni,
         CancellationToken ct = default);
     Task<Result<ReportTexts>> SaveReportTextsAsync(string id, ReportTextsDto request, string officerDni,
+        CancellationToken ct = default);
+    /// <summary>
+    /// versionado-informe: historial de versiones de report_texts del caso propio (más reciente
+    /// primero). 404 si no existe, 403 si es de otro perito. Funciona en cualquier Status.
+    /// </summary>
+    Task<Result<ReportTextVersionsResponse>> GetReportTextVersionsAsync(string id, string officerDni,
+        CancellationToken ct = default);
+    /// <summary>
+    /// trazabilidad-caso: eventos de cadena de custodia del caso, ascendente por timestamp. Dueño
+    /// (por Officer.Dni) o superadmin (<paramref name="actorRole"/>). 404 si no existe, 403 si es
+    /// ajeno y no superadmin.
+    /// </summary>
+    Task<Result<List<CaseEvent>>> ListEventsAsync(string id, User actor, string actorRole,
         CancellationToken ct = default);
     Task<Result<List<CaptureRole>>> UpsertCaptureRolesAsync(string id, CaptureRolesRequest request,
         string officerDni, CancellationToken ct = default);
@@ -78,18 +96,24 @@ public sealed partial class CaseService : ICaseService
     public const string LegacyCaseMessage =
         "Este caso se creó antes del informe pericial. Completá los datos de la causa para generarlo.";
 
+    /// <summary>versionado-informe (D3/D5-B): tope de versiones por caso.</summary>
+    public const int MaxReportVersions = 50;
+
     private readonly ICaseRepository _repo;
     private readonly IStorageService _storage;
     private readonly IReportService _reports;
     private readonly IExpertProfileService _profiles;
     private readonly IReportSettings _reportSettings;
     private readonly ICatalogService _catalogs;
+    private readonly ICaseEventRepository _caseEvents;
+    private readonly IHttpContextAccessor _httpContext;
     private readonly StorageOptions _storageOptions;
     private readonly ReportOptions _reportOptions;
     private readonly ILogger<CaseService> _log;
 
     public CaseService(ICaseRepository repo, IStorageService storage, IReportService reports,
         IExpertProfileService profiles, IReportSettings reportSettings, ICatalogService catalogs,
+        ICaseEventRepository caseEvents, IHttpContextAccessor httpContext,
         IOptions<StorageOptions> storageOptions, IOptions<ReportOptions> reportOptions, ILogger<CaseService> log)
     {
         _storageOptions = storageOptions.Value;
@@ -100,8 +124,40 @@ public sealed partial class CaseService : ICaseService
         _reports = reports;
         _profiles = profiles;
         _reportSettings = reportSettings;
+        _caseEvents = caseEvents;
+        _httpContext = httpContext;
         _log = log;
     }
+
+    // ── trazabilidad-caso: registro best-effort y aislado de hitos (DT4) ────────
+
+    /// <summary>
+    /// Inserta un <see cref="CaseEvent"/> fuera de la operación principal: traga y loguea cualquier
+    /// excepción (nunca cambia la respuesta de la acción del usuario) y usa CancellationToken.None
+    /// (un request cancelado no pierde el hito ya ocurrido). Igual que _catalogs.RecordUsageAsync.
+    /// </summary>
+    private async Task RecordEventAsync(CaseEvent evt)
+    {
+        try { await _caseEvents.InsertAsync(evt, CancellationToken.None); }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "No se pudo registrar el evento {Type} del caso {CaseId}", evt.Type, evt.CaseId);
+        }
+    }
+
+    // IP del request (DT7-b): null fuera de un request HTTP (el evento se registra igual).
+    private string? ActorIp() => _httpContext.HttpContext?.Connection.RemoteIpAddress?.ToString();
+
+    // Evento base con el actor congelado del caso (dueño) + IP del request.
+    private CaseEvent CaseEventFor(Case cas, string type) => new()
+    {
+        CaseId = cas.Id,
+        Type = type,
+        ActorDni = cas.Officer.Dni,
+        ActorName = cas.Officer.Name,
+        Timestamp = DateTime.UtcNow,
+        Ip = ActorIp(),
+    };
 
     public async Task<List<Case>> ListAsync(string officerDni, CancellationToken ct = default)
     {
@@ -212,6 +268,8 @@ public sealed partial class CaseService : ICaseService
         await _repo.InsertAsync(cas, ct);
         // Best-effort (nunca lanza): un fallo del catálogo no cambia la respuesta del POST.
         await _catalogs.RecordUsageAsync(officer.Dni, CatalogLogic.ValuesForCreate(cas), ct);
+        // trazabilidad-caso: hito de alta (best-effort). El actor es el dueño recién congelado.
+        await RecordEventAsync(CaseEventFor(cas, CaseEventTypes.CaseCreated));
         return Result.Ok(cas);
     }
 
@@ -256,6 +314,15 @@ public sealed partial class CaseService : ICaseService
         var saved = ResolveStorage((await _repo.FindByIdAsync(id, ct))!);
         // Solo los campos que cambiaron respecto de `cas` (leído antes del update, D12). Best-effort.
         await _catalogs.RecordUsageAsync(officer.Dni, CatalogLogic.ValuesForUpdate(saved, cas), ct);
+        // trazabilidad-caso (DT6): case_updated con los campos que cambiaron. Si nada cambió, no se
+        // registra (evita ruido de un PUT trivial). Best-effort.
+        var changedFields = CaseEventFields.ChangedFields(cas, saved);
+        if (changedFields.Count > 0)
+        {
+            var evt = CaseEventFor(saved, CaseEventTypes.CaseUpdated);
+            evt.Detail = new CaseEventDetail { ChangedFields = changedFields };
+            await RecordEventAsync(evt);
+        }
         return Result.Ok(saved);
     }
 
@@ -282,6 +349,10 @@ public sealed partial class CaseService : ICaseService
 
         var validationError = CaseValidation.ValidateReportTexts(request);
         if (validationError is not null) return Result.Invalid<ReportTexts>(validationError);
+        // versionado-informe: trigger ∈ {null,"","save","restore"}; restored_from solo con "restore".
+        if (!ReportVersioning.TryNormalizeTrigger(request.Trigger, request.RestoredFrom,
+                out var trigger, out var triggerError))
+            return Result.Invalid<ReportTexts>(triggerError!);
         ReportTextFormats.TryNormalize(request.Formato, out var formato);
 
         var texts = new ReportTexts
@@ -300,9 +371,57 @@ public sealed partial class CaseService : ICaseService
             UpdatedAt = DateTime.UtcNow,
         };
 
-        if (!await _repo.UpdateReportTextsAsync(id, texts, ct))
+        // versionado-informe (D1/D2/D4): el snapshot candidato se agrega al historial SOLO si pasa el
+        // de-dup contra la última versión. El autor es el dueño congelado del caso (D9). El append va
+        // ATÓMICO en el mismo UpdateOne que pisa report_texts.
+        var snapshot = ReportVersioning.Snapshot(texts);
+        ReportTextVersion? versionToPush = null;
+        List<ReportTextVersion>? prunedOverride = null;
+        if (!ReportVersioning.IsDuplicate(cas.ReportTextVersions, snapshot))
+        {
+            var version = new ReportTextVersion
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                CreatedAt = DateTime.UtcNow,
+                AuthorDni = cas.Officer.Dni,
+                AuthorName = cas.Officer.Name,
+                Trigger = trigger,
+                RestoredFrom = trigger == ReportVersionTriggers.Restore ? request.RestoredFrom : null,
+                Texts = snapshot,
+            };
+            (versionToPush, prunedOverride) = ReportVersioning.PlanAppend(cas.ReportTextVersions, version);
+        }
+
+        if (!await _repo.UpdateReportTextsAsync(id, texts, versionToPush, prunedOverride, ct))
             return Result.Conflict<ReportTexts>(NotEditableMessage);
         return Result.Ok(texts);
+    }
+
+    public async Task<Result<ReportTextVersionsResponse>> GetReportTextVersionsAsync(string id,
+        string officerDni, CancellationToken ct = default)
+    {
+        var (cas, error) = await LoadOwnedAsync<ReportTextVersionsResponse>(id, officerDni, ct);
+        if (cas is null) return error!;
+        // Más reciente primero (orden descendente por created_at).
+        var versions = cas.ReportTextVersions
+            .OrderByDescending(v => v.CreatedAt)
+            .Select(ReportVersioning.ToDto)
+            .ToList();
+        return Result.Ok(new ReportTextVersionsResponse(versions));
+    }
+
+    // ── trazabilidad-caso: GET /api/cases/{id}/events ──────────────────────────
+
+    public async Task<Result<List<CaseEvent>>> ListEventsAsync(string id, User actor, string actorRole,
+        CancellationToken ct = default)
+    {
+        var cas = await _repo.FindByIdAsync(id, ct);
+        if (cas is null) return Result.NotFound<List<CaseEvent>>();
+        // Dueño o superadmin (D9-A). En dev/external el rol siempre es "cliente": solo vale el dueño.
+        if (cas.Officer.Dni != actor.Dni && actorRole != UserRoles.Superadmin)
+            return Result.Forbidden<List<CaseEvent>>();
+        var events = await _caseEvents.ListByCaseAsync(id, ct);
+        return Result.Ok(events);
     }
 
     // ── Roles de captura (T7) ─────────────────────────────────────────────────
@@ -493,6 +612,12 @@ public sealed partial class CaseService : ICaseService
                     }
                 }
 
+                // trazabilidad-caso (DT8): evidencia subida por el flujo server (sin host). Best-effort.
+                var evt = CaseEventFor(cas, CaseEventTypes.EvidenceAdded);
+                evt.Filename = info.Name;
+                evt.Detail = new CaseEventDetail { Sha256 = staged.Hash, Size = info.Length };
+                await RecordEventAsync(evt);
+
                 return Result.Ok(new FileInfoDto(info.Name, info.Length, staged.Hash, info.LastWriteTimeUtc,
                     sourcePath));
             }
@@ -585,6 +710,11 @@ public sealed partial class CaseService : ICaseService
         if (files.Count == 0)
             return Result.Invalid<GenerateResponse>("El caso no tiene archivos. Capturá evidencia primero.");
 
+        // versionado-informe (D2): snapshot "generate" del report_texts vigente ANTES de pasar a
+        // Generating, append atómico bajo Editable(id). La poda conserva la primera y todas las
+        // "generate". Best-effort para el versionado (un fallo no frena la generación).
+        await AppendGenerateVersionAsync(cas, ct);
+
         await _repo.UpdateStatusAsync(id, CaseStatus.Generating, ct);
         _log.LogInformation("Generando informe para caso {CaseId}", id);
 
@@ -598,6 +728,10 @@ public sealed partial class CaseService : ICaseService
                 result.ReportHash, ct);
 
             cas = ResolveStorage((await _repo.FindByIdAsync(id, ct))!);
+            // trazabilidad-caso (DT10): hito de informe generado (best-effort).
+            var ok = CaseEventFor(cas, CaseEventTypes.ReportGenerated);
+            ok.Detail = new CaseEventDetail { ZipHash = result.ZipHash, ReportHash = result.ReportHash };
+            await RecordEventAsync(ok);
             return Result.Ok(new GenerateResponse(
                 cas, result.ZipHash, result.Password,
                 new FilesDto(result.ZipFilename, result.PdfFilename), result.ReportHash));
@@ -606,8 +740,40 @@ public sealed partial class CaseService : ICaseService
         {
             _log.LogError(ex, "Error generando informe para caso {CaseId}", id);
             await _repo.UpdateStatusAsync(id, CaseStatus.Error, ct);
+            // trazabilidad-caso (DT10): fallo real de generación (best-effort). Motivo truncado.
+            var fail = CaseEventFor(cas, CaseEventTypes.ReportFailed);
+            fail.Detail = new CaseEventDetail { Reason = TruncateReason(ex.Message) };
+            await RecordEventAsync(fail);
             return Result.Fail<GenerateResponse>($"Error generando informe: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// versionado-informe (D2/D3): agrega una versión "generate" del report_texts vigente, con poda
+    /// que conserva la primera y todas las "generate". Append atómico (AppendReportVersionAsync).
+    /// Best-effort: si falla, solo loguea (no frena la generación). De-dup: nada si es idéntica a la
+    /// última.
+    /// </summary>
+    private async Task AppendGenerateVersionAsync(Case cas, CancellationToken ct)
+    {
+        try
+        {
+            var version = ReportVersioning.GenerateVersionFor(cas);
+            if (version is null) return;
+            var (push, pruned) = ReportVersioning.PlanAppend(cas.ReportTextVersions, version);
+            await _repo.AppendReportVersionAsync(cas.Id, push ?? version, pruned, ct);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "No se pudo agregar la versión \"generate\" al caso {CaseId}", cas.Id);
+        }
+    }
+
+    // DT10: el motivo de report_failed nunca lleva datos sensibles y se trunca a ~300 chars.
+    private static string TruncateReason(string? reason)
+    {
+        var r = (reason ?? string.Empty).Trim();
+        return r.Length <= 300 ? r : r[..300];
     }
 
     public const string NoEncryptedZipMessage = "Este caso no tiene un ZIP cifrado";

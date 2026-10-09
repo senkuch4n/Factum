@@ -23,7 +23,9 @@ public sealed class AuditOptions
 [Produces("application/json")]
 public sealed class AgentAuditController(
     IAgentEventRepository repo,
-    IOptions<AuditOptions> auditOpts) : ControllerBase
+    ICaseEventRepository caseEvents,
+    IOptions<AuditOptions> auditOpts,
+    ILogger<AgentAuditController> log) : ControllerBase
 {
     private User Officer => (User)HttpContext.Items["User"]!;
 
@@ -31,6 +33,7 @@ public sealed class AgentAuditController(
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> Report([FromBody] ReportAgentEventRequest request, CancellationToken ct)
     {
+        var ip = ResolveClientIp();
         var evt = new AgentEvent
         {
             Dni = Officer.Dni,
@@ -40,12 +43,48 @@ public sealed class AgentAuditController(
             Mode = request.Mode,
             Action = request.Action,
             CaseId = request.CaseId,
-            Ip = ResolveClientIp(),
+            Ip = ip,
         };
 
         await repo.InsertAsync(evt, ct);
+        // trazabilidad-caso (DT9): si la acción es una captura y trae case_id, se deriva además un
+        // case_event equivalente. Best-effort y aislado: un fallo loguea y NO cambia el 204 ni el
+        // agent_event ya guardado.
+        if (!string.IsNullOrWhiteSpace(request.CaseId) &&
+            MapCaptureType(request.Action) is { } type)
+        {
+            try
+            {
+                await caseEvents.InsertAsync(new CaseEvent
+                {
+                    CaseId = request.CaseId!,
+                    Type = type,
+                    ActorDni = Officer.Dni,
+                    ActorName = Officer.Name,
+                    Timestamp = DateTime.UtcNow,
+                    Hostname = request.Hostname,
+                    OsUser = request.OsUser,
+                    AgentMode = request.Mode,
+                    Ip = ip,
+                }, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                log.LogWarning(ex, "No se pudo derivar el evento de captura del caso {CaseId}", request.CaseId);
+            }
+        }
         return NoContent();
     }
+
+    // DT9: AgentAction → CaseEventType. Startup no genera evento de caso (uso del agente, no un hito).
+    private static string? MapCaptureType(AgentAction action) => action switch
+    {
+        AgentAction.Screenshot => CaseEventTypes.CaptureScreenshot,
+        AgentAction.CaptureStart => CaseEventTypes.CaptureVideoStart,
+        AgentAction.CaptureStop => CaseEventTypes.CaptureVideoStop,
+        AgentAction.Webcam => CaseEventTypes.CapturePhoto,
+        _ => null,   // Startup u otros
+    };
 
     // HttpContext.Connection.RemoteIpAddress ya refleja la IP real del fiscal:
     // ForwardedHeadersOptions (Program.cs) la reescribe desde X-Forwarded-For
