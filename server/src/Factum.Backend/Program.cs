@@ -121,6 +121,10 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 // ── Infraestructura ───────────────────────────────────────────────────────────
 builder.Services.AddSingleton<ICaseRepository, CaseRepository>();
 builder.Services.AddSingleton<IAgentEventRepository, AgentEventRepository>();
+// trazabilidad-caso: colección case_events (append-only). El índice se crea solo en el ctor del repo.
+builder.Services.AddSingleton<ICaseEventRepository, CaseEventRepository>();
+// trazabilidad-caso (DT7-b): la IP de los eventos nacidos en CaseService sale del HttpContext.
+builder.Services.AddHttpContextAccessor();
 // despliegue-nube DT3: ping a Mongo con timeouts cortos para GET /health/ready.
 builder.Services.AddSingleton<IMongoHealthProbe, MongoHealthProbe>();
 builder.Services.AddSingleton<IDiskSpaceProbe, DriveInfoDiskSpaceProbe>();

@@ -122,7 +122,10 @@ public sealed class InMemoryCaseCounter : ICaseRepository
         CancellationToken ct = default) => throw No();
     public Task AddFileSourceAsync(string id, string filename, string sourcePath, CancellationToken ct = default) => throw No();
     public Task<bool> UpdateCaseDataAsync(string id, CaseDataUpdate data, CancellationToken ct = default) => throw No();
-    public Task<bool> UpdateReportTextsAsync(string id, ReportTexts texts, CancellationToken ct = default) => throw No();
+    public Task<bool> UpdateReportTextsAsync(string id, ReportTexts texts, ReportTextVersion? versionToPush = null,
+        List<ReportTextVersion>? prunedOverride = null, CancellationToken ct = default) => throw No();
+    public Task<bool> AppendReportVersionAsync(string id, ReportTextVersion version,
+        List<ReportTextVersion>? prunedOverride, CancellationToken ct = default) => throw No();
     public Task<List<CaptureRole>?> UpsertCaptureRolesAsync(string id, IReadOnlyList<(string Filename, string? Role)> roles,
         CancellationToken ct = default) => throw No();
     public Task<List<Case>> ListCatalogSourcesAsync(string officerDni, CancellationToken ct = default) => throw No();
