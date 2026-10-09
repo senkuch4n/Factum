@@ -468,7 +468,10 @@ public sealed class AdbService : IAdbService, IOperationSource
             .Select(p => p.Trim().Replace(".", ""))
             .ToList();
         var joined = string.Concat(parts).Replace("\n", "");
-        return joined[..Math.Min(15, joined.Length)];
+        var imei = joined[..Math.Min(15, joined.Length)];
+        // adb no siempre expone el IMEI (sin permisos, versión de Android, etc.). En vez de un
+        // string vacío, devolvemos el centinela explícito que el front/backend ya reconocen.
+        return string.IsNullOrWhiteSpace(imei) ? Device.ImeiManualEntry : imei;
     }
 
     // ── Explorador de archivos del dispositivo ────────────────────────────────
