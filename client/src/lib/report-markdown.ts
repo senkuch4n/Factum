@@ -287,3 +287,51 @@ export function stripReportImages(md: string): string {
   refs.forEach(r => { out[r.line] = ""; });
   return out.join("\n");
 }
+
+/** Entidades básicas del dialecto → texto (misma tabla que `unescapeReportImageAlt`). */
+function decodeEntities(text: string): string {
+  return text.replace(
+    /&(amp|lt|gt|quot|nbsp|#\d+|#[xX][0-9a-fA-F]+);/g,
+    (m, ent: string) => {
+      if (ent[0] !== "#") return NAMED_ENTITIES[ent] ?? m;
+      const code = ent[1] === "x" || ent[1] === "X" ? parseInt(ent.slice(2), 16) : parseInt(ent.slice(1), 10);
+      try {
+        return code > 0 ? String.fromCodePoint(code) : m;
+      } catch {
+        return m;
+      }
+    },
+  );
+}
+
+/**
+ * Markdown del dialecto → texto plano visible, para diffear una versión contra
+ * otra (versionado-informe, HU6 D7). Quita las imágenes (no aportan texto),
+ * los marcadores de énfasis/viñeta/encabezado y el escape, y de los enlaces
+ * conserva solo el texto visible. No pretende ser un render fiel, solo el texto
+ * que el perito lee, para que el diff hable de palabras y no de sintaxis.
+ */
+export function markdownToVisibleText(md: string): string {
+  const withoutImages = stripReportImages(md ?? "");
+  const lines = withoutImages.replace(/\r\n?/g, "\n").split("\n");
+  const out: string[] = [];
+  for (const raw of lines) {
+    let line = raw;
+    if (line.trim() === EMPTY_PARAGRAPH || line.trim() === "") { out.push(""); continue; }
+    // Enlaces `[texto](url)` → `texto` (sin el destino).
+    line = line.replace(/\[((?:\\.|[^\]\\])*)\]\([^)]*\)/g, "$1");
+    // Encabezados y viñetas al inicio.
+    line = line.replace(/^\s*#{1,6}\s+/, "").replace(/^\s*[-+*]\s+/, "");
+    // Énfasis `**`, `*`, `_`, `~~`.
+    line = line.replace(/\*\*|__|~~|[*_`]/g, "");
+    // Escape de puntuación ASCII (`\*`, `\[`, …) → el carácter.
+    // eslint-disable-next-line no-useless-escape
+    line = line.replace(/\\([!-\/:-@\[-`{-~])/g, "$1");
+    line = decodeEntities(line);
+    // El NBSP de sangría vuelve a espacio.
+    line = line.replace(/ /g, " ");
+    out.push(line.replace(/\s+$/u, ""));
+  }
+  // Colapsa líneas vacías múltiples en una sola separación.
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
