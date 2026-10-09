@@ -37,6 +37,13 @@ export interface RichTextEditorProps {
    * prop no hay botón "Imagen".
    */
   onRequestImage?: (req: { editor: Editor; pos?: number }) => void;
+  /**
+   * Solo lectura (versionado-informe, HU6 D8): el editor no es editable, sin
+   * barra de formato, sin contador ni avisos. Reusa el mismo pipeline Markdown
+   * para que "Ver una versión" se vea igual que el editor. `onChange`/`onBlur`
+   * no se disparan en este modo.
+   */
+  readOnly?: boolean;
 }
 
 /** Aviso temporal debajo del editor (`aria-live`). */
@@ -57,7 +64,7 @@ const fmt = new Intl.NumberFormat("es-AR");
  * Se carga con `next/dynamic` y `ssr: false` desde `ReportStep`.
  */
 export default function RichTextEditor({
-  id, labelId, label, value, onChange, onBlur, required, placeholder, maxLength, error, onRequestImage,
+  id, labelId, label, value, onChange, onBlur, required, placeholder, maxLength, error, onRequestImage, readOnly = false,
 }: RichTextEditorProps) {
   const lastValueRef = useRef(value);
   const onChangeRef = useRef(onChange);
@@ -106,16 +113,16 @@ export default function RichTextEditor({
 
   const editor = useEditor({
     immediatelyRender: false,
+    editable: !readOnly,
     extensions,
     content: value,
     contentType: "markdown",
     editorProps: {
       attributes: {
         id,
-        role: "textbox",
-        "aria-multiline": "true",
+        ...(readOnly ? {} : { role: "textbox", "aria-multiline": "true" }),
         "aria-labelledby": labelId,
-        ...(required ? { "aria-required": "true" } : {}),
+        ...(required && !readOnly ? { "aria-required": "true" } : {}),
         class: "fx-rte",
         spellcheck: "true",
       },
@@ -185,6 +192,15 @@ export default function RichTextEditor({
   const length = value.length;
   const atLimit = limitHit || length >= maxLength;
   const nearLimit = !atLimit && length >= maxLength * 0.9;
+
+  // Solo lectura (HU6 D8): sin barra ni contador, borde neutro y pipeline Markdown igual.
+  if (readOnly) {
+    return (
+      <div className="fx-rte-field rounded-fx-md border border-fx-border bg-fx-surface-2">
+        <EditorContent editor={editor} />
+      </div>
+    );
+  }
 
   return (
     <div>

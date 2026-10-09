@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils";
 import { FX_BUTTON_PRIMARY, FX_BUTTON_SECONDARY } from "@/lib/prime/pt/shared";
 import { CopyButton } from "@/components/feedback/CopyButton";
 import { useCaseAgentFlow } from "./useCaseAgentFlow";
+import { CaseTimeline } from "./CaseTimeline";
+import { CaseVersionHistoryButton } from "./CaseVersionHistoryButton";
 
 /** Id del aviso de compatibilidad (lo referencia el botón "ZIP cifrado" del pie). */
 const compatId = (cas: Case) => `zip-compat-${cas.id}`;
@@ -61,6 +63,14 @@ export function CaseDetailContent({ cas, onResume }: { cas: Case; onResume: (c: 
           </div>
         ))}
       </dl>
+
+      {/* versionado-informe (HU6, D7-B): historial de las secciones del informe,
+          accesible desde el detalle; solo lectura en casos completados. */}
+      <CaseVersionHistoryButton cas={cas} />
+
+      {/* trazabilidad-caso (HU5, D7-A): cadena de custodia / actividad del caso,
+          antes del paquete del informe para que la narrativa preceda a los artefactos. */}
+      <CaseTimeline cas={cas} />
 
       {isDone && (
         <section

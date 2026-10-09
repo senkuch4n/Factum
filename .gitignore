@@ -55,3 +55,6 @@ deploy/cloud/*.env
 deploy/cloud/caddy-sitios/*.caddy
 # Tatana para la nube armado por deploy/cloud/armar-tatana-nube.sh
 deploy/cloud/dist/
+
+# Worktrees efímeros de subagentes
+.claude/worktrees/
