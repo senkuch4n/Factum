@@ -40,7 +40,7 @@ export const menu: MenuPassThroughOptions = {
       enter: "opacity-0 motion-safe:scale-95",
       enterActive: "!opacity-100 motion-safe:!scale-100 transition-[opacity,transform] duration-fx-fast ease-fx",
       exit: "opacity-100",
-      exitActive: "!opacity-0 transition-opacity duration-100 ease-fx",
+      exitActive: "!opacity-0 transition-opacity duration-fx-fast ease-fx",
     },
   },
 };

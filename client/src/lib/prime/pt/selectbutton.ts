@@ -13,7 +13,7 @@ export const selectbutton: SelectButtonPassThroughOptions = {
   },
   button: ({ context }) => ({
     className: cn(
-      "inline-flex items-center justify-center gap-1.5 min-h-8 px-2.5 rounded-[6px]",
+      "inline-flex items-center justify-center gap-1.5 min-h-8 px-2.5 rounded-fx-sm",
       "text-fx-body-sm font-semibold cursor-pointer select-none",
       "transition-colors duration-fx-fast ease-fx",
       FOCUS_RING,

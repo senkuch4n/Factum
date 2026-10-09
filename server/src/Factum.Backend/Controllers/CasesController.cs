@@ -1,4 +1,5 @@
 using System.Globalization;
+using Factum.Backend.Common;
 using Factum.Backend.DTOs;
 using Factum.Backend.Infrastructure;
 using Factum.Backend.Models;
@@ -30,6 +31,42 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
         return Ok(new { cases });
     }
 
+    // dashboard-kpis-tendencias: KPIs + tendencia mensual del perito. El segmento literal "stats"
+    // matchea antes que el parámetro {id} de GET /api/cases/{id}. Default 0 del binding cubre la
+    // ausencia del query param.
+    [HttpGet("stats")]
+    [ProducesResponseType<CaseStatsResponse>(StatusCodes.Status200OK)]
+    public async Task<IActionResult> Stats([FromQuery(Name = "tz_offset_minutes")] int tzOffsetMinutes,
+        CancellationToken ct)
+        => Ok(await caseService.GetStatsAsync(Officer.Dni, tzOffsetMinutes, ct));
+
+    // dashboard-breakdown: distribución por dimensión. Literal "breakdown" (gana sobre {id}).
+    [HttpGet("breakdown")]
+    [ProducesResponseType<BreakdownResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Breakdown([FromQuery] string? dimension, [FromQuery] string? from,
+        [FromQuery] string? to, CancellationToken ct)
+    {
+        if (!TryParseDate(from, out var fromDate)) return this.ErrorResult(
+            Result.Invalid<BreakdownResponse>("from tiene que ser una fecha yyyy-MM-dd"));
+        if (!TryParseDate(to, out var toDate)) return this.ErrorResult(
+            Result.Invalid<BreakdownResponse>("to tiene que ser una fecha yyyy-MM-dd"));
+        var result = await caseService.BreakdownAsync(Officer.Dni, dimension, fromDate, toDate, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    // yyyy-MM-dd en UTC; null (ausente) es válido. Devuelve false solo si vino y no parsea.
+    private static bool TryParseDate(string? raw, out DateOnly? value)
+    {
+        value = null;
+        if (string.IsNullOrWhiteSpace(raw)) return true;
+        if (!DateOnly.TryParseExact(raw, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None,
+                out var parsed))
+            return false;
+        value = parsed;
+        return true;
+    }
+
     [HttpGet("{id}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -39,6 +76,28 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
         return result.IsSuccess
             ? Ok(new { cas = result.Value.Case, files = result.Value.Files })
             : this.ErrorResult(result);
+    }
+
+    // trazabilidad-caso: línea de tiempo del caso (dueño o superadmin). Ascendente por timestamp.
+    [HttpGet("{id}/events")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Events(string id, CancellationToken ct)
+    {
+        var result = await caseService.ListEventsAsync(id, Officer, HttpContext.GetSession().Role, ct);
+        return result.IsSuccess ? Ok(new { events = result.Value }) : this.ErrorResult(result);
+    }
+
+    // versionado-informe: historial de versiones de report_texts (solo lectura). Más reciente primero.
+    [HttpGet("{id}/report-text-versions")]
+    [ProducesResponseType<ReportTextVersionsResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ReportTextVersions(string id, CancellationToken ct)
+    {
+        var result = await caseService.GetReportTextVersionsAsync(id, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
     }
 
     [HttpPost]

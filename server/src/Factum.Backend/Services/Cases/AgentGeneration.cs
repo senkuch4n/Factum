@@ -90,6 +90,17 @@ public sealed partial class CaseService
 
         _log.LogInformation("Caso {CaseId}: {N} archivo(s) registrados en el manifiesto desde {Host}",
             id, validation.Items.Count, evidenceHost.Hostname);
+        // trazabilidad-caso (DT8): un evidence_added por archivo del lote, con filename/sha256/size y
+        // el host del manifiesto (agent_mode no viaja en el manifiesto → null). Best-effort.
+        foreach (var item in validation.Items)
+        {
+            var evt = CaseEventFor(cas, CaseEventTypes.EvidenceAdded);
+            evt.Filename = item.Filename;
+            evt.Hostname = evidenceHost.Hostname;
+            evt.OsUser = evidenceHost.OsUser;
+            evt.Detail = new CaseEventDetail { Sha256 = item.Sha256, Size = item.Size };
+            await RecordEventAsync(evt);
+        }
         return Result.Ok(new EvidenceResponse(merged, evidenceHost));
     }
 
@@ -112,6 +123,11 @@ public sealed partial class CaseService
 
         if (!await _repo.RemoveEvidenceAsync(id, filename, ct))
             return EvidenceFail<EvidenceResponse>(ErrorKind.Conflict, NotEditableMessage, EvidenceErrorCodes.CaseNotEditable);
+
+        // trazabilidad-caso (DT8): baja de evidencia (best-effort).
+        var removed = CaseEventFor(cas, CaseEventTypes.EvidenceRemoved);
+        removed.Filename = filename;
+        await RecordEventAsync(removed);
 
         var fresh = (await _repo.FindByIdAsync(id, ct))!;
         return Result.Ok(new EvidenceResponse(fresh.Evidence, fresh.EvidenceHost));
@@ -149,6 +165,10 @@ public sealed partial class CaseService
         if (broken.Count > 0) missing = [.. missing, .. broken];
         if (missing.Count > 0)
             return Result.Invalid<PrepareGenerationResponse>(CaseValidation.MissingMessage, missing);
+
+        // versionado-informe (D2): snapshot "generate" al abrir el intento (flujo agent), append
+        // atómico bajo Editable(id). Best-effort para el versionado; no frena el prepare.
+        await AppendGenerateVersionAsync(cas, ct);
 
         var pending = new PendingGeneration
         {
@@ -307,6 +327,10 @@ public sealed partial class CaseService
                     pending.ZipFilename, report.PdfFilename, report.ReportHash, zipLocation, CancellationToken.None);
 
                 var saved = ResolveStorage((await _repo.FindByIdAsync(id, CancellationToken.None))!);
+                // trazabilidad-caso (DT10): hito de informe generado (flujo agent, best-effort).
+                var ok = CaseEventFor(saved, CaseEventTypes.ReportGenerated);
+                ok.Detail = new CaseEventDetail { ZipHash = meta.ZipHash!, ReportHash = report.ReportHash };
+                await RecordEventAsync(ok);
                 return Result.Ok(new GenerateResponse(saved, meta.ZipHash!, pending.Password,
                     new FilesDto(pending.ZipFilename, report.PdfFilename), report.ReportHash, zipLocation));
             }
@@ -315,6 +339,10 @@ public sealed partial class CaseService
                 _log.LogError(ex, "Error generando informe (flujo agent) para caso {CaseId}", id);
                 try { await _repo.MarkAgentGenerationFailedAsync(id, CancellationToken.None); }
                 catch (Exception markEx) { _log.LogError(markEx, "No se pudo marcar el caso {CaseId} en error", id); }
+                // trazabilidad-caso (DT10): fallo real de generación (flujo agent, best-effort).
+                var failEvt = CaseEventFor(fresh, CaseEventTypes.ReportFailed);
+                failEvt.Detail = new CaseEventDetail { Reason = TruncateReason(ex.Message) };
+                await RecordEventAsync(failEvt);
                 return Result.Fail<GenerateResponse>($"Error generando informe: {ex.Message}");
             }
         }

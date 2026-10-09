@@ -118,6 +118,57 @@ public sealed class Case
     /// </summary>
     [JsonIgnore]
     public PendingGeneration? PendingGeneration { get; set; }
+
+    /// <summary>
+    /// Historial append-only de snapshots de report_texts (versionado-informe, D1-B/D5-B).
+    /// Default [] + [BsonIgnoreExtraElements]: un caso previo a esta HU deserializa lista vacía
+    /// (no hay migración ni backfill). [JsonIgnore] (D6): no sale en ningún JSON de Case — ni en el
+    /// listado ni en GET /api/cases/{id}; la lista se expone SOLO por
+    /// GET /api/cases/{id}/report-text-versions (que la lee del Case deserializado de Mongo, donde
+    /// [JsonIgnore] no afecta el mapeo BSON). El listado además la proyecta afuera (como ReportTexts).
+    /// </summary>
+    [JsonIgnore]
+    public List<ReportTextVersion> ReportTextVersions { get; set; } = [];
+}
+
+[BsonIgnoreExtraElements]
+public sealed class ReportTextVersion
+{
+    /// <summary>Guid "N" (como PendingGeneration.Id). Lo fija el servidor.</summary>
+    public string Id { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    /// <summary>Snapshot del autor al consolidar la versión (Officer.Dni / Officer.Name).</summary>
+    public string AuthorDni { get; set; } = string.Empty;
+    public string AuthorName { get; set; } = string.Empty;
+    /// <summary>"save" | "restore" | "generate" (ver ReportVersionTriggers).</summary>
+    public string Trigger { get; set; } = string.Empty;
+    /// <summary>Si es una restauración, el Id de la versión restaurada (D4). Null si no.</summary>
+    [BsonIgnoreIfNull]
+    public string? RestoredFrom { get; set; }
+    /// <summary>Foto de las ocho secciones + formato. Mismo shape que ReportTexts, sin UpdatedAt.</summary>
+    public ReportTextSnapshot Texts { get; set; } = new();
+}
+
+[BsonIgnoreExtraElements]
+public sealed class ReportTextSnapshot
+{
+    public string ObjetoInforme { get; set; } = string.Empty;
+    public string OperacionesRealizadas { get; set; } = string.Empty;
+    public string AseguramientoEvidencia { get; set; } = string.Empty;
+    public string Resultados { get; set; } = string.Empty;
+    public string ValoracionTecnica { get; set; } = string.Empty;
+    public string Conclusiones { get; set; } = string.Empty;
+    public string NotasTecnicas { get; set; } = string.Empty;
+    public string Reserva { get; set; } = string.Empty;
+    [BsonIgnoreIfNull]
+    public string? Formato { get; set; }
+}
+
+public static class ReportVersionTriggers
+{
+    public const string Save = "save";
+    public const string Restore = "restore";
+    public const string Generate = "generate";
 }
 
 public static class EvidenceStorages

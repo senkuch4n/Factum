@@ -87,8 +87,37 @@ public sealed record ReportTextsDto(
     string? Reserva = null,
     // editor-texto-enriquecido: "markdown" (cliente nuevo) o null/""/"texto" (texto plano).
     // En la respuesta de defaults es siempre "markdown".
-    string? Formato = null
+    string? Formato = null,
+    // versionado-informe: opcionales nuevos para el historial. Default null = cliente viejo, no
+    // rompe el contrato. "save" (default) o "restore". restored_from solo válido con "restore".
+    string? Trigger = null,
+    string? RestoredFrom = null
 );
+
+// versionado-informe: DTOs del historial de versiones de report_texts (GET …/report-text-versions).
+// JSON snake_case_lower (Program.cs). Mismo shape que report_texts SIN updated_at.
+
+public sealed record ReportTextVersionTextsDto(
+    string ObjetoInforme,
+    string OperacionesRealizadas,
+    string AseguramientoEvidencia,
+    string Resultados,
+    string ValoracionTecnica,
+    string Conclusiones,
+    string NotasTecnicas,
+    string Reserva,
+    string? Formato);
+
+public sealed record ReportTextVersionDto(
+    string Id,
+    DateTime CreatedAt,
+    string AuthorDni,
+    string AuthorName,
+    string Trigger,
+    string? RestoredFrom,
+    ReportTextVersionTextsDto Texts);
+
+public sealed record ReportTextVersionsResponse(List<ReportTextVersionDto> Versions);
 
 public sealed record CaptureRoleDto(string? Filename = null, string? Role = null);
 

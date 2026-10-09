@@ -26,7 +26,6 @@ import { useFileManager, storageOf } from "@/hooks/useFileManager";
 import { useRecording } from "@/hooks/useRecording";
 import { useAirplayShotSession } from "@/hooks/useAirplayShotSession";
 import { AgentChip } from "@/components/dashboard/AgentChip";
-import { DashboardStats } from "@/components/dashboard/DashboardStats";
 import { GreetingHeadline } from "@/components/dashboard/GreetingHeadline";
 import { ResumeDeviceModal } from "@/components/dashboard/ResumeDeviceModal";
 import { SoporteModal } from "@/components/dashboard/SoporteModal";
@@ -155,6 +154,13 @@ export default function Dashboard() {
 
   // ── Domain hooks ─────────────────────────────────────────────────
   const { user, historyCases, historyLoading, loadHistory, handleLogout } = useAuth();
+
+  // La analítica (KPIs, tendencia, desglose) vive en `/metricas`
+  // (separar-metricas-vista): el dashboard queda enfocado en operar
+  // inspecciones y solo recarga el historial.
+  const refreshHistory = useCallback(() => {
+    loadHistory();
+  }, [loadHistory]);
 
   // ── Perfil del perito (tarjeta del paso 2) ───────────────────────
   const { profile, loading: profileLoading, save: saveProfile, reload: reloadProfile } = useExpertProfile();
@@ -569,7 +575,7 @@ export default function Dashboard() {
     setCaseForm(EMPTY_CASE_FORM); setCaseErr({}); setStatus(""); setGlobal("");
     setIsResuming(false); setFocusFieldId(null); setGenerateMissing([]);
     setSyncWarningDismissed(false);
-    if (!opts.keepMode) { loadHistory(); setMode("history"); }
+    if (!opts.keepMode) { refreshHistory(); setMode("history"); }
   }
 
   // Salir del wizard: en pasos con evidencia en curso (2–5) pedimos confirmación,
@@ -695,6 +701,10 @@ export default function Dashboard() {
         onLogout={handleLogout}
         showThemeSwitch
         maxWidthClass={mode === "wizard" ? "max-w-6xl" : "max-w-5xl"}
+        // Historial: pestañas de sección (Inspecciones/Métricas) en el centro.
+        // Wizard: `sections` undefined → el centro vuelve a ser el breadcrumb
+        // del paso (con su "volver" confirmado). separar-metricas-vista D6.
+        sections={mode === "history" ? { activeSection: "inspecciones" } : undefined}
         center={
           <div className="flex items-center justify-center gap-1.5 min-w-0">
             {mode === "wizard" && (
@@ -800,8 +810,6 @@ export default function Dashboard() {
                 <FxBanner tone="error" onClose={() => setGlobal("")}>{globalError}</FxBanner>
               )}
 
-              {historyCases.length > 0 && <DashboardStats cases={historyCases} />}
-
               {draftCases.length > 0 && (
                 <section aria-labelledby="drafts-title">
                   <h2 id="drafts-title" className="flex items-center gap-1.5 text-fx-label uppercase text-fx-text-2">
@@ -848,7 +856,7 @@ export default function Dashboard() {
                 cases={historyCases}
                 loading={historyLoading}
                 onNewCase={startWizard}
-                onRefresh={loadHistory}
+                onRefresh={refreshHistory}
                 onResume={handleResume}
               />
             </div>

@@ -25,7 +25,22 @@ public interface ICaseRepository
     /// <summary>$set de los datos de la causa + Perito + SchemaVersion = 1 (+ Device.Imei si viene).
     /// Solo si el caso sigue editable; devuelve false si no matcheó.</summary>
     Task<bool> UpdateCaseDataAsync(string id, CaseDataUpdate data, CancellationToken ct = default);
-    Task<bool> UpdateReportTextsAsync(string id, ReportTexts texts, CancellationToken ct = default);
+    /// <summary>
+    /// $set de <c>report_texts</c> y, de forma ATÓMICA en el mismo UpdateOne, el append al historial
+    /// de versiones (versionado-informe, D1). <paramref name="versionToPush"/> no null y
+    /// <paramref name="prunedOverride"/> null → $push simple. <paramref name="prunedOverride"/> no
+    /// null → $set del array completo ya podado (D3, conserva la primera y las "generate").
+    /// Ambos no null es un error de uso (gana el override). Solo si el caso sigue editable.
+    /// </summary>
+    Task<bool> UpdateReportTextsAsync(string id, ReportTexts texts, ReportTextVersion? versionToPush = null,
+        List<ReportTextVersion>? prunedOverride = null, CancellationToken ct = default);
+    /// <summary>
+    /// Append atómico de una versión al historial SIN tocar <c>report_texts</c> (versionado-informe,
+    /// versión "generate"). $push simple o $set del array podado, bajo el mismo filtro de
+    /// editabilidad. false si el caso no matcheó (dejó de ser editable).
+    /// </summary>
+    Task<bool> AppendReportVersionAsync(string id, ReportTextVersion version,
+        List<ReportTextVersion>? prunedOverride, CancellationToken ct = default);
     /// <summary>Upsert por filename (role null = borrar la marca); devuelve la lista completa o null si no matcheó.</summary>
     Task<List<CaptureRole>?> UpsertCaptureRolesAsync(string id,
         IReadOnlyList<(string Filename, string? Role)> roles, CancellationToken ct = default);
@@ -122,6 +137,7 @@ public sealed class CaseRepository : ICaseRepository
             .SortByDescending(c => c.CreatedAt)
             .Project<Case>(Builders<Case>.Projection
                 .Exclude(c => c.ReportTexts)
+                .Exclude(c => c.ReportTextVersions)
                 .Exclude(c => c.ZipPassword)
                 .Exclude(c => c.PendingGeneration))
             .ToListAsync(ct);
@@ -242,10 +258,29 @@ public sealed class CaseRepository : ICaseRepository
         return res.MatchedCount > 0;
     }
 
-    public async Task<bool> UpdateReportTextsAsync(string id, ReportTexts texts, CancellationToken ct = default)
+    public async Task<bool> UpdateReportTextsAsync(string id, ReportTexts texts,
+        ReportTextVersion? versionToPush = null, List<ReportTextVersion>? prunedOverride = null,
+        CancellationToken ct = default)
     {
-        var res = await _col.UpdateOneAsync(Editable(id),
-            Builders<Case>.Update.Set(c => c.ReportTexts, texts), cancellationToken: ct);
+        // $set report_texts + (opcional) el append al historial viajan en un solo UpdateOne: nunca
+        // queda a medias (D1). El filtro Editable(id) mantiene el 409 de siempre si el caso dejó de
+        // ser editable entremedio.
+        var u = Builders<Case>.Update.Set(c => c.ReportTexts, texts);
+        if (prunedOverride is not null)
+            u = u.Set(c => c.ReportTextVersions, prunedOverride);          // array ya podado (D3)
+        else if (versionToPush is not null)
+            u = u.Push(c => c.ReportTextVersions, versionToPush);          // push simple
+        var res = await _col.UpdateOneAsync(Editable(id), u, cancellationToken: ct);
+        return res.MatchedCount > 0;
+    }
+
+    public async Task<bool> AppendReportVersionAsync(string id, ReportTextVersion version,
+        List<ReportTextVersion>? prunedOverride, CancellationToken ct = default)
+    {
+        var u = prunedOverride is not null
+            ? Builders<Case>.Update.Set(c => c.ReportTextVersions, prunedOverride)
+            : Builders<Case>.Update.Push(c => c.ReportTextVersions, version);
+        var res = await _col.UpdateOneAsync(Editable(id), u, cancellationToken: ct);
         return res.MatchedCount > 0;
     }
 

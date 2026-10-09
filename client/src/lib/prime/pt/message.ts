@@ -17,6 +17,11 @@ const TONE: Record<Severity, string> = {
  * tono. Prime pone role="alert" siempre; acá los errores se anuncian con
  * aria-live="assertive" y el resto "polite". En demos estáticas, pasar
  * `role="note"` por props para no anunciar al cargar la página.
+ *
+ * D3-A — `secondary` y `contrast` mapean a **info** de forma intencional (un
+ * aviso secundario sigue siendo un aviso). Esto difiere de `Tag`
+ * (pt/tag.ts), donde `secondary`/`contrast`/sin severidad caen en neutro. La
+ * divergencia entre ambos pt es deliberada, no se unifica.
  */
 export const message: MessagePassThroughOptions = {
   root: ({ props }) => ({

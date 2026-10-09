@@ -14,6 +14,14 @@ import { ThemeSwitch } from "./ThemeSwitch";
 interface AppNavbarProps {
   /** Contexto de navegación (breadcrumb); lo provee la página. */
   center?: React.ReactNode;
+  /**
+   * Selector de secciones de primer nivel ("Inspecciones" / "Métricas") en el
+   * centro de la píldora. Si se pasa, tiene prioridad sobre `center` (el navbar
+   * renderiza las pestañas en vez del breadcrumb): el dashboard lo usa solo en
+   * modo historial y el wizard sigue con su `center`. Sin esta prop (admin,
+   * wizard) el centro queda idéntico a antes.
+   */
+  sections?: { activeSection: "inspecciones" | "metricas" };
   /** Acciones de la página (AgentChip, CTA). */
   actions?: React.ReactNode;
   /** `role` habilita "Administrar cuentas" (superadmin en modo `local`). */
@@ -45,6 +53,39 @@ function BrandMark() {
   return <img src="/logo-mark-f.png" alt="" aria-hidden="true" width={256} height={256} className="h-7 w-7" />;
 }
 
+/* Secciones de primer nivel: dos <Link> tipo pestaña. La activa se distingue
+   por color Y peso (no solo color) + `aria-current="page"`. Labels cortos:
+   entran a 360px sin colapsar a ícono. */
+const SECTIONS = [
+  { key: "inspecciones", label: "Inspecciones", href: "/dashboard" },
+  { key: "metricas", label: "Métricas", href: "/metricas" },
+] as const;
+
+const SECTION_BASE =
+  "inline-flex min-h-9 items-center rounded-fx-pill px-3 text-sm no-underline transition-colors duration-fx-fast ease-fx fx-focus-ring";
+const SECTION_ACTIVE = "bg-fx-surface-3 font-semibold text-fx-text";
+const SECTION_IDLE = "font-medium text-fx-text-3 hover:text-fx-text";
+
+function SectionTabs({ activeSection }: { activeSection: "inspecciones" | "metricas" }) {
+  return (
+    <nav aria-label="Secciones" className="flex min-w-0 items-center justify-center gap-1">
+      {SECTIONS.map(({ key, label, href }) => {
+        const active = key === activeSection;
+        return (
+          <Link
+            key={key}
+            href={href}
+            aria-current={active ? "page" : undefined}
+            className={`${SECTION_BASE} ${active ? SECTION_ACTIVE : SECTION_IDLE}`}
+          >
+            <span className="truncate">{label}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
 /**
  * Navbar global: píldora flotante (rounded-full) despegada de los bordes, con
  * dos tapas claras (marca a la izquierda, usuario a la derecha) que enmarcan
@@ -58,6 +99,7 @@ function BrandMark() {
  */
 export function AppNavbar({
   center,
+  sections,
   actions,
   user,
   onLogout,
@@ -93,8 +135,10 @@ export function AppNavbar({
           </div>
         )}
 
-        {/* Centro: contexto de navegación (trunca) */}
-        <div className="flex min-w-0 flex-1 items-center px-1 sm:px-2">{center}</div>
+        {/* Centro: selector de secciones (prioridad) o contexto de navegación (trunca) */}
+        <div className={`flex min-w-0 flex-1 items-center px-1 sm:px-2 ${sections ? "justify-center" : ""}`}>
+          {sections ? <SectionTabs activeSection={sections.activeSection} /> : center}
+        </div>
 
         {/* Derecha: acciones + tema + usuario (tapa clara) */}
         <div className="flex min-w-0 items-center gap-1 sm:gap-1.5">
