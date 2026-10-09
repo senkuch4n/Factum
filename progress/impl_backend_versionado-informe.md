@@ -73,14 +73,38 @@ Solo agrega `$push`/`$set` del array `report_text_versions` sobre el propio caso
 documento existente se migra al desplegar: un caso previo deserializa `[]` por el default +
 `[BsonIgnoreExtraElements]`. No crea colecciones ni índices.
 
-## Tests
+## Tests (item bloqueante del 1er review — resuelto)
 
-La SDD sugiere un proyecto de tests xUnit para `CaseEventFields`/versionado. No se agregó proyecto
-de tests (no hay infraestructura de tests .NET en el repo y la SDD lo marca como opcional —
-"preferible testear con un repo en memoria/fake para no tocar la base de desarrollo"). La lógica
-pura quedó aislada en `ReportVersioning` para facilitar un test futuro. Pendiente opcional.
+El proyecto `server/tests/Factum.Backend.Tests` ya existía. Se agregó
+`server/tests/Factum.Backend.Tests/ReportVersioningTests.cs` (22 tests xUnit) sobre la lógica pura
+de `ReportVersioning`, sin tocar Mongo (sin riesgo de datos, rápidos):
+
+- **De-dup (D4):** historial vacío → nunca duplicado (la primera siempre entra); idéntico a la más
+  reciente → duplicado; distinto → no; la comparación es contra la de `created_at` más reciente (no
+  el último elemento del array); un `formato` distinto no es duplicado.
+- **Restaurar (D5):** `trigger:"restore"` + `restored_from` quedan registrados y la versión previa
+  sigue en el historial (append-only, push simple por debajo del tope).
+- **Retención (D3):** por debajo del tope → push simple; en el tope (`MaxReportVersions=50`) → `$set`
+  del array podado que conserva la primera, todas las `generate` y la nueva, descarta las
+  intermedias viejas, respeta el tope exacto y deja la nueva al final; con muchas `generate` no se
+  borra ninguna.
+- **Versión "generate" (D2):** se crea con autor del caso; de-dup propio (null si es idéntica a la
+  última); no rompe con `ReportTexts` null.
+- **Normalización del trigger:** null/""/"save" → "save"; "restore" ok; valor inválido → error;
+  `restored_from` con "save" → error.
+- **ToDto:** mapea todos los campos del contrato.
+- **Append-only (C3):** test de reflexión que confirma que `ICaseEventRepository` solo expone
+  `InsertAsync`/`ListByCaseAsync` (sin Update/Delete/Remove).
+
+Para que el proyecto de tests siguiera compilando tras cambiar la firma de `UpdateReportTextsAsync`
+y agregar `AppendReportVersionAsync`, se actualizó el fake `InMemoryCaseCounter`
+(`server/tests/Factum.Backend.Tests/Admin/AdminTestDoubles.cs`): los dos métodos nuevos de
+`ICaseRepository` tiran `NotImplemented` (ese fake solo usa el conteo de solo lectura).
 
 ## Verificación
 
-`dotnet build server/src/Factum.Backend/Factum.Backend.csproj` → 0 errores, 4 advertencias NuGet
-preexistentes, sin warnings CS nuevos.
+- `dotnet build server/src/Factum.Backend/Factum.Backend.csproj` → 0 errores, 4 advertencias NuGet
+  preexistentes, sin warnings CS nuevos.
+- `dotnet test server/tests/Factum.Backend.Tests/Factum.Backend.Tests.csproj` → 833 correctas,
+  7 omitidas (tests de integración con Mongo que requieren DB viva, preexistentes), 0 fallos. Los
+  22 `ReportVersioningTests` pasan.
