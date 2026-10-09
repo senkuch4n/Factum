@@ -447,6 +447,14 @@ export type ReportTextFormat = "markdown";
 /** Body de `PUT /api/cases/{id}/report-texts`: este cliente siempre manda `formato: "markdown"`. */
 export interface ReportTextsRequest extends ReportTextsInput {
   formato: ReportTextFormat;
+  /**
+   * versionado-informe (HU6): opcional. `"save"` (default si se omite) o
+   * `"restore"`. Solo el guardado disparado por "Restaurar esta versión" lo
+   * manda; el autoguardado normal lo omite.
+   */
+  trigger?: "save" | "restore";
+  /** Id de la versión restaurada; solo válido con `trigger: "restore"`. */
+  restored_from?: string;
 }
 
 /** Respuesta de `GET /api/cases/{id}/report-texts/defaults` (textos ya en Markdown). */
@@ -458,6 +466,100 @@ export interface ReportTexts extends ReportTextsInput {
   /** null/ausente = texto plano anterior a esta HU. "texto" no lo devuelve el servidor, pero se tolera. */
   formato?: ReportTextFormat | "texto" | null;
   updated_at?: string;
+}
+
+/* ── Cadena de custodia / actividad del caso (trazabilidad-caso, HU5) ── */
+
+/**
+ * Tipo de un hito de la línea de tiempo del caso (`case_events.type`). Valores
+ * snake_case literales del backend (`CaseEventTypes`). Un backend más nuevo
+ * podría agregar tipos: el cliente los trata con un texto genérico.
+ */
+export type CaseEventType =
+  | "case_created"
+  | "case_updated"
+  | "capture_screenshot"
+  | "capture_video_start"
+  | "capture_video_stop"
+  | "capture_photo"
+  | "evidence_added"
+  | "evidence_removed"
+  | "report_generated"
+  | "report_failed";
+
+/**
+ * Detalle acotado de un `CaseEvent`: cada campo solo aplica a ciertos tipos y el
+ * backend lo omite cuando no corresponde. Nunca trae datos sensibles.
+ */
+export interface CaseEventDetail {
+  /** `case_updated`: nombres snake_case de los campos que cambiaron (sin valores). */
+  changed_fields?: string[];
+  /** `report_generated`: hash del ZIP. */
+  zip_hash?: string;
+  /** `report_generated`: hash del informe. */
+  report_hash?: string;
+  /** `report_failed`: motivo resumido (<=300 chars). */
+  reason?: string;
+  /** `evidence_added`: hash del archivo. */
+  sha256?: string;
+  /** `evidence_added`: tamaño en bytes. */
+  size?: number;
+}
+
+/** Un hito de la línea de tiempo del caso (`GET /api/cases/{id}/events`). */
+export interface CaseEvent {
+  id: string;
+  case_id: string;
+  type: CaseEventType;
+  actor_dni: string;
+  /** Copia congelada del nombre del perito al registrar. */
+  actor_name: string;
+  /** Instante UTC (ISO-8601); se muestra en hora local. */
+  timestamp: string;
+  /** Solo en eventos originados en Tatana. */
+  hostname?: string | null;
+  os_user?: string | null;
+  /** Modo del agente que originó el evento (null si no vino de Tatana). */
+  agent_mode?: "installed" | "portable" | null;
+  ip?: string | null;
+  /** Captura / subida / baja. */
+  filename?: string | null;
+  detail?: CaseEventDetail | null;
+}
+
+/* ── Historial de versiones de los textos del informe (versionado-informe, HU6) ── */
+
+/** Qué disparó una versión del historial (`report_text_versions[].trigger`). */
+export type ReportVersionTrigger = "save" | "restore" | "generate";
+
+/**
+ * Foto de las ocho secciones + formato de una versión del historial. Mismas
+ * claves que `report_texts`, **sin** `updated_at`.
+ */
+export interface ReportTextVersionTexts {
+  objeto_informe: string;
+  operaciones_realizadas: string;
+  aseguramiento_evidencia: string;
+  resultados: string;
+  valoracion_tecnica: string;
+  conclusiones: string;
+  notas_tecnicas: string;
+  reserva: string;
+  /** `"markdown"` o null/ausente (texto plano de una versión vieja). */
+  formato?: "markdown" | null;
+}
+
+/** Una versión del historial de `report_texts` (`GET …/report-text-versions`). */
+export interface ReportTextVersion {
+  id: string;
+  /** Instante UTC (ISO-8601) en que se consolidó la versión. */
+  created_at: string;
+  author_dni: string;
+  author_name: string;
+  trigger: ReportVersionTrigger;
+  /** Si es una restauración, el id de la versión restaurada. */
+  restored_from?: string | null;
+  texts: ReportTextVersionTexts;
 }
 
 /** Captura del caso que se puede insertar en un texto del informe (SDD §4.4). */
@@ -898,6 +1000,16 @@ export const api = {
 
   async saveReportTexts(caseId: string, data: ReportTextsRequest): Promise<ReportTexts> {
     return request<ReportTexts>(`/api/cases/${caseId}/report-texts`, { method: "PUT", body: JSON.stringify(data) });
+  },
+
+  /** Hitos de cadena de custodia del caso (trazabilidad-caso, HU5), ascendente por `timestamp`. */
+  async listCaseEvents(caseId: string): Promise<{ events: CaseEvent[] }> {
+    return request<{ events: CaseEvent[] }>(`/api/cases/${caseId}/events`);
+  },
+
+  /** Historial de versiones de los textos del informe (versionado-informe, HU6), descendente por `created_at`. */
+  async getReportTextVersions(caseId: string): Promise<{ versions: ReportTextVersion[] }> {
+    return request<{ versions: ReportTextVersion[] }>(`/api/cases/${caseId}/report-text-versions`);
   },
 
   /** Upsert por `filename`; `role: null` borra la marca. Devuelve el estado completo. */

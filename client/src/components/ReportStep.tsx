@@ -5,7 +5,7 @@ import type { Editor } from "@tiptap/core";
 import dynamic from "next/dynamic";
 import { Button } from "primereact/button";
 import {
-  AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, ClipboardList, FileText, HardDrive, Loader2, RefreshCw, Undo2,
+  AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, ClipboardList, FileText, HardDrive, History, Loader2, RefreshCw, Undo2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { EMPTY_REPORT_TEXTS, MAX_LEN_TEXT, REPORT_SECTION_LABELS, reportFieldId } from "@/lib/pericial";
@@ -52,6 +52,15 @@ const RichTextEditor = dynamic(() => import("@/components/editor/RichTextEditor"
       className="h-[8.5rem] rounded-fx-md border border-fx-border-strong bg-fx-surface-2 motion-safe:animate-pulse"
     />
   ),
+});
+
+/**
+ * Panel de historial de versiones (versionado-informe, HU6): también aparte,
+ * con `diff` y el editor de solo lectura cargados bajo demanda. No entra al
+ * bundle del wizard hasta que el perito abre "Historial".
+ */
+const ReportVersionHistory = dynamic(() => import("@/components/report-versions/ReportVersionHistory"), {
+  ssr: false,
 });
 
 const SECTIONS: { key: TextKey; label: string; required: boolean; hasDefault: boolean; placeholder?: string }[] = [
@@ -103,6 +112,8 @@ export function ReportStep({
   const [loadError, setLoadError] = useState("");
   const [restoreKey, setRestoreKey] = useState<TextKey | null>(null);
   const [restoring, setRestoring] = useState<TextKey | null>(null);
+  // versionado-informe (HU6): sección cuyo historial de versiones está abierto.
+  const [historyKey, setHistoryKey] = useState<TextKey | null>(null);
 
   const textsRef = useRef(texts);
   const dirtyRef = useRef(false);
@@ -167,7 +178,10 @@ export function ReportStep({
   }
 
   /* ── Guardado ── */
-  const save = useCallback(async (): Promise<boolean> => {
+  // versionado-informe (HU6): un guardado disparado por "Restaurar esta versión"
+  // viaja con `trigger:"restore"` + `restored_from`; el autoguardado normal los
+  // omite (equivale a `"save"`).
+  const save = useCallback(async (version?: { trigger: "restore"; restored_from: string }): Promise<boolean> => {
     if (timerRef.current) { window.clearTimeout(timerRef.current); timerRef.current = null; }
     // Un texto por encima del tope no se manda: el servidor lo rechazaría (D16).
     if (overLimitKeys(textsRef.current).length) {
@@ -179,7 +193,7 @@ export function ReportStep({
     dirtyRef.current = false;
     setState("saving");
     try {
-      const res = await api.saveReportTexts(caseId, { ...textsRef.current, formato: REPORT_TEXT_FORMAT });
+      const res = await api.saveReportTexts(caseId, { ...textsRef.current, formato: REPORT_TEXT_FORMAT, ...version });
       onSavedRef.current(res);
       // Solo el último guardado define el estado visible.
       if (seq === seqRef.current) setState(dirtyRef.current ? "pending" : "saved");
@@ -300,6 +314,19 @@ export function ReportStep({
     update({ ...textsRef.current, [key]: d[key] });
   }
 
+  /**
+   * Restaura el texto de una versión del historial (HU6, D5): pone el texto en
+   * el editor de esa sección y dispara un guardado con `trigger:"restore"` +
+   * `restored_from`. La confirmación ya la hizo el panel; acá solo se aplica.
+   */
+  function restoreVersion(key: TextKey, versionId: string, text: string) {
+    const next = { ...textsRef.current, [key]: text };
+    textsRef.current = next;
+    setTexts(next);
+    dirtyRef.current = false; // el guardado que sigue consolida este texto
+    void save({ trigger: "restore", restored_from: versionId });
+  }
+
   async function handleContinue() {
     if (await flush()) onContinue();
   }
@@ -394,19 +421,30 @@ export function ReportStep({
                     onRequestImage={openPicker}
                   />
                 </FormField>
-                {hasDefault && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                  {hasDefault && (
+                    <Button
+                      type="button"
+                      text
+                      severity="secondary"
+                      size="small"
+                      icon={<Undo2 className="h-3.5 w-3.5" aria-hidden="true" />}
+                      label="Restaurar texto por defecto"
+                      loading={restoring === key}
+                      onClick={() => { void requestRestore(key); }}
+                    />
+                  )}
+                  {/* versionado-informe (HU6): historial de versiones de la sección. */}
                   <Button
                     type="button"
                     text
                     severity="secondary"
                     size="small"
-                    icon={<Undo2 className="h-3.5 w-3.5" aria-hidden="true" />}
-                    label="Restaurar texto por defecto"
-                    loading={restoring === key}
-                    onClick={() => { void requestRestore(key); }}
-                    className="mt-1.5"
+                    icon={<History className="h-3.5 w-3.5" aria-hidden="true" />}
+                    label="Historial"
+                    onClick={() => setHistoryKey(key)}
                   />
-                )}
+                </div>
               </div>
             );
           })}
@@ -426,6 +464,18 @@ export function ReportStep({
         onConfirm={v => closePicker(v)}
         onCancel={() => closePicker()}
       />
+
+      {historyKey && (
+        <ReportVersionHistory
+          open={historyKey !== null}
+          onClose={() => setHistoryKey(null)}
+          caseId={caseId}
+          sectionKey={historyKey}
+          sectionLabel={REPORT_SECTION_LABELS[historyKey]}
+          currentText={texts[historyKey]}
+          onRestore={(versionId, text) => restoreVersion(historyKey, versionId, text)}
+        />
+      )}
 
       <StepActions>
         <Button
