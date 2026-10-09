@@ -73,6 +73,13 @@ public sealed class AgentOptions
 
 public sealed class Device
 {
+    /// <summary>
+    /// Centinela que Tatana pone en <see cref="Imei"/> cuando no pudo leer el IMEI del dispositivo.
+    /// El front y el backend ya lo reconocen: el front muestra el campo manual de IMEI. Debe valer
+    /// exactamente <c>INGRESAR_MANUALMENTE</c>.
+    /// </summary>
+    public const string ImeiManualEntry = "INGRESAR_MANUALMENTE";
+
     public string Serial { get; set; } = string.Empty;
     public string State { get; set; } = string.Empty;
     public string Manufacturer { get; set; } = string.Empty;

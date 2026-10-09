@@ -250,7 +250,10 @@ public sealed class IosService : IIosService, IOperationSource
                 {
                     Serial = udid, State = "device", Manufacturer = "Apple", Platform = "ios",
                     Name = Str(item, "name"),
-                    Imei = Str(item, "imei"),
+                    // pymobiledevice3 no siempre trae el IMEI: devolvemos el centinela explícito
+                    // (el front/backend ya lo reconocen) en vez de un string vacío.
+                    Imei = Str(item, "imei") is var imei && !string.IsNullOrWhiteSpace(imei)
+                        ? imei : Device.ImeiManualEntry,
                     Operator = Str(item, "phone_number"),
                 };
                 var productType = Str(item, "product_type");
