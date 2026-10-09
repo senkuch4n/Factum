@@ -22,6 +22,7 @@ export function PhoneShell({ platform = "android", className, children }: {
       <span aria-hidden="true" className="absolute -left-[3px] top-[26%] h-[11%] w-[3px] rounded-fx-sm bg-fx-border-strong" />
       <span aria-hidden="true" className="absolute -right-[3px] top-[22%] h-[15%] w-[3px] rounded-fx-sm bg-fx-border-strong" />
 
+      {/* Radios del chasis (hardware, no UI): fuera de la escala --fx-radius-* a propósito (D1). */}
       <div className="h-full w-full rounded-[2.4rem] border border-fx-border-strong bg-fx-surface-3 p-[8px] shadow-fx-2">
         <div className="relative h-full w-full overflow-hidden rounded-[2rem] bg-fx-bg">
           {isIOS ? (

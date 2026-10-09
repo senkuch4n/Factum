@@ -67,7 +67,12 @@
   --fx-font-sans: var(--font-sans), system-ui, sans-serif;
   --fx-font-mono: var(--font-mono), ui-monospace, monospace;
 
-  /* Radios */
+  /* Radios — escala del sistema. Convención: no usar `rounded-[…]` literal en
+     componentes; usar las utilidades `rounded-fx-*` (sm/md/lg/xl/pill),
+     `rounded-full` o `rounded-none`. Única excepción documentada: los radios
+     del chasis del teléfono en PhoneFrame.tsx (geometría de hardware, D1).
+     Nota (D4): una escala de espaciado `--fx-space-*` queda para una HU aparte;
+     por ahora el espaciado sigue siendo híbrido (p-4, px-2.5, p-[8px]…). */
   --fx-radius-sm:   4px;
   --fx-radius-md:   8px;
   --fx-radius-lg:   12px;
