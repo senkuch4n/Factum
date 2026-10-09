@@ -55,9 +55,9 @@ export const toast: ToastPassThroughOptions = {
     timeout: { enter: 200, exit: 150 },
     classNames: {
       enter: "opacity-0 motion-safe:translate-y-2",
-      enterActive: "!opacity-100 motion-safe:!translate-y-0 transition-[opacity,transform] duration-200 ease-fx",
+      enterActive: "!opacity-100 motion-safe:!translate-y-0 transition-[opacity,transform] duration-fx-base ease-fx",
       exit: "opacity-100",
-      exitActive: "!opacity-0 transition-opacity duration-150 ease-fx",
+      exitActive: "!opacity-0 transition-opacity duration-fx-fast ease-fx",
     },
   },
 };

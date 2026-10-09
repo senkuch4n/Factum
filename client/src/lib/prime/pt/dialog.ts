@@ -66,16 +66,16 @@ export const dialog: DialogPassThroughOptions = {
             enter: "opacity-0 motion-safe:translate-x-full",
             enterActive: "!opacity-100 motion-safe:!translate-x-0 transition-[opacity,transform] duration-fx-slow ease-fx",
             exit: "opacity-100",
-            exitActive: "!opacity-0 motion-safe:!translate-x-full transition-[opacity,transform] duration-200 ease-fx",
+            exitActive: "!opacity-0 motion-safe:!translate-x-full transition-[opacity,transform] duration-fx-base ease-fx",
           },
         }
       : {
           timeout: { enter: 200, exit: 150 },
           classNames: {
             enter: "opacity-0 motion-safe:scale-95",
-            enterActive: "!opacity-100 motion-safe:!scale-100 transition-[opacity,transform] duration-200 ease-fx",
+            enterActive: "!opacity-100 motion-safe:!scale-100 transition-[opacity,transform] duration-fx-base ease-fx",
             exit: "opacity-100",
-            exitActive: "!opacity-0 motion-safe:!scale-95 transition-[opacity,transform] duration-150 ease-fx",
+            exitActive: "!opacity-0 motion-safe:!scale-95 transition-[opacity,transform] duration-fx-fast ease-fx",
           },
         },
 };

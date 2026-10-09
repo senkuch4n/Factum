@@ -80,6 +80,9 @@ export default {
       // Radios del sistema de diseño, sobre los tokens --fx-radius-*.
       // `rounded-none` y `rounded-full` (círculos: avatares, puntos) salen del
       // default de Tailwind; `rounded-fx-pill` es para píldoras y badges.
+      // Sin `rounded-[…]` literal en componentes: usá estas utilidades
+      // (`rounded-fx-*` / `rounded-full` / `rounded-none`). Excepción
+      // documentada: el chasis del teléfono en PhoneFrame.tsx (hardware, D1).
       borderRadius: {
         "fx-sm": "var(--fx-radius-sm)",
         "fx-md": "var(--fx-radius-md)",

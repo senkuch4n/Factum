@@ -15,7 +15,16 @@ const NEUTRAL = "bg-fx-surface-3 border-fx-border-strong text-fx-text-2";
 /**
  * Tag (estado de caso, estado de token). Fondo `*-soft` + borde y texto del
  * tono; siempre se usa con ícono + texto, nunca solo color.
- * `secondary`, `contrast` o sin severidad → neutro.
+ *
+ * D1-A — lenguaje "pill" del sistema para badges de estado: `bg-fx-*-soft`
+ * (fondo suave) + `border-fx-*` + `text-fx-*` (texto saturado), el mismo
+ * patrón que `AgentChip`. Es la regla para todos los badges de estado.
+ *
+ * D3-A — `secondary`, `contrast` o sin severidad caen en NEUTRAL
+ * (`bg-fx-surface-3 border-fx-border-strong text-fx-text-2`), **a diferencia
+ * de `Message`** (pt/message.ts), que mapea `secondary`/`contrast` al tono
+ * info de forma intencional. La diferencia es deliberada: el Tag neutro es un
+ * chip sin carga semántica; el Message secundario sigue siendo un aviso.
  */
 export const tag: TagPassThroughOptions = {
   root: ({ props }) => ({
