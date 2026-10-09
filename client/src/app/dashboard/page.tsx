@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import dynamic from "next/dynamic";
 import { motion, AnimatePresence, MotionConfig } from "framer-motion";
-import { Loader2, Plus, Play, ChevronRight, ArrowLeft, Smartphone, HelpCircle, LifeBuoy } from "lucide-react";
+import { Loader2, Plus, Play, ChevronRight, ArrowLeft, Smartphone, HelpCircle, LifeBuoy, TrendingUp } from "lucide-react";
 import { Button } from "primereact/button";
-import { api, ApiError, type DeviceInput, type ZipLocation } from "@/lib/api";
+import { api, ApiError, type CaseStats, type DeviceInput, type ZipLocation } from "@/lib/api";
 import { agent, AgentError, type ZipProgress } from "@/lib/agent";
 import { agentErrorMessage, agentStatusMessage } from "@/lib/agent-messages";
 import { useAgentIdentity, ensureAgentIdentity, isSameHostFor } from "@/hooks/useAgentIdentity";
@@ -27,6 +28,7 @@ import { useRecording } from "@/hooks/useRecording";
 import { useAirplayShotSession } from "@/hooks/useAirplayShotSession";
 import { AgentChip } from "@/components/dashboard/AgentChip";
 import { DashboardStats } from "@/components/dashboard/DashboardStats";
+import { DashboardBreakdown } from "@/components/dashboard/DashboardBreakdown";
 import { GreetingHeadline } from "@/components/dashboard/GreetingHeadline";
 import { ResumeDeviceModal } from "@/components/dashboard/ResumeDeviceModal";
 import { SoporteModal } from "@/components/dashboard/SoporteModal";
@@ -45,6 +47,15 @@ import { FxBanner } from "@/components/feedback/FxBanner";
 import { EASE, slideDir } from "@/constants/animations";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
+
+// Recharts fuera del bundle inicial del dashboard (patrón de ReportStep.tsx).
+const CasesByMonthChart = dynamic(
+  () => import("@/components/dashboard/CasesByMonthChart").then((m) => m.CasesByMonthChart),
+  {
+    ssr: false,
+    loading: () => <div aria-hidden className="h-64 rounded-fx-xl bg-fx-surface-2 motion-safe:animate-pulse" />,
+  },
+);
 
 const STEPS = [
   { id: 1, label: "Dispositivo", sublabel: "Seleccionando dispositivo" },
@@ -155,6 +166,30 @@ export default function Dashboard() {
 
   // ── Domain hooks ─────────────────────────────────────────────────
   const { user, historyCases, historyLoading, loadHistory, handleLogout } = useAuth();
+
+  // ── Analítica del dashboard (dashboard-kpis-tendencias) ──────────
+  // Fetch propio del endpoint de stats (D1-B): el historial sigue andando
+  // aunque este falle. Se recarga junto con el historial (ver `refreshHistory`).
+  const [stats, setStats] = useState<CaseStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [statsError, setStatsError] = useState(false);
+
+  const loadStats = useCallback(() => {
+    setStatsLoading(true);
+    setStatsError(false);
+    api.caseStats()
+      .then(setStats)
+      .catch(() => setStatsError(true))
+      .finally(() => setStatsLoading(false));
+  }, []);
+
+  useEffect(() => { if (user) loadStats(); }, [user, loadStats]);
+
+  // Recargar historial + stats juntos (botón "actualizar", alta/edición de casos).
+  const refreshHistory = useCallback(() => {
+    loadHistory();
+    loadStats();
+  }, [loadHistory, loadStats]);
 
   // ── Perfil del perito (tarjeta del paso 2) ───────────────────────
   const { profile, loading: profileLoading, save: saveProfile, reload: reloadProfile } = useExpertProfile();
@@ -569,7 +604,7 @@ export default function Dashboard() {
     setCaseForm(EMPTY_CASE_FORM); setCaseErr({}); setStatus(""); setGlobal("");
     setIsResuming(false); setFocusFieldId(null); setGenerateMissing([]);
     setSyncWarningDismissed(false);
-    if (!opts.keepMode) { loadHistory(); setMode("history"); }
+    if (!opts.keepMode) { refreshHistory(); setMode("history"); }
   }
 
   // Salir del wizard: en pasos con evidencia en curso (2–5) pedimos confirmación,
@@ -800,7 +835,43 @@ export default function Dashboard() {
                 <FxBanner tone="error" onClose={() => setGlobal("")}>{globalError}</FxBanner>
               )}
 
-              {historyCases.length > 0 && <DashboardStats cases={historyCases} />}
+              {/* Analítica del perito (dashboard-kpis-tendencias + dashboard-breakdown).
+                  Mientras carga el stats: esqueleto de tarjetas. Error: banner con
+                  reintento (el historial sigue andando). Vacío (total 0): nada — el
+                  estado de bienvenida lo muestra `CaseHistory` más abajo. */}
+              {statsError ? (
+                <FxBanner tone="error">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>No se pudieron cargar las estadísticas.</span>
+                    <Button
+                      text
+                      size="small"
+                      label="Reintentar"
+                      onClick={loadStats}
+                      className="min-h-11"
+                    />
+                  </div>
+                </FxBanner>
+              ) : statsLoading || (stats && stats.total > 0) ? (
+                <div className="space-y-6">
+                  <DashboardStats stats={stats} loading={statsLoading} />
+                  {stats && stats.total > 0 && (
+                    <section aria-labelledby="trend-title" className="space-y-3">
+                      <h2
+                        id="trend-title"
+                        className="flex items-center gap-1.5 text-fx-label uppercase text-fx-text-2"
+                      >
+                        <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" />
+                        Casos creados por mes
+                      </h2>
+                      <div className="fx-card rounded-fx-xl p-4 sm:p-5">
+                        <CasesByMonthChart data={stats.monthly} />
+                      </div>
+                    </section>
+                  )}
+                  {stats && stats.total > 0 && <DashboardBreakdown />}
+                </div>
+              ) : null}
 
               {draftCases.length > 0 && (
                 <section aria-labelledby="drafts-title">
@@ -848,7 +919,7 @@ export default function Dashboard() {
                 cases={historyCases}
                 loading={historyLoading}
                 onNewCase={startWizard}
-                onRefresh={loadHistory}
+                onRefresh={refreshHistory}
                 onResume={handleResume}
               />
             </div>

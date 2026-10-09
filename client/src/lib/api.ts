@@ -203,7 +203,10 @@ async function requestSafe<T>(path: string, options: RequestInit = {}): Promise<
   let res: Response;
   try {
     res = await send(path, options);
-  } catch {
+  } catch (e) {
+    // Un abort (el llamador canceló con `signal`) se propaga tal cual para que
+    // el componente lo distinga de un corte real y lo ignore; no es un error de red.
+    if (e instanceof DOMException && e.name === "AbortError") throw e;
     throw new ApiError(SERVER_UNREACHABLE, 0, undefined, null);
   }
   if (!res.ok) throw await toApiError(res);
@@ -709,6 +712,46 @@ export interface DeviceInput {
   name?: string;
 }
 
+/* ── Analítica del dashboard (dashboard-kpis-tendencias §8) ── */
+
+/**
+ * KPIs + tendencia mensual del perito (`GET /api/cases/stats`). Casing snake_case
+ * exacto del backend (`CaseStatsResponse`, `JsonNamingPolicy.SnakeCaseLower`).
+ * `by_status` es un objeto plano con las 4 claves fijas (siempre presentes).
+ */
+export interface CaseStats {
+  total: number;
+  by_status: { draft: number; generating: number; completed: number; error: number };
+  /** 0..1; `completed / total`. 0 si `total === 0`. El cliente lo muestra como %. */
+  completion_rate: number;
+  /** Promedio de cierre en segundos, o `null` si no hay completados con `generated_at`. */
+  avg_close_seconds: number | null;
+  /** 12 meses ascendentes (los sin casos en 0). `month` en formato "yyyy-MM". */
+  monthly: { month: string; count: number }[];
+}
+
+/* ── Desglose analítico (dashboard-breakdown §8) ── */
+
+/** Dimensiones del desglose (`GET /api/cases/breakdown`). */
+export type BreakdownDimension = "platform" | "status" | "caratula" | "ambito_causa";
+
+/** Un segmento del desglose. `label` lo resuelve el backend (fuente única de los textos). */
+export interface BreakdownBucket {
+  key: string;
+  label: string;
+  count: number;
+}
+
+/**
+ * Distribución de los casos del perito por una dimensión (`GET /api/cases/breakdown`).
+ * `total` = suma de los `count` = total del conjunto filtrado por fecha.
+ */
+export interface CaseBreakdown {
+  dimension: BreakdownDimension;
+  total: number;
+  buckets: BreakdownBucket[];
+}
+
 export const api = {
   async login(dni: string, username: string, password: string): Promise<{ token: string; user: User }> {
     const data = await request<{ token: string; user: User }>("/api/auth/login", {
@@ -1063,6 +1106,34 @@ export const api = {
    */
   async getZipPassword(caseId: string): Promise<{ password: string }> {
     return request<{ password: string }>(`/api/cases/${caseId}/zip-password`);
+  },
+
+  /* ── Analítica del dashboard (dashboard-kpis-tendencias §8) ── */
+
+  /**
+   * KPIs + tendencia mensual del perito logueado. Manda el offset de zona del
+   * navegador (`-getTimezoneOffset()`, minutos a sumar a UTC) para que el servidor
+   * agrupe los meses en hora local del perito (D5-A).
+   */
+  async caseStats(signal?: AbortSignal): Promise<CaseStats> {
+    const tz = -new Date().getTimezoneOffset();
+    return requestSafe<CaseStats>(`/api/cases/stats?tz_offset_minutes=${tz}`, { signal });
+  },
+
+  /* ── Desglose analítico (dashboard-breakdown §8) ── */
+
+  /**
+   * Distribución de los casos del perito por `dimension`, con filtro de fechas
+   * propio (`from`/`to` en `yyyy-MM-dd`, `to` inclusivo por día). El backend
+   * resuelve labels, "Sin especificar", Top N y "Otras".
+   */
+  async caseBreakdown(
+    dimension: BreakdownDimension, from?: string, to?: string, signal?: AbortSignal,
+  ): Promise<CaseBreakdown> {
+    const params = new URLSearchParams({ dimension });
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    return requestSafe<CaseBreakdown>(`/api/cases/breakdown?${params.toString()}`, { signal });
   },
 
   downloadURL(caseId: string, filename: string): string {

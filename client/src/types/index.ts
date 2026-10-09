@@ -10,6 +10,7 @@ export type {
   AdminCreateUserRequest, AdminUpdateUserRequest, AdminUserWithPassword,
   BrandingImageKind, BrandingImageAction, BrandingImage, AccountBranding, BrandingSaveMetadata,
   AccountBrandingSaveResponse, BrandingField, BrandingErrorCode,
+  CaseStats, BreakdownDimension, BreakdownBucket, CaseBreakdown,
 } from "@/lib/api";
 export type { Device, AgentEvent, AgentFile, VideoVariant, AgentInfo } from "@/lib/agent";
 
