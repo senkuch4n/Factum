@@ -81,7 +81,6 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
     // trazabilidad-caso: línea de tiempo del caso (dueño o superadmin). Ascendente por timestamp.
     [HttpGet("{id}/events")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Events(string id, CancellationToken ct)
     {
@@ -92,7 +91,6 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
     // versionado-informe: historial de versiones de report_texts (solo lectura). Más reciente primero.
     [HttpGet("{id}/report-text-versions")]
     [ProducesResponseType<ReportTextVersionsResponse>(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> ReportTextVersions(string id, CancellationToken ct)
     {
@@ -183,7 +181,6 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
     [HttpGet("{id}/files/upload-check")]
     [ProducesResponseType<UploadCheckResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     [ProducesResponseType(StatusCodes.Status413PayloadTooLarge)]
@@ -221,7 +218,6 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
     [HttpPut("{id}/evidence")]
     [ProducesResponseType<EvidenceResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> RegisterEvidence(string id, [FromBody] RegisterEvidenceRequest request,
@@ -234,7 +230,6 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
     [HttpDelete("{id}/evidence/{filename}")]
     [ProducesResponseType<EvidenceResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> DeleteEvidence(string id, string filename, CancellationToken ct)
@@ -248,7 +243,6 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
     [HttpPost("{id}/generate/prepare")]
     [ProducesResponseType<PrepareGenerationResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> PrepareGeneration(string id, [FromBody] PrepareGenerationRequest request,
@@ -265,7 +259,6 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
     [DisableFormValueModelBinding]
     [ProducesResponseType<GenerateResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     [ProducesResponseType(StatusCodes.Status413PayloadTooLarge)]
@@ -290,7 +283,6 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
     // La contraseña sale solo de acá (y una vez en generate). No se cachea en ningún lado.
     [HttpGet("{id}/zip-password")]
     [ProducesResponseType<ZipPasswordResponse>(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> ZipPassword(string id, CancellationToken ct)
     {
@@ -302,7 +294,6 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
     // editor-imagenes-informe §4.4: capturas insertables en las secciones del informe.
     [HttpGet("{id}/report-images")]
     [ProducesResponseType<ReportImagesResponse>(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> ReportImages(string id, CancellationToken ct)
     {
@@ -316,7 +307,6 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
     [HttpGet("{id}/files/{filename}/preview")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> ReportImagePreview(string id, string filename, CancellationToken ct)
     {

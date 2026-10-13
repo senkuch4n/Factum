@@ -12,7 +12,6 @@ using Factum.Backend.Services.Support;
 using Factum.Backend.Services.Tatana;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Configuration.Json;
 using Microsoft.OpenApi.Models;
 
@@ -43,7 +42,12 @@ var builder = WebApplication.CreateBuilder(args);
 }
 
 var port = int.Parse(Environment.GetEnvironmentVariable("PORT") ?? "8080");
-builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(port));
+// api-hardening §4.2: sin "Server: Kestrel" (SecurityHeadersMiddleware lo saca también, como defensa extra).
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.ListenAnyIP(port);
+    options.AddServerHeader = false;
+});
 
 // ── Auth y soporte: config resuelta y validada antes de registrar servicios ──
 // Si la config es inválida, el backend no arranca (fail-fast): la excepción sale por
@@ -63,6 +67,9 @@ if (reportSettingsRaw.MaxGenerateUploadBytes <= 0)
     configErrors.Add("Report:MaxGenerateUploadBytes tiene que ser mayor que 0");
 var (corsOrigins, corsErrors) = CorsOrigins.Parse(builder.Configuration);
 configErrors.AddRange(corsErrors);
+// api-hardening §4.6: rate limit del login y proxies confiables para X-Forwarded-For.
+var (securitySettings, securityErrors) = SecuritySettings.Resolve(builder.Configuration);
+configErrors.AddRange(securityErrors);
 // tatana-instalador-autoupdate D-T19: versión mínima de Tatana (vacío o X.Y.Z).
 if (TatanaOptions.Validate(builder.Configuration["Tatana:MinVersion"]) is { } tatanaError)
     configErrors.Add(tatanaError);
@@ -101,22 +108,10 @@ builder.Services.AddAuthentication("FactumBearerScheme")
         "FactumBearerScheme", _ => { });
 builder.Services.AddAuthorization();
 
-// ── CORS (zip-local-informe-servidor §5.9) ────────────────────────────────────
-// Solo los orígenes de Cors:AllowedOrigins (default: el front local). Sin credenciales: el token
-// viaja en el header Authorization.
-builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
-    p.WithOrigins([.. corsOrigins]).AllowAnyHeader().AllowAnyMethod()));
-
-// ── IP real del fiscal cuando el backend corre detrás de un reverse proxy ────
-// (nginx, ingress, etc.) — sin esto, la auditoría del agente vería la IP del
-// proxy en vez de la PC de origen. KnownNetworks/KnownProxies vacíos porque el
-// proxy real (si existe) se decide en el despliegue, no es fijo acá.
-builder.Services.Configure<ForwardedHeadersOptions>(options =>
-{
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    options.KnownIPNetworks.Clear();
-    options.KnownProxies.Clear();
-});
+// ── Borde del pipeline (api-hardening §4.1.1) ─────────────────────────────────
+// CORS (zip-local-informe-servidor §5.9), IP real detrás del proxy (solo proxies confiables, §4.5),
+// rate limit del login por IP y por DNI (§4.4). Ver Infrastructure/FactumEdge.cs.
+builder.Services.AddFactumEdge(corsOrigins, securitySettings);
 
 // ── Infraestructura ───────────────────────────────────────────────────────────
 builder.Services.AddSingleton<ICaseRepository, CaseRepository>();
@@ -217,6 +212,11 @@ var app = builder.Build();
 if (authSettings.Mode != AuthModes.Local)
     app.Logger.LogInformation("Auth: modo {Mode}", authSettings.Mode);
 app.Logger.LogInformation("CORS: orígenes permitidos {Lista}", string.Join(", ", corsOrigins));
+app.Logger.LogInformation(
+    "Login: rate limit {PerIp}/{VentanaIp}s por IP, {PerDni}/{VentanaDni}s por DNI; proxies confiables {Redes}",
+    securitySettings.LoginRateLimit.PerIpPermitLimit, securitySettings.LoginRateLimit.PerIpWindowSeconds,
+    securitySettings.LoginRateLimit.PerDniPermitLimit, securitySettings.LoginRateLimit.PerDniWindowSeconds,
+    string.Join(", ", securitySettings.KnownNetworks));
 if (authSettings.ExternalLoginUri is { } loginUri)
     app.Logger.LogInformation("Auth: login externo en {Url}",
         loginUri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped));
@@ -257,8 +257,9 @@ app.Services.GetRequiredService<IReportSettings>();
         orphans, orphanGenerations);
 }
 
-app.UseForwardedHeaders();
-app.UseCors();
+// api-hardening §4.1: forwarded headers → headers de seguridad → CORS → errores uniformes → rate limit.
+// El manejo de errores propio atrapa antes que la DeveloperExceptionPage: mismo JSON en todos los entornos.
+app.UseFactumEdge();
 app.UseAuthentication();
 app.UseAuthorization();
 // usuarios-locales §6.5: con el cambio de contraseña pendiente, 403 password_change_required.
