@@ -217,11 +217,11 @@ public sealed class CaseZipService : ICaseZipService
                 DeleteQuietly(p.PendingSha);
                 if (ex is OperationCanceledException && ct.IsCancellationRequested) throw;
                 _log.LogError(ex, "No se pudo armar o verificar el ZIP del caso {CaseId}", p.CaseId);
-                throw new AgentHttpException(500, AgentErrorCodes.ZipFailed,
-                    ex is EvidenceZipVerificationException
-                        ? ex.Message
-                        : "No se pudo armar o verificar el ZIP en esta PC; la evidencia quedó intacta",
-                    inner: ex);
+                if (ex is EvidenceZipVerificationException { Entry: { } d })
+                    _log.LogError(
+                        "Verificación del ZIP del caso {CaseId} falló: {Reason}. Entrada {Entry}, {Size} bytes, método {Method}, cifrada {Encrypted}, SHA-256 esperado {Expected}, obtenido {Actual}",
+                        p.CaseId, ex.Message, d.Name, d.Size, d.Method, d.Encrypted, d.ExpectedSha256, d.ActualSha256);
+                throw new AgentHttpException(500, AgentErrorCodes.ZipFailed, ZipFailedMessage(ex), inner: ex);
             }
         }
         finally
@@ -229,6 +229,15 @@ public sealed class CaseZipService : ICaseZipService
             gate.Release();
         }
     }
+
+    /// <summary>
+    /// Texto de <c>zip_failed</c> (zip-verificacion-stored D4). Si falló la verificación del ZIP, la
+    /// evidencia ya pasó el rehash (si no, habría sido <c>evidence_changed</c>), así que está intacta; el
+    /// detalle técnico va solo al log.
+    /// </summary>
+    internal static string ZipFailedMessage(Exception ex) => ex is EvidenceZipVerificationException
+        ? "La evidencia está intacta, pero el ZIP armado no pasó el control de integridad. Si se repite, contactá a soporte."
+        : "No se pudo armar o verificar el ZIP en esta PC; la evidencia quedó intacta";
 
     // ── POST /cases/{id}/zip/commit ──────────────────────────────────────────
 

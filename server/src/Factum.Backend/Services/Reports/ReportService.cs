@@ -160,8 +160,16 @@ public sealed class ReportService : IReportService
                 brand, ct);
             reportHash = await Sha256Async(docxPath);
         }
-        catch
+        catch (Exception ex)
         {
+            // zip-verificacion-stored D-T5: detalle de la entrada que no pasó la verificación, solo al log
+            // (nunca la contraseña). El error hacia el cliente no cambia.
+            if (ex is EvidenceZipVerificationException { Entry: { } d })
+                logger.LogError(
+                    "Verificación del ZIP del caso {CaseId} ({NroReferencia}) falló: {Reason}. Entrada {Entry}, {Size} bytes, método {Method}, cifrada {Encrypted}, SHA-256 esperado {Expected}, obtenido {Actual}",
+                    cas.Id, cas.NroReferencia, ex.Message, d.Name, d.Size, d.Method, d.Encrypted, d.ExpectedSha256,
+                    d.ActualSha256);
+
             // Solo los dos artefactos de ESTE intento. Los archivos sueltos de la evidencia no se
             // tocan: con el caso en Error, el perito puede reintentar.
             foreach (var artifact in new[] { zipPath, docxPath })

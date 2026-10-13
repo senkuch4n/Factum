@@ -155,3 +155,29 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-13 — #56 reintento 2 done (acordeón guiado). Verificado a ojo por el orquestador en 1366 claro: una sección abierta, resúmenes con 'Precargado · revisar' y Editar, Siguiente con 'A continuación'. en_revision; lanzado reviewer.
 - 2026-10-13 — #56 re-revisión (reintento 2) APROBADA. Esperando OK del usuario para commit/PR.
 - 2026-10-13 — #56 OK del usuario ('ahora me gusta más'). Commit + push + PR.
+- 2026-10-13 — #56 aprobada; PR abierto (apilado sobre #55).
+- 2026-10-13 — Mergeados en orden #49, #53, #54, #55 (conflicto con #53 en page.tsx resuelto: onConnected + useDeviceConnection, tsc OK) y #57. develop local actualizado; Tatana y backend reiniciados sobre develop.
+- 2026-10-13 — Pedido: QA de robustez (skill qa-testing adaptada: sin agent-browser ni bypass de QA → Claude in Chrome + usuarios QA sembrados por _id). Lanzados 3 agentes: API backend, Tatana (instancia mock propia :8766), E2E navegador con Samsung (incluye grabación de 11 min). Reportes -> scratchpad/qa/.
+- 2026-10-13 — QA robustez terminada (4 frentes). Bloqueantes: C1 ZIP falla en verificación (Stored+AES async, expuesto por #54), C2 grabación Android pierde ~2 min / 0 B registrado. Consolidado -> scratchpad/qa/INFORME.md. 6 HU propuestas. Quedan 2 casos QA sin poder borrar (sin endpoint).
+- 2026-10-13 — Usuario OK: borrados por id los 2 casos QA (cases 2, case_events 19, agent_events 12), carpetas de Evidencia y dev-data, 3 previews de agent-data (queda screenshot_20261013_105818_026.png, dudoso). Alta HU #58 zip-verificacion-stored, #59 grabacion-android-robusta, #60 tatana-ws-y-hosts, #61 wizard-concurrencia-pestanas, #62 informe-formato-fixes, #63 api-hardening. Reportes QA copiados a docs/qa/2026-10-13/. Tomada #58, rama feat/zip-verificacion-stored, afinando.
+- 2026-10-13 — #58 afinada -> docs/hu-zip-verificacion-stored.md (6 dudas). Esperando validación.
+- 2026-10-13 — #60 afinada (adelantada) -> docs/hu-tatana-ws-y-hosts.md (6 dudas). Por validar.
+- 2026-10-13 — #62 afinada (adelantada) -> docs/hu-informe-formato-fixes.md (6 dudas). Por validar.
+- 2026-10-13 — #58 validada por el usuario (todas recomendadas) → en_arquitectura; lanzado architect.
+- 2026-10-13 — #59 afinada (adelantada) -> docs/hu-grabacion-android-robusta.md (9 dudas). Por validar.
+- 2026-10-13 — #63 afinada (adelantada) -> docs/hu-api-hardening.md (9 dudas). Por validar.
+- 2026-10-13 — #60 y #63 validadas por el orquestador (delegación del usuario: técnicas con recomendadas). SDD adelantadas.
+- 2026-10-13 — #59 validada por el usuario (todas A). SDD adelantada; lanzado architect.
+- 2026-10-13 — #61 afinada (adelantada) -> docs/hu-wizard-concurrencia-pestanas.md (11 dudas). Por validar.
+- 2026-10-13 — #62 validada por el usuario (todas recomendadas, sin script, 4 cm). SDD adelantada; lanzado architect.
+- 2026-10-13 — #58 SDD lista -> Refactorizaciones/zip-verificacion-stored.md; implementando; lanzado implementer-backend (opus).
+- 2026-10-13 — #61 validada por el usuario (todas recomendadas; D10 parte la HU). Alta wizard-pulido-ux con el Bloque 2. SDD #61 adelantada; lanzado architect.
+- 2026-10-13 — #64 afinada (adelantada) -> docs/hu-wizard-pulido-ux.md (5 dudas). Por validar.
+- 2026-10-13 — #63 SDD lista (adelantada). Superposición de saneo con #62 resuelta: SafeText y puntos de entrada en #62 (validación D1 A); nota en api-hardening.md §4.8; mensaje al architect de #62.
+- 2026-10-13 — #60 SDD lista (adelantada) -> Refactorizaciones/tatana-ws-y-hosts.md.
+- 2026-10-13 — #62 SDD lista (adelantada) -> Refactorizaciones/informe-formato-fixes.md.
+- 2026-10-13 — #61 SDD lista (adelantada) -> Refactorizaciones/wizard-concurrencia-pestanas.md.
+- 2026-10-13 — #59 SDD lista (adelantada) -> Refactorizaciones/grabacion-android-robusta.md. Causa C2 casi confirmada: con --no-video-playback scrcpy ignora SIGINT/SIGTERM (Tatana lo mata → pierde buffer o 0 B); con --no-window cierra limpio. Ojo: Tatana lanzado en segundo plano hereda SIGINT ignorado (nuestro entorno de QA). Riesgo: Windows sin medir (flags de config para revertir).
+- 2026-10-13 — #58 implementer-backend done -> progress/impl_backend_zip-verificacion-stored.md. D1 rama A (ZIP bien escrito; falla solo la lectura async, que además se saltea el HMAC). D5 NO cumple: verificación 1,7× más lenta (48 s vs 28 s en 5,5 GB) → consultar al usuario. en_revision; lanzado reviewer.
+- 2026-10-13 — #58 review APROBADA -> progress/review_zip-verificacion-stored.md. Esperando decisión del usuario sobre D5 (1,7×) y su OK para commit/PR.
+- 2026-10-13 — #58: usuario acepta 1,7× (opción a), sin issue upstream (huecos quitados), pide mergear. Commit + PR + merge.
