@@ -142,3 +142,16 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-12 — #52 tomada, rama feat/formulario-inspeccion-ux, SDD ya lista → implementando. Lanzado implementer-frontend (opus).
 - 2026-10-12 — #52 implementer-frontend done -> progress/impl_frontend_formulario-inspeccion-ux.md. en_revision; lanzado reviewer.
 - 2026-10-12 — #52 review APROBADA → aprobada. PR #55 contra develop. Modo autónomo terminado: #50, #51, #52 en Hecho (PRs #53, #54, #55) + PR #49 webcam. Solo queda #7 (prueba física Windows+iPhone, no automatizable). Stack local (backend :8080, client :3000) sigue arriba.
+- 2026-10-13 — Alta #56 formulario-causa-rediseno (pedido: usar ui-ux-pro-max/3d para mejorar e innovar el formulario de datos de la causa). Rama feat/formulario-causa-rediseno apilada sobre feat/formulario-inspeccion-ux (PR #55 sin mergear, mismos archivos). afinando; lanzado afinador.
+- 2026-10-13 — #56 afinada -> docs/hu-formulario-causa-rediseno.md (11 dudas). afinada_pendiente_validacion; esperando al usuario.
+- 2026-10-13 — #56 validada por el usuario: D1 A (ficha viva), D2 B (modelo 3D con R3F), D3 A, D4 A; D5–D11 recomendadas. en_arquitectura; lanzado architect.
+- 2026-10-13 — #56 SDD lista -> Refactorizaciones/formulario-causa-rediseno.md (three 0.186.1, R3F 9.8.1, sin drei). P1 del usuario: B (girar ±25°, botón aparte para ampliar). implementando; lanzado implementer-frontend (opus).
+- 2026-10-13 — #56 implementer-frontend done -> progress/impl_frontend_formulario-causa-rediseno.md. en_revision; lanzado reviewer.
+- 2026-10-13 — #56 review APROBADA -> progress/review_formulario-causa-rediseno.md (3D gzip 236 KiB, nada de three en carga inicial). Esperando prueba manual del usuario antes de commit/PR.
+- 2026-10-13 — #56 prueba manual del usuario: 'tosco todavía'. Diagnóstico en pantalla -> progress/feedback_usuario_formulario-causa-rediseno.md. rechazada_reintentando (1); relanzado implementer-frontend.
+- 2026-10-13 — #56 reintento 1 done (aplanado, etiquetas en una línea, grilla, ficha sin scroll con 3D arriba, max-w-7xl, tokens --fx-control-*, --fx-device-body). Verificado a ojo por el orquestador en 1366. en_revision; lanzado reviewer.
+- 2026-10-13 — #56 re-revisión APROBADA. Esperando OK visual del usuario y decisión sobre tamaño del teléfono 3D.
+- 2026-10-13 — #56 usuario: 'me gusta mucho más, pero llenar los datos me abruma'. Elige acordeón de una sección a la vez. rechazada_reintentando (2, último). Relanzado implementer-frontend.
+- 2026-10-13 — #56 reintento 2 done (acordeón guiado). Verificado a ojo por el orquestador en 1366 claro: una sección abierta, resúmenes con 'Precargado · revisar' y Editar, Siguiente con 'A continuación'. en_revision; lanzado reviewer.
+- 2026-10-13 — #56 re-revisión (reintento 2) APROBADA. Esperando OK del usuario para commit/PR.
+- 2026-10-13 — #56 OK del usuario ('ahora me gusta más'). Commit + push + PR.

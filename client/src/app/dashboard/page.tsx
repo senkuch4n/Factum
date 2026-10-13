@@ -15,8 +15,8 @@ import type {
 } from "@/types";
 import {
   CASE_MESSAGES, EMPTY_CASE_FORM, PROFILE_REQUIRED_KEYS, PROFILE_MESSAGES,
-  caseToForm, formToCaseRequest, isImeiMissing, isPhoneLike, prefillFromLastCase, profileErrorKey,
-  todayIso, validateCaseForm, validateProfile,
+  caseToForm, formToCaseRequest, isImeiMissing, isPhoneLike, lastPericialCase, prefillFromLastCase, profileErrorKey,
+  todayIso, validateCaseForm, validateProfile, type CasePrefill,
 } from "@/lib/pericial";
 import { useExpertProfile, profileToForm, sameProfile } from "@/hooks/useExpertProfile";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
@@ -122,6 +122,8 @@ export default function Dashboard() {
   const [caseErrors, setCaseErr] = useState<Record<string, string>>({});
   const [focusErrorsTick, setFocusErrorsTick] = useState(0);
   const [currentCase, setCase] = useState<Case | null>(null);
+  // Precarga visible del paso 2 (formulario-causa-rediseno §6.2): sobrevive al ir al paso 1 y volver.
+  const [casePrefill, setCasePrefill] = useState<CasePrefill | null>(null);
   const [result, setResult] = useState<{
     zip: string; pdf: string; password: string | null; encrypted: boolean; hash: string; reportHash: string;
     // Flujo agent (zip-local-informe-servidor §7.7)
@@ -586,6 +588,7 @@ export default function Dashboard() {
     setCaseForm(EMPTY_CASE_FORM); setCaseErr({}); setStatus(""); setGlobal("");
     setIsResuming(false); setFocusFieldId(null); setGenerateMissing([]);
     setSyncWarningDismissed(false);
+    setCasePrefill(null);
     if (!opts.keepMode) { refreshHistory(); setMode("history"); }
   }
 
@@ -602,6 +605,8 @@ export default function Dashboard() {
   function startWizard() {
     resetWizard({ keepMode: true });
     setCaseForm(newCaseForm(historyCases));
+    const src = lastPericialCase(historyCases);
+    setCasePrefill(src ? { sourceId: src.id, confirmed: false } : null);
     void reloadProfile();
     setMode("wizard");
   }
@@ -618,6 +623,7 @@ export default function Dashboard() {
   function proceedResume(cas: Case) {
     clearFiles(); resetRecording(); resetShotSession();
     setCase(cas); setResult(null); setCaseErr({}); setFocusFieldId(null); setGenerateMissing([]);
+    setCasePrefill(null);
     setSelDevice({
       serial: cas.device.serial, state: "device",
       manufacturer: cas.device.manufacturer, model: cas.device.model,
@@ -711,7 +717,7 @@ export default function Dashboard() {
         user={user}
         onLogout={handleLogout}
         showThemeSwitch
-        maxWidthClass={mode === "wizard" ? "max-w-6xl" : "max-w-5xl"}
+        maxWidthClass={mode === "wizard" ? "max-w-7xl" : "max-w-5xl"}
         // Historial: pestañas de sección (Inspecciones/Métricas) en el centro.
         // Wizard: `sections` undefined → el centro vuelve a ser el breadcrumb
         // del paso (con su "volver" confirmado). separar-metricas-vista D6.
@@ -876,7 +882,7 @@ export default function Dashboard() {
 
         {mode === "wizard" && (
           <div ref={wizardTopRef} className="scroll-mt-0 p-4 sm:p-6 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]">
-            <div className="mx-auto flex max-w-6xl items-start gap-8">
+            <div className="mx-auto flex max-w-7xl items-start gap-8">
               {/* Riel vertical de pasos (md+). Los pasos completados son navegables,
                   salvo que eso implique duplicar el caso ya creado (ver minJumpable). */}
               <aside aria-label="Progreso de la inspección" className="sticky top-6 hidden w-52 shrink-0 md:block">
@@ -971,9 +977,14 @@ export default function Dashboard() {
                               onChange={f => setCaseForm(f)}
                               onProfileChange={setProfileForm}
                               onClearError={key => setCaseErr(er => ({ ...er, [key]: "" }))}
+                              onSectionErrors={errs => setCaseErr(er => ({ ...er, ...errs }))}
                               onBack={() => go(1)}
                               onCancel={() => go(3)}
                               onSubmit={handleSaveCase}
+                              historyCases={historyCases}
+                              caseId={currentCase?.id ?? null}
+                              prefill={currentCase ? null : casePrefill}
+                              onPrefillChange={setCasePrefill}
                             />
                           )}
 

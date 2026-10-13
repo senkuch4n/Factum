@@ -14,7 +14,7 @@ type ErrKind = "NotAllowed" | "NotFound" | "InUse" | "Other";
 interface Props {
   open: boolean;
   label: string;
-  icon: React.ElementType;
+  icon: React.ElementType<{ className?: string }>;
   onCapture: (blob: Blob, filename: string) => void;
   onClose: () => void;
 }

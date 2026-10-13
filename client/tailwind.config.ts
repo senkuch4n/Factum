@@ -40,6 +40,9 @@ export default {
           "danger-soft":     "var(--fx-danger-soft)",
           info:              "var(--fx-info)",
           "info-soft":       "var(--fx-info-soft)",
+          "control-bg":      "var(--fx-control-bg)",
+          "control-border":  "var(--fx-control-border)",
+          "device-body":     "var(--fx-device-body)",
         },
       },
       // Color de `border` / `divide-*` sin color explícito: lo lee el preflight

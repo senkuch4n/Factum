@@ -16,7 +16,7 @@ import { Lightbox } from "./Lightbox";
 export function IdentityCard({
   label, role, icon: Icon, name, dni, blobURL, agentFilename, fileURL, onCapture, loading, done, disabled,
 }: {
-  label: string; role: string; icon: React.ElementType;
+  label: string; role: string; icon: React.ElementType<{ className?: string }>;
   name?: string; dni?: string;
   blobURL?: string; agentFilename?: string;
   /** URL ya resuelta (carpeta del caso en Tatana, flujo agent); manda sobre `agentFilename`. */

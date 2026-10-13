@@ -95,7 +95,7 @@ function Thumb({ name, kind, url }: { name: string; kind: "image" | "video" | "d
 /* ── Confirmación de una identidad (perito / titular) con su foto. ── */
 function IdentityConfirm({
   label, role, icon: Icon, file, urlOf,
-}: { label: string; role: string; icon: React.ElementType; file?: CapturedFile; urlOf: (f: CapturedFile) => string }) {
+}: { label: string; role: string; icon: React.ElementType<{ className?: string }>; file?: CapturedFile; urlOf: (f: CapturedFile) => string }) {
   const [errored, setErrored] = useState(false);
   const showImg = !!file && !errored;
   return (
@@ -134,7 +134,7 @@ function IdentityConfirm({
 /* ── Grupo de evidencia — título + conteo + fila de miniaturas. ── */
 function EvidenceGroup({
   title, icon: Icon, items, kind, urlOf,
-}: { title: string; icon: React.ElementType; items: CapturedFile[]; kind: "image" | "video" | "doc"; urlOf: (f: CapturedFile) => string }) {
+}: { title: string; icon: React.ElementType<{ className?: string }>; items: CapturedFile[]; kind: "image" | "video" | "doc"; urlOf: (f: CapturedFile) => string }) {
   if (items.length === 0) return null;
   return (
     <div>
