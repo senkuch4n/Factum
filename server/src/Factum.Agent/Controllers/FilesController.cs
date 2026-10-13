@@ -6,7 +6,7 @@ namespace Factum.Agent.Controllers;
 
 [ApiController]
 [Route("files")]
-public sealed class FilesController(IFileStorageService storage) : ControllerBase
+public sealed class FilesController(IFileStorageService storage, IVideoPostprocessService post) : ControllerBase
 {
     private static readonly FileExtensionContentTypeProvider ContentTypeProvider = new();
 
@@ -28,8 +28,17 @@ public sealed class FilesController(IFileStorageService storage) : ControllerBas
     [HttpDelete("{filename}")]
     public IActionResult Delete(string filename)
     {
-        var deleted = storage.Delete(filename);
-        return deleted ? Ok(new { deleted = filename })
-            : NotFound(new { error = "Archivo no encontrado" });
+        try
+        {
+            var deleted = storage.Delete(filename);
+            return deleted ? Ok(new { deleted = filename })
+                : NotFound(new { error = "Archivo no encontrado" });
+        }
+        finally
+        {
+            // ios-grabacion-larga §4.6 (D8): haya existido o no, se cancela su post-proceso y se borran sus
+            // variantes. Discard nunca tira y no cambia la respuesta.
+            post.Discard(filename);
+        }
     }
 }

@@ -15,7 +15,11 @@ public interface IIosService
     Task<List<Device>> ListDevicesAsync(CancellationToken ct = default);
     Task<string> TakeScreenshotAsync(string udid, string outputPath, string method = "auto", CancellationToken ct = default);
     Task StartRecordingAsync(string udid, string mode, string outputPath, CancellationToken ct = default);
-    Task<string> StopRecordingAsync(string udid, CancellationToken ct = default);
+    /// <summary>
+    /// Detiene la grabación. <see cref="IosStopResult.Variants"/> = etiquetas de variantes planeadas por el
+    /// post-proceso ([] en airplay, on_device, mock sin fuente o sin ffmpeg; ios-grabacion-larga §5.4).
+    /// </summary>
+    Task<IosStopResult> StopRecordingAsync(string udid, CancellationToken ct = default);
 
     // Sesión de "espejar para capturas": conecta AirPlay una vez y permite marcar N momentos
     // mientras el fiscal navega libremente, extrayendo un PNG por marca recién al finalizar.
@@ -30,6 +34,9 @@ public interface IIosService
     // §4.3: "enabled" | "restarting" | "manual_required".
     Task<string> EnableDeveloperModeAsync(string udid, CancellationToken ct = default);
 }
+
+/// <summary>Resultado del stop de una grabación iOS (ios-grabacion-larga §5.4).</summary>
+public sealed record IosStopResult(string OutputPath, IReadOnlyList<string> Variants);
 
 // Modos de grabación iOS:
 //   video_only  → capturas DVT → ffmpeg MP4 (~2 FPS; limitación de iOS 26)
@@ -58,6 +65,8 @@ public sealed class IosService : IIosService, IOperationSource
     private readonly bool _mock;
     private readonly bool _isWindows = OperatingSystem.IsWindows();
     private readonly string? _micDevice;
+    private readonly string? _mockRecordingSource;
+    private readonly IVideoPostprocessService _post;
     private readonly ILogger<IosService> _log;
     private readonly AgentWebSocketHub _hub;
     private readonly IFileStorageService _storage;
@@ -68,16 +77,15 @@ public sealed class IosService : IIosService, IOperationSource
     private readonly ConcurrentDictionary<string, bool> _prepared = new(StringComparer.Ordinal);
     private IosSession? _session;
     private AirplayShotSession? _shotSession;
-    // tatana-instalador-autoupdate §5.3: post-procesos de video (RunInterpolationsAsync) en curso.
-    private int _videoPostprocessCount;
-    private long _videoPostprocessSinceTicks;
     private int _appleServiceMissingLogged; // 1 = ya se avisó (se rearma cuando vuelve el servicio)
 
     public IosService(IOptions<AgentOptions> opts, ILogger<IosService> log, AgentWebSocketHub hub,
-        IFileStorageService storage, AppleServiceProbe probe)
+        IFileStorageService storage, AppleServiceProbe probe, IVideoPostprocessService post)
     {
         _mock      = opts.Value.Mock;
         _micDevice = opts.Value.MicDevice;
+        _mockRecordingSource = opts.Value.MockIosRecordingSource;
+        _post      = post;
         _log       = log;
         _hub       = hub;
         _storage   = storage;
@@ -131,33 +139,18 @@ public sealed class IosService : IIosService, IOperationSource
     }
 
     // ── Operaciones en curso (tatana-instalador-autoupdate §5.3) ──────────────
-    // Grabación, sesión AirPlay de capturas y post-proceso de video bloquean "Reiniciar y actualizar".
+    // Grabación y sesión AirPlay de capturas bloquean "Reiniciar y actualizar". El post-proceso de video
+    // ya no (ios-grabacion-larga D7): es una operación en segundo plano que se cancela al entrar en
+    // mantenimiento (VideoPostprocessService, /agent/state.background_operations).
     public IEnumerable<AgentOperation> ActiveOperations
     {
         get
         {
-            var ops = new List<AgentOperation>(3);
+            var ops = new List<AgentOperation>(2);
             if (_session is { } rec) ops.Add(new AgentOperation("recording_ios", rec.Started));
             if (_shotSession is { } shot) ops.Add(new AgentOperation("airplay_session", shot.Started));
-            if (Volatile.Read(ref _videoPostprocessCount) > 0)
-                ops.Add(new AgentOperation("video_postprocess",
-                    new DateTimeOffset(Interlocked.Read(ref _videoPostprocessSinceTicks), TimeSpan.Zero)));
             return ops;
         }
-    }
-
-    // El contador sube ANTES de soltar la request de stop (así no hay un hueco entre la respuesta y
-    // el arranque de la tarea) y baja en el finally, pase lo que pase.
-    private void StartVideoPostprocess(string videoPath)
-    {
-        if (Interlocked.Increment(ref _videoPostprocessCount) == 1)
-            Interlocked.Exchange(ref _videoPostprocessSinceTicks, DateTimeOffset.UtcNow.UtcTicks);
-        _ = Task.Run(async () =>
-        {
-            try { await RunInterpolationsAsync(videoPath); }
-            catch (Exception ex) { _log.LogWarning(ex, "Post-proceso de video falló: {Path}", videoPath); }
-            finally { Interlocked.Decrement(ref _videoPostprocessCount); }
-        });
     }
 
     // ── Python, helper y disponibilidad (§6.1) ────────────────────────────────
@@ -777,7 +770,7 @@ public sealed class IosService : IIosService, IOperationSource
 
     // ── Recording — stop ──────────────────────────────────────────────────────
 
-    public async Task<string> StopRecordingAsync(string udid, CancellationToken ct = default)
+    public async Task<IosStopResult> StopRecordingAsync(string udid, CancellationToken ct = default)
     {
         await _recordLock.WaitAsync(ct);
         try
@@ -787,12 +780,22 @@ public sealed class IosService : IIosService, IOperationSource
 
             if (_mock)
             {
+                // DA9: con Agent:MockIosRecordingSource se copia ese MP4 y se corre el post-proceso real
+                // (solo video_only/with_mic, como con iPhone). Sin fuente: archivo vacío y sin variantes.
+                if (!string.IsNullOrWhiteSpace(_mockRecordingSource) && File.Exists(_mockRecordingSource))
+                {
+                    File.Copy(_mockRecordingSource, session.OutputPath, overwrite: true);
+                    IReadOnlyList<string> mockVariants = session.Mode is "video_only" or "with_mic"
+                        ? _post.Start(session.OutputPath, null)
+                        : [];
+                    return new IosStopResult(session.OutputPath, mockVariants);
+                }
                 await File.WriteAllBytesAsync(session.OutputPath, Array.Empty<byte>(), ct);
-                return session.OutputPath;
+                return new IosStopResult(session.OutputPath, []);
             }
 
             if (session.Mode == "on_device")
-                return await PullNewRecordingAsync(udid, session, ct);
+                return new IosStopResult(await PullNewRecordingAsync(udid, session, ct), []);
 
             if (session.Mode == "airplay")
             {
@@ -837,11 +840,13 @@ public sealed class IosService : IIosService, IOperationSource
                 throw IosErrors.RecordingEmptyFrom(session.StartError, IosErrors.ReasonNoFrames, _isWindows);
             }
 
-            // Interpolación solo para grabaciones DVT/burst (airplay ya es 30fps nativo)
-            if (session.Mode != "airplay")
-                StartVideoPostprocess(session.OutputPath);
+            // Variantes solo para grabaciones DVT/burst (airplay ya es 30fps nativo). Start abre el
+            // original antes de volver y encola el trabajo; nunca espera a ffmpeg (ios-grabacion-larga §5.3).
+            IReadOnlyList<string> variants = session.Mode != "airplay"
+                ? _post.Start(session.OutputPath, DateTimeOffset.UtcNow - session.Started)
+                : [];
 
-            return session.OutputPath;
+            return new IosStopResult(session.OutputPath, variants);
         }
         finally { _recordLock.Release(); }
     }
@@ -1246,116 +1251,6 @@ public sealed class IosService : IIosService, IOperationSource
             return IosErrors.Create(IosErrors.Locked, isWindows);
         return IosErrors.Create(IosErrors.CaptureFailed, isWindows,
             "no se pudo extraer la grabación del iPhone (" + (IosHelper.LastLine(stderr) ?? "afc pull") + ")");
-    }
-
-    // ── Frame interpolation (background) ─────────────────────────────────────
-    //
-    // Genera variantes interpoladas del video iOS (2 FPS → 30 FPS) en background.
-    // Transmite video_variant_ready por WebSocket cuando cada variante está lista.
-
-    private async Task RunInterpolationsAsync(string videoPath)
-    {
-        var stem   = Path.GetFileNameWithoutExtension(videoPath);
-        var dir    = Path.GetDirectoryName(videoPath)!;
-        var ffmpeg = FindBinary(AgentTools.Ffmpeg) ?? "ffmpeg";
-
-        // 1. minterpolate blend (~2s) — frame blending simple
-        var blendPath = Path.Combine(dir, stem + "_blend.mp4");
-        var r = await ProcessRunner.RunAsync(ffmpeg,
-            $"-y -i \"{videoPath}\" " +
-            $"-vf \"minterpolate=fps=30:mi_mode=blend\" " +
-            $"-c:v libx264 -pix_fmt yuv420p -crf 23 \"{blendPath}\"");
-        if (r.Success)
-        {
-            _log.LogInformation("Variante blend lista: {Path}", blendPath);
-            await _hub.BroadcastAsync(new AgentEvent
-            {
-                Type = "video_variant_ready",
-                Data = new
-                {
-                    original_filename = Path.GetFileName(videoPath),
-                    label             = "Suavizado",
-                    filename          = Path.GetFileName(blendPath),
-                    url               = $"/files/{Path.GetFileName(blendPath)}"
-                }
-            });
-        }
-        else _log.LogWarning("Interpolación blend falló: {E}", r.Stderr);
-
-        // 2. minterpolate MCI (~30-60s) — compensación de movimiento
-        var mciPath = Path.Combine(dir, stem + "_mci.mp4");
-        r = await ProcessRunner.RunAsync(ffmpeg,
-            $"-y -i \"{videoPath}\" " +
-            $"-vf \"minterpolate=fps=30:mi_mode=mci:mc_mode=aobmc:me=umh:vsbmc=1\" " +
-            $"-c:v libx264 -pix_fmt yuv420p -crf 23 \"{mciPath}\"");
-        if (r.Success)
-        {
-            _log.LogInformation("Variante MCI lista: {Path}", mciPath);
-            await _hub.BroadcastAsync(new AgentEvent
-            {
-                Type = "video_variant_ready",
-                Data = new
-                {
-                    original_filename = Path.GetFileName(videoPath),
-                    label             = "MCI",
-                    filename          = Path.GetFileName(mciPath),
-                    url               = $"/files/{Path.GetFileName(mciPath)}"
-                }
-            });
-        }
-        else _log.LogWarning("Interpolación MCI falló: {E}", r.Stderr);
-
-        // 3. RIFE (si rife-ncnn-vulkan está instalado)
-        var rife = FindBinary(AgentTools.Rife);
-        if (rife is not null)
-            await RunRifeInterpolationAsync(videoPath, stem, dir, ffmpeg, rife);
-    }
-
-    private async Task RunRifeInterpolationAsync(string videoPath, string stem, string dir,
-        string ffmpeg, string rife)
-    {
-        var framesIn  = Path.Combine(Path.GetTempPath(), $"rife_in_{stem}");
-        var framesOut = Path.Combine(Path.GetTempPath(), $"rife_out_{stem}");
-        var rifePath  = Path.Combine(dir, stem + "_rife.mp4");
-        try
-        {
-            Directory.CreateDirectory(framesIn);
-            Directory.CreateDirectory(framesOut);
-
-            // Extraer frames del video
-            var extract = await ProcessRunner.RunAsync(ffmpeg,
-                $"-y -i \"{videoPath}\" -vsync passthrough \"{framesIn}/%08d.png\"");
-            if (!extract.Success) { _log.LogWarning("RIFE: extracción de frames falló: {E}", extract.Stderr); return; }
-
-            // Interpolar con RIFE (2^4 = 16×)
-            var rifeRun = await ProcessRunner.RunAsync(rife,
-                $"-i \"{framesIn}\" -o \"{framesOut}\" -r 4 -j 1:1:1");
-            if (!rifeRun.Success) { _log.LogWarning("RIFE: falló: {E}", rifeRun.Stderr); return; }
-
-            // Re-encodear a 30 fps
-            var encode = await ProcessRunner.RunAsync(ffmpeg,
-                $"-y -framerate 30 -i \"{framesOut}/%08d.png\" " +
-                $"-c:v libx264 -pix_fmt yuv420p -crf 23 \"{rifePath}\"");
-            if (!encode.Success) { _log.LogWarning("RIFE: re-encode falló: {E}", encode.Stderr); return; }
-
-            _log.LogInformation("Variante RIFE lista: {Path}", rifePath);
-            await _hub.BroadcastAsync(new AgentEvent
-            {
-                Type = "video_variant_ready",
-                Data = new
-                {
-                    original_filename = Path.GetFileName(videoPath),
-                    label             = "RIFE",
-                    filename          = Path.GetFileName(rifePath),
-                    url               = $"/files/{Path.GetFileName(rifePath)}"
-                }
-            });
-        }
-        finally
-        {
-            try { Directory.Delete(framesIn, recursive: true); } catch { }
-            try { Directory.Delete(framesOut, recursive: true); } catch { }
-        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

@@ -16,7 +16,8 @@ public sealed record ImportEvidenceRequest(string? Filename = null);
 /// </summary>
 [ApiController]
 [Route("cases/{caseId}")]
-public sealed class CaseEvidenceController(ICaseEvidenceStore store, IOptions<AgentOptions> opts) : ControllerBase
+public sealed class CaseEvidenceController(ICaseEvidenceStore store, IOptions<AgentOptions> opts,
+    IVideoPostprocessService post) : ControllerBase
 {
     private static readonly FileExtensionContentTypeProvider ContentTypes = new();
 
@@ -94,5 +95,11 @@ public sealed class CaseEvidenceController(ICaseEvidenceStore store, IOptions<Ag
                 : Error(new AgentHttpException(404, AgentErrorCodes.FileNotFound, $"El archivo {filename} no existe"));
         }
         catch (AgentHttpException ex) { return Error(ex); }
+        finally
+        {
+            // ios-grabacion-larga §4.6 (D8): quitar la grabación cancela su post-proceso y borra sus
+            // variantes de la raíz. Nunca tira; no cambia la respuesta.
+            post.Discard(filename);
+        }
     }
 }

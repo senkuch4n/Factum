@@ -7,7 +7,7 @@ import { appInfo } from './app-info'
 import { updateManager } from './updater/update-manager'
 import { setUpdaterLogSink } from './updater/logger'
 import { readDistConfig } from './updater/dist-config'
-import { busyOperationsText, type UpdateState } from './updater/state'
+import { backgroundOperationsNotice, busyOperationsText, type UpdateState } from './updater/state'
 import './ipc'
 
 // D-T4: la config vive en %APPDATA%\Tatana\ (tatana.json, appsettings.Local.json,
@@ -126,7 +126,9 @@ function buildTrayMenu(): void {
       {
         label: busy.length
           ? `Reiniciar y actualizar (esperando: ${busyOperationsText(busy)})`
-          : 'Reiniciar y actualizar',
+          : backgroundOperationsNotice(s.backgroundOperations)
+            ? 'Reiniciar y actualizar (cancela la versión suavizada en curso)'
+            : 'Reiniciar y actualizar',
         visible: s.phase === 'ready',
         enabled: busy.length === 0,
         click: () => { void requestInstall() },
