@@ -10,12 +10,13 @@
  * y el foco sigue al botón usado en su nueva posición.
  */
 
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Button } from "primereact/button";
 import { InputText } from "primereact/inputtext";
-import { ChevronDown, ChevronUp, Plus, Users, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, Split, Users, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MAX_LEN_LINE, cleanIntegrantes, joinIntegrantes, newIntegranteRow } from "@/lib/pericial";
+import { splitIntegrantes } from "@/lib/case-summary";
 import { FormField } from "@/components/FormField";
 import type { IntegranteRow } from "@/types";
 
@@ -36,10 +37,22 @@ const ROW_BUTTON = cn(
 interface Props {
   rows: IntegranteRow[];
   onChange: (rows: IntegranteRow[]) => void;
+  /** Marca "tomado de la causa anterior" junto a la etiqueta (precarga visible). */
+  prefilled?: React.ReactNode;
 }
 
-export function IntegrantesField({ rows, onChange }: Props) {
+/** Oferta "Separar en N" después de pegar varios nombres en una fila vacía (formulario-causa-rediseno §6.13). */
+interface SplitOffer {
+  rowKey: string;
+  parts: string[];
+  /** Valor que quedó en la fila después del pegado (el navegador puede quitar saltos de línea); null hasta el primer cambio. */
+  pasted: string | null;
+}
+
+export function IntegrantesField({ rows, onChange, prefilled }: Props) {
   const pendingFocus = useRef<string | null>(null);
+  const [offer, setOffer] = useState<SplitOffer | null>(null);
+  const [addedNote, setAddedNote] = useState<{ rowKey: string; added: number } | null>(null);
 
   // Después del commit: el control que tiene que recibir el foco ya existe.
   useLayoutEffect(() => {
@@ -52,7 +65,33 @@ export function IntegrantesField({ rows, onChange }: Props) {
   const preview = joinIntegrantes(cleanIntegrantes(rows.map(r => r.value)));
 
   function setValue(key: string, value: string) {
+    if (offer?.rowKey === key && offer.pasted === null) setOffer({ ...offer, pasted: value });
     onChange(rows.map(r => (r.key === key ? { ...r, value } : r)));
+  }
+
+  // La oferta vale mientras la fila conserve exactamente lo pegado (editarla la descarta).
+  const activeOffer = offer && offer.pasted !== null && rows.find(r => r.key === offer.rowKey)?.value === offer.pasted ? offer : null;
+
+  function onPaste(row: IntegranteRow, e: React.ClipboardEvent<HTMLInputElement>) {
+    if (row.value !== "") return;
+    const text = e.clipboardData.getData("text");
+    const parts = splitIntegrantes(text);
+    // El pegado ocurre normal (queda en una fila, como siempre); solo se ofrece separar.
+    if (parts.length >= 2) setOffer({ rowKey: row.key, parts, pasted: null });
+    else setOffer(null);
+    setAddedNote(null);
+  }
+
+  function acceptSplit(o: SplitOffer) {
+    const index = rows.findIndex(r => r.key === o.rowKey);
+    if (index < 0) return;
+    const room = MAX_INTEGRANTES - rows.length + 1;
+    const parts = o.parts.slice(0, room);
+    const created = parts.map((v, i) => (i === 0 ? { ...rows[index], value: v } : newIntegranteRow(v)));
+    pendingFocus.current = rowInputId(created[created.length - 1].key);
+    onChange([...rows.slice(0, index), ...created, ...rows.slice(index + 1)]);
+    setOffer(null);
+    setAddedNote(parts.length < o.parts.length ? { rowKey: created[created.length - 1].key, added: parts.length } : null);
   }
 
   function add() {
@@ -82,12 +121,13 @@ export function IntegrantesField({ rows, onChange }: Props) {
   }
 
   return (
-    <div className="sm:col-span-2">
+    <div className="col-span-full">
       <FormField
         id={rows.length ? rowInputId(rows[0].key) : INTEGRANTES_ADD_ID}
         icon={Users}
         label="Integrantes"
-        sublabel="· opcional"
+        optional
+        labelBadge={prefilled}
       >
         <div className="flex flex-col gap-2">
           {rows.length > 0 && (
@@ -96,7 +136,8 @@ export function IntegrantesField({ rows, onChange }: Props) {
                 const n = i + 1;
                 const last = i === rows.length - 1;
                 return (
-                  <li key={row.key} className="flex items-center gap-0.5 sm:gap-1">
+                  <li key={row.key} className="flex flex-col gap-1.5">
+                    <div className="flex items-center gap-0.5 sm:gap-1">
                     <span aria-hidden="true" className="hidden w-6 shrink-0 text-right text-xs tabular-nums text-fx-text-3 sm:inline">
                       {n}.
                     </span>
@@ -105,6 +146,7 @@ export function IntegrantesField({ rows, onChange }: Props) {
                       name="integrantes"
                       value={row.value}
                       onChange={e => setValue(row.key, e.target.value)}
+                      onPaste={e => onPaste(row, e)}
                       onKeyDown={e => {
                         // Enter en la última fila agrega otra (si esta no está vacía).
                         if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
@@ -149,6 +191,35 @@ export function IntegrantesField({ rows, onChange }: Props) {
                     >
                       <X className="h-4 w-4" aria-hidden="true" />
                     </button>
+                    </div>
+                    {activeOffer?.rowKey === row.key && (
+                      <div className="flex flex-wrap items-center gap-1 sm:pl-7 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]">
+                        <Button
+                          type="button"
+                          size="small"
+                          outlined
+                          severity="secondary"
+                          icon={<Split className="h-3.5 w-3.5" aria-hidden="true" />}
+                          label={`Separar en ${activeOffer.parts.length} integrantes`}
+                          onClick={() => acceptSplit(activeOffer)}
+                          className="[@media(pointer:coarse)]:min-h-11"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setOffer(null)}
+                          aria-label="Descartar"
+                          title="Descartar"
+                          className={ROW_BUTTON}
+                        >
+                          <X className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      </div>
+                    )}
+                    {addedNote?.rowKey === row.key && (
+                      <p className="m-0 text-xs text-fx-text-2 sm:pl-7">
+                        Se agregaron {addedNote.added} (máximo {MAX_INTEGRANTES}).
+                      </p>
+                    )}
                   </li>
                 );
               })}

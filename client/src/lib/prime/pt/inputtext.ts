@@ -20,10 +20,12 @@ export function inputRootClasses({ props, context }: InputRootParams): string {
     context?.disabled
       ? "bg-fx-surface-1 text-fx-text-disabled border-fx-border cursor-not-allowed placeholder:text-fx-text-disabled"
       : cn(
-          "bg-fx-surface-2 text-fx-text",
+          // Fondo y borde de control (--fx-control-*): más livianos que surface-2 +
+          // border-strong, con el borde todavía ≥ 3:1 (formulario-causa-rediseno, reintento 1).
+          "bg-fx-control-bg text-fx-text",
           props.invalid
             ? "border-fx-danger"
-            : "border-fx-border-strong hover:border-fx-text-3 focus-visible:border-fx-accent aria-[invalid=true]:border-fx-danger",
+            : "border-fx-control-border hover:border-fx-border-strong focus-visible:border-fx-accent aria-[invalid=true]:border-fx-danger",
         ),
     {
       "px-2.5 py-1.5 text-xs": props.size === "small",
@@ -33,7 +35,7 @@ export function inputRootClasses({ props, context }: InputRootParams): string {
 }
 
 /**
- * InputText. Borde `--fx-border-strong` (límite de control, ≥ 3:1), foco
+ * InputText. Borde `--fx-control-border` (límite de control, ≥ 3:1), foco
  * estándar + borde de acento, `invalid` (prop o aria-invalid) en peligro y
  * deshabilitado sobre superficie 1.
  *

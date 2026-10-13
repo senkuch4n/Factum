@@ -39,7 +39,7 @@ export function ExpertProfileFields({
 }) {
   const fid = (k: keyof ProfileFormData) => `${idPrefix}${profileFieldId(k)}`;
   return (
-    <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+    <div className="grid grid-cols-1 items-start gap-x-4 gap-y-6 sm:grid-cols-2">
       {PROFILE_FIELDS.map(({ key, label, icon, placeholder, maxLength }) => {
         const id = fid(key);
         const error = errors[profileErrorKey(key)];
@@ -95,19 +95,23 @@ export function ExpertProfileCard({
   const summary = [form.nombre.trim(), form.matricula.trim() && `M.P. ${form.matricula.trim()}`]
     .filter(Boolean).join(" · ");
 
+  // Fila plana (sin tarjeta propia): el formulario es una sola superficie y las
+  // secciones se separan con divisores (formulario-causa-rediseno, reintento 1).
   return (
-    <div className="rounded-fx-lg border border-fx-border bg-fx-surface-2">
-      <div className="flex items-center gap-3 px-3.5 py-2.5">
-        <UserRound className="h-4 w-4 shrink-0 text-fx-text-2" aria-hidden="true" />
+    <div className="pb-5">
+      <div className="flex items-center gap-3">
+        <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-fx-surface-2 text-fx-text-2">
+          <UserRound className="h-4 w-4" />
+        </span>
         <div className="min-w-0 flex-1">
-          <h3 className="m-0 text-fx-label uppercase text-fx-text-2">Tus datos de perito</h3>
+          <h3 className="m-0 text-xs font-normal text-fx-text-3">Tus datos de perito</h3>
           {!expanded && (
-            <p className="m-0 truncate text-fx-body-sm text-fx-text">
+            <p className="m-0 truncate text-fx-body-sm font-medium text-fx-text">
               {loading ? "Cargando…" : summary || "Sin completar"}
             </p>
           )}
           {expanded && profile && !profile.is_complete && (
-            <p className="m-0 text-xs text-fx-text-3">
+            <p className="m-0 text-fx-body-sm text-fx-text-2">
               Se guardan en tu perfil y se copian a cada caso nuevo.
             </p>
           )}
@@ -131,7 +135,7 @@ export function ExpertProfileCard({
       {expanded && (
         <div
           id="expert-profile-fields"
-          className="border-t border-fx-border px-3.5 pb-3.5 pt-3 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]"
+          className="pt-5 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]"
         >
           <ExpertProfileFields form={form} errors={errors} onChange={onChange} onClearError={onClearError} />
         </div>

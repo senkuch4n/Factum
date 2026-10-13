@@ -28,12 +28,12 @@ export const dropdown: DropdownPT = {
       props.disabled
         ? "bg-fx-surface-1 border-fx-border text-fx-text-disabled cursor-not-allowed"
         : cn(
-            "bg-fx-surface-2 text-fx-text",
+            "bg-fx-control-bg text-fx-text",
             props.invalid
               ? "border-fx-danger"
               : state.focused || state.overlayVisible
                 ? "border-fx-accent"
-                : "border-fx-border-strong hover:border-fx-text-3",
+                : "border-fx-control-border hover:border-fx-border-strong",
           ),
     ),
   }),

@@ -15,7 +15,7 @@ import type { AdminAction, AdminUserEvent } from "@/types";
 
 const PAGE_SIZE = 20;
 
-const ACTION_ICONS: Record<AdminAction, React.ElementType> = {
+const ACTION_ICONS: Record<AdminAction, React.ElementType<{ className?: string }>> = {
   create: UserPlus,
   update: Pencil,
   suspend: Ban,
