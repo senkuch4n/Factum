@@ -23,6 +23,7 @@ import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { ReportStep } from "@/components/ReportStep";
 import { useAuth } from "@/hooks/useAuth";
 import { useAgentConnection } from "@/hooks/useAgentConnection";
+import { useDeviceConnection } from "@/hooks/useDeviceConnection";
 import { useAgentIosStatus } from "@/hooks/useAgentIosStatus";
 import { useFileManager, storageOf } from "@/hooks/useFileManager";
 import { useRecording } from "@/hooks/useRecording";
@@ -291,6 +292,7 @@ export default function Dashboard() {
   // Al conectar o reconectar el WS, se recupera el estado de las variantes en curso (Duda 9 A).
   const handleAgentConnected = useCallback(() => { void refreshVariantStatus(); }, [refreshVariantStatus]);
   const { agentOnline, devices, loadingDev, refreshDevices } = useAgentConnection(handleWsEvent, handleAgentConnected);
+  const deviceConnection = useDeviceConnection(agentOnline, devices, loadingDev, selDevice?.serial ?? null);
   // ios-herramientas-windows §9.4: servicio de Apple y AirPlay según `/health.ios`.
   const { appleService, airplayAvailable, airplayReason } = useAgentIosStatus(agentOnline);
   const airplayUnavailableReason = airplayAvailable ? null : airplayReason ?? "uxplay_not_found";
@@ -954,6 +956,7 @@ export default function Dashboard() {
                           {step === 2 && selDevice && (
                             <CaseFormStep
                               device={selDevice}
+                              connection={deviceConnection}
                               form={caseForm}
                               errors={caseErrors}
                               loading={!!loading.case}

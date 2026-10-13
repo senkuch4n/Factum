@@ -10,16 +10,17 @@ import {
   ChevronRight, ArrowLeft,
   Hash, User, FileText, Landmark, Building2, Scale, Calendar as CalendarIcon,
   MapPin, UserCheck, Briefcase, BadgeCheck, Smartphone, Phone,
-  ArrowRight, CheckCircle2, ScanLine, Usb,
+  ArrowRight, CheckCircle2, ScanLine, Usb, Unplug, ServerOff, ChevronDown, RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { agent, type Device } from "@/lib/agent";
+import { agent, agentFileURL, type Device } from "@/lib/agent";
 import {
   CASE_FORM_FOCUS_ORDER, CASE_REQUIRED_KEYS, PROFILE_REQUIRED_KEYS,
   MAX_LEN_LINE, MAX_LEN_LONG, caseFieldId, errorKeyToFieldId, isImeiMissing,
 } from "@/lib/pericial";
 import { CATALOG_LABELS } from "@/lib/catalogs";
 import { useCatalogs } from "@/hooks/useCatalogs";
+import type { DeviceConnection } from "@/hooks/useDeviceConnection";
 import type { CaseFormData, CatalogId, ExpertProfile, IntegranteRow, ProfileFormData } from "@/types";
 import { PhoneFrame } from "./PhoneFrame";
 import { SpecRow } from "./SpecRow";
@@ -54,8 +55,9 @@ function localDateToIso(d: Date): string {
  * `pt.input.root` (el InputText interno). Es un objeto, no una función, así se
  * suma al pt global de `inputtext` del hijo; `pr-10` deja lugar al botón.
  * `root` ocupa todo el ancho de la columna (el global es `sm:w-auto`).
+ * `onKeyDown` va al `<input>`: lo usa el guard de Enter con el panel abierto.
  */
-function calendarPt(aria: { describedBy?: string; invalid: boolean }): CalendarPassThroughOptions {
+function calendarPt(aria: { describedBy?: string; invalid: boolean }, onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void): CalendarPassThroughOptions {
   return {
     root: { className: "w-full sm:w-full" },
     input: {
@@ -64,10 +66,40 @@ function calendarPt(aria: { describedBy?: string; invalid: boolean }): CalendarP
         "aria-required": true,
         "aria-invalid": aria.invalid || undefined,
         "aria-describedby": aria.describedBy,
+        onKeyDown,
       },
     },
   } as unknown as CalendarPassThroughOptions; // `input` anidado (InputText hijo): los tipos lo declaran plano
 }
+
+/* ── Estado de conexión del equipo (indicador + aviso) ─────── */
+const CONNECTION_UI: Record<DeviceConnection, {
+  icon: React.ElementType;
+  label: string;
+  tone: string;
+  srExtra?: string;
+  bannerTitle?: string;
+  bannerBody?: string;
+  disabledReason: string | null;
+}> = {
+  connected: {
+    icon: Usb, label: "USB conectado", tone: "text-fx-success", disabledReason: null,
+  },
+  device_offline: {
+    icon: Unplug, label: "Desconectado", tone: "text-fx-danger",
+    srExtra: ". Reconectá el cable USB; podés seguir completando el formulario.",
+    bannerTitle: "Equipo desconectado",
+    bannerBody: "Reconectá el cable USB. La captura se actualiza sola al reconectar. Podés seguir completando y guardar el caso.",
+    disabledReason: "Conectá el equipo para capturar.",
+  },
+  agent_offline: {
+    icon: ServerOff, label: "Agente sin conexión", tone: "text-fx-warning",
+    srExtra: ". Abrí Tatana en esta PC; podés seguir completando el formulario.",
+    bannerTitle: "Tatana no responde",
+    bannerBody: "Abrí Tatana en esta PC. Podés seguir completando y guardar el caso.",
+    disabledReason: "Abrí Tatana para capturar.",
+  },
+};
 
 /* ── Types ─────────────────────────────────────────────────── */
 type SectionId = "perfil" | "actuacion" | "partes" | "equipo";
@@ -148,6 +180,8 @@ function sectionOfFieldId(id: string): SectionId {
 
 interface Props {
   device: Device;
+  /** Estado real del equipo según Tatana (`useDeviceConnection` en la página). */
+  connection: DeviceConnection;
   form: CaseFormData;
   errors: Record<string, string>;
   loading: boolean;
@@ -168,7 +202,7 @@ interface Props {
   onClearError: (key: string) => void;
   onBack: () => void;
   onCancel: () => void;
-  onSubmit: () => void;
+  onSubmit: () => void | Promise<void>;
 }
 
 /* ── Sección plegable ── */
@@ -203,13 +237,25 @@ function FormSection({
    MAIN COMPONENT
 ════════════════════════════════════════════════════════════════ */
 export function CaseFormStep({
-  device, form, errors, loading, mode, isLegacy,
+  device, connection, form, errors, loading, mode, isLegacy,
   profile, profileLoading, profileForm, focusErrorsTick, focusFieldId, onFocusConsumed,
   onChange, onProfileChange, onClearError, onBack, onCancel, onSubmit,
 }: Props) {
   const [screenshotSrc, setScreenshotSrc] = useState<string | null>(null);
   const [loadingShot,   setLoadingShot]   = useState(false);
-  const hasTakenFirst = useRef(false);
+  const [shotError,     setShotError]     = useState<string | null>(null);
+  const [shotFailedAfterImage, setShotFailedAfterImage] = useState(false);
+  const [deviceDetailsOpen, setDeviceDetailsOpen] = useState(false);
+  const connectionRef = useRef(connection);
+  connectionRef.current = connection;
+  const screenshotSrcRef = useRef(screenshotSrc);
+  screenshotSrcRef.current = screenshotSrc;
+  const shotInFlight = useRef(false);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const isIOS = device.platform === "ios";
   const osLabel = isIOS
@@ -221,8 +267,6 @@ export function CaseFormStep({
   // con el centinela INGRESAR_MANUALMENTE: si no, el form manda IMEI vacío y el backend
   // rechaza con 400 sin que el perito tenga dónde cargarlo.
   const imeiManual  = isImeiMissing(device.imei);
-
-  const agentBase = process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:8765";
 
   // ── Secciones plegables ──
   const profileIncomplete = !profileLoading && !profile?.is_complete;
@@ -255,21 +299,51 @@ export function CaseFormStep({
   const requiredTotal  = requiredValues.length;
   const requiredFilled = requiredValues.filter(v => v.trim().length > 0).length;
 
+  // ── Captura de pantalla ──
+  // Solo con el equipo conectado y sin otra captura en vuelo. El motivo del
+  // último fallo queda visible mientras dice "Capturando…" (no se limpia al
+  // empezar); con un fallo habiendo imagen previa, la imagen se conserva
+  // atenuada como "Captura anterior".
   async function takeShot() {
+    if (connectionRef.current !== "connected" || shotInFlight.current) return;
+    shotInFlight.current = true;
     setLoadingShot(true);
     try {
       const { filename } = await agent.takeScreenshot(device.serial, device.platform ?? "android");
-      setScreenshotSrc(`${agentBase}/files/${filename}`);
-    } catch { /* silently ignore — device may be locked */ }
-    finally { setLoadingShot(false); }
+      if (!mountedRef.current) return;
+      setScreenshotSrc(agentFileURL(filename));
+      setShotError(null);
+      setShotFailedAfterImage(false);
+    } catch (e) {
+      if (!mountedRef.current) return;
+      setShotError(e instanceof Error && e.message ? e.message : "No se pudo capturar la pantalla.");
+      setShotFailedAfterImage(screenshotSrcRef.current !== null);
+    } finally {
+      shotInFlight.current = false;
+      if (mountedRef.current) setLoadingShot(false);
+    }
   }
 
+  // Captura en los flancos de la conexión: al montar conectado, y al volver a
+  // conectarse (con 1 s de margen para que el equipo termine de enumerarse).
+  // Montar desconectado no intenta capturar. Nunca hay loop: solo flancos.
+  const prevConnection = useRef<DeviceConnection | null>(null);
   useEffect(() => {
-    if (hasTakenFirst.current) return;
-    hasTakenFirst.current = true;
-    takeShot();
+    const prev = prevConnection.current;
+    prevConnection.current = connection;
+    if (connection !== "connected") return;
+    if (prev === null) { void takeShot(); return; }
+    if (prev !== "connected") {
+      const t = window.setTimeout(() => { void takeShot(); }, 1000);
+      return () => window.clearTimeout(t);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [connection]);
+
+  const connUi = CONNECTION_UI[connection];
+  const ConnIcon = connUi.icon;
+  const stale = !!screenshotSrc && (shotFailedAfterImage || connection !== "connected");
+  const showCaptured = !!screenshotSrc && !loadingShot && !stale && !shotError;
 
   // Al fallar la validación (submit con errores) enfocamos el primer campo con error,
   // en el orden visual; si está en una sección plegada, la despliega.
@@ -308,6 +382,44 @@ export function CaseFormStep({
     setManageCatalog(catalog);
     setManage({ target });
   }, []);
+
+  // Reintento de catálogos: si el foco estaba en "Reintentar" y la carga sale
+  // bien, el botón se desmonta con el banner → el foco pasa al primer campo
+  // con sugerencias ("Destinatario"). Si falla, el botón sigue y el foco no se mueve.
+  const retryFocusRef = useRef(false);
+  function retryCatalogs() {
+    retryFocusRef.current = document.activeElement?.id === "case-catalogs-retry";
+    void cat.reload();
+  }
+  const prevCatError = useRef(cat.error);
+  useEffect(() => {
+    const was = prevCatError.current;
+    prevCatError.current = cat.error;
+    if (was && !cat.error && retryFocusRef.current) {
+      retryFocusRef.current = false;
+      focusField("case-nombre_tribunal", "actuacion");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cat.error]);
+
+  // ── Envío: `<form>` real (Enter envía) sin envíos dobles ──
+  const submitInFlight = useRef(false);
+  function handleFormSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (loading || submitInFlight.current) return;
+    submitInFlight.current = true;
+    Promise.resolve(onSubmit()).finally(() => { submitInFlight.current = false; });
+  }
+
+  // Enter en "Fecha de intervención" con el selector abierto: Prime no lo
+  // maneja en el input y enviaría el form → cierra el selector y no envía.
+  const calendarRef = useRef<Calendar>(null);
+  function onCalendarKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && !e.nativeEvent.isComposing && e.currentTarget.getAttribute("aria-expanded") === "true") {
+      e.preventDefault();
+      calendarRef.current?.hide();
+    }
+  }
 
   function renderField(f: FieldDef) {
     const id = caseFieldId(f.key);
@@ -350,6 +462,7 @@ export function CaseFormStep({
             />
           ) : f.type === "date" ? (
             <Calendar
+              ref={calendarRef}
               inputId={id}
               name={f.key}
               value={isoToLocalDate(value)}
@@ -359,7 +472,7 @@ export function CaseFormStep({
               icon={<CalendarIcon className="h-4 w-4" aria-hidden="true" />}
               placeholder="dd/mm/aaaa"
               invalid={!!error}
-              pt={calendarPt({ describedBy: ariaDescribedBy, invalid: !!error })}
+              pt={calendarPt({ describedBy: ariaDescribedBy, invalid: !!error }, onCalendarKeyDown)}
             />
           ) : (
             <div className="relative">
@@ -399,7 +512,7 @@ export function CaseFormStep({
 
         {/* ── Izquierda: identidad del equipo (única fuente de verdad de sus datos). ── */}
         <div className={cn("flex flex-col overflow-hidden rounded-fx-lg border border-fx-border bg-fx-surface-1", FADE_IN)}>
-          <div className="flex items-center gap-2.5 border-b border-fx-border px-4 py-3">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-fx-border px-4 py-3">
             {/* contenido de imagen */}
             <img
               src={isIOS ? "/apple.svg" : "/android.svg"}
@@ -409,46 +522,89 @@ export function CaseFormStep({
               className="h-3.5 w-3.5 shrink-0 dark:invert"
             />
             <Tag value={osLabel} />
-            <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-fx-success">
-              <Usb className="h-3.5 w-3.5" aria-hidden="true" /> USB conectado
+            {/* Única región que anuncia el cambio de conexión (siempre montada). */}
+            <span
+              role="status"
+              aria-atomic="true"
+              className={cn("ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs font-medium", connUi.tone)}
+            >
+              <ConnIcon className="h-3.5 w-3.5" aria-hidden="true" /> {connUi.label}
+              {connUi.srExtra && <span className="sr-only">{connUi.srExtra}</span>}
             </span>
           </div>
 
-          <div className="flex flex-1 flex-col items-center gap-4 p-5">
-            <div role="status" className="flex h-4 w-full items-center justify-end">
-              {screenshotSrc && !loadingShot && (
-                <span className={cn("inline-flex items-center gap-1 text-xs text-fx-success", FADE_IN)}>
-                  <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-                  Pantalla capturada
-                </span>
-              )}
-            </div>
+          {connUi.bannerTitle && (
+            <FxBanner tone="warn" role="note" icon={<ConnIcon className="h-4 w-4" aria-hidden="true" />} className="mx-4 mt-3 w-auto">
+              <p className="m-0 font-semibold">{connUi.bannerTitle}</p>
+              <p className="m-0 mt-0.5 text-xs font-normal text-fx-text-2">{connUi.bannerBody}</p>
+            </FxBanner>
+          )}
 
-            <PhoneFrame
-              src={screenshotSrc}
-              platform={device.platform ?? "android"}
-              loading={loadingShot}
-              onRefresh={takeShot}
-            />
-
-            <p className="m-0 w-full text-center text-fx-body-sm font-semibold text-fx-text">
+          {/* < lg: fila compacta con el modelo y el disclosure del detalle. */}
+          <div className="flex items-center gap-2 border-b border-fx-border px-4 py-2 lg:hidden">
+            <p className="m-0 min-w-0 flex-1 truncate text-fx-body-sm font-semibold text-fx-text" title={`${device.manufacturer} ${device.model}`}>
               {device.manufacturer} {device.model}
             </p>
+            <Button
+              type="button"
+              text
+              severity="secondary"
+              size="small"
+              label={deviceDetailsOpen ? "Ocultar equipo" : "Ver equipo"}
+              icon={
+                <ChevronDown
+                  className={cn("h-4 w-4 transition-transform duration-fx-fast ease-fx motion-reduce:transition-none", deviceDetailsOpen && "rotate-180")}
+                  aria-hidden="true"
+                />
+              }
+              iconPos="right"
+              aria-expanded={deviceDetailsOpen}
+              aria-controls="case-device-details"
+              onClick={() => setDeviceDetailsOpen(o => !o)}
+              className="shrink-0 min-h-11"
+            />
           </div>
 
-          <div className="border-t border-fx-border bg-fx-surface-2 px-5 pb-4">
-            <h3 className="m-0 py-3 text-fx-label uppercase text-fx-text-2">Especificaciones</h3>
-            <dl className="m-0">
-              <SpecRow icon={Hash}     label="IMEI"   value={!isImeiMissing(imeiDisplay) ? imeiDisplay : "—"} mono accent={!imeiManual} />
-              <SpecRow icon={FileText} label="Serial" value={device.serial.slice(0, 24)} mono />
-              {device.name && device.name !== device.model && (
-                <SpecRow icon={User} label="Nombre" value={device.name} />
-              )}
-            </dl>
+          <div id="case-device-details" className={cn("flex-1 flex-col", deviceDetailsOpen ? "flex" : "hidden lg:flex")}>
+            <div className="flex flex-1 flex-col items-center gap-4 p-5">
+              <div role="status" className="flex h-4 w-full items-center justify-end">
+                {showCaptured && (
+                  <span className={cn("inline-flex items-center gap-1 text-xs text-fx-success", FADE_IN)}>
+                    <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    Pantalla capturada
+                  </span>
+                )}
+              </div>
+
+              <PhoneFrame
+                src={screenshotSrc}
+                platform={device.platform ?? "android"}
+                loading={loadingShot}
+                onRefresh={() => { void takeShot(); }}
+                error={shotError}
+                stale={stale}
+                disabledReason={connUi.disabledReason}
+              />
+
+              <p className="m-0 hidden w-full text-center text-fx-body-sm font-semibold text-fx-text lg:block">
+                {device.manufacturer} {device.model}
+              </p>
+            </div>
+
+            <div className="border-t border-fx-border bg-fx-surface-2 px-5 pb-4">
+              <h3 className="m-0 py-3 text-fx-label uppercase text-fx-text-2">Especificaciones</h3>
+              <dl className="m-0">
+                <SpecRow icon={Hash}     label="IMEI"   value={!isImeiMissing(imeiDisplay) ? imeiDisplay : "—"} mono accent={!imeiManual} />
+                <SpecRow icon={FileText} label="Serial" value={device.serial.slice(0, 24)} mono />
+                {device.name && device.name !== device.model && (
+                  <SpecRow icon={User} label="Nombre" value={device.name} />
+                )}
+              </dl>
+            </div>
           </div>
 
           {imeiManual && (
-            <FxBanner tone="warn" role="status" className="mx-4 mb-4 w-auto">
+            <FxBanner tone="warn" role="status" className="mx-4 mb-4 mt-3 w-auto lg:mt-0">
               <p className="m-0 font-semibold">IMEI no detectado automáticamente</p>
               <p className="m-0 mt-0.5 text-xs font-normal text-fx-text-2">
                 Completá el campo IMEI. Marcá <kbd className="font-mono font-bold text-fx-text">*#06#</kbd> en el celular para verlo.
@@ -458,7 +614,12 @@ export function CaseFormStep({
         </div>
 
         {/* ── Derecha: formulario ── */}
-        <div className={cn("space-y-4 rounded-fx-lg border border-fx-border bg-fx-surface-1 p-5", FADE_IN)}>
+        <form
+          noValidate
+          onSubmit={handleFormSubmit}
+          aria-label="Datos de la causa"
+          className={cn("space-y-4 rounded-fx-lg border border-fx-border bg-fx-surface-1 p-5", FADE_IN)}
+        >
           {isLegacy && (
             <FxBanner tone="warn" role="status">
               Este caso se creó antes del informe pericial. Completá los datos de la causa para continuar.
@@ -484,7 +645,23 @@ export function CaseFormStep({
           />
 
           {cat.error && (
-            <p role="status" className="m-0 text-xs text-fx-text-3">No se pudieron cargar tus sugerencias</p>
+            <FxBanner tone="warn">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <p className="m-0 min-w-0 flex-1">No se pudieron cargar tus sugerencias. Podés escribir igual.</p>
+                <Button
+                  type="button"
+                  id="case-catalogs-retry"
+                  size="small"
+                  outlined
+                  severity="secondary"
+                  label={cat.loading ? "Reintentando…" : "Reintentar"}
+                  icon={<RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />}
+                  loading={cat.loading}
+                  onClick={retryCatalogs}
+                  className="shrink-0 [@media(pointer:coarse)]:min-h-11"
+                />
+              </div>
+            </FxBanner>
           )}
 
           <ExpertProfileCard
@@ -572,16 +749,15 @@ export function CaseFormStep({
               />
             )}
             <Button
-              type="button"
+              type="submit"
               label={loading ? "Guardando…" : mode === "edit" ? "Guardar y continuar" : "Crear caso y continuar"}
               icon={<ArrowRight className="h-4 w-4" aria-hidden="true" />}
               iconPos="right"
               loading={loading}
-              onClick={onSubmit}
               className="w-full sm:flex-1 min-h-11"
             />
           </StepActions>
-        </div>
+        </form>
       </div>
 
       <CatalogManageDialog

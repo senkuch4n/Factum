@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { agent } from "@/lib/agent";
+import { agent, AGENT_URL } from "@/lib/agent";
 import type { Device, AgentEvent } from "@/types";
 
 /**
@@ -35,10 +35,7 @@ export function useAgentConnection(onEvent: (e: AgentEvent) => void, onConnected
       if (destroyed) return;
       let online = false;
       try {
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:8765"}/health`,
-          { signal: AbortSignal.timeout(5000) },
-        );
+        const res = await fetch(`${AGENT_URL}/health`, { signal: AbortSignal.timeout(5000) });
         online = res.ok;
       } catch {
         online = false;
