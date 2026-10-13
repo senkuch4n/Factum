@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils";
 import { formatDate, formatTime } from "@/lib/format";
 import { FX_BUTTON_SECONDARY } from "@/lib/prime/pt/shared";
 import {
-  derivedMilestones, derivedTitle, eventFilename, eventIcon, eventTitle, eventTone,
-  type DerivedMilestone,
+  derivedMilestones, derivedTitle, eventFilename, eventHashChange, eventIcon, eventTitle, eventTone,
+  type DerivedMilestone, type EventTone,
 } from "@/lib/case-events";
 
 type LoadState =
@@ -135,7 +135,7 @@ function TimelineItem({
   children: React.ReactNode;
   first: boolean;
   last: boolean;
-  tone: "danger" | "neutral";
+  tone: EventTone;
   type: string;
 }) {
   const Icon = eventIcon(type);
@@ -150,7 +150,9 @@ function TimelineItem({
             "flex h-7 w-7 items-center justify-center rounded-full border",
             tone === "danger"
               ? "border-fx-danger bg-fx-danger-soft text-fx-danger"
-              : "border-fx-border bg-fx-surface-2 text-fx-text-3",
+              : tone === "warning"
+                ? "border-fx-warning bg-fx-warning-soft text-fx-warning"
+                : "border-fx-border bg-fx-surface-2 text-fx-text-3",
           )}
         >
           <Icon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -164,15 +166,24 @@ function TimelineItem({
 function RealItemBody({ ev }: { ev: CaseEvent }) {
   const tone = eventTone(ev.type);
   const filename = eventFilename(ev);
-  const reason = ev.type === "report_failed" ? ev.detail?.reason : undefined;
+  const reason = ev.type === "report_failed" || ev.type === "capture_failed" ? ev.detail?.reason : undefined;
+  const hashChange = eventHashChange(ev);
 
   return (
     <>
-      <p className={cn("m-0 text-fx-body-sm font-medium", tone === "danger" ? "text-fx-danger" : "text-fx-text")}>
+      <p
+        className={cn(
+          "m-0 text-fx-body-sm font-medium",
+          tone === "danger" ? "text-fx-danger" : tone === "warning" ? "text-fx-warning" : "text-fx-text",
+        )}
+      >
         {eventTitle(ev)}
       </p>
       {filename && (
         <p translate="no" className="m-0 mt-0.5 font-mono text-xs text-fx-text-2 break-all">{filename}</p>
+      )}
+      {hashChange && (
+        <p translate="no" className="m-0 mt-0.5 font-mono text-xs text-fx-text-3 break-all">{hashChange}</p>
       )}
       {reason && <p className="m-0 mt-0.5 text-xs text-fx-text-2 break-words">{reason}</p>}
       <Meta

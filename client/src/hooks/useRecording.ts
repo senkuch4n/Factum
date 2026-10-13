@@ -14,6 +14,19 @@ export function sameId(a: string | null | undefined, b: string | null | undefine
   return !!a && !!b && a.toLowerCase() === b.toLowerCase();
 }
 
+/**
+ * Resultado de un pedido de grabación de esta pestaña (wizard-concurrencia-pestanas
+ * DT12): el llamador reporta la auditoría recién con la confirmación de Tatana.
+ * `busy` = ya había una operación de grabación en vuelo (doble clic): no se llamó a Tatana.
+ */
+export type RecordOutcome =
+  | { kind: "started" }
+  | { kind: "stopped"; filename: string | null }
+  | { kind: "start_failed"; reason: string }
+  | { kind: "stop_failed"; reason: string }
+  | { kind: "picker" }
+  | { kind: "busy" };
+
 export const FOREIGN_STOPPED_MESSAGE = "La grabación se detuvo y quedó en Tatana. No se agregó a este caso.";
 
 interface RecordingOpts {
@@ -69,6 +82,11 @@ export function useRecording(
 
   /** Pedidos en vuelo de esta pestaña (para no pisar el estado optimista). */
   const inFlightRef = useRef({ start: false, stop: false });
+  /**
+   * Guard sincrónico de doble clic (DT8): uno solo para iniciar, detener y elegir
+   * el modo de iOS. Se pone antes del primer `await`.
+   */
+  const opInFlightRef = useRef(false);
   /** Filenames detenidos desde el aviso de "otro caso": nunca se importan acá. */
   const foreignStopsRef = useRef<Set<string>>(new Set());
   /** Se incrementa al terminar un start/stop: descarta un `/agent/state` leído antes. */
@@ -134,7 +152,9 @@ export function useRecording(
     }
   }, [syncFromAgentState]);
 
-  async function startRecording(device: Device, onError: (msg: string) => void, iosMode?: IosRecordMode) {
+  async function startRecording(
+    device: Device, onError: (msg: string) => void, iosMode?: IosRecordMode,
+  ): Promise<RecordOutcome> {
     const platform = device.platform ?? "android";
     inFlightRef.current.start = true;
     setLoad("startRecord", true);
@@ -149,11 +169,14 @@ export function useRecording(
       setRemotePhase(null);
       setRecovered(false);
       setForeignRecording(null);
+      return { kind: "started" };
     } catch (e) {
-      onError(recordErrorText(e, "Error al iniciar grabación"));
+      const reason = recordErrorText(e, "Error al iniciar grabación");
+      onError(reason);
       if (platform === "ios") setIosRecordMode(null);
       // Otra grabación en curso: el aviso de grabación ajena sale de `/agent/state`.
       if (e instanceof AgentError && e.code === "already_recording") void refresh();
+      return { kind: "start_failed", reason };
     } finally {
       inFlightRef.current.start = false;
       genRef.current++;
@@ -161,28 +184,32 @@ export function useRecording(
     }
   }
 
-  async function handleToggleRecord(device: Device, onError: (msg: string) => void) {
+  async function handleToggleRecord(device: Device, onError: (msg: string) => void): Promise<RecordOutcome> {
+    if (opInFlightRef.current) return { kind: "busy" };
     const platform = device.platform ?? "android";
     if (isRecording) {
+      opInFlightRef.current = true;
       inFlightRef.current.stop = true;
       setLoad("stopRecord", true);
       try {
-        const stopped = await agent.stopRecording(device.serial, platform);
+        const stopped = await agent.stopRecording(device.serial, platform, { caseId: optsRef.current.getCaseId() });
         if (stopped?.filename) {
           addFile(stopped.filename);
           if (stopped.validation) optsRef.current.onValidation(stopped.filename, stopped.validation);
           // Sin `variants_expected` (Tatana viejo) no se marca nada (DA2).
           if (platform === "ios" && stopped.variants_expected) expectVariants(stopped.filename, stopped.variants ?? []);
         }
+        return { kind: "stopped", filename: stopped?.filename ?? null };
       } catch (e) {
         // El agente ya limpió su estado: reintentar el stop no sirve, así que
         // igual se sale del modo grabación (abajo) y se avisa el motivo real.
-        if (e instanceof AgentError && (e.code === "recording_empty" || e.code === "recording_unreadable" || e.code === "not_recording")) {
-          onError(agentErrorMessage(e, { action: "record" }));
-        } else {
-          onError(`No se pudo guardar la grabación: ${e instanceof Error ? e.message : "error desconocido"}`);
-        }
+        const reason = e instanceof AgentError && (e.code === "recording_empty" || e.code === "recording_unreadable" || e.code === "not_recording")
+          ? agentErrorMessage(e, { action: "record" })
+          : `No se pudo guardar la grabación: ${e instanceof Error ? e.message : "error desconocido"}`;
+        onError(reason);
+        return { kind: "stop_failed", reason };
       } finally {
+        opInFlightRef.current = false;
         inFlightRef.current.stop = false;
         genRef.current++;
         setLoad("stopRecord", false);
@@ -194,16 +221,30 @@ export function useRecording(
       }
     } else if (platform === "ios") {
       setIosModePicker(true);
+      return { kind: "picker" };
     } else {
-      await startRecording(device, onError);
+      opInFlightRef.current = true;
+      try {
+        return await startRecording(device, onError);
+      } finally {
+        opInFlightRef.current = false;
+      }
     }
   }
 
-  async function handleSelectIosMode(mode: IosRecordMode, device: Device, onError: (msg: string) => void) {
+  async function handleSelectIosMode(
+    mode: IosRecordMode, device: Device, onError: (msg: string) => void,
+  ): Promise<RecordOutcome> {
+    if (opInFlightRef.current) return { kind: "busy" };
+    opInFlightRef.current = true;
     setIosModePicker(false);
     setIosRecordMode(mode);
     setAirplayName(null);
-    await startRecording({ ...device, platform: "ios" }, onError, mode);
+    try {
+      return await startRecording({ ...device, platform: "ios" }, onError, mode);
+    } finally {
+      opInFlightRef.current = false;
+    }
   }
 
   /**
@@ -216,7 +257,8 @@ export function useRecording(
     if (f.filename) foreignStopsRef.current.add(f.filename);
     setLoad("stopForeign", true);
     try {
-      await agent.stopRecording(f.serial, f.platform);
+      // Sin atribución: la grabación es de otro caso y no tiene que volver a esta pestaña.
+      await agent.stopRecording(f.serial, f.platform, null);
       onInfo(FOREIGN_STOPPED_MESSAGE);
     } catch (e) {
       if (e instanceof AgentError && e.code === "not_recording") onInfo(agentErrorMessage(e, { action: "record" }));

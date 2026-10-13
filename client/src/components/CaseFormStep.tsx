@@ -15,7 +15,7 @@ import {
   ArrowRight, CheckCircle2, ScanLine, RefreshCw, History, AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { agent, agentFileURL, type Device } from "@/lib/agent";
+import { agent, agentFileURL, previewFileURL, PreviewUnsupportedError, type Device } from "@/lib/agent";
 import {
   CASE_FORM_FOCUS_ORDER, CASE_REQUIRED_KEYS, PROFILE_REQUIRED_KEYS, PREFILL_KEYS,
   MAX_LEN_LINE, MAX_LEN_LONG, caseFieldId, errorKeyToFieldId, isImeiMissing, profileErrorKey,
@@ -539,9 +539,21 @@ export function CaseFormStep({
     shotInFlight.current = true;
     setLoadingShot(true);
     try {
-      const { filename } = await agent.takeScreenshot(device.serial, device.platform ?? "android");
+      // Vista previa (wizard-concurrencia-pestanas DT5): no es evidencia y no emite
+      // eventos. Con un Tatana sin `/preview`, captura común sin atribución (la
+      // descartan las otras pestañas por no traer serial ni dueño).
+      const platform = device.platform ?? "android";
+      let src: string;
+      try {
+        const { url } = await agent.takePreview(device.serial, platform);
+        src = previewFileURL(url);
+      } catch (e) {
+        if (!(e instanceof PreviewUnsupportedError)) throw e;
+        const { filename } = await agent.takeScreenshot(device.serial, platform, null);
+        src = agentFileURL(filename);
+      }
       if (!mountedRef.current) return;
-      setScreenshotSrc(agentFileURL(filename));
+      setScreenshotSrc(src);
       setShotError(null);
       setShotFailedAfterImage(false);
     } catch (e) {

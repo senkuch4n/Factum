@@ -354,6 +354,16 @@ public sealed partial class CaseService : ICaseService
                 out var trigger, out var triggerError))
             return Result.Invalid<ReportTexts>(triggerError!);
         ReportTextFormats.TryNormalize(request.Formato, out var formato);
+        // wizard-concurrencia-pestanas DT13: presente → se guarda; ausente/null → se conserva el guardado.
+        if (!CaseValidation.IsValidReportCounts(request.OperacionesBase))
+            return Result.Invalid<ReportTexts>(CaseValidation.InvalidReportCountsMessage);
+        var operacionesBase = request.OperacionesBase is { } b
+            ? new ReportCounts
+            {
+                Capturas = b.Capturas, Grabaciones = b.Grabaciones,
+                ArchivosExtraidos = b.ArchivosExtraidos, Otros = b.Otros,
+            }
+            : cas.ReportTexts?.OperacionesBase;
 
         var texts = new ReportTexts
         {
@@ -369,6 +379,7 @@ public sealed partial class CaseService : ICaseService
             // guardan tal cual llegan.
             Formato = formato,
             UpdatedAt = DateTime.UtcNow,
+            OperacionesBase = operacionesBase,
         };
 
         // versionado-informe (D1/D2/D4): el snapshot candidato se agrega al historial SOLO si pasa el
@@ -753,15 +764,30 @@ public sealed partial class CaseService : ICaseService
     /// que conserva la primera y todas las "generate". Append atómico (AppendReportVersionAsync).
     /// Best-effort: si falla, solo loguea (no frena la generación). De-dup: nada si es idéntica a la
     /// última.
+    /// wizard-concurrencia-pestanas §8.2.4: append condicional al tamaño del historial leído. Si otro
+    /// request lo cambió en el medio (dos prepare en carrera), se relee UNA vez y se replanifica
+    /// (GenerateVersionFor ya devuelve null si ahora es duplicada); si vuelve a no matchear, log y sigue.
     /// </summary>
     private async Task AppendGenerateVersionAsync(Case cas, CancellationToken ct)
     {
         try
         {
-            var version = ReportVersioning.GenerateVersionFor(cas);
-            if (version is null) return;
-            var (push, pruned) = ReportVersioning.PlanAppend(cas.ReportTextVersions, version);
-            await _repo.AppendReportVersionAsync(cas.Id, push ?? version, pruned, ct);
+            var current = cas;
+            for (var attempt = 1; attempt <= 2; attempt++)
+            {
+                var version = ReportVersioning.GenerateVersionFor(current);
+                if (version is null) return;
+                var (push, pruned) = ReportVersioning.PlanAppend(current.ReportTextVersions, version);
+                if (await _repo.AppendReportVersionAsync(current.Id, push ?? version, pruned,
+                        current.ReportTextVersions.Count, ct))
+                    return;
+                if (attempt == 2) break;
+                var fresh = await _repo.FindByIdAsync(current.Id, ct);
+                if (fresh is null || !IsEditable(fresh)) return;
+                current = fresh;
+            }
+            _log.LogWarning("No se agregó la versión \"generate\" al caso {CaseId}: el historial cambió dos veces",
+                cas.Id);
         }
         catch (Exception ex)
         {

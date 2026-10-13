@@ -4,9 +4,38 @@
  */
 
 import type { ManifestFile } from "./api";
+import { getTabOriginId } from "./tab-origin";
 
 export const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:8765";
 export function agentFileURL(filename: string) { return `${AGENT_URL}/files/${filename}`; }
+
+/**
+ * Atribución de una captura (wizard-concurrencia-pestanas DT1/DT3): el caso que
+ * la pidió. El `origin_id` de la pestaña lo agrega siempre el cliente.
+ */
+export interface AgentAttribution {
+  caseId?: string | null;
+}
+
+/**
+ * Query `case_id`/`origin_id` (los POST sin body; CORS de Tatana no permite headers propios).
+ * `null` = pedido sin dueño (vista previa con un Tatana viejo, detener una grabación ajena).
+ */
+function attributionParams(attribution?: AgentAttribution | null): URLSearchParams {
+  const p = new URLSearchParams();
+  if (attribution === null) return p;
+  if (attribution?.caseId) p.set("case_id", attribution.caseId);
+  p.set("origin_id", getTabOriginId());
+  return p;
+}
+
+/** Body `case_id`/`origin_id` (record/start, webcam/capture). */
+function attributionBody(attribution?: AgentAttribution): { case_id?: string; origin_id: string } {
+  return {
+    ...(attribution?.caseId ? { case_id: attribution.caseId } : {}),
+    origin_id: getTabOriginId(),
+  };
+}
 
 /** Mensaje cuando `fetch` ni siquiera llega a Tatana (agente cerrado o puerto ocupado). */
 const AGENT_UNREACHABLE = "No se pudo conectar con Tatana. Revisá que esté abierto en esta PC.";
@@ -120,13 +149,36 @@ export interface AgentRecordingState {
   unclaimed_recordings: UnclaimedRecording[];
 }
 
-/** Evento WS `recording_started` (`data`). `case_id` puede venir `null`. */
+/** Evento WS `recording_started` (`data`). `case_id`/`origin_id` pueden venir `null`. */
 export interface RecordingStartedData {
   serial: string;
   platform: "android" | "ios";
   case_id?: string | null;
+  /** Pestaña que la pidió (wizard-concurrencia-pestanas); falta en un Tatana anterior. */
+  origin_id?: string | null;
   started_at?: string;
   filename?: string;
+}
+
+/**
+ * Evento WS `screenshot_taken` (`data`). `serial`/`case_id`/`origin_id` faltan
+ * en un Tatana anterior a `event_attribution_v1`.
+ */
+export interface ScreenshotTakenData {
+  filename: string;
+  url: string;
+  serial?: string;
+  case_id?: string | null;
+  origin_id?: string | null;
+}
+
+/** Evento WS `photo_taken` (`data`): webcam de Tatana, sin `serial`. */
+export interface PhotoTakenData {
+  type?: string;
+  filename: string;
+  url: string;
+  case_id?: string | null;
+  origin_id?: string | null;
 }
 
 /**
@@ -140,6 +192,8 @@ export interface RecordingStoppedData {
   platform?: "android" | "ios";
   serial?: string;
   case_id?: string | null;
+  /** Pestaña que inició la grabación (wizard-concurrencia-pestanas); falta en un Tatana anterior. */
+  origin_id?: string | null;
   /** Solo Android con Tatana `recording_state_v1`; iOS: `null`/ausente. */
   validation?: RecordingValidation | null;
   error?: string | null;
@@ -428,6 +482,22 @@ export interface PulledFile {
   error?: string;
 }
 
+/** Tatana sin `POST /devices/{serial}/preview` (anterior a `device_preview_v1`): no se reintenta el 404. */
+let previewUnsupported = false;
+
+/** El Tatana conectado no tiene el endpoint de vista previa (DT5). */
+export class PreviewUnsupportedError extends Error {
+  constructor() {
+    super("Tatana no tiene vista previa");
+    this.name = "PreviewUnsupportedError";
+  }
+}
+
+/** URL absoluta de una vista previa (`url` = `/previews/<archivo>`). */
+export function previewFileURL(url: string): string {
+  return `${AGENT_URL}${url}`;
+}
+
 /** Capabilities de `/health` de la conexión actual (ver `supportsRecordingState`). */
 let capabilitiesCache: string[] | null = null;
 
@@ -463,8 +533,19 @@ export const agent = {
     return res.json();
   },
 
-  async takeScreenshot(serial: string, platform: "android" | "ios" = "android"): Promise<{ filename: string; url: string }> {
-    const url = `${AGENT_URL}/devices/${serial}/screenshot${platform === "ios" ? "?platform=ios" : ""}`;
+  /**
+   * Captura de evidencia (paso 3). Va con `case_id`/`origin_id` para que el
+   * `screenshot_taken` solo lo tome esta pestaña o las del mismo caso.
+   */
+  async takeScreenshot(
+    serial: string,
+    platform: "android" | "ios" = "android",
+    attribution?: AgentAttribution | null,
+  ): Promise<{ filename: string; url: string }> {
+    const q = attributionParams(attribution);
+    if (platform === "ios") q.set("platform", "ios");
+    const qs = q.toString();
+    const url = `${AGENT_URL}/devices/${serial}/screenshot${qs ? `?${qs}` : ""}`;
     let res: Response;
     try {
       res = await fetch(url, { method: "POST" });
@@ -473,6 +554,36 @@ export const agent = {
     }
     // D7: el motivo real que manda Tatana (`{ error, code }`); el fallback solo si no viene.
     if (!res.ok) throw await readAgentError(res, "Error tomando screenshot");
+    return res.json();
+  },
+
+  /**
+   * Vista previa del paso 2 (wizard-concurrencia-pestanas DT5): `POST
+   * /devices/{serial}/preview`. No es evidencia: Tatana la guarda aparte y no
+   * emite ningún evento. Un Tatana sin el endpoint (404) lanza
+   * `PreviewUnsupportedError`; el llamador cae a `takeScreenshot` sin atribución.
+   */
+  async takePreview(
+    serial: string,
+    platform: "android" | "ios" = "android",
+  ): Promise<{ filename: string; url: string }> {
+    if (previewUnsupported) throw new PreviewUnsupportedError();
+    const q = platform === "ios" ? "?platform=ios" : "";
+    let res: Response;
+    try {
+      res = await fetch(`${AGENT_URL}/devices/${encodeURIComponent(serial)}/preview${q}`, { method: "POST", cache: "no-store" });
+    } catch {
+      throw new Error(AGENT_UNREACHABLE);
+    }
+    if (res.status === 404) {
+      // Un 404 con `{ error }` es del celular (no encontrado); sin cuerpo de Tatana, es la ruta que no existe.
+      const body = (await res.clone().json().catch(() => null)) as { error?: unknown } | null;
+      if (!body || typeof body.error !== "string") {
+        previewUnsupported = true;
+        throw new PreviewUnsupportedError();
+      }
+    }
+    if (!res.ok) throw await readAgentError(res, "Error tomando la vista previa");
     return res.json();
   },
 
@@ -500,10 +611,14 @@ export const agent = {
     return res.json();
   },
 
-  async stopAirplayShot(serial: string): Promise<{ files: { filename: string; url: string }[] }> {
+  async stopAirplayShot(
+    serial: string,
+    attribution?: AgentAttribution,
+  ): Promise<{ files: { filename: string; url: string }[] }> {
     let res: Response;
     try {
-      res = await fetch(`${AGENT_URL}/devices/${serial}/screenshot/airplay/stop`, { method: "POST" });
+      const q = attributionParams(attribution).toString();
+      res = await fetch(`${AGENT_URL}/devices/${serial}/screenshot/airplay/stop?${q}`, { method: "POST" });
     } catch {
       throw new Error(AGENT_UNREACHABLE);
     }
@@ -542,7 +657,8 @@ export const agent = {
     return agentJSON(`/devices/${encodeURIComponent(serial)}/record/start`, jsonInit("POST", {
       android_version: androidVersion, platform, ios_mode: iosMode,
       android_with_mic: androidWithMic,
-      ...(caseId ? { case_id: caseId } : {}),
+      // `case_id` (grabacion-android-robusta) + `origin_id` de esta pestaña (wizard-concurrencia-pestanas).
+      ...attributionBody({ caseId }),
     }));
   },
 
@@ -554,9 +670,13 @@ export const agent = {
   async stopRecording(
     serial: string,
     platform: "android" | "ios" = "android",
+    attribution?: AgentAttribution | null,
   ): Promise<RecordingStoppedData> {
-    const q = platform === "ios" ? "?platform=ios" : "";
-    return agentJSON<RecordingStoppedData>(`/devices/${encodeURIComponent(serial)}/record/stop${q}`, { method: "POST" });
+    // Tatana usa la atribución del inicio; esta solo cuenta si no la tiene registrada.
+    const q = attributionParams(attribution);
+    if (platform === "ios") q.set("platform", "ios");
+    const qs = q.toString();
+    return agentJSON<RecordingStoppedData>(`/devices/${encodeURIComponent(serial)}/record/stop${qs ? `?${qs}` : ""}`, { method: "POST" });
   },
 
   /**
@@ -598,13 +718,15 @@ export const agent = {
   /** Olvida las capabilities cacheadas (Tatana reconectado: puede ser otra versión). */
   resetCapabilities(): void {
     capabilitiesCache = null;
+    // Tatana reconectado: puede ser una versión con vista previa.
+    previewUnsupported = false;
   },
 
-  async captureWebcam(type: "funcionario" | "denunciante"): Promise<{ filename: string; url: string }> {
+  async captureWebcam(type: "funcionario" | "denunciante", attribution?: AgentAttribution): Promise<{ filename: string; url: string }> {
     const res = await fetch(`${AGENT_URL}/webcam/capture`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type }),
+      body: JSON.stringify({ type, ...attributionBody(attribution) }),
     });
     if (!res.ok) throw new Error("Error capturando foto");
     return res.json();

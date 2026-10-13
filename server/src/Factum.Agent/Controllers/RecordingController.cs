@@ -29,6 +29,8 @@ public sealed class RecordingController(
                 return BadRequest(new { error = "Identificador de caso inválido", code = AgentErrorCodes.InvalidCaseId });
             caseId = canonical;
         }
+        // wizard-concurrencia-pestanas DT4: la pestaña que la inicia. Inválido → null (es solo atribución).
+        var originId = EventAttribution.Normalize(request.OriginId);
 
         try
         {
@@ -52,10 +54,12 @@ public sealed class RecordingController(
             }
 
             var filename = Path.GetFileName(path);
+            // Recién con el inicio confirmado (si el servicio tiró, no queda atribución huérfana).
+            registry.SetOwner(serial, new EventAttribution(caseId, originId));
             await hub.BroadcastAsync(new AgentEvent
             {
                 Type = "recording_started",
-                Data = new { serial, platform, case_id = caseId, started_at = startedAt, filename },
+                Data = new { serial, platform, case_id = caseId, origin_id = originId, started_at = startedAt, filename },
             }, CancellationToken.None);
             return Ok(new StartRecordingResponse(filename, "recording", startedAt, caseId));
         }
@@ -76,10 +80,16 @@ public sealed class RecordingController(
     // §6.2 / §6.4. Android valida la grabación: ok/incomplete → 200; empty/unreadable → 422 y además un
     // recording_stopped con filename = null, así las otras pestañas salen de "Grabando".
     [HttpPost("stop")]
+    // wizard-concurrencia-pestanas DT4: recording_stopped lleva serial/case_id/origin_id de quien la inició
+    // (case_id del servicio, origin_id del registro). Los del query se usan solo si no hay registro.
     public async Task<IActionResult> Stop(string serial,
-        [FromQuery] string? platform, CancellationToken ct)
+        [FromQuery] string? platform,
+        [FromQuery(Name = "case_id")] string? queryCaseId,
+        [FromQuery(Name = "origin_id")] string? queryOriginId,
+        CancellationToken ct)
     {
         var plat = platform == "ios" ? "ios" : "android";
+        var queryAttr = EventAttribution.From(queryCaseId, queryOriginId);
         try
         {
             string outputPath;
@@ -110,6 +120,7 @@ public sealed class RecordingController(
             var filename = Path.GetFileName(outputPath);
             var url = $"/files/{filename}";
             var variantsExpected = variants.Count > 0;
+            var (evCaseId, evOriginId) = ResolveAttribution(stoppedSerial, serial, caseId, queryAttr);
 
             // DA10: queda en unclaimed_recordings hasta que se importe. Un archivo vacío (mock de iOS sin fuente)
             // no se ofrece: la importación lo rechazaría con empty_evidence.
@@ -121,8 +132,8 @@ public sealed class RecordingController(
             await hub.BroadcastAsync(new AgentEvent
             {
                 Type = "recording_stopped",
-                Data = new RecordingStoppedEvent(filename, url, plat, stoppedSerial, caseId, variantsExpected, variants,
-                    validation, null, null),
+                Data = new RecordingStoppedEvent(filename, url, plat, stoppedSerial, evCaseId, variantsExpected, variants,
+                    validation, null, null, evOriginId),
             }, CancellationToken.None);
 
             return Ok(new StopRecordingResponse(filename, url, variantsExpected, variants, plat, stoppedSerial, caseId,
@@ -139,13 +150,14 @@ public sealed class RecordingController(
                 var validation = ex.Extra is not null && ex.Extra.TryGetValue("validation", out var v)
                     ? v as RecordingValidationDto
                     : null;
+                var failedSerial = ex.Data[AdbService.ExDataSerial] as string ?? serial;
+                var (evCaseId, evOriginId) = ResolveAttribution(failedSerial, serial,
+                    ex.Data[AdbService.ExDataCaseId] as string, queryAttr);
                 await hub.BroadcastAsync(new AgentEvent
                 {
                     Type = "recording_stopped",
-                    Data = new RecordingStoppedEvent(null, null, plat,
-                        ex.Data[AdbService.ExDataSerial] as string ?? serial,
-                        ex.Data[AdbService.ExDataCaseId] as string,
-                        false, [], validation, ex.Message, ex.Code),
+                    Data = new RecordingStoppedEvent(null, null, plat, failedSerial, evCaseId,
+                        false, [], validation, ex.Message, ex.Code, evOriginId),
                 }, CancellationToken.None);
             }
             return StatusCode(ex.Status, ex.ToBody());
@@ -158,6 +170,25 @@ public sealed class RecordingController(
         {
             return StatusCode(500, new { error = ex.Message });
         }
+        finally
+        {
+            // Haya salido bien o mal, el servicio ya limpió su estado: la atribución no sobrevive al stop.
+            registry.TakeOwner(serial);
+        }
+    }
+
+    /// <summary>
+    /// case_id: el del servicio (grabacion-android-robusta) o, si no lo tiene, el del registro; origin_id: el del
+    /// registro. Solo si no hay registro se usan los del query del stop. Consume el registro.
+    /// </summary>
+    private (string? CaseId, string? OriginId) ResolveAttribution(string recordingSerial, string routeSerial,
+        string? serviceCaseId, EventAttribution queryAttr)
+    {
+        var owner = registry.TakeOwner(recordingSerial)
+            ?? (recordingSerial != routeSerial ? registry.TakeOwner(routeSerial) : null);
+        return owner is not null
+            ? (serviceCaseId ?? owner.CaseId, owner.OriginId)
+            : (serviceCaseId ?? queryAttr.CaseId, queryAttr.OriginId);
     }
 
     private static long FileLength(string path)
@@ -173,7 +204,8 @@ public sealed record StartRecordingRequest(
     string Platform = "android",
     string? IosMode = null,
     bool AndroidWithMic = false,
-    string? CaseId = null);
+    string? CaseId = null,
+    string? OriginId = null);
 
 /// <summary>200 del start (§6.1): <c>filename</c>, <c>state</c>, <c>started_at</c>, <c>case_id</c> (se omite si es null).</summary>
 public sealed record StartRecordingResponse(string Filename, string State, DateTimeOffset StartedAt, string? CaseId);
@@ -184,8 +216,9 @@ public sealed record StopRecordingResponse(string Filename, string Url, bool Var
 
 /// <summary>
 /// <c>recording_stopped.data</c> (§6.4). En el WS los null viajan como null: en éxito <c>error</c>/<c>code</c>
-/// son null; en una falla 422, <c>filename</c>/<c>url</c> son null.
+/// son null; en una falla 422, <c>filename</c>/<c>url</c> son null. <c>origin_id</c> = pestaña que la inició
+/// (wizard-concurrencia-pestanas DT4).
 /// </summary>
 public sealed record RecordingStoppedEvent(string? Filename, string? Url, string Platform, string Serial,
     string? CaseId, bool VariantsExpected, IReadOnlyList<string> Variants, RecordingValidationDto? Validation,
-    string? Error, string? Code);
+    string? Error, string? Code, string? OriginId = null);

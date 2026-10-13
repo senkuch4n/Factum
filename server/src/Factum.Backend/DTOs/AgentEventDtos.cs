@@ -9,5 +9,8 @@ public sealed record ReportAgentEventRequest(
     [Required] string AgentVersion,
     [Required] AgentMode Mode,
     [Required] AgentAction Action,
-    string? CaseId
+    string? CaseId,
+    // wizard-concurrencia-pestanas DT11: solo con action = capture_failed (failed_action obligatorio).
+    AgentAction? FailedAction = null,
+    string? Reason = null
 );

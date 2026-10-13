@@ -308,9 +308,14 @@ else if (localConfigStatus.Loaded)
     var orphanPostprocess = 0;
     try { orphanPostprocess = VideoPostprocessService.CleanupWorkDirectory(store.DataDirectory); }
     catch (Exception ex) { logger.LogWarning(ex, "No se pudo borrar la carpeta de post-proceso huérfana"); }
+    // wizard-concurrencia-pestanas §4.2: las vistas previas del paso 2 no sobreviven a un reinicio (solo previews/).
+    var clearedPreviews = 0;
+    try { clearedPreviews = app.Services.GetRequiredService<IFileStorageService>().ClearPreviews(); }
+    catch (Exception ex) { logger.LogWarning(ex, "No se pudo vaciar la carpeta de vistas previas"); }
     logger.LogInformation(
-        "Evidencia: carpeta de trabajo {DataDirectory}/cases, ZIP en {EvidenceDirectory}; orígenes permitidos {Lista} (temporales huérfanos borrados: {N}; trabajos de post-proceso huérfanos borrados: {P}; ZIP parciales huérfanos borrados: {Z})",
-        store.DataDirectory, zipDir, string.Join(", ", allowedOrigins), orphanUploads, orphanPostprocess, orphanParts);
+        "Evidencia: carpeta de trabajo {DataDirectory}/cases, ZIP en {EvidenceDirectory}; orígenes permitidos {Lista} (temporales huérfanos borrados: {N}; trabajos de post-proceso huérfanos borrados: {P}; ZIP parciales huérfanos borrados: {Z}; vistas previas borradas: {V})",
+        store.DataDirectory, zipDir, string.Join(", ", allowedOrigins), orphanUploads, orphanPostprocess, orphanParts,
+        clearedPreviews);
     if (AgentFileNames.IsSyncedFolder(zipDir))
         logger.LogWarning(
             "La carpeta de evidencia {Ruta} está dentro de una carpeta sincronizada con la nube; el ZIP se subiría a ese servicio. Configurá Agent:EvidenceDirectory fuera de OneDrive/iCloud.",

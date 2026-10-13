@@ -8,7 +8,9 @@ import { writeSessionNotice } from "./session-notice";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
-export type AgentAuditAction = "startup" | "capture_start" | "capture_stop" | "screenshot" | "webcam";
+export type AgentAuditAction = "startup" | "capture_start" | "capture_stop" | "screenshot" | "webcam" | "capture_failed";
+/** Acción que falló en un `capture_failed` (wizard-concurrencia-pestanas DT11). */
+export type AgentFailedAction = Exclude<AgentAuditAction, "startup" | "capture_failed">;
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -458,17 +460,35 @@ export interface ReportTextsRequest extends ReportTextsInput {
   trigger?: "save" | "restore";
   /** Id de la versión restaurada; solo válido con `trigger: "restore"`. */
   restored_from?: string;
+  /**
+   * wizard-concurrencia-pestanas (DT13): cantidades con las que se armó
+   * "Operaciones realizadas". Solo se manda cuando ese texto sale de los
+   * defaults; ausente = el backend conserva el valor guardado.
+   */
+  operaciones_base?: ReportCounts;
+}
+
+/** Conteos de evidencia que usa "Operaciones realizadas" (`ReportValues.Counts` del backend). */
+export interface ReportCounts {
+  capturas: number;
+  grabaciones: number;
+  archivos_extraidos: number;
+  otros: number;
 }
 
 /** Respuesta de `GET /api/cases/{id}/report-texts/defaults` (textos ya en Markdown). */
 export interface ReportTextDefaults extends ReportTextsInput {
   formato: ReportTextFormat;
+  /** Conteos actuales de la evidencia (falta en un backend anterior). */
+  operaciones_base?: ReportCounts;
 }
 
 export interface ReportTexts extends ReportTextsInput {
   /** null/ausente = texto plano anterior a esta HU. "texto" no lo devuelve el servidor, pero se tolera. */
   formato?: ReportTextFormat | "texto" | null;
   updated_at?: string;
+  /** Cantidades con las que se armó "Operaciones realizadas" (null/ausente = sin dato, sin aviso). */
+  operaciones_base?: ReportCounts | null;
 }
 
 /* ── Cadena de custodia / actividad del caso (trazabilidad-caso, HU5) ── */
@@ -488,7 +508,9 @@ export type CaseEventType =
   | "evidence_added"
   | "evidence_removed"
   | "report_generated"
-  | "report_failed";
+  | "report_failed"
+  | "evidence_updated"
+  | "capture_failed";
 
 /**
  * Detalle acotado de un `CaseEvent`: cada campo solo aplica a ciertos tipos y el
@@ -501,12 +523,16 @@ export interface CaseEventDetail {
   zip_hash?: string;
   /** `report_generated`: hash del informe. */
   report_hash?: string;
-  /** `report_failed`: motivo resumido (<=300 chars). */
+  /** `report_failed` / `capture_failed`: motivo resumido (<=300 chars). */
   reason?: string;
-  /** `evidence_added`: hash del archivo. */
+  /** `evidence_added` / `evidence_updated`: hash del archivo (en `evidence_updated`, el nuevo). */
   sha256?: string;
-  /** `evidence_added`: tamaño en bytes. */
+  /** `evidence_added` / `evidence_updated`: tamaño en bytes. */
   size?: number;
+  /** `evidence_updated`: hash que tenía el archivo antes. */
+  previous_sha256?: string;
+  /** `capture_failed`: tipo de evento de captura que se habría registrado. */
+  failed_action?: "capture_video_start" | "capture_video_stop" | "capture_screenshot" | "capture_photo";
 }
 
 /** Un hito de la línea de tiempo del caso (`GET /api/cases/{id}/events`). */
@@ -1307,7 +1333,12 @@ export const api = {
    * (instalado/portátil), hizo qué acción. Best-effort — un fallo acá nunca
    * debe interrumpir la captura de evidencia en curso.
    */
-  async reportAgentEvent(action: AgentAuditAction, caseId?: string): Promise<void> {
+  async reportAgentEvent(
+    action: AgentAuditAction,
+    caseId?: string | null,
+    /** Solo con `capture_failed` (DT11): qué acción falló y el mismo texto que vio el perito. */
+    extra?: { failed_action?: AgentFailedAction; reason?: string },
+  ): Promise<void> {
     try {
       const info = await agent.getInfo();
       const token = getToken();
@@ -1325,7 +1356,9 @@ export const api = {
           agent_version: info.version,
           mode: info.mode,
           action,
-          case_id: caseId,
+          case_id: caseId ?? undefined,
+          ...(extra?.failed_action ? { failed_action: extra.failed_action } : {}),
+          ...(extra?.reason?.trim() ? { reason: extra.reason.trim().slice(0, 300) } : {}),
         }),
       });
     } catch {

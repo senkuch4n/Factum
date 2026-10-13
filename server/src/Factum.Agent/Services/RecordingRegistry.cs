@@ -35,6 +35,8 @@ public sealed class RecordingRegistry
     private readonly TimeProvider _time;
     private readonly List<UnclaimedRecordingDto> _items = [];
     private readonly Lock _gate = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, RecordingAttribution> _owners =
+        new(StringComparer.Ordinal);
 
     public RecordingRegistry(IOptions<AgentOptions> opts, TimeProvider time)
     {
@@ -67,4 +69,25 @@ public sealed class RecordingRegistry
                 .ToList();
         }
     }
+
+    // ── Atribución de la grabación en curso (wizard-concurrencia-pestanas DT4) ────────────────────────
+    // El case_id ya lo guardan AdbService/IosService (grabacion-android-robusta §5.9); acá se suma la pestaña
+    // (origin_id) que la inició, para que recording_stopped la lleve aunque el stop venga de otra pestaña, de
+    // otra carga de página o por fuera. Tatana reiniciado = registro vacío (igual que la grabación).
+
+    /// <summary>Guarda (o reemplaza) la atribución de la grabación de <paramref name="serial"/>. Se llama
+    /// después de que el servicio confirmó el inicio.</summary>
+    public void SetOwner(string serial, EventAttribution attribution) =>
+        _owners[serial] = new RecordingAttribution(serial, attribution.CaseId, attribution.OriginId, _time.GetUtcNow());
+
+    /// <summary>Lee y borra la atribución de <paramref name="serial"/> (null si no hay).</summary>
+    public RecordingAttribution? TakeOwner(string serial) =>
+        _owners.TryRemove(serial, out var a) ? a : null;
+
+    /// <summary>Lee sin borrar.</summary>
+    public RecordingAttribution? PeekOwner(string serial) =>
+        _owners.TryGetValue(serial, out var a) ? a : null;
 }
+
+/// <summary>Quién inició una grabación en curso (DT4).</summary>
+public sealed record RecordingAttribution(string Serial, string? CaseId, string? OriginId, DateTimeOffset Since);

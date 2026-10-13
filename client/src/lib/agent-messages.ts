@@ -56,6 +56,9 @@ export function agentStatusMessage(
   return identity?.outdatedReason === "min_version" ? agentMinVersionMessage(identity) : AGENT_OUTDATED_MESSAGE;
 }
 
+/** Mismo caso generándose en otra pestaña o ventana (DT9). Se muestra como advertencia. */
+export const GENERATION_BUSY_MESSAGE = "Este caso ya se está generando en otra pestaña o ventana. Esperá a que termine.";
+
 /** Textos por defecto de los errores de grabación, si Tatana no manda `error` (SDD §7.2). */
 export const RECORDING_ERROR_TEXT = {
   already_recording: "Ya hay una grabación en curso en esta PC. Detenela antes de empezar otra.",
@@ -118,7 +121,8 @@ export function agentErrorMessage(err: unknown, ctx: { name?: string; action: Ag
       return `Algunos archivos de la evidencia cambiaron o faltan en esta PC${list ? ` (${list})` : ""}. No se generó nada; revisá la carpeta del caso.`;
     }
     case "zip_in_progress":
-      return "Ya se está armando el ZIP de este caso en esta PC.";
+      // Generar desde dos pestañas (wizard-concurrencia-pestanas DT9): advertencia, no error.
+      return ctx.action === "generate" ? GENERATION_BUSY_MESSAGE : "Ya se está armando el ZIP de este caso en esta PC.";
     case "zip_failed":
       return "No se pudo armar o verificar el ZIP en esta PC; la evidencia quedó intacta. Reintentá.";
     case "zip_not_found":

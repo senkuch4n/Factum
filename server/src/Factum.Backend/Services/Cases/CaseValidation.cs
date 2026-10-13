@@ -189,6 +189,18 @@ public static class CaseValidation
 
     public const string InvalidFormatMessage = "El campo formato no es válido";
 
+    // wizard-concurrencia-pestanas DT13: conteos de operaciones_base.
+    public const int MaxReportCount = 100000;
+    public const string InvalidReportCountsMessage = "Las cantidades de Operaciones realizadas no son válidas";
+
+    /// <summary>null (no vino) es válido; si vino, cada conteo entre 0 y 100000.</summary>
+    public static bool IsValidReportCounts(ReportCountsDto? c)
+    {
+        if (c is null) return true;
+        static bool Ok(int n) => n is >= 0 and <= MaxReportCount;
+        return Ok(c.Capturas) && Ok(c.Grabaciones) && Ok(c.ArchivosExtraidos) && Ok(c.Otros);
+    }
+
     /// <summary>
     /// Formato, largos y contenido (editor-texto-enriquecido §4.2 y §6.6). El tope cuenta el
     /// string guardado (D9 A). En Markdown se rechaza el HTML (salvo &lt;u&gt;), las imágenes que
