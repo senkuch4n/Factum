@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Factum.Backend.Common;
 using Microsoft.Extensions.Options;
 
 namespace Factum.Backend.Services.Branding;
@@ -100,7 +101,8 @@ public sealed class BrandingService : IBrandingService
 
     private static string? NormalizeName(string? raw, ILogger logger)
     {
-        var name = raw?.Trim() ?? "";
+        // informe-formato-fixes DA2: SafeText (una línea) antes del truncado, igual que la API.
+        var name = SafeText.Clean(raw, TextShape.SingleLine).Trim();
         if (name.Length == 0) return null;
         if (name.Length > MaxNameLength)
         {
@@ -113,7 +115,7 @@ public sealed class BrandingService : IBrandingService
     private static IReadOnlyList<string> NormalizeContactLines(List<string>? raw, ILogger logger)
     {
         var lines = (raw ?? [])
-            .Select(l => l?.Trim() ?? "")
+            .Select(l => SafeText.Clean(l, TextShape.SingleLine).Trim())
             .Where(l => l.Length > 0)
             .ToList();
 

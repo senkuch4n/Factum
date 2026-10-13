@@ -201,3 +201,8 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-13 — #61 corrección del modal hecha. en_revision; relanzado reviewer.
 - 2026-10-13 — #61 re-revisión APROBADA. Esperando prueba manual del usuario (dos pestañas).
 - 2026-10-13 — #61 OK del usuario. Commit + PR + merge.
+- 2026-10-13 — #61 mergeada (PR #68). Tomada #62, rama feat/informe-formato-fixes → implementando.
+- 2026-10-13 — #62 implementer-frontend done -> progress/impl_frontend_informe-formato-fixes.md (tsc OK; paridad con backend pendiente para el reviewer). Esperando backend.
+- 2026-10-13 — #62 implementer-backend done -> progress/impl_backend_informe-formato-fixes.md. en_revision; lanzado reviewer.
+- 2026-10-13 — #62 review APROBADA. Backend reiniciado en la rama para la prueba manual.
+- 2026-10-13 — #62 OK del usuario. Commit + PR + merge.

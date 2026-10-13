@@ -3,6 +3,7 @@ using System.Text;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using Factum.Backend.Common;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
 
@@ -397,7 +398,7 @@ internal static class ReportMarkdownRenderer
         private void RenderLink(LinkInline link, OpenXmlElement target, Format f)
         {
             var url = link.Url;
-            if (target is Hyperlink || !ReportMarkdown.IsAllowedUrl(url) ||
+            if (target is Hyperlink || !ReportMarkdown.IsAllowedUrl(url) || !IsCleanUrl(url) ||
                 !Uri.TryCreate(url, UriKind.Absolute, out var uri))
             {
                 RenderInlines(link, target, f);
@@ -417,7 +418,7 @@ internal static class ReportMarkdownRenderer
         private void RenderAutolink(AutolinkInline auto, OpenXmlElement target, Format f)
         {
             var url = auto.IsEmail ? "mailto:" + auto.Url : auto.Url;
-            if (target is Hyperlink || !ReportMarkdown.IsAllowedUrl(url) ||
+            if (target is Hyperlink || !ReportMarkdown.IsAllowedUrl(url) || !IsCleanUrl(url) ||
                 !Uri.TryCreate(url, UriKind.Absolute, out var uri))
             {
                 AppendText(target, auto.Url, f);
@@ -427,6 +428,11 @@ internal static class ReportMarkdownRenderer
             AppendText(hyperlink, auto.Url, f with { Link = true });
             target.AppendChild(hyperlink);
         }
+
+        // informe-formato-fixes §6.1 (D4): Markdig decodifica entidades (&#xFFFE;, &#x202E;) en la URL;
+        // si limpiarla la cambia, el enlace va como texto (sin Hyperlink) y nada sucio llega al .rels.
+        private static bool IsCleanUrl(string? url) =>
+            url is not null && SafeText.Clean(url, TextShape.SingleLine) == url;
 
         private static string VisibleUrl(string url) =>
             url.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase) ? url["mailto:".Length..] : url;

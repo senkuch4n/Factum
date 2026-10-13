@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using Factum.Backend.Common;
 
 namespace Factum.Backend.Services.Catalogs;
 
@@ -15,9 +16,14 @@ public static partial class CatalogText
     [GeneratedRegex(@"\s+")]
     private static partial Regex Whitespace();
 
-    /// <summary>Valor a guardar: trim + cualquier secuencia de espacios en blanco (\s+, incluye \t y \n) → un espacio.</summary>
+    /// <summary>
+    /// Valor a guardar: SafeText (una línea; informe-formato-fixes §5.2) → cualquier secuencia de
+    /// espacios en blanco (\s+, incluye \t y \n) → un espacio → trim.
+    /// </summary>
     public static string CleanValue(string? s) =>
-        string.IsNullOrEmpty(s) ? string.Empty : Whitespace().Replace(s, " ").Trim();
+        string.IsNullOrEmpty(s)
+            ? string.Empty
+            : Whitespace().Replace(SafeText.Clean(s, TextShape.SingleLine), " ").Trim();
 
     /// <summary>
     /// Clave de dedupe: CleanValue → Normalize(FormD) → saca UnicodeCategory.NonSpacingMark,

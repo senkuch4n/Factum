@@ -1,3 +1,4 @@
+using Factum.Backend.Common;
 using Factum.Backend.DTOs;
 using Factum.Backend.Infrastructure;
 using Factum.Backend.Models;
@@ -46,12 +47,15 @@ public sealed class AgentAuditController(
         }
 
         var ip = ResolveClientIp();
+        // informe-formato-fixes §5.2: los textos libres del agente, sin caracteres invisibles ni C0.
+        var hostname = SafeText.Clean(request.Hostname, TextShape.SingleLine);
+        var osUser = SafeText.Clean(request.OsUser, TextShape.SingleLine);
         var evt = new AgentEvent
         {
             Dni = Officer.Dni,
-            Hostname = request.Hostname,
-            OsUser = request.OsUser,
-            AgentVersion = request.AgentVersion,
+            Hostname = hostname,
+            OsUser = osUser,
+            AgentVersion = SafeText.Clean(request.AgentVersion, TextShape.SingleLine),
             Mode = request.Mode,
             Action = request.Action,
             CaseId = request.CaseId,
@@ -76,8 +80,8 @@ public sealed class AgentAuditController(
                     ActorDni = Officer.Dni,
                     ActorName = Officer.Name,
                     Timestamp = DateTime.UtcNow,
-                    Hostname = request.Hostname,
-                    OsUser = request.OsUser,
+                    Hostname = hostname,
+                    OsUser = osUser,
                     AgentMode = request.Mode,
                     Ip = ip,
                     Detail = type == CaseEventTypes.CaptureFailed
