@@ -22,6 +22,8 @@ public static class AgentErrorCodes
     public const string ZipFailed = "zip_failed";
     public const string ZipNotFound = "zip_not_found";
     public const string ZipHashMismatch = "zip_hash_mismatch";
+    /// <summary>400 del ZIP: contraseña vacía o de más de 99 bytes UTF-8 (tatana-ws-y-hosts T-08/T-09).</summary>
+    public const string InvalidPassword = "invalid_password";
     public const string OriginNotAllowed = "origin_not_allowed";
 
     // ── iPhone (ios-herramientas-windows §4.1); los textos están en Services/Ios/IosErrors.cs ──

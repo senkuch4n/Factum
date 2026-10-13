@@ -84,4 +84,37 @@ public sealed class AgentFileNamesTests
         Assert.Null(AgentFileNames.SafeChild(dir, "../a.png"));
         Assert.Null(AgentFileNames.SafeChild(dir, "sub/a.png"));
     }
+
+    // ── tatana-ws-y-hosts T-13 (D-A4) y T-05 ─────────────────────────────────
+
+    [Theory]
+    [InlineData("\u202Egpj.exe", false)]
+    [InlineData("a\u0085b.png", false)]
+    [InlineData("a\u2066b\u2069.png", false)]
+    [InlineData("a\u061Cb.png", false)]
+    [InlineData("a\u200Fb.png", false)]
+    [InlineData("a\u202Ab.png", false)]
+    [InlineData("a\u009Fb.png", false)]
+    [InlineData("familia \U0001F468\u200D\U0001F469\u200D\U0001F467.png", true)] // ZWJ en emoji
+    [InlineData("nombre\u00A0con nbsp.png", true)]
+    [InlineData("grabación ñ.mkv", true)]
+    [InlineData("証拠写真.jpg", true)]
+    [InlineData("a/b.png", false)]
+    public void IsValidNewName(string name, bool expected) => Assert.Equal(expected, AgentFileNames.IsValidNewName(name));
+
+    [Fact]
+    public void IsValidName_SigueAceptandoBidi_ParaArchivosQueYaEstan() =>
+        Assert.True(AgentFileNames.IsValidName("\u202Egpj.exe"));
+
+    [Theory]
+    [InlineData("evidencia_1234_2026.zip.part", true)]
+    [InlineData("evidencia_ñ.zip.part", true)]
+    [InlineData("evidencia_X.zip", false)]
+    [InlineData("evidencia_X.zip.sha256", false)]
+    [InlineData("otro.part", false)]
+    [InlineData("evidencia_.zip.part", false)]
+    [InlineData("evidencia_a-b.zip.part", false)]
+    [InlineData(null, false)]
+    public void IsZipPartFilename(string? name, bool expected) =>
+        Assert.Equal(expected, AgentFileNames.IsZipPartFilename(name));
 }

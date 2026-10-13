@@ -24,6 +24,9 @@ public static class AgentFileNames
     private static readonly Regex ZipNameRegex = new(@"^evidencia_[\p{L}\p{N}_]{1,60}\.zip$",
         RegexOptions.CultureInvariant);
 
+    private static readonly Regex ZipPartNameRegex = new(@"^evidencia_[\p{L}\p{N}_]{1,60}\.zip\.part$",
+        RegexOptions.CultureInvariant);
+
     /// <summary>
     /// Nombre plano de evidencia: no vacío, ≤ 255, sin <c>/</c>, <c>\</c> ni control, sin
     /// <c>&lt; &gt; : " | ? *</c>, sin <c>.</c>/espacio final, sin nombre reservado de Windows y que
@@ -49,6 +52,36 @@ public static class AgentFileNames
 
     /// <summary><c>^evidencia_[\p{L}\p{N}_]{1,60}\.zip$</c>.</summary>
     public static bool IsZipFilename(string? name) => name is not null && ZipNameRegex.IsMatch(name);
+
+    /// <summary>
+    /// <c>^evidencia_[\p{L}\p{N}_]{1,60}\.zip\.part$</c>: ZIP a medio escribir (tatana-ws-y-hosts T-05). Solo
+    /// estos se borran al arrancar.
+    /// </summary>
+    public static bool IsZipPartFilename(string? name) => name is not null && ZipPartNameRegex.IsMatch(name);
+
+    /// <summary>
+    /// Controles que permiten disfrazar un nombre (tatana-ws-y-hosts T-13): C1 (U+0080–U+009F), ALM (U+061C),
+    /// LRM/RLM (U+200E/U+200F), embeddings/overrides bidi (U+202A–U+202E) e isolates (U+2066–U+2069). ZWJ
+    /// (U+200D) y NBSP (U+00A0) NO entran: los usan emoji y nombres legítimos.
+    /// </summary>
+    public static bool HasUnsafeControls(string? name)
+    {
+        if (name is null) return false;
+        foreach (var ch in name)
+        {
+            if (ch is >= '\u0080' and <= '\u009F') return true;
+            if (ch is '\u061C' or '\u200E' or '\u200F') return true;
+            if (ch is >= '\u202A' and <= '\u202E') return true;
+            if (ch is >= '\u2066' and <= '\u2069') return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Nombre de un archivo NUEVO (upload-check, upload, import): <see cref="IsValidName"/> y sin
+    /// <see cref="HasUnsafeControls"/>. GET, DELETE y el ZIP siguen usando <see cref="IsValidName"/> (D-A4).
+    /// </summary>
+    public static bool IsValidNewName(string? name) => IsValidName(name) && !HasUnsafeControls(name);
 
     /// <summary>
     /// Id de caso (Guid "D"). Devuelve la forma canónica en minúscula, que es la que usan las

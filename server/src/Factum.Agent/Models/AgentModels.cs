@@ -32,6 +32,14 @@ public sealed class AgentOptions
     /// <summary>Orígenes del front que pueden llamar a Tatana. Vacío = <c>OriginPolicy.Defaults</c>.</summary>
     public string[] AllowedOrigins { get; set; } = [];
 
+    /// <summary>
+    /// Hosts EXTRA que puede traer el header <c>Host</c> (tatana-ws-y-hosts §3.1/§4.3), además de <c>localhost</c>,
+    /// <c>127.0.0.1</c>, <c>[::1]</c> y la IP de <see cref="BindAddress"/> (o las de la PC si es 0.0.0.0/::).
+    /// Nombre o IP, sin esquema, puerto, path ni <c>*</c>. Inválido en appsettings/env/CLI → no arranca; en la
+    /// config local → se ignora el archivo entero. Ver <c>Common.HostPolicy</c>.
+    /// </summary>
+    public string[] AllowedHosts { get; set; } = [];
+
     /// <summary>Tope de una subida del navegador a la carpeta del caso. Default 16 GiB.</summary>
     public long MaxUploadBytes { get; set; } = 16L * 1024 * 1024 * 1024;
 
