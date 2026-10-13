@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import type { CaptureRole, CaptureRoleValue } from "@/lib/api";
 import { CAPTURE_ROLES_FIELD_ID, isRoleEligible } from "@/lib/pericial";
-import { agent, type AirplayUnavailableReason, type VideoVariant } from "@/lib/agent";
+import { agent, type AirplayUnavailableReason, type VideoVariant, type VideoVariantStatus } from "@/lib/agent";
 import { airplayUnavailableText } from "@/lib/agent-messages";
 import type { EvidenceStorage } from "@/lib/api";
 import { FOCUS_RING } from "@/lib/prime/pt/shared";
@@ -80,7 +80,8 @@ interface Props {
   // trae su ruta de origen en el dispositivo, para que quede registrada en el informe.
   onDeviceFilesAdded?: (files: PulledFileRef[]) => void;
   videoVariants?: Record<string, VideoVariant[]>;
-  pendingVariantFiles?: Set<string>;
+  /** Estado del post-proceso de cada grabación: original → etiqueta → estado (solo visual). */
+  variantStatus?: Record<string, Record<string, VideoVariantStatus>>;
   airplayReceiverName?: string | null;
   // Sesión de "espejar para capturas" (iOS + AirPlay, marcas múltiples) — flujo separado
   // del botón normal "Capturar pantalla".
@@ -144,7 +145,7 @@ export function CaptureStep({
   localBlobs = NO_LOCAL_BLOBS,
   onDeviceFilesAdded,
   videoVariants = {},
-  pendingVariantFiles = new Set(),
+  variantStatus = NO_VARIANT_STATUS,
   airplayReceiverName,
   airplayShotActive, airplayShotConnected, airplayShotReceiverName, airplayShotMarksCount = 0,
   onStartAirplayShot, onMarkAirplayShot, onStopAirplayShot,
@@ -801,7 +802,8 @@ export function CaptureStep({
                   file={selected.remoteFile!}
                   originalURL={selected.url}
                   variants={videoVariants[selected.name] ?? []}
-                  isPending={pendingVariantFiles.has(selected.name)}
+                  variantStatus={Object.values(variantStatus[selected.name] ?? {})}
+                  storedInCase={!!selected.remoteFile?.storedInCase}
                   onRemove={() => removeItem(selected)}
                   removeDisabled={removeBlocked}
                 />
@@ -929,6 +931,7 @@ export function CaptureStep({
 /* Default estable de `localBlobs` (un `{}` literal en el destructuring sería nuevo en cada render). */
 const NO_LOCAL_BLOBS: Record<string, LocalBlobInfo> = {};
 const NO_UPLOAD_STATES: Record<string, FileUploadState> = {};
+const NO_VARIANT_STATUS: Record<string, Record<string, VideoVariantStatus>> = {};
 
 /* Subtítulo de bloque del paso (misma convención que la parte 2). */
 const LABEL = "m-0 flex items-center gap-1.5 text-fx-label uppercase text-fx-text-2";

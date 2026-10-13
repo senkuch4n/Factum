@@ -26,6 +26,8 @@ export interface UpdateState {
   reason?: UpdateReason
   /** `kind`s de `/agent/state.operations` (sin repetir). */
   busyOperations?: string[]
+  /** `kind`s de `/agent/state.background_operations` (sin repetir): no bloquean la actualización. */
+  backgroundOperations?: string[]
   notifiedVersion?: string
 }
 
@@ -76,4 +78,14 @@ export function busyOperationText(kind: string): string {
 /** "grabación en curso, procesando un video" (sin repetir textos). */
 export function busyOperationsText(kinds: ReadonlyArray<string> | undefined): string {
   return [...new Set((kinds ?? []).map(busyOperationText))].join(', ')
+}
+
+/**
+ * Aviso para "Reiniciar y actualizar" cuando hay trabajo en segundo plano que se
+ * cancela al actualizar (ios-grabacion-larga D7). `null` si no hay que avisar.
+ */
+export function backgroundOperationsNotice(kinds: ReadonlyArray<string> | undefined): string | null {
+  return (kinds ?? []).includes('video_postprocess')
+    ? 'Al actualizar, se cancelará la versión suavizada que se está generando. Las grabaciones no se tocan.'
+    : null
 }

@@ -125,6 +125,7 @@ class AppInfoService extends EventEmitter {
       const s = await getAgentState(getPort())
       this.agentState = s
       updateManager.setBusyOperations(s ? [...new Set(s.operations.map((o) => o.kind))] : [])
+      updateManager.setBackgroundOperations(s ? [...new Set(s.background_operations.map((o) => o.kind))] : [])
       this.publish()
     }
     this.refreshSoon = () => { setTimeout(() => { void tick() }, 2500) }

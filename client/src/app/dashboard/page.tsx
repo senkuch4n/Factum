@@ -10,7 +10,9 @@ import { agentErrorMessage, agentStatusMessage } from "@/lib/agent-messages";
 import { useAgentIdentity, ensureAgentIdentity, isSameHostFor } from "@/hooks/useAgentIdentity";
 import { syncedFolderMessage } from "@/components/ResultStep";
 import type { GenerateProgress } from "@/components/dashboard/GenerateStep";
-import type { Device, AgentEvent, Case, CaseFormData, ProfileFormData } from "@/types";
+import type {
+  Device, AgentEvent, Case, CaseFormData, ProfileFormData, RecordingStoppedData, VideoVariantStatus,
+} from "@/types";
 import {
   CASE_MESSAGES, EMPTY_CASE_FORM, PROFILE_REQUIRED_KEYS, PROFILE_MESSAGES,
   caseToForm, formToCaseRequest, isImeiMissing, isPhoneLike, prefillFromLastCase, profileErrorKey,
@@ -170,8 +172,8 @@ export default function Dashboard() {
   const isLegacyCase = !!currentCase && (currentCase.schema_version ?? 0) === 0;
 
   const {
-    files, loading: fileLoading, videoVariants, pendingVariantFiles, pendingBlobs, localBlobs,
-    addFile, addVideoVariant, markPendingVariant,
+    files, loading: fileLoading, videoVariants, pendingBlobs, localBlobs,
+    addFile, addVideoVariant, variantStatus, expectVariants, applyVariantStatus, refreshVariantStatus,
     removeFile, setCaptureRole, handlePhotoBlob, handleUploadAndContinueLegacy, clearFiles,
     uploadProgress, uploadStates, uploadNotice, dismissUploadNotice, cancelUpload,
     storageMode, saveBusy, bindCase, handleSaveAndContinue, restoreCaseEvidence, cancelSave,
@@ -225,7 +227,7 @@ export default function Dashboard() {
     isRecordingRef, loading: recLoading,
     setRecording, setDiscoRec, setDeviceOffline, setAirplayName, setIosModePicker, setAndroidWithMic,
     handleToggleRecord, handleSelectIosMode, resetRecording,
-  } = useRecording(addFile, markPendingVariant);
+  } = useRecording(addFile, expectVariants);
 
   const {
     active: shotActive, connected: shotConnected, receiverName: shotReceiverName,
@@ -254,12 +256,17 @@ export default function Dashboard() {
     if (event.type === "recording_started") setRecording(true);
     if (event.type === "recording_stopped") {
       setRecording(false); setAirplayName(null);
-      const d = event.data as { filename: string; platform?: string };
-      if (d.filename) { addFile(d.filename); if (d.platform === "ios") markPendingVariant(d.filename); }
+      const d = event.data as unknown as RecordingStoppedData;
+      if (d.filename) {
+        addFile(d.filename);
+        // Sin `variants_expected` (Tatana viejo) no se marca nada: el guardado nunca espera (DA2).
+        if (d.platform === "ios" && d.variants_expected === true) expectVariants(d.filename, d.variants ?? []);
+      }
     }
     if (event.type === "airplay_receiver_ready") {
       setAirplayName((event.data as { receiver_name: string }).receiver_name);
     }
+    if (event.type === "video_variant_status") applyVariantStatus(event.data as unknown as VideoVariantStatus);
     if (event.type === "video_variant_ready") {
       addVideoVariant(event.data as { original_filename: string; label: string; filename: string; url: string });
     }
@@ -280,9 +287,11 @@ export default function Dashboard() {
     }
     if (event.type === "airplay_shot_connected") handleShotConnected();
     if (event.type === "airplay_shot_timeout") handleShotTimeout(msg => setGlobal(msg));
-  }, [addFile, addVideoVariant, markPendingVariant, setRecording, setDiscoRec, setDeviceOffline, setAirplayName, isRecordingRef, handleShotConnected, handleShotTimeout]);
+  }, [addFile, addVideoVariant, expectVariants, applyVariantStatus, setRecording, setDiscoRec, setDeviceOffline, setAirplayName, isRecordingRef, handleShotConnected, handleShotTimeout]);
 
-  const { agentOnline, devices, loadingDev, refreshDevices } = useAgentConnection(handleWsEvent);
+  // Al conectar o reconectar el WS, se recupera el estado de las variantes en curso (Duda 9 A).
+  const handleAgentConnected = useCallback(() => { void refreshVariantStatus(); }, [refreshVariantStatus]);
+  const { agentOnline, devices, loadingDev, refreshDevices } = useAgentConnection(handleWsEvent, handleAgentConnected);
   const deviceConnection = useDeviceConnection(agentOnline, devices, loadingDev, selDevice?.serial ?? null);
   // ios-herramientas-windows §9.4: servicio de Apple y AirPlay según `/health.ios`.
   const { appleService, airplayAvailable, airplayReason } = useAgentIosStatus(agentOnline);
@@ -1036,7 +1045,7 @@ export default function Dashboard() {
                               localBlobs={localBlobs}
                               onDeviceFilesAdded={files => files.forEach(f => addFile(f.filename, f.sourcePath))}
                               videoVariants={videoVariants}
-                              pendingVariantFiles={pendingVariantFiles}
+                              variantStatus={variantStatus}
                               airplayReceiverName={airplayReceiverName}
                               airplayShotActive={shotActive}
                               airplayShotConnected={shotConnected}

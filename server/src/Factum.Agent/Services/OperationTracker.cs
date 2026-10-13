@@ -2,8 +2,10 @@ namespace Factum.Agent.Services;
 
 /// <summary>
 /// Una operación en curso de Tatana (SDD tatana-instalador-autoupdate D5, D-T10). <c>Kind</c> ∈
-/// <c>recording_android</c> | <c>recording_ios</c> | <c>airplay_session</c> | <c>video_postprocess</c> |
-/// <c>request</c>. <c>Detail</c> solo en <c>request</c>: <c>"POST /cases"</c> (nunca el id del caso ni la query).
+/// <c>recording_android</c> | <c>recording_ios</c> | <c>airplay_session</c> | <c>request</c>. <c>Detail</c> solo
+/// en <c>request</c>: <c>"POST /cases"</c> (nunca el id del caso ni la query). <c>video_postprocess</c> ya no
+/// sale de <c>IosService</c> (ios-grabacion-larga D7): no bloquea y va en <c>/agent/state.background_operations</c>
+/// (lo arma <c>AgentStateController</c> desde <c>IVideoPostprocessService</c>).
 /// </summary>
 public sealed record AgentOperation(string Kind, DateTimeOffset Since, string? Detail = null);
 
