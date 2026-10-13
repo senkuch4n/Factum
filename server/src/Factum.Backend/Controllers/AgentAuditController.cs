@@ -1,3 +1,4 @@
+using Factum.Backend.Common;
 using Factum.Backend.DTOs;
 using Factum.Backend.Infrastructure;
 using Factum.Backend.Models;
@@ -31,19 +32,36 @@ public sealed class AgentAuditController(
 
     [HttpPost]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Report([FromBody] ReportAgentEventRequest request, CancellationToken ct)
     {
+        // wizard-concurrencia-pestanas DT11: capture_failed exige la acción que falló (una de las capturas).
+        AgentAction? failedAction = null;
+        string? reason = null;
+        if (request.Action == AgentAction.CaptureFailed)
+        {
+            if (!IsFailableAction(request.FailedAction))
+                return BadRequest(new { error = MissingFailedActionMessage });
+            failedAction = request.FailedAction;
+            reason = TruncateReason(request.Reason);
+        }
+
         var ip = ResolveClientIp();
+        // informe-formato-fixes §5.2: los textos libres del agente, sin caracteres invisibles ni C0.
+        var hostname = SafeText.Clean(request.Hostname, TextShape.SingleLine);
+        var osUser = SafeText.Clean(request.OsUser, TextShape.SingleLine);
         var evt = new AgentEvent
         {
             Dni = Officer.Dni,
-            Hostname = request.Hostname,
-            OsUser = request.OsUser,
-            AgentVersion = request.AgentVersion,
+            Hostname = hostname,
+            OsUser = osUser,
+            AgentVersion = SafeText.Clean(request.AgentVersion, TextShape.SingleLine),
             Mode = request.Mode,
             Action = request.Action,
             CaseId = request.CaseId,
             Ip = ip,
+            FailedAction = failedAction,
+            Reason = reason,
         };
 
         await repo.InsertAsync(evt, ct);
@@ -62,10 +80,13 @@ public sealed class AgentAuditController(
                     ActorDni = Officer.Dni,
                     ActorName = Officer.Name,
                     Timestamp = DateTime.UtcNow,
-                    Hostname = request.Hostname,
-                    OsUser = request.OsUser,
+                    Hostname = hostname,
+                    OsUser = osUser,
                     AgentMode = request.Mode,
                     Ip = ip,
+                    Detail = type == CaseEventTypes.CaptureFailed
+                        ? new CaseEventDetail { FailedAction = MapCaptureType(failedAction!.Value), Reason = reason }
+                        : null,
                 }, CancellationToken.None);
             }
             catch (Exception ex)
@@ -76,15 +97,33 @@ public sealed class AgentAuditController(
         return NoContent();
     }
 
+    public const string MissingFailedActionMessage = "Falta la acción que falló (failed_action)";
+
     // DT9: AgentAction → CaseEventType. Startup no genera evento de caso (uso del agente, no un hito).
-    private static string? MapCaptureType(AgentAction action) => action switch
+    // wizard-concurrencia-pestanas DT11: CaptureFailed → capture_failed.
+    internal static string? MapCaptureType(AgentAction action) => action switch
     {
         AgentAction.Screenshot => CaseEventTypes.CaptureScreenshot,
         AgentAction.CaptureStart => CaseEventTypes.CaptureVideoStart,
         AgentAction.CaptureStop => CaseEventTypes.CaptureVideoStop,
         AgentAction.Webcam => CaseEventTypes.CapturePhoto,
+        AgentAction.CaptureFailed => CaseEventTypes.CaptureFailed,
         _ => null,   // Startup u otros
     };
+
+    /// <summary>Acciones que pueden fallar (failed_action de capture_failed): las cuatro de captura.</summary>
+    internal static bool IsFailableAction(AgentAction? action) =>
+        action is AgentAction.CaptureStart or AgentAction.CaptureStop or AgentAction.Screenshot or AgentAction.Webcam;
+
+    /// <summary>Motivo de capture_failed: trim y ≤ 300 (mismo criterio que report_failed). Vacío → null.</summary>
+    internal static string? TruncateReason(string? reason)
+    {
+        var r = (reason ?? string.Empty).Trim();
+        if (r.Length == 0) return null;
+        if (r.Length <= 300) return r;
+        // Sin cortar un par sustituto (emoji) a la mitad.
+        return char.IsHighSurrogate(r[299]) ? r[..299] : r[..300];
+    }
 
     // HttpContext.Connection.RemoteIpAddress ya refleja la IP real del fiscal:
     // ForwardedHeadersOptions (Program.cs) la reescribe desde X-Forwarded-For

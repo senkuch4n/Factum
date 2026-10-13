@@ -8,13 +8,15 @@ import {
   AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, ClipboardList, FileText, HardDrive, History, Loader2, RefreshCw, Undo2,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { EMPTY_REPORT_TEXTS, MAX_LEN_TEXT, REPORT_SECTION_LABELS, reportFieldId } from "@/lib/pericial";
+import {
+  EMPTY_REPORT_TEXTS, MAX_LEN_TEXT, REPORT_SECTION_LABELS, countsOutdated, countsSummary, reportFieldId,
+} from "@/lib/pericial";
 import { ReportImagePreviewCache, useReportImages } from "@/lib/report-images";
 import { agentStatusMessage } from "@/lib/agent-messages";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import type { Case, EvidenceStorage } from "@/lib/api";
 import { REPORT_TEXT_FORMAT, plainToMarkdown } from "@/lib/report-markdown";
-import type { ReportTexts, ReportTextsInput } from "@/types";
+import type { ReportCounts, ReportTexts, ReportTextsInput } from "@/types";
 import { FormField } from "./FormField";
 import { ConfirmDialog } from "@/components/overlay/ConfirmDialog";
 import { FxBanner } from "@/components/feedback/FxBanner";
@@ -22,6 +24,7 @@ import { StepHeader } from "@/components/wizard/StepHeader";
 import { StepActions } from "@/components/wizard/StepActions";
 import { ReportImagesProvider, type ImagePickerRequest, type ReportImagesContextValue } from "@/components/editor/ReportImagesContext";
 import { CapturePickerDialog } from "@/components/editor/CapturePickerDialog";
+import { scrollIntoContainer } from "@/lib/scroll";
 
 type TextKey = keyof ReportTextsInput;
 
@@ -86,6 +89,16 @@ const AUTOSAVE_MS = 1200;
 
 type SaveState = "loading" | "load-error" | "idle" | "pending" | "saving" | "saved" | "error";
 
+/** "Operaciones realizadas" armada con otras cantidades (wizard-concurrencia-pestanas DT13). */
+interface CountsStale {
+  /** Conteos con los que se armó el texto guardado. */
+  base: ReportCounts;
+  /** Conteos actuales de la evidencia. */
+  current: ReportCounts;
+  /** Texto sugerido con los conteos actuales. */
+  freshText: string;
+}
+
 interface Props {
   caseId: string;
   /** Campo a enfocar al montar (enlaces del checklist de "Generar"). */
@@ -120,6 +133,17 @@ export function ReportStep({
   const timerRef = useRef<number | null>(null);
   const seqRef = useRef(0);
   const defaultsRef = useRef<ReportTextsInput | null>(null);
+  /** Conteos de los últimos defaults pedidos (van como base si se restaura "Operaciones realizadas"). */
+  const defaultsBaseRef = useRef<ReportCounts | null>(null);
+  /**
+   * Conteos con los que se armó "Operaciones realizadas", pendientes de mandar
+   * como `operaciones_base` (DT13). Solo se llena cuando ese texto sale de los
+   * defaults; el autoguardado normal no lo manda y el backend conserva el valor.
+   */
+  const pendingBaseRef = useRef<ReportCounts | null>(null);
+  const [countsStale, setCountsStale] = useState<CountsStale | null>(null);
+  /** "Cantidades actualizadas. Deshacer": lo que había antes de actualizar. */
+  const [countsUndo, setCountsUndo] = useState<{ prevText: string; stale: CountsStale } | null>(null);
   const onSavedRef = useRef(onSaved);
   useEffect(() => { onSavedRef.current = onSaved; }, [onSaved]);
 
@@ -192,8 +216,13 @@ export function ReportStep({
     const seq = ++seqRef.current;
     dirtyRef.current = false;
     setState("saving");
+    const sentBase = pendingBaseRef.current;
     try {
-      const res = await api.saveReportTexts(caseId, { ...textsRef.current, formato: REPORT_TEXT_FORMAT, ...version });
+      const res = await api.saveReportTexts(caseId, {
+        ...textsRef.current, formato: REPORT_TEXT_FORMAT, ...version,
+        ...(sentBase ? { operaciones_base: sentBase } : {}),
+      });
+      if (sentBase && pendingBaseRef.current === sentBase) pendingBaseRef.current = null;
       onSavedRef.current(res);
       // Solo el último guardado define el estado visible.
       if (seq === seqRef.current) setState(dirtyRef.current ? "pending" : "saved");
@@ -237,9 +266,24 @@ export function ReportStep({
         textsRef.current = t;
         setTexts(t);
         setState("idle");
+        // ¿"Operaciones realizadas" se armó con otras cantidades? (best-effort, sin base no hay aviso)
+        const base = cas.report_texts.operaciones_base;
+        if (base) {
+          api.getReportTextDefaults(caseId)
+            .then(d => {
+              defaultsRef.current = pickSections(d);
+              defaultsBaseRef.current = d.operaciones_base ?? null;
+              setCountsStale(countsOutdated(base, d.operaciones_base)
+                ? { base, current: d.operaciones_base!, freshText: defaultsRef.current.operaciones_realizadas }
+                : null);
+            })
+            .catch(() => {});
+        }
       } else {
         const defaults = await api.getReportTextDefaults(caseId);
         defaultsRef.current = pickSections(defaults);
+        defaultsBaseRef.current = defaults.operaciones_base ?? null;
+        pendingBaseRef.current = defaults.operaciones_base ?? null;
         textsRef.current = defaultsRef.current;
         setTexts(defaultsRef.current);
         await save();
@@ -256,7 +300,10 @@ export function ReportStep({
   useEffect(() => () => {
     if (timerRef.current) window.clearTimeout(timerRef.current);
     if (dirtyRef.current && !overLimitKeys(textsRef.current).length) {
-      api.saveReportTexts(caseId, { ...textsRef.current, formato: REPORT_TEXT_FORMAT })
+      const base = pendingBaseRef.current;
+      api.saveReportTexts(caseId, {
+        ...textsRef.current, formato: REPORT_TEXT_FORMAT, ...(base ? { operaciones_base: base } : {}),
+      })
         .then(r => onSavedRef.current(r))
         .catch(() => {});
     }
@@ -271,8 +318,8 @@ export function ReportStep({
     const attempt = () => {
       const el = document.getElementById(focusFieldId);
       if (el) {
-        el.focus();
-        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.focus({ preventScroll: true });
+        scrollIntoContainer(el, { block: "center" });
       } else if (++tries < 60) {
         timer = window.setTimeout(attempt, 50);
         return;
@@ -285,21 +332,37 @@ export function ReportStep({
   }, [focusFieldId, state === "loading"]);
 
   /* ── Restaurar texto por defecto ── */
-  async function getDefaults(): Promise<ReportTextsInput> {
-    if (!defaultsRef.current) {
+
+  /**
+   * Defaults del informe. "Operaciones realizadas" siempre los pide frescos: el
+   * caché puede tener conteos viejos si la evidencia cambió (DT13).
+   */
+  async function getDefaults(fresh = false): Promise<ReportTextsInput> {
+    if (fresh || !defaultsRef.current) {
       const d = await api.getReportTextDefaults(caseId);
       defaultsRef.current = pickSections(d);
+      defaultsBaseRef.current = d.operaciones_base ?? null;
     }
     return defaultsRef.current;
+  }
+
+  /** Texto de Operaciones reemplazado por el default: queda pendiente mandar su base y se va el aviso. */
+  function markOperacionesFromDefaults() {
+    pendingBaseRef.current = defaultsBaseRef.current;
+    setCountsStale(null);
+    setCountsUndo(null);
   }
 
   async function requestRestore(key: TextKey) {
     setRestoring(key);
     try {
-      const d = await getDefaults();
+      const d = await getDefaults(key === "operaciones_realizadas");
       const cur = textsRef.current[key];
       if (cur.trim() && cur !== d[key]) setRestoreKey(key);
-      else if (cur !== d[key]) update({ ...textsRef.current, [key]: d[key] });
+      else if (cur !== d[key]) {
+        if (key === "operaciones_realizadas") markOperacionesFromDefaults();
+        update({ ...textsRef.current, [key]: d[key] });
+      }
     } catch {
       // Sin defaults (servidor caído): el texto actual queda como está.
     } finally {
@@ -311,7 +374,28 @@ export function ReportStep({
     const key = restoreKey;
     const d = defaultsRef.current;
     if (!key || !d) return;
+    if (key === "operaciones_realizadas") markOperacionesFromDefaults();
     update({ ...textsRef.current, [key]: d[key] });
+  }
+
+  /** "Actualizar cantidades": reemplaza Operaciones por el texto sugerido con los conteos actuales. */
+  function applyFreshCounts() {
+    const stale = countsStale;
+    if (!stale) return;
+    setCountsUndo({ prevText: textsRef.current.operaciones_realizadas, stale });
+    setCountsStale(null);
+    pendingBaseRef.current = stale.current;
+    update({ ...textsRef.current, operaciones_realizadas: stale.freshText });
+  }
+
+  /** "Deshacer": vuelve el texto anterior y su base (el aviso reaparece). */
+  function undoFreshCounts() {
+    const u = countsUndo;
+    if (!u) return;
+    setCountsUndo(null);
+    setCountsStale(u.stale);
+    pendingBaseRef.current = u.stale.base;
+    update({ ...textsRef.current, operaciones_realizadas: u.prevText });
   }
 
   /**
@@ -399,6 +483,40 @@ export function ReportStep({
             const id = reportFieldId(key);
             return (
               <div key={key}>
+                {key === "operaciones_realizadas" && countsStale && (
+                  <FxBanner tone="warn" className="mb-3">
+                    <p className="m-0">
+                      La evidencia cambió después de armar este texto (ahora: {countsSummary(countsStale.current)}).
+                    </p>
+                    <p className="m-0 mt-0.5 text-xs font-normal text-fx-text-2">
+                      Si lo corregiste a mano, podés dejarlo así. Si no, actualizá las cantidades.
+                    </p>
+                    <Button
+                      type="button"
+                      severity="secondary"
+                      size="small"
+                      icon={<RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />}
+                      label="Actualizar cantidades"
+                      onClick={applyFreshCounts}
+                      className="mt-2 min-h-11 sm:min-h-0"
+                    />
+                  </FxBanner>
+                )}
+                {key === "operaciones_realizadas" && countsUndo && (
+                  <FxBanner tone="success" className="mb-3" onClose={() => setCountsUndo(null)}>
+                    <span className="inline-flex flex-wrap items-center gap-x-1">
+                      Cantidades actualizadas.
+                      <Button
+                        type="button"
+                        link
+                        size="small"
+                        label="Deshacer"
+                        onClick={undoFreshCounts}
+                        pt={{ root: { className: "p-0" } }}
+                      />
+                    </span>
+                  </FxBanner>
+                )}
                 <FormField
                   id={id}
                   labelId={`${id}-label`}

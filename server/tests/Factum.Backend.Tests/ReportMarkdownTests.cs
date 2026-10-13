@@ -8,7 +8,7 @@ namespace Factum.Backend.Tests;
 /// <summary>Dialecto Markdown de Factum (Refactorizaciones/editor-texto-enriquecido.md §4, §6.2; T1-T7).</summary>
 public sealed class ReportMarkdownTests
 {
-    // ── T1. Fixtures F1-F17 (§4.4), byte a byte ─────────────────────────────
+    // ── T1. Fixtures F1-F17 (§4.4) y F18-F24 (informe-formato-fixes §5.3), byte a byte ──
 
     public static readonly TheoryData<string, string, string> Fixtures = new()
     {
@@ -29,10 +29,18 @@ public sealed class ReportMarkdownTests
         { "F15", "+ más\n---", "\\+ más\n\n\\---" },
         { "F16", "C:\\ruta", "C:\\\\ruta" },
         { "F17", "", "" },
+        // informe-formato-fixes §5.3: SafeText en el render (paridad con cleanText del cliente).
+        { "F18", "A\uFFFEB\uFFFF", "AB" },
+        { "F19", "x\u202Eevil\u202Cy", "xevily" },
+        { "F20", "a\u2066b\u2069c\u200Ed", "abc\u200Ed" },
+        { "F21", "lone\uD800 hi\uDC00 ok \U0001F600", "lone hi ok \U0001F600" },
+        { "F22", "del\u007Fc1\u0085", "del\u007Fc1\u0085" },
+        { "F23", "\r\uFFFE\nfin", "fin" },
+        { "F24", "\uFDD0x\U0001FFFE", "x" },
     };
 
     [Theory]
-    [MemberData(nameof(Fixtures))]
+    [MemberData(nameof(Fixtures), DisableDiscoveryEnumeration = true)] // F21 lleva surrogates sueltos: sin serializar
     public void T1_FromPlainText_Fixtures(string id, string input, string expected)
     {
         Assert.True(expected == ReportMarkdown.FromPlainText(input), id);
@@ -62,13 +70,14 @@ public sealed class ReportMarkdownTests
     private static string Norm(string s) => s.Replace('\u00A0', ' ').Replace(ReportMarkdown.LeadingNbspMarker, ' ').TrimEnd();
 
     [Theory]
-    [MemberData(nameof(Fixtures))]
+    [MemberData(nameof(Fixtures), DisableDiscoveryEnumeration = true)] // F21 lleva surrogates sueltos: sin serializar
     public void T2_FromPlainText_ConservaElTexto(string id, string input, string _)
     {
         var md = ReportMarkdown.FromPlainText(input);
         Assert.Null(ReportMarkdown.Validate(md));
 
-        var expected = input.Replace("\r\n", "\n").Split('\n').Select(l => l.TrimEnd()).ToList();
+        // Lo que se espera ver es el texto ya limpio (F18-F24 traen caracteres que se quitan).
+        var expected = ReportValues.Clean(input).Split('\n').Select(l => l.TrimEnd()).ToList();
         while (expected.Count > 0 && expected[0].Length == 0) expected.RemoveAt(0);
         while (expected.Count > 0 && expected[^1].Length == 0) expected.RemoveAt(expected.Count - 1);
         expected = expected.Select(l => l.StartsWith("- ", StringComparison.Ordinal) ? l[2..].TrimStart() : l).ToList();

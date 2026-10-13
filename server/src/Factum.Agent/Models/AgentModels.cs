@@ -32,11 +32,47 @@ public sealed class AgentOptions
     /// <summary>Orígenes del front que pueden llamar a Tatana. Vacío = <c>OriginPolicy.Defaults</c>.</summary>
     public string[] AllowedOrigins { get; set; } = [];
 
+    /// <summary>
+    /// Hosts EXTRA que puede traer el header <c>Host</c> (tatana-ws-y-hosts §3.1/§4.3), además de <c>localhost</c>,
+    /// <c>127.0.0.1</c>, <c>[::1]</c> y la IP de <see cref="BindAddress"/> (o las de la PC si es 0.0.0.0/::).
+    /// Nombre o IP, sin esquema, puerto, path ni <c>*</c>. Inválido en appsettings/env/CLI → no arranca; en la
+    /// config local → se ignora el archivo entero. Ver <c>Common.HostPolicy</c>.
+    /// </summary>
+    public string[] AllowedHosts { get; set; } = [];
+
     /// <summary>Tope de una subida del navegador a la carpeta del caso. Default 16 GiB.</summary>
     public long MaxUploadBytes { get; set; } = 16L * 1024 * 1024 * 1024;
 
     /// <summary>Espacio libre que tiene que quedar después de una subida o del ZIP. Default 1 GiB.</summary>
     public long MinFreeBytes { get; set; } = 1L * 1024 * 1024 * 1024;
+
+    // ── ios-grabacion-larga (§5.1) ───────────────────────────────────────────
+
+    /// <summary>Post-proceso de grabaciones iOS (variantes de previsualización). Ver <see cref="VideoPostprocessOptions"/>.</summary>
+    public VideoPostprocessOptions VideoPostprocess { get; set; } = new();
+
+    /// <summary>
+    /// Solo con <see cref="Mock"/> = true: MP4 que se copia como "grabación" iOS al detener (para probar el
+    /// post-proceso sin iPhone, DA9). No va en appsettings.json: variable de entorno, CLI o appsettings.Local.json.
+    /// </summary>
+    public string? MockIosRecordingSource { get; set; }
+
+    // ── grabacion-android-robusta (§5.1) ─────────────────────────────────────
+
+    /// <summary>Grabación de Android con scrcpy (arranque, cierre y validación). Ver <see cref="RecordingOptions"/>.</summary>
+    public RecordingOptions Recording { get; set; } = new();
+
+    /// <summary>
+    /// Solo con <see cref="Mock"/> = true: video que se copia como "grabación" Android al detener. No va en
+    /// appsettings.json: variable de entorno, CLI o appsettings.Local.json.
+    /// </summary>
+    public string? MockAndroidRecordingSource { get; set; }
+
+    /// <summary>
+    /// Solo con <see cref="Mock"/> = true: fuerza el resultado de la validación para probar la UI:
+    /// <c>"ok"</c> | <c>"incomplete"</c> | <c>"empty"</c> | <c>"unreadable"</c>. Solo por env/CLI/appsettings.Local.json.
+    /// </summary>
+    public string? MockAndroidRecordingOutcome { get; set; }
 
     /// <summary>Ruta absoluta de la carpeta base del ZIP (config o default por SO).</summary>
     public string ResolveEvidenceDirectory() =>
@@ -69,6 +105,169 @@ public sealed class AgentOptions
             return Path.GetFullPath(Path.Combine(dataDirectory, "evidencia"));
         return Path.Combine(userProfile, "Factum", "Evidencia");
     }
+}
+
+/// <summary>
+/// Config <c>Agent:VideoPostprocess:*</c> (ios-grabacion-larga §5.1). Un valor inválido no impide arrancar:
+/// <see cref="Normalize"/> loguea un warning y vuelve al default de ese campo (DA6).
+/// </summary>
+public sealed class VideoPostprocessOptions
+{
+    public const int DefaultBlendMaxSourceSeconds = 0;
+    public const int DefaultRifeMaxSourceSeconds = 120;
+    public const double DefaultTimeoutFactor = 3.0;
+    public const int DefaultTimeoutExtraSeconds = 120;
+    public const int DefaultTimeoutMinSeconds = 300;
+    public const int DefaultTimeoutMaxSeconds = 7200;
+    public const int DefaultProgressIntervalSeconds = 3;
+
+    /// <summary>false = sin variantes (como AirPlay): <c>variants: []</c>.</summary>
+    public bool Enabled { get; set; } = true;
+    /// <summary>Umbral de duración del original para "Suavizado". 0 = sin límite.</summary>
+    public int BlendMaxSourceSeconds { get; set; } = DefaultBlendMaxSourceSeconds;
+    /// <summary>Umbral de duración del original para "RIFE". 0 = sin límite (DA3).</summary>
+    public int RifeMaxSourceSeconds { get; set; } = DefaultRifeMaxSourceSeconds;
+    /// <summary>Plazo = factor × duración + extra, acotado entre mínimo y máximo.</summary>
+    public double TimeoutFactor { get; set; } = DefaultTimeoutFactor;
+    public int TimeoutExtraSeconds { get; set; } = DefaultTimeoutExtraSeconds;
+    public int TimeoutMinSeconds { get; set; } = DefaultTimeoutMinSeconds;
+    /// <summary>También es el plazo si no se conoce la duración (DA7).</summary>
+    public int TimeoutMaxSeconds { get; set; } = DefaultTimeoutMaxSeconds;
+    /// <summary>Intervalo mínimo entre eventos de progreso.</summary>
+    public int ProgressIntervalSeconds { get; set; } = DefaultProgressIntervalSeconds;
+
+    /// <summary>Corrige, campo por campo, los valores inválidos al default (con un warning). Devuelve this.</summary>
+    public VideoPostprocessOptions Normalize(ILogger? log)
+    {
+        void Warn(string field, object value, object fallback) =>
+            log?.LogWarning("Agent:VideoPostprocess:{Field} inválido ({Value}); se usa {Default}", field, value, fallback);
+
+        if (BlendMaxSourceSeconds < 0)
+        {
+            Warn(nameof(BlendMaxSourceSeconds), BlendMaxSourceSeconds, DefaultBlendMaxSourceSeconds);
+            BlendMaxSourceSeconds = DefaultBlendMaxSourceSeconds;
+        }
+        if (RifeMaxSourceSeconds < 0)
+        {
+            Warn(nameof(RifeMaxSourceSeconds), RifeMaxSourceSeconds, DefaultRifeMaxSourceSeconds);
+            RifeMaxSourceSeconds = DefaultRifeMaxSourceSeconds;
+        }
+        if (!(TimeoutFactor > 0) || double.IsInfinity(TimeoutFactor))
+        {
+            Warn(nameof(TimeoutFactor), TimeoutFactor, DefaultTimeoutFactor);
+            TimeoutFactor = DefaultTimeoutFactor;
+        }
+        if (TimeoutExtraSeconds < 0)
+        {
+            Warn(nameof(TimeoutExtraSeconds), TimeoutExtraSeconds, DefaultTimeoutExtraSeconds);
+            TimeoutExtraSeconds = DefaultTimeoutExtraSeconds;
+        }
+        if (TimeoutMinSeconds < 0)
+        {
+            Warn(nameof(TimeoutMinSeconds), TimeoutMinSeconds, DefaultTimeoutMinSeconds);
+            TimeoutMinSeconds = DefaultTimeoutMinSeconds;
+        }
+        if (TimeoutMaxSeconds <= 0)
+        {
+            Warn(nameof(TimeoutMaxSeconds), TimeoutMaxSeconds, DefaultTimeoutMaxSeconds);
+            TimeoutMaxSeconds = DefaultTimeoutMaxSeconds;
+        }
+        if (TimeoutMinSeconds > TimeoutMaxSeconds)
+        {
+            // Los dos vuelven al default: no se sabe cuál de los dos está mal.
+            log?.LogWarning(
+                "Agent:VideoPostprocess:TimeoutMinSeconds ({Min}) mayor que TimeoutMaxSeconds ({Max}); se usan {DMin} y {DMax}",
+                TimeoutMinSeconds, TimeoutMaxSeconds, DefaultTimeoutMinSeconds, DefaultTimeoutMaxSeconds);
+            TimeoutMinSeconds = DefaultTimeoutMinSeconds;
+            TimeoutMaxSeconds = DefaultTimeoutMaxSeconds;
+        }
+        if (ProgressIntervalSeconds < 1)
+        {
+            Warn(nameof(ProgressIntervalSeconds), ProgressIntervalSeconds, DefaultProgressIntervalSeconds);
+            ProgressIntervalSeconds = DefaultProgressIntervalSeconds;
+        }
+        return this;
+    }
+
+    /// <summary>Copia (Normalize no toca las opciones compartidas de IOptions).</summary>
+    public VideoPostprocessOptions Clone() => (VideoPostprocessOptions)MemberwiseClone();
+}
+
+/// <summary>
+/// Config <c>Agent:Recording:*</c> (grabacion-android-robusta §5.1). Un valor inválido no impide arrancar:
+/// <see cref="Normalize"/> loguea un warning y vuelve al default de ese campo.
+/// </summary>
+public sealed class RecordingOptions
+{
+    public const int DefaultStartTimeoutSeconds = 20;
+    public const int DefaultStopTimeoutSeconds = 30;
+    public const int DefaultSigtermAfterSeconds = 3;
+    public const double DefaultToleranceMinSeconds = 3;
+    public const double DefaultTolerancePercent = 2;
+    public const string WindowModeNoWindow = "no_window";
+    public const string WindowModeNoVideoPlayback = "no_video_playback";
+
+    /// <summary>Tiempo máximo para ver el marcador de inicio de scrcpy.</summary>
+    public int StartTimeoutSeconds { get; set; } = DefaultStartTimeoutSeconds;
+    /// <summary>false = criterio viejo: vivo a los 1,5 s = grabando (inicio = lanzamiento + 1 s). Salida de emergencia.</summary>
+    public bool RequireStartMarker { get; set; } = true;
+    /// <summary>Espera total desde la señal hasta el kill (Duda 2 A).</summary>
+    public int StopTimeoutSeconds { get; set; } = DefaultStopTimeoutSeconds;
+    /// <summary>Solo macOS/Linux: SIGTERM si scrcpy sigue vivo este tiempo después de la SIGINT. 0 = sin escalado.</summary>
+    public int SigtermAfterSeconds { get; set; } = DefaultSigtermAfterSeconds;
+    /// <summary>Agrega <c>--stay-awake</c>.</summary>
+    public bool StayAwake { get; set; } = true;
+    /// <summary><c>"no_window"</c> → <c>--no-window</c>; <c>"no_video_playback"</c> → <c>--no-video-playback</c> (lo anterior).</summary>
+    public string WindowMode { get; set; } = WindowModeNoWindow;
+    /// <summary>Tolerancia = max(min, grabado × porcentaje / 100) (Duda 3 A).</summary>
+    public double ToleranceMinSeconds { get; set; } = DefaultToleranceMinSeconds;
+    public double TolerancePercent { get; set; } = DefaultTolerancePercent;
+
+    /// <summary>Corrige, campo por campo, los valores inválidos al default (con un warning). Devuelve this.</summary>
+    public RecordingOptions Normalize(ILogger? log)
+    {
+        void Warn(string field, object? value, object fallback) =>
+            log?.LogWarning("Agent:Recording:{Field} inválido ({Value}); se usa {Default}", field, value, fallback);
+
+        if (StartTimeoutSeconds <= 0)
+        {
+            Warn(nameof(StartTimeoutSeconds), StartTimeoutSeconds, DefaultStartTimeoutSeconds);
+            StartTimeoutSeconds = DefaultStartTimeoutSeconds;
+        }
+        if (StopTimeoutSeconds <= 0)
+        {
+            Warn(nameof(StopTimeoutSeconds), StopTimeoutSeconds, DefaultStopTimeoutSeconds);
+            StopTimeoutSeconds = DefaultStopTimeoutSeconds;
+        }
+        if (SigtermAfterSeconds < 0 || SigtermAfterSeconds >= StopTimeoutSeconds)
+        {
+            // Con el default de StopTimeoutSeconds (30) el default de SigtermAfterSeconds (3) siempre entra.
+            var fallback = DefaultSigtermAfterSeconds < StopTimeoutSeconds ? DefaultSigtermAfterSeconds : 0;
+            Warn(nameof(SigtermAfterSeconds), SigtermAfterSeconds, fallback);
+            SigtermAfterSeconds = fallback;
+        }
+        if (!(ToleranceMinSeconds > 0) || double.IsInfinity(ToleranceMinSeconds))
+        {
+            Warn(nameof(ToleranceMinSeconds), ToleranceMinSeconds, DefaultToleranceMinSeconds);
+            ToleranceMinSeconds = DefaultToleranceMinSeconds;
+        }
+        if (double.IsNaN(TolerancePercent) || TolerancePercent < 0 || TolerancePercent > 50)
+        {
+            Warn(nameof(TolerancePercent), TolerancePercent, DefaultTolerancePercent);
+            TolerancePercent = DefaultTolerancePercent;
+        }
+        var mode = WindowMode?.Trim().ToLowerInvariant();
+        if (mode is not (WindowModeNoWindow or WindowModeNoVideoPlayback))
+        {
+            Warn(nameof(WindowMode), WindowMode, WindowModeNoWindow);
+            mode = WindowModeNoWindow;
+        }
+        WindowMode = mode;
+        return this;
+    }
+
+    /// <summary>Copia (Normalize no toca las opciones compartidas de IOptions).</summary>
+    public RecordingOptions Clone() => (RecordingOptions)MemberwiseClone();
 }
 
 public sealed class Device

@@ -38,9 +38,12 @@ public interface ICaseRepository
     /// Append atómico de una versión al historial SIN tocar <c>report_texts</c> (versionado-informe,
     /// versión "generate"). $push simple o $set del array podado, bajo el mismo filtro de
     /// editabilidad. false si el caso no matcheó (dejó de ser editable).
+    /// wizard-concurrencia-pestanas §8.2.4: además exige que el historial siga teniendo
+    /// <paramref name="expectedCount"/> versiones (append condicional: dos prepare en carrera no
+    /// duplican el snapshot). 0 = vacío o sin el campo.
     /// </summary>
     Task<bool> AppendReportVersionAsync(string id, ReportTextVersion version,
-        List<ReportTextVersion>? prunedOverride, CancellationToken ct = default);
+        List<ReportTextVersion>? prunedOverride, int expectedCount, CancellationToken ct = default);
     /// <summary>Upsert por filename (role null = borrar la marca); devuelve la lista completa o null si no matcheó.</summary>
     Task<List<CaptureRole>?> UpsertCaptureRolesAsync(string id,
         IReadOnlyList<(string Filename, string? Role)> roles, CancellationToken ct = default);
@@ -60,14 +63,18 @@ public interface ICaseRepository
 
     /// <summary>
     /// $set de <c>Evidence</c>, <c>EvidenceHost</c>, <c>EvidenceStorage = "agent"</c> y
-    /// <c>FileSources</c>, solo si el caso sigue editable y no es del flujo "server". false si no matcheó.
+    /// <c>FileSources</c>, solo si el caso sigue editable, no es del flujo "server" y la revisión del
+    /// manifiesto sigue siendo <paramref name="expectedRevision"/> (wizard-concurrencia-pestanas DT10;
+    /// 0 = "0 o sin el campo"). <c>$inc EvidenceRevision</c>. false si no matcheó.
     /// </summary>
-    Task<bool> RegisterEvidenceAsync(string id, List<EvidenceItem> evidence, EvidenceHost host,
-        List<FileSource> fileSources, CancellationToken ct = default);
+    Task<bool> RegisterEvidenceAsync(string id, int expectedRevision, List<EvidenceItem> evidence,
+        EvidenceHost host, List<FileSource> fileSources, CancellationToken ct = default);
 
     /// <summary>
     /// $pull del ítem de <c>Evidence</c>, de su <c>CaptureRoles</c> y de su <c>FileSources</c>; si
-    /// el manifiesto queda vacío, $unset de <c>EvidenceHost</c>. Mismo filtro que el registro.
+    /// el manifiesto queda vacío, $unset de <c>EvidenceHost</c>. Mismo filtro que el registro (sin la
+    /// revisión). Cada paso hace <c>$inc EvidenceRevision</c>: un registro que leyó antes de la baja
+    /// no resucita el ítem.
     /// </summary>
     Task<bool> RemoveEvidenceAsync(string id, string filename, CancellationToken ct = default);
 
@@ -275,12 +282,16 @@ public sealed class CaseRepository : ICaseRepository
     }
 
     public async Task<bool> AppendReportVersionAsync(string id, ReportTextVersion version,
-        List<ReportTextVersion>? prunedOverride, CancellationToken ct = default)
+        List<ReportTextVersion>? prunedOverride, int expectedCount, CancellationToken ct = default)
     {
         var u = prunedOverride is not null
             ? Builders<Case>.Update.Set(c => c.ReportTextVersions, prunedOverride)
             : Builders<Case>.Update.Push(c => c.ReportTextVersions, version);
-        var res = await _col.UpdateOneAsync(Editable(id), u, cancellationToken: ct);
+        var f = Builders<Case>.Filter;
+        var count = expectedCount == 0
+            ? f.Or(f.Size(c => c.ReportTextVersions, 0), f.Exists(c => c.ReportTextVersions, false))
+            : f.Size(c => c.ReportTextVersions, expectedCount);
+        var res = await _col.UpdateOneAsync(Editable(id) & count, u, cancellationToken: ct);
         return res.MatchedCount > 0;
     }
 
@@ -290,15 +301,21 @@ public sealed class CaseRepository : ICaseRepository
     private static FilterDefinition<Case> EditableAgent(string id) =>
         Editable(id) & Builders<Case>.Filter.Ne(c => c.EvidenceStorage, EvidenceStorages.Server);
 
-    public async Task<bool> RegisterEvidenceAsync(string id, List<EvidenceItem> evidence, EvidenceHost host,
-        List<FileSource> fileSources, CancellationToken ct = default)
+    public async Task<bool> RegisterEvidenceAsync(string id, int expectedRevision, List<EvidenceItem> evidence,
+        EvidenceHost host, List<FileSource> fileSources, CancellationToken ct = default)
     {
-        var res = await _col.UpdateOneAsync(EditableAgent(id),
+        var f = Builders<Case>.Filter;
+        // Documento previo a esta HU: no tiene EvidenceRevision y deserializa 0.
+        var revision = expectedRevision == 0
+            ? f.Or(f.Eq(c => c.EvidenceRevision, 0), f.Exists(c => c.EvidenceRevision, false))
+            : f.Eq(c => c.EvidenceRevision, expectedRevision);
+        var res = await _col.UpdateOneAsync(EditableAgent(id) & revision,
             Builders<Case>.Update
                 .Set(c => c.Evidence, evidence)
                 .Set(c => c.EvidenceHost, host)
                 .Set(c => c.EvidenceStorage, EvidenceStorages.Agent)
-                .Set(c => c.FileSources, fileSources),
+                .Set(c => c.FileSources, fileSources)
+                .Inc(c => c.EvidenceRevision, 1),
             cancellationToken: ct);
         return res.MatchedCount > 0;
     }
@@ -309,14 +326,15 @@ public sealed class CaseRepository : ICaseRepository
             Builders<Case>.Update
                 .PullFilter(c => c.Evidence, e => e.Filename == filename)
                 .PullFilter(c => c.CaptureRoles, r => r.Filename == filename)
-                .PullFilter(c => c.FileSources, s => s.Filename == filename),
+                .PullFilter(c => c.FileSources, s => s.Filename == filename)
+                .Inc(c => c.EvidenceRevision, 1),
             cancellationToken: ct);
         if (res.MatchedCount == 0) return false;
 
         // Segundo paso atómico por sí mismo: solo si el manifiesto quedó vacío.
         await _col.UpdateOneAsync(
             EditableAgent(id) & Builders<Case>.Filter.Size(c => c.Evidence, 0),
-            Builders<Case>.Update.Unset(c => c.EvidenceHost),
+            Builders<Case>.Update.Unset(c => c.EvidenceHost).Inc(c => c.EvidenceRevision, 1),
             cancellationToken: ct);
         return true;
     }

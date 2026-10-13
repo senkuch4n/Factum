@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using Factum.Agent.Common;
 using Factum.Agent.Models;
@@ -43,6 +44,12 @@ public interface ICaseZipService
     ZipStatusResponse Status(string caseId, string? caseRef, string? zipFilename);
     /// <summary>Ruta del ZIP final si existe; null si no.</summary>
     string? FinalZipPath(string caseId, string? caseRef, string? zipFilename);
+    /// <summary>
+    /// Al arrancar (tatana-ws-y-hosts T-05): borra los <c>evidencia_*.zip.part</c> de
+    /// <c>&lt;EvidenceDirectory&gt;/*/.factum/pendiente/</c>. Nunca carpetas, <c>.zip</c> ni <c>.sha256</c>.
+    /// Devuelve cuántos borró.
+    /// </summary>
+    int CleanupOrphanParts();
 }
 
 /// <summary>
@@ -56,6 +63,8 @@ public sealed class CaseZipService : ICaseZipService
     internal const string PendingDirName = "pendiente";
     internal const string StateFileName = "estado.json";
     private static readonly TimeSpan ProgressInterval = TimeSpan.FromMilliseconds(500);
+    /// <summary>Tope de la contraseña en bytes UTF-8: 7-Zip no abre un ZIP AES con una más larga (T-09).</summary>
+    internal const int MaxPasswordBytes = 99;
 
     private static readonly JsonSerializerOptions StateJson = new()
     {
@@ -114,6 +123,15 @@ public sealed class CaseZipService : ICaseZipService
     public async Task<BuildZipResponse> BuildAsync(string caseId, BuildZipRequest request, CancellationToken ct)
     {
         var p = PathsFor(caseId, request.CaseRef, request.ZipFilename);
+        // T-08/T-09: antes del lock y de tocar disco. null = sin contraseña; " " es válida. Nunca se muestra.
+        if (request.Password is { } pw)
+        {
+            if (pw.Length == 0)
+                throw new AgentHttpException(400, AgentErrorCodes.InvalidPassword, "La contraseña del ZIP no puede estar vacía");
+            if (Encoding.UTF8.GetByteCount(pw) > MaxPasswordBytes)
+                throw new AgentHttpException(400, AgentErrorCodes.InvalidPassword,
+                    "La contraseña del ZIP no puede superar los 99 bytes (7-Zip no abriría el ZIP)");
+        }
         var files = request.Files ?? [];
         if (files.Count == 0)
             throw new AgentHttpException(400, AgentErrorCodes.InvalidFilename, "No hay archivos para el ZIP");
@@ -134,19 +152,10 @@ public sealed class CaseZipService : ICaseZipService
                 throw new AgentHttpException(409, AgentErrorCodes.ZipAlreadyCommitted,
                     "El ZIP de este caso ya se generó y se guardó en esta PC");
 
-            try
-            {
-                Directory.CreateDirectory(p.PendingDir);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                throw new AgentHttpException(500, AgentErrorCodes.StorageError,
-                    $"No se pudo crear la carpeta de evidencia {p.Final}", inner: ex);
-            }
-
-            // 3. Espacio en el volumen de la carpeta final.
+            // 3. Espacio en el volumen de la carpeta final. T-06: la carpeta todavía no existe (se crea recién al
+            // escribir el ZIP), así que se mide sobre el primer ancestro que exista.
             var total = files.Sum(f => Math.Max(0, f.Size ?? 0));
-            if (_probe.GetAvailableFreeBytes(p.Final) is { } available && available < total + _minFreeBytes)
+            if (_probe.GetAvailableFreeBytes(ExistingAncestor(p.Final)) is { } available && available < total + _minFreeBytes)
             {
                 var required = total + _minFreeBytes;
                 throw new AgentHttpException(507, AgentErrorCodes.InsufficientStorage,
@@ -186,9 +195,21 @@ public sealed class CaseZipService : ICaseZipService
                     "Algunos archivos de la evidencia cambiaron o faltan en esta PC",
                     new Dictionary<string, object?> { ["files"] = changes });
 
-            // 5-7. ZIP provisorio, hash y verificación.
+            // 5-7. ZIP provisorio, hash y verificación. T-06: las carpetas se crean recién acá y, si algo falla,
+            // se borran las que creó ESTA llamada y solo si quedaron vacías.
+            var meta = Path.Combine(p.Final, MetaDirName);
+            var created = new[] { p.Final, meta, p.PendingDir }.Where(d => !Directory.Exists(d)).ToList();
             try
             {
+                try
+                {
+                    Directory.CreateDirectory(p.PendingDir);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    throw new AgentHttpException(500, AgentErrorCodes.StorageError,
+                        $"No se pudo crear la carpeta de evidencia {p.Final}", inner: ex);
+                }
                 DeleteQuietly(p.PendingPart);
                 await progress.PhaseAsync("zipping");
                 await EvidenceZip.WriteAsync(p.PendingPart, paths, request.Password, ct, progress.Add);
@@ -212,16 +233,23 @@ public sealed class CaseZipService : ICaseZipService
             }
             catch (Exception ex)
             {
+                var canceled = ex is OperationCanceledException && ct.IsCancellationRequested;
+                // T-07: se clasifica ANTES de borrar el .part (el espacio se mide con el .part todavía ocupándolo).
+                var failure = canceled
+                    ? null
+                    : ex as AgentHttpException ?? ClassifyBuildFailure(ex, paths,
+                        () => _probe.GetAvailableFreeBytes(ExistingAncestor(p.Final)), total, _minFreeBytes);
                 DeleteQuietly(p.PendingPart);
                 DeleteQuietly(p.PendingZip);
                 DeleteQuietly(p.PendingSha);
-                if (ex is OperationCanceledException && ct.IsCancellationRequested) throw;
-                _log.LogError(ex, "No se pudo armar o verificar el ZIP del caso {CaseId}", p.CaseId);
-                throw new AgentHttpException(500, AgentErrorCodes.ZipFailed,
-                    ex is EvidenceZipVerificationException
-                        ? ex.Message
-                        : "No se pudo armar o verificar el ZIP en esta PC; la evidencia quedó intacta",
-                    inner: ex);
+                DeleteEmptyCreatedDirs(created);
+                if (canceled) throw;
+                _log.LogError(ex, "No se pudo armar o verificar el ZIP del caso {CaseId} ({Code})", p.CaseId, failure!.Code);
+                if (ex is EvidenceZipVerificationException { Entry: { } d })
+                    _log.LogError(
+                        "Verificación del ZIP del caso {CaseId} falló: {Reason}. Entrada {Entry}, {Size} bytes, método {Method}, cifrada {Encrypted}, SHA-256 esperado {Expected}, obtenido {Actual}",
+                        p.CaseId, ex.Message, d.Name, d.Size, d.Method, d.Encrypted, d.ExpectedSha256, d.ActualSha256);
+                throw failure;
             }
         }
         finally
@@ -229,6 +257,120 @@ public sealed class CaseZipService : ICaseZipService
             gate.Release();
         }
     }
+
+    /// <summary>
+    /// Falla de los pasos 5-7 → error HTTP (tatana-ws-y-hosts T-07, D-A7): un archivo de la evidencia que
+    /// desapareció a mitad del armado → 409 <c>evidence_changed</c> (<c>reason: "missing"</c>); disco lleno → 507
+    /// <c>insufficient_storage</c>; cualquier otra → 500 <c>zip_failed</c>. Se llama ANTES de borrar el <c>.part</c>.
+    /// </summary>
+    internal static AgentHttpException ClassifyBuildFailure(Exception ex, IReadOnlyList<string> paths,
+        Func<long?> freeBytes, long total, long minFree)
+    {
+        if (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            var missing = paths.Where(path => !File.Exists(path))
+                .Select(path => new EvidenceChange(Path.GetFileName(path), "missing"))
+                .ToList();
+            if (missing.Count > 0)
+                return new AgentHttpException(409, AgentErrorCodes.EvidenceChanged,
+                    "Algunos archivos de la evidencia cambiaron o faltan en esta PC",
+                    new Dictionary<string, object?> { ["files"] = missing }, ex);
+        }
+        if (ex is IOException io)
+        {
+            var available = freeBytes();
+            if (DiskErrors.IsDiskFull(io) || (available is { } a && a < total))
+            {
+                var required = total + minFree;
+                return new AgentHttpException(507, AgentErrorCodes.InsufficientStorage,
+                    available is { } av
+                        ? $"No hay espacio en el disco de esta PC para guardar el ZIP (hace falta {CaseEvidenceStore.FormatBytes(required)}, quedan {CaseEvidenceStore.FormatBytes(av)})"
+                        : "No hay espacio en el disco de esta PC para guardar el ZIP",
+                    new Dictionary<string, object?> { ["required_bytes"] = required, ["available_bytes"] = available }, ex);
+            }
+        }
+        return new AgentHttpException(500, AgentErrorCodes.ZipFailed, ZipFailedMessage(ex), inner: ex);
+    }
+
+    /// <summary>
+    /// Primer ancestro existente de <paramref name="path"/> (T-06): <c>DriveInfo</c> sobre una ruta inexistente
+    /// tira en macOS y el prechequeo de espacio quedaría muerto. Último recurso: la raíz.
+    /// </summary>
+    internal static string ExistingAncestor(string path)
+    {
+        var full = Path.GetFullPath(path);
+        for (var dir = full; !string.IsNullOrEmpty(dir); dir = Path.GetDirectoryName(dir))
+            if (Directory.Exists(dir)) return dir;
+        return Path.GetPathRoot(full) ?? full;
+    }
+
+    // T-06: de la más profunda a la más alta, no recursivo y solo si quedó vacía.
+    private void DeleteEmptyCreatedDirs(List<string> created)
+    {
+        for (var i = created.Count - 1; i >= 0; i--)
+        {
+            var dir = created[i];
+            try
+            {
+                if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
+                    Directory.Delete(dir);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "No se pudo borrar la carpeta vacía {Dir}", dir);
+            }
+        }
+    }
+
+    // ── Limpieza al arrancar (T-05) ──────────────────────────────────────────
+
+    public int CleanupOrphanParts()
+    {
+        if (!Directory.Exists(EvidenceDirectory)) return 0;
+        var deleted = 0;
+        IEnumerable<string> cases;
+        try { cases = Directory.EnumerateDirectories(EvidenceDirectory).ToList(); }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "No se pudo recorrer {Dir} para borrar ZIP parciales", EvidenceDirectory);
+            return 0;
+        }
+        foreach (var caseDir in cases)
+        {
+            var pending = Path.Combine(caseDir, MetaDirName, PendingDirName);
+            try
+            {
+                if (!Directory.Exists(pending)) continue;
+                foreach (var file in Directory.EnumerateFiles(pending).ToList())
+                {
+                    if (!AgentFileNames.IsZipPartFilename(Path.GetFileName(file))) continue;
+                    try
+                    {
+                        File.Delete(file);
+                        deleted++;
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogWarning(ex, "No se pudo borrar el ZIP parcial huérfano {Path}", file);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "No se pudo revisar {Dir}", pending);
+            }
+        }
+        return deleted;
+    }
+
+    /// <summary>
+    /// Texto de <c>zip_failed</c> (zip-verificacion-stored D4). Si falló la verificación del ZIP, la
+    /// evidencia ya pasó el rehash (si no, habría sido <c>evidence_changed</c>), así que está intacta; el
+    /// detalle técnico va solo al log.
+    /// </summary>
+    internal static string ZipFailedMessage(Exception ex) => ex is EvidenceZipVerificationException
+        ? "La evidencia está intacta, pero el ZIP armado no pasó el control de integridad. Si se repite, contactá a soporte."
+        : "No se pudo armar o verificar el ZIP en esta PC; la evidencia quedó intacta";
 
     // ── POST /cases/{id}/zip/commit ──────────────────────────────────────────
 

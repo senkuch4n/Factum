@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Factum.Agent.Models;
+using Microsoft.AspNetCore.HostFiltering;
 using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
@@ -129,17 +130,25 @@ builder.Services.AddSingleton<AppleServiceProbe>();
 builder.Services.AddSingleton<IosService>();
 builder.Services.AddSingleton<IIosService>(sp => sp.GetRequiredService<IosService>());
 builder.Services.AddSingleton<IOperationSource>(sp => sp.GetRequiredService<IosService>());
+// grabacion-android-robusta §5.12: grabaciones en curso y detenidas sin importar en /agent/state.
+builder.Services.AddSingleton<IRecordingStateSource>(sp => sp.GetRequiredService<AdbService>());
+builder.Services.AddSingleton<IRecordingStateSource>(sp => sp.GetRequiredService<IosService>());
+builder.Services.AddSingleton<RecordingRegistry>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<OperationTracker>();
 builder.Services.AddSingleton<IWebcamService, WebcamService>();
 builder.Services.AddSingleton<IFileStorageService, FileStorageService>();
 builder.Services.AddSingleton<AgentWebSocketHub>();
+builder.Services.AddSingleton<IAgentEventSink>(sp => sp.GetRequiredService<AgentWebSocketHub>());
 builder.Services.AddSingleton<ToolInventory>();
 // zip-local-informe-servidor: carpeta de trabajo del caso y ZIP en la PC del perito.
 builder.Services.AddSingleton<IAgentDiskProbe, DriveInfoAgentDiskProbe>();
 builder.Services.AddSingleton<ICaseEvidenceStore, CaseEvidenceStore>();
 builder.Services.AddSingleton<ICaseZipService, CaseZipService>();
 builder.Services.AddSingleton<IFolderReveal, FolderReveal>();
+// ios-grabacion-larga §5.3: variantes de previsualización de grabaciones iOS, en segundo plano.
+builder.Services.AddSingleton<VideoPostprocessService>();
+builder.Services.AddSingleton<IVideoPostprocessService>(sp => sp.GetRequiredService<VideoPostprocessService>());
 
 // ── Puerto y dirección de escucha (CLI > config > default) ───────────────────
 var port = builder.Configuration.GetValue<int>("Agent:Port", 8765);
@@ -170,7 +179,25 @@ else
 }
 builder.WebHost.UseUrls(listenUrl);
 
+// ── Filtro de Host (tatana-ws-y-hosts §4.3, D2/D3) ────────────────────────────
+// Solo se atienden requests DIRIGIDAS a esta PC: cierra el DNS rebinding (un dominio que resuelve a
+// 127.0.0.1 llega con su propio Host y recibe 400). La lista la arma HostPolicy y pisa el "AllowedHosts"
+// de ASP.NET venga de donde venga (D-A6). Inválida en appsettings/env/CLI → no arranca.
+var (allowedHosts, hostErrors) = HostPolicy.Build(bindAddress,
+    builder.Configuration.GetSection(HostPolicy.Key).Get<string[]>(), HostPolicy.MachineAddresses);
+if (hostErrors.Count > 0)
+    throw new InvalidOperationException(
+        "Configuración inválida, Tatana no arranca:" + string.Concat(hostErrors.Select(e => "\n  - " + e)));
+builder.Services.PostConfigure<HostFilteringOptions>(o =>
+{
+    o.AllowedHosts = allowedHosts.ToList();
+    o.AllowEmptyHosts = true; // default de ASP.NET; HTTP/1.1 sin Host ya lo rechaza Kestrel
+});
+
 var app = builder.Build();
+
+// Primer middleware: un Host ajeno recibe 400 sin datos ni CORS en TODAS las rutas (/ws, /health, OPTIONS…).
+app.UseHostFiltering();
 
 // Guarda de origen + CORS (§6.1). Los headers se escriben ANTES de next() y el resto va en
 // try/catch: si una excepción escapa el pipeline (ej: fallo de DI) no llega a Kestrel, que haría
@@ -275,14 +302,27 @@ else if (localConfigStatus.Loaded)
     var zipDir = app.Services.GetRequiredService<ICaseZipService>().EvidenceDirectory;
     var store = app.Services.GetRequiredService<ICaseEvidenceStore>();
     var orphanUploads = store.CleanupOrphanUploads();
+    // tatana-ws-y-hosts T-05: .part huérfanos del ZIP (solo evidencia_*.zip.part en .factum/pendiente/).
+    var orphanParts = app.Services.GetRequiredService<ICaseZipService>().CleanupOrphanParts();
+    // ios-grabacion-larga §5.6: solo <DataDirectory>/.postprocess/ (ahí escribe únicamente Tatana).
+    var orphanPostprocess = 0;
+    try { orphanPostprocess = VideoPostprocessService.CleanupWorkDirectory(store.DataDirectory); }
+    catch (Exception ex) { logger.LogWarning(ex, "No se pudo borrar la carpeta de post-proceso huérfana"); }
+    // wizard-concurrencia-pestanas §4.2: las vistas previas del paso 2 no sobreviven a un reinicio (solo previews/).
+    var clearedPreviews = 0;
+    try { clearedPreviews = app.Services.GetRequiredService<IFileStorageService>().ClearPreviews(); }
+    catch (Exception ex) { logger.LogWarning(ex, "No se pudo vaciar la carpeta de vistas previas"); }
     logger.LogInformation(
-        "Evidencia: carpeta de trabajo {DataDirectory}/cases, ZIP en {EvidenceDirectory}; orígenes permitidos {Lista} (temporales huérfanos borrados: {N})",
-        store.DataDirectory, zipDir, string.Join(", ", allowedOrigins), orphanUploads);
+        "Evidencia: carpeta de trabajo {DataDirectory}/cases, ZIP en {EvidenceDirectory}; orígenes permitidos {Lista} (temporales huérfanos borrados: {N}; trabajos de post-proceso huérfanos borrados: {P}; ZIP parciales huérfanos borrados: {Z}; vistas previas borradas: {V})",
+        store.DataDirectory, zipDir, string.Join(", ", allowedOrigins), orphanUploads, orphanPostprocess, orphanParts,
+        clearedPreviews);
     if (AgentFileNames.IsSyncedFolder(zipDir))
         logger.LogWarning(
             "La carpeta de evidencia {Ruta} está dentro de una carpeta sincronizada con la nube; el ZIP se subiría a ese servicio. Configurá Agent:EvidenceDirectory fuera de OneDrive/iCloud.",
             zipDir);
 }
+
+logger.LogInformation("Hosts permitidos: {Lista}", string.Join(", ", allowedHosts));
 
 if (exposedToNetwork)
     logger.LogWarning(
@@ -291,19 +331,39 @@ if (exposedToNetwork)
 
 await adb.EnsureServerAsync();
 
-// Versiones de adb/scrcpy/ffmpeg/python para /health.tools, en segundo plano.
-app.Services.GetRequiredService<ToolInventory>().WarmUp();
-
-_ = Task.Run(async () =>
+// Apagado (tatana-ws-y-hosts §4.2), UN solo callback para que el orden no dependa del LIFO de Register:
+// 1. ios-grabacion-larga §5.6: se cancela el post-proceso (agent_stopping) y se le dan 5 s para matar ffmpeg
+//    y limpiar la carpeta de trabajo (sus eventos terminales quedan encolados en el hub).
+// 2. close 1001 "going away" a cada WebSocket, DETRÁS de esos eventos, con 1 s de espera.
 {
-    List<string> lastSerials = [];
-    while (true)
+    var post = app.Services.GetRequiredService<IVideoPostprocessService>();
+    app.Lifetime.ApplicationStopping.Register(() =>
     {
         try
         {
-            await Task.Delay(3000);
-            var devices = (await adb.ListDevicesAsync())
-                .Concat(await ios.ListDevicesAsync())
+            post.CancelAll("agent_stopping");
+            post.WhenIdleAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        }
+        catch (Exception ex) { logger.LogWarning(ex, "Error al cancelar el post-proceso al apagar"); }
+        try { hub.ShutdownAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult(); }
+        catch (Exception ex) { logger.LogWarning(ex, "Error al cerrar los WebSocket al apagar"); }
+    });
+}
+
+// Versiones de adb/scrcpy/ffmpeg/python para /health.tools, en segundo plano.
+app.Services.GetRequiredService<ToolInventory>().WarmUp();
+
+var stopping = app.Lifetime.ApplicationStopping;
+_ = Task.Run(async () =>
+{
+    List<string> lastSerials = [];
+    while (!stopping.IsCancellationRequested)
+    {
+        try
+        {
+            await Task.Delay(3000, stopping);
+            var devices = (await adb.ListDevicesAsync(stopping))
+                .Concat(await ios.ListDevicesAsync(stopping))
                 .ToList();
 
             var serials = devices.Select(d => d.Serial).OrderBy(s => s).ToList();
@@ -318,7 +378,12 @@ _ = Task.Run(async () =>
                 logger.LogInformation("Dispositivos: [{Serials}]", string.Join(", ", serials));
             }
         }
-        catch (Exception ex) { logger.LogWarning(ex, "Error en polling de dispositivos"); }
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested) { break; }
+        catch (Exception ex) when (!stopping.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Error en polling de dispositivos");
+        }
+        catch { break; } // apagando: sin warnings
     }
 });
 

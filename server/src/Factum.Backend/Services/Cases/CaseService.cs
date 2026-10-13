@@ -28,14 +28,14 @@ public interface ICaseService
         CancellationToken ct = default);
     /// <summary>
     /// versionado-informe: historial de versiones de report_texts del caso propio (más reciente
-    /// primero). 404 si no existe, 403 si es de otro perito. Funciona en cualquier Status.
+    /// primero). 404 si no existe o es de otro perito. Funciona en cualquier Status.
     /// </summary>
     Task<Result<ReportTextVersionsResponse>> GetReportTextVersionsAsync(string id, string officerDni,
         CancellationToken ct = default);
     /// <summary>
     /// trazabilidad-caso: eventos de cadena de custodia del caso, ascendente por timestamp. Dueño
-    /// (por Officer.Dni) o superadmin (<paramref name="actorRole"/>). 404 si no existe, 403 si es
-    /// ajeno y no superadmin.
+    /// (por Officer.Dni) o superadmin (<paramref name="actorRole"/>). 404 si no existe o si es
+    /// ajeno y no superadmin (api-hardening §4.7).
     /// </summary>
     Task<Result<List<CaseEvent>>> ListEventsAsync(string id, User actor, string actorRole,
         CancellationToken ct = default);
@@ -166,15 +166,26 @@ public sealed partial class CaseService : ICaseService
         return cases;
     }
 
-    // Caso del dueño, o el error que corresponde (404 / 403). Con EvidenceStorage resuelto.
+    // Caso del dueño, o 404 (api-hardening §4.7, D7 A: un caso ajeno responde igual que uno
+    // inexistente, para no confirmar que el id existe; el intento queda en el log). Con EvidenceStorage resuelto.
     private async Task<(Case? Case, Result<T>? Error)> LoadOwnedAsync<T>(string id, string officerDni,
         CancellationToken ct)
     {
         var cas = await _repo.FindByIdAsync(id, ct);
-        if (cas is null) return (null, Result.NotFound<T>());
-        if (cas.Officer.Dni != officerDni) return (null, Result.Forbidden<T>());
-        return (ResolveStorage(cas), null);
+        switch (CaseAccess.Check(cas, officerDni))
+        {
+            case CaseAccessResult.NotFound:
+                return (null, Result.NotFound<T>());
+            case CaseAccessResult.Foreign:
+                LogForeignAccess(officerDni, id);
+                return (null, Result.NotFound<T>());
+            default:
+                return (ResolveStorage(cas!), null);
+        }
     }
+
+    private void LogForeignAccess(string requesterDni, string caseId) =>
+        _log.LogWarning("Acceso a caso ajeno: {Dni} pidió {CaseId}", requesterDni, caseId);
 
     // zip-local-informe-servidor §3.2: completa EvidenceStorage EN MEMORIA (el repositorio nunca
     // hace Replace, así que esto no se persiste). Solo lee el disco y no crea la carpeta del caso.
@@ -209,7 +220,8 @@ public sealed partial class CaseService : ICaseService
     {
         var fields = CaseFields.From(request);
         var d = request.Device;
-        var imei = (d?.Imei ?? string.Empty).Trim();
+        // informe-formato-fixes §5.2: device con SafeText (una línea); Trim solo donde ya estaba.
+        var imei = SafeText.Clean(d?.Imei, TextShape.SingleLine).Trim();
 
         var outcome = CaseValidation.ValidateCaseData(fields, imei);
         if (outcome.Error is not null) return Result.Invalid<Case>(outcome.Error);
@@ -249,14 +261,14 @@ public sealed partial class CaseService : ICaseService
             Officer = officer,
             Device = d is not null ? new DeviceInfo
             {
-                Serial = d.Serial ?? string.Empty,
-                Name = (d.Name ?? string.Empty).Trim(),
-                Manufacturer = d.Manufacturer ?? string.Empty,
-                Model = d.Model ?? string.Empty,
+                Serial = SafeText.Clean(d.Serial, TextShape.SingleLine),
+                Name = SafeText.Clean(d.Name, TextShape.SingleLine).Trim(),
+                Manufacturer = SafeText.Clean(d.Manufacturer, TextShape.SingleLine),
+                Model = SafeText.Clean(d.Model, TextShape.SingleLine),
                 AndroidVersion = d.AndroidVersion,
                 Imei = imei,
                 Platform = d.Platform ?? "android",
-                OsVersion = d.OsVersion ?? string.Empty,
+                OsVersion = SafeText.Clean(d.OsVersion, TextShape.SingleLine),
             } : new DeviceInfo(),
             Status = CaseStatus.Draft,
             CreatedAt = DateTime.UtcNow,
@@ -283,7 +295,7 @@ public sealed partial class CaseService : ICaseService
         if (!IsEditable(cas)) return Result.Conflict<Case>(NotEditableMessage);
 
         var fields = CaseFields.From(request);
-        var newImei = request.Imei?.Trim();
+        var newImei = SafeText.CleanOrNull(request.Imei, TextShape.SingleLine)?.Trim();
         var effectiveImei = string.IsNullOrEmpty(newImei) ? cas.Device.Imei : newImei;
 
         var outcome = CaseValidation.ValidateCaseData(fields, effectiveImei);
@@ -347,6 +359,10 @@ public sealed partial class CaseService : ICaseService
         if (cas is null) return error!;
         if (!IsEditable(cas)) return Result.Conflict<ReportTexts>(NotEditableMessage);
 
+        // informe-formato-fixes §5.2: los 8 textos se limpian (multilínea) ANTES de validar; todo lo
+        // que sigue (validación, ReportTexts, snapshot de versionado) usa el request limpio.
+        // formato, trigger y restored_from no se tocan.
+        request = CleanReportTexts(request);
         var validationError = CaseValidation.ValidateReportTexts(request);
         if (validationError is not null) return Result.Invalid<ReportTexts>(validationError);
         // versionado-informe: trigger ∈ {null,"","save","restore"}; restored_from solo con "restore".
@@ -354,6 +370,16 @@ public sealed partial class CaseService : ICaseService
                 out var trigger, out var triggerError))
             return Result.Invalid<ReportTexts>(triggerError!);
         ReportTextFormats.TryNormalize(request.Formato, out var formato);
+        // wizard-concurrencia-pestanas DT13: presente → se guarda; ausente/null → se conserva el guardado.
+        if (!CaseValidation.IsValidReportCounts(request.OperacionesBase))
+            return Result.Invalid<ReportTexts>(CaseValidation.InvalidReportCountsMessage);
+        var operacionesBase = request.OperacionesBase is { } b
+            ? new ReportCounts
+            {
+                Capturas = b.Capturas, Grabaciones = b.Grabaciones,
+                ArchivosExtraidos = b.ArchivosExtraidos, Otros = b.Otros,
+            }
+            : cas.ReportTexts?.OperacionesBase;
 
         var texts = new ReportTexts
         {
@@ -369,6 +395,7 @@ public sealed partial class CaseService : ICaseService
             // guardan tal cual llegan.
             Formato = formato,
             UpdatedAt = DateTime.UtcNow,
+            OperacionesBase = operacionesBase,
         };
 
         // versionado-informe (D1/D2/D4): el snapshot candidato se agrega al historial SOLO si pasa el
@@ -397,6 +424,18 @@ public sealed partial class CaseService : ICaseService
         return Result.Ok(texts);
     }
 
+    internal static ReportTextsDto CleanReportTexts(ReportTextsDto r) => r with
+    {
+        ObjetoInforme = SafeText.CleanOrNull(r.ObjetoInforme, TextShape.MultiLine),
+        OperacionesRealizadas = SafeText.CleanOrNull(r.OperacionesRealizadas, TextShape.MultiLine),
+        AseguramientoEvidencia = SafeText.CleanOrNull(r.AseguramientoEvidencia, TextShape.MultiLine),
+        Resultados = SafeText.CleanOrNull(r.Resultados, TextShape.MultiLine),
+        ValoracionTecnica = SafeText.CleanOrNull(r.ValoracionTecnica, TextShape.MultiLine),
+        Conclusiones = SafeText.CleanOrNull(r.Conclusiones, TextShape.MultiLine),
+        NotasTecnicas = SafeText.CleanOrNull(r.NotasTecnicas, TextShape.MultiLine),
+        Reserva = SafeText.CleanOrNull(r.Reserva, TextShape.MultiLine),
+    };
+
     public async Task<Result<ReportTextVersionsResponse>> GetReportTextVersionsAsync(string id,
         string officerDni, CancellationToken ct = default)
     {
@@ -416,10 +455,16 @@ public sealed partial class CaseService : ICaseService
         CancellationToken ct = default)
     {
         var cas = await _repo.FindByIdAsync(id, ct);
-        if (cas is null) return Result.NotFound<List<CaseEvent>>();
         // Dueño o superadmin (D9-A). En dev/external el rol siempre es "cliente": solo vale el dueño.
-        if (cas.Officer.Dni != actor.Dni && actorRole != UserRoles.Superadmin)
-            return Result.Forbidden<List<CaseEvent>>();
+        // api-hardening §4.7: ajeno y no superadmin → 404, igual que inexistente.
+        switch (CaseAccess.Check(cas, actor.Dni, allowSuperadmin: true, actorRole == UserRoles.Superadmin))
+        {
+            case CaseAccessResult.NotFound:
+                return Result.NotFound<List<CaseEvent>>();
+            case CaseAccessResult.Foreign:
+                LogForeignAccess(actor.Dni, id);
+                return Result.NotFound<List<CaseEvent>>();
+        }
         var events = await _caseEvents.ListByCaseAsync(id, ct);
         return Result.Ok(events);
     }
@@ -753,15 +798,30 @@ public sealed partial class CaseService : ICaseService
     /// que conserva la primera y todas las "generate". Append atómico (AppendReportVersionAsync).
     /// Best-effort: si falla, solo loguea (no frena la generación). De-dup: nada si es idéntica a la
     /// última.
+    /// wizard-concurrencia-pestanas §8.2.4: append condicional al tamaño del historial leído. Si otro
+    /// request lo cambió en el medio (dos prepare en carrera), se relee UNA vez y se replanifica
+    /// (GenerateVersionFor ya devuelve null si ahora es duplicada); si vuelve a no matchear, log y sigue.
     /// </summary>
     private async Task AppendGenerateVersionAsync(Case cas, CancellationToken ct)
     {
         try
         {
-            var version = ReportVersioning.GenerateVersionFor(cas);
-            if (version is null) return;
-            var (push, pruned) = ReportVersioning.PlanAppend(cas.ReportTextVersions, version);
-            await _repo.AppendReportVersionAsync(cas.Id, push ?? version, pruned, ct);
+            var current = cas;
+            for (var attempt = 1; attempt <= 2; attempt++)
+            {
+                var version = ReportVersioning.GenerateVersionFor(current);
+                if (version is null) return;
+                var (push, pruned) = ReportVersioning.PlanAppend(current.ReportTextVersions, version);
+                if (await _repo.AppendReportVersionAsync(current.Id, push ?? version, pruned,
+                        current.ReportTextVersions.Count, ct))
+                    return;
+                if (attempt == 2) break;
+                var fresh = await _repo.FindByIdAsync(current.Id, ct);
+                if (fresh is null || !IsEditable(fresh)) return;
+                current = fresh;
+            }
+            _log.LogWarning("No se agregó la versión \"generate\" al caso {CaseId}: el historial cambió dos veces",
+                cas.Id);
         }
         catch (Exception ex)
         {
@@ -779,7 +839,7 @@ public sealed partial class CaseService : ICaseService
     public const string NoEncryptedZipMessage = "Este caso no tiene un ZIP cifrado";
 
     // Único lugar (además de la respuesta de generate) por donde sale la contraseña. Caso ajeno
-    // → 403 como el resto de los endpoints del caso (P1-A). Casos viejos (D8) o generados con
+    // → 404 como el resto de los endpoints del caso (api-hardening §4.7). Casos viejos (D8) o generados con
     // EncryptZip=false → 404. No se loguea nada.
     public async Task<Result<ZipPasswordResponse>> GetZipPasswordAsync(string id, string officerDni,
         CancellationToken ct = default)

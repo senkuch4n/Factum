@@ -125,12 +125,12 @@ public sealed class InMemoryCaseCounter : ICaseRepository
     public Task<bool> UpdateReportTextsAsync(string id, ReportTexts texts, ReportTextVersion? versionToPush = null,
         List<ReportTextVersion>? prunedOverride = null, CancellationToken ct = default) => throw No();
     public Task<bool> AppendReportVersionAsync(string id, ReportTextVersion version,
-        List<ReportTextVersion>? prunedOverride, CancellationToken ct = default) => throw No();
+        List<ReportTextVersion>? prunedOverride, int expectedCount, CancellationToken ct = default) => throw No();
     public Task<List<CaptureRole>?> UpsertCaptureRolesAsync(string id, IReadOnlyList<(string Filename, string? Role)> roles,
         CancellationToken ct = default) => throw No();
     public Task<List<Case>> ListCatalogSourcesAsync(string officerDni, CancellationToken ct = default) => throw No();
-    public Task<bool> RegisterEvidenceAsync(string id, List<EvidenceItem> evidence, EvidenceHost host,
-        List<FileSource> fileSources, CancellationToken ct = default) => throw No();
+    public Task<bool> RegisterEvidenceAsync(string id, int expectedRevision, List<EvidenceItem> evidence,
+        EvidenceHost host, List<FileSource> fileSources, CancellationToken ct = default) => throw No();
     public Task<bool> RemoveEvidenceAsync(string id, string filename, CancellationToken ct = default) => throw No();
     public Task<bool> SetPendingGenerationAsync(string id, PendingGeneration pending, CancellationToken ct = default) => throw No();
     public Task<bool> TryMarkGeneratingAsync(string id, string generationId, CancellationToken ct = default) => throw No();

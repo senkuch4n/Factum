@@ -53,7 +53,11 @@ public sealed class CaseEventDetail
     [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Sha256 { get; set; }                // evidence_added
     [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public long?   Size { get; set; }                  // evidence_added
+    public long?   Size { get; set; }                  // evidence_added / evidence_updated
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PreviousSha256 { get; set; }        // evidence_updated (sha256 anterior)
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? FailedAction { get; set; }          // capture_failed: tipo de evento que se habría registrado
 }
 
 /// <summary>
@@ -70,6 +74,10 @@ public static class CaseEventTypes
     public const string CapturePhoto = "capture_photo";
     public const string EvidenceAdded = "evidence_added";
     public const string EvidenceRemoved = "evidence_removed";
+    /// <summary>wizard-concurrencia-pestanas DT10: re-registro del mismo nombre con otro SHA-256.</summary>
+    public const string EvidenceUpdated = "evidence_updated";
+    /// <summary>wizard-concurrencia-pestanas DT11: Tatana rechazó una captura (detail.failed_action + reason).</summary>
+    public const string CaptureFailed = "capture_failed";
     public const string ReportGenerated = "report_generated";
     public const string ReportFailed = "report_failed";
     /// <summary>DT11: preparado pero no se emite en v1.</summary>

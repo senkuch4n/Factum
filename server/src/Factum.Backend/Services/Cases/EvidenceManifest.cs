@@ -23,10 +23,23 @@ public static class EvidenceErrorCodes
     public const string ImageHashMismatch = "image_hash_mismatch";
     public const string InvalidZipInfo = "invalid_zip_info";
     public const string RequestTooLarge = "request_too_large";
+    /// <summary>wizard-concurrencia-pestanas DT10: otra pestaña sigue registrando tras 3 intentos (409).</summary>
+    public const string EvidenceBusy = "evidence_busy";
 }
 
 /// <summary>Ítem del manifiesto ya validado y normalizado (sha256 en minúscula, nombre sin espacios).</summary>
 public sealed record ValidatedEvidenceItem(string Filename, long Size, string Sha256, string? SourcePath);
+
+/// <summary>
+/// Plan del registro idempotente (wizard-concurrencia-pestanas DT10). <c>Merged</c> en orden ordinal;
+/// <c>Added</c>/<c>Updated</c> en el orden del lote. <c>Changed</c> = hay algo que escribir (altas,
+/// actualizaciones o rutas de origen completadas).
+/// </summary>
+public sealed record RegistrationPlan(
+    List<EvidenceItem> Merged,
+    List<ValidatedEvidenceItem> Added,
+    List<(ValidatedEvidenceItem Item, string PreviousSha256)> Updated,
+    bool Changed);
 
 /// <summary>Resultado de <see cref="EvidenceManifest.ValidateItems"/>: error (+ nombre) o los ítems normalizados.</summary>
 public sealed record ManifestValidation(string? Error, string? Filename, List<ValidatedEvidenceItem> Items)
@@ -53,6 +66,8 @@ public static class EvidenceManifest
         "Los archivos verificados en la PC no coinciden con los registrados en el expediente";
     public const string MissingImagesMessage = "Faltan capturas que el informe necesita";
     public const string InvalidZipInfoMessage = "Los datos del ZIP no son válidos";
+    public const string EvidenceBusyMessage =
+        "Otra pestaña está registrando evidencia de este caso. Reintentá en unos segundos.";
 
     public static string EvidenceOnOtherPcMessage(string hostname) =>
         $"La evidencia de este caso está en la PC {hostname}. Seguilo desde esa PC.";
@@ -139,6 +154,64 @@ public static class EvidenceManifest
         }
         return map.Values.OrderBy(e => e.Filename, StringComparer.Ordinal).ToList();
     }
+
+    /// <summary>
+    /// Registro idempotente (wizard-concurrencia-pestanas DT10, D4 A):
+    /// <list type="bullet">
+    /// <item>Nombre nuevo → <c>Added</c>, con <c>RegisteredAt = now</c>.</item>
+    /// <item>Mismo nombre y mismo sha256 (ordinal) → se conserva el ítem tal cual (<c>RegisteredAt</c> y
+    /// <c>Size</c> incluidos). Si no tenía ruta de origen y el nuevo sí, se completa (cambio sin evento).</item>
+    /// <item>Mismo nombre y otro sha256 → <c>Updated</c>: se reemplaza (<c>RegisteredAt = now</c>; si el nuevo no
+    /// trae ruta de origen se conserva la anterior, como en <see cref="Upsert"/>).</item>
+    /// </list>
+    /// </summary>
+    public static RegistrationPlan PlanRegistration(IEnumerable<EvidenceItem> existing,
+        IEnumerable<ValidatedEvidenceItem> incoming, DateTime now)
+    {
+        var map = new Dictionary<string, EvidenceItem>(StringComparer.Ordinal);
+        foreach (var e in existing) map[e.Filename] = e;
+        var added = new List<ValidatedEvidenceItem>();
+        var updated = new List<(ValidatedEvidenceItem, string)>();
+        var sourceCompleted = false;
+
+        foreach (var i in incoming)
+        {
+            if (!map.TryGetValue(i.Filename, out var old))
+            {
+                added.Add(i);
+                map[i.Filename] = NewItem(i, i.SourcePath, now);
+            }
+            else if (string.Equals(old.Sha256, i.Sha256, StringComparison.Ordinal))
+            {
+                if (string.IsNullOrEmpty(old.SourcePath) && i.SourcePath is not null)
+                {
+                    map[i.Filename] = new EvidenceItem
+                    {
+                        Filename = old.Filename, Size = old.Size, Sha256 = old.Sha256,
+                        SourcePath = i.SourcePath, RegisteredAt = old.RegisteredAt,
+                    };
+                    sourceCompleted = true;
+                }
+            }
+            else
+            {
+                updated.Add((i, old.Sha256));
+                map[i.Filename] = NewItem(i, i.SourcePath ?? old.SourcePath, now);
+            }
+        }
+
+        var merged = map.Values.OrderBy(e => e.Filename, StringComparer.Ordinal).ToList();
+        return new RegistrationPlan(merged, added, updated, added.Count > 0 || updated.Count > 0 || sourceCompleted);
+    }
+
+    private static EvidenceItem NewItem(ValidatedEvidenceItem i, string? source, DateTime now) => new()
+    {
+        Filename = i.Filename,
+        Size = i.Size,
+        Sha256 = i.Sha256,
+        SourcePath = source,
+        RegisteredAt = now,
+    };
 
     /// <summary>
     /// <c>FileSources</c> con las rutas de origen de <paramref name="items"/> (una por nombre: una

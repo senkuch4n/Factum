@@ -4,7 +4,7 @@ import {
   Loader2, Download, ArrowUpCircle, CheckCircle2, WifiOff, ShieldAlert,
   AlertTriangle, RefreshCw, Info, X, PauseCircle,
 } from 'lucide-react'
-import { busyOperationsText } from '../hooks/useTatanaUpdates'
+import { backgroundOperationsNotice, busyOperationsText } from '../hooks/useTatanaUpdates'
 
 /* SDD tatana-instalador-autoupdate §6.8: una línea de estado de la
    actualización (debajo del estado del agente) y avisos cerrables. Nada de
@@ -69,6 +69,7 @@ export function UpdateStatusLine({ state }: { state: TatanaUpdateState | null })
 
   const busy = state.busyOperations ?? []
   const isBusy = busy.length > 0
+  const backgroundNotice = backgroundOperationsNotice(state.backgroundOperations)
   const Icon = line.icon
   const percent = Math.max(0, Math.min(100, state.percent ?? 0))
 
@@ -111,7 +112,7 @@ export function UpdateStatusLine({ state }: { state: TatanaUpdateState | null })
             type="button"
             onClick={install}
             disabled={isBusy || installing}
-            aria-describedby={isBusy ? 'tatana-update-busy' : undefined}
+            aria-describedby={isBusy ? 'tatana-update-busy' : backgroundNotice ? 'tatana-update-background' : undefined}
             className="focus-ring flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: 'var(--blue)', color: '#ffffff' }}
           >
@@ -164,7 +165,18 @@ export function UpdateStatusLine({ state }: { state: TatanaUpdateState | null })
         </p>
       )}
 
-      {state.phase === 'ready' && !isBusy && (
+      {state.phase === 'ready' && !isBusy && backgroundNotice && (
+        <p
+          id="tatana-update-background"
+          className="mt-2 flex items-start gap-1.5 text-xs"
+          style={{ color: 'var(--text-secondary)' }}
+        >
+          <Info aria-hidden="true" className="mt-px w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--amber)' }} />
+          {backgroundNotice}
+        </p>
+      )}
+
+      {state.phase === 'ready' && !isBusy && !backgroundNotice && (
         <p className="mt-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
           También se instala sola la próxima vez que se abra Tatana o al iniciar sesión.
         </p>

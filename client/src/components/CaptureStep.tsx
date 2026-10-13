@@ -13,7 +13,11 @@ import {
 } from "lucide-react";
 import type { CaptureRole, CaptureRoleValue } from "@/lib/api";
 import { CAPTURE_ROLES_FIELD_ID, isRoleEligible } from "@/lib/pericial";
-import { agent, type AirplayUnavailableReason, type VideoVariant } from "@/lib/agent";
+import {
+  agent, type AirplayUnavailableReason, type RecordingPhase, type RecordingStateEntry,
+  type VideoVariant, type VideoVariantStatus,
+} from "@/lib/agent";
+import type { EvidenceNotices } from "@/hooks/useEvidenceNotices";
 import { airplayUnavailableText } from "@/lib/agent-messages";
 import type { EvidenceStorage } from "@/lib/api";
 import { FOCUS_RING } from "@/lib/prime/pt/shared";
@@ -31,20 +35,38 @@ import { StepHeader } from "./wizard/StepHeader";
 import { StepActions } from "./wizard/StepActions";
 import { MEDIA_SURFACE } from "./capture/media";
 import {
-  fileType, localKindOf, nextAdjuntoName, kindMeta,
+  fileType, localKindOf, nextAdjuntoName, kindMeta, srcOf,
   type CapturedFile, type GKind, type GItem,
 } from "./capture/gallery";
+import { ConfirmDialog } from "./overlay/ConfirmDialog";
+import { formatBytes } from "@/lib/format";
 import type { LocalBlobInfo } from "@/hooks/useFileManager";
-import { StageEmpty, StageScreen } from "./capture/StageScreen";
+import { SafeImg, StageEmpty, StageScreen } from "./capture/StageScreen";
 import { AttachmentChip, EvidenceTrayTile, type TrayUploadState } from "./capture/EvidenceTray";
 import { UploadLiveRegion, UploadProgressPanel } from "./capture/UploadProgressPanel";
 import type { UploadMessage } from "@/lib/upload-messages";
 import type { FileUploadState, UploadProgress } from "@/types";
 import { CaptureRoleMenu } from "./capture/CaptureRoleMenu";
 import { AirplayConnectGuide, OnDeviceStopGuide } from "./capture/CaptureGuides";
+import { ElapsedTime, clockTime } from "./capture/ElapsedTime";
 
 interface Props {
   isRecording: boolean;
+  // ── grabacion-android-robusta §7.7 ──
+  /** Inicio real de la grabación según Tatana (ISO). Sin él (Tatana viejo) no hay cronómetro. */
+  recordingStartedAt?: string | null;
+  /** Fase que informa Tatana: "starting" → "Iniciando…", "stopping" → "Deteniendo…". */
+  recordingPhase?: RecordingPhase | null;
+  /** El estado de grabación se recuperó de Tatana (recarga, otra pestaña): "Grabando desde HH:MM". */
+  recordingRecovered?: boolean;
+  /** Grabación en curso de otro caso / origen desconocido / otro celular. */
+  foreignRecording?: RecordingStateEntry | null;
+  /** Detiene la grabación ajena sin agregarla a este caso. */
+  onStopForeign?: () => void;
+  /** Avisos no bloqueantes (grabación incompleta, captura negra). */
+  notices?: EvidenceNotices;
+  /** "Conservar" una captura negra: se oculta el aviso y sale del paso 5. */
+  onKeepBlack?: (filename: string) => void;
   androidVersion: number;
   platform?: "android" | "ios";
   deviceSerial?: string;
@@ -66,7 +88,11 @@ interface Props {
   captureRoles?: CaptureRole[];
   onSetCaptureRole?: (filename: string, role: CaptureRoleValue | null) => void;
   onUploadAndContinue: () => void;
-  onRemoveFile?: (filename: string) => void;
+  /**
+   * Borra un archivo después de que el perito confirma en el diálogo. `true` si
+   * salió de la bandeja; `false` si quedó (el motivo llega por `onError`).
+   */
+  onRemoveFile?: (filename: string, onError: (msg: string) => void) => Promise<boolean>;
   loading: Record<string, boolean>;
   deviceOffline?: boolean;
   disconnectedDuringRecord?: boolean;
@@ -80,7 +106,8 @@ interface Props {
   // trae su ruta de origen en el dispositivo, para que quede registrada en el informe.
   onDeviceFilesAdded?: (files: PulledFileRef[]) => void;
   videoVariants?: Record<string, VideoVariant[]>;
-  pendingVariantFiles?: Set<string>;
+  /** Estado del post-proceso de cada grabación: original → etiqueta → estado (solo visual). */
+  variantStatus?: Record<string, Record<string, VideoVariantStatus>>;
   airplayReceiverName?: string | null;
   // Sesión de "espejar para capturas" (iOS + AirPlay, marcas múltiples) — flujo separado
   // del botón normal "Capturar pantalla".
@@ -129,7 +156,9 @@ interface Props {
 }
 
 export function CaptureStep({
-  isRecording, androidVersion, platform = "android", deviceSerial, files,
+  isRecording, recordingStartedAt = null, recordingPhase = null, recordingRecovered = false,
+  foreignRecording = null, onStopForeign, notices = NO_NOTICES, onKeepBlack,
+  androidVersion, platform = "android", deviceSerial, files,
   onScreenshot, onToggleRecord,
   iosModePicker, iosRecordMode, onSelectIosMode, onCancelIosMode,
   onPhotoPerito, onPhotoTitular,
@@ -144,7 +173,7 @@ export function CaptureStep({
   localBlobs = NO_LOCAL_BLOBS,
   onDeviceFilesAdded,
   videoVariants = {},
-  pendingVariantFiles = new Set(),
+  variantStatus = NO_VARIANT_STATUS,
   airplayReceiverName,
   airplayShotActive, airplayShotConnected, airplayShotReceiverName, airplayShotMarksCount = 0,
   onStartAirplayShot, onMarkAirplayShot, onStopAirplayShot,
@@ -157,6 +186,8 @@ export function CaptureStep({
 }: Props) {
   const isIOS = platform === "ios";
   const airplayShotHintId = useId();
+  const foreignNoticeId = useId();
+  const recordHelpId = useId();
   const agentMode = storageMode === "agent";
   // Captura deshabilitada durante el envío o con la evidencia en otra PC / Tatana caído.
   const captureBlocked = uploading || !!evidenceLock;
@@ -243,9 +274,27 @@ export function CaptureStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalItems]);
 
+  // ── Borrado con confirmación (wizard-concurrencia-pestanas DT14, M2): un solo
+  //    diálogo para los cuatro disparadores (bandeja, chips, visor y VideoCard). ──
+  const [pendingRemove, setPendingRemove] = useState<GItem | null>(null);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
   function removeItem(item: GItem) {
-    if (removeBlocked) return;
-    onRemoveFile?.(item.name);
+    if (removeBlocked || !onRemoveFile) return;
+    setPendingRemove(item);
+    setRemoveError(null);
+    setRemoveOpen(true);
+  }
+
+  async function confirmRemove(): Promise<boolean> {
+    const item = pendingRemove;
+    if (!item || !onRemoveFile) return true;
+    setRemoveError(null);
+    let lastError: string | null = null;
+    const ok = await onRemoveFile(item.name, msg => { lastError = msg; });
+    if (!ok) setRemoveError(lastError ?? "No se pudo borrar la evidencia. Reintentá.");
+    return ok;
   }
 
   /** Estado de envío de un ítem: subido (en el caso), subiendo/error (esta tanda) o pendiente. */
@@ -288,13 +337,50 @@ export function CaptureStep({
     });
   }
 
-  const recordBtnDisabled = !!loading.startRecord || !!loading.stopRecord || !!deviceOffline || captureBlocked;
-  const recordBusy = !!loading.startRecord || !!loading.stopRecord;
+  const recordStarting = !!loading.startRecord || recordingPhase === "starting";
+  const recordStopping = !!loading.stopRecord || recordingPhase === "stopping";
+  const recordBusy = recordStarting || recordStopping;
+  // Con una grabación ajena en curso no se puede empezar otra (Tatana graba una a la vez).
+  const foreignBlocks = !!foreignRecording && !isRecording;
+  const recordBtnDisabled = recordBusy || !!deviceOffline || captureBlocked || foreignBlocks;
+  const recordLabel = recordStopping ? "Deteniendo…" : recordStarting ? "Iniciando…" : isRecording ? "Detener" : "Grabar";
+  const recordHelp = recordStopping
+    ? "Cerrando y verificando la grabación. No desconectes el celular."
+    : recordStarting ? "Esperando que el celular empiece a grabar…" : "";
+
+  // Aviso de grabación ajena: título según de quién es.
+  const foreignTitle = !foreignRecording ? ""
+    : deviceSerial && foreignRecording.serial !== deviceSerial ? "Hay una grabación en curso de otro celular"
+    : foreignRecording.case_id ? "Hay una grabación en curso iniciada desde otro caso"
+    : "Hay una grabación en curso de origen desconocido";
+  const foreignSince = foreignRecording ? clockTime(foreignRecording.started_at ?? foreignRecording.requested_at) : null;
+
+  /** Aviso de un ítem de la bandeja (incompleta / negra sin "Conservar"). */
+  const noticeOf = (item: GItem): "incomplete" | "black" | undefined => {
+    if (item.kind === "video" && notices.recordings[item.name]?.status === "incomplete") return "incomplete";
+    if (item.kind === "screenshot" && notices.black[item.name] && !notices.keptBlack.includes(item.name)) return "black";
+    return undefined;
+  };
 
   return (
     <>
       {/* ── Diálogos (siempre montados; el Dialog de Prime monta el contenido al abrir) ── */}
       <Lightbox src={lightbox} onClose={() => setLightbox(null)} />
+
+      <ConfirmDialog
+        open={removeOpen}
+        onOpenChange={open => { setRemoveOpen(open); if (!open) setRemoveError(null); }}
+        onConfirm={confirmRemove}
+        tone="destructive"
+        dismissableMask
+        title="¿Borrar esta evidencia?"
+        description="Se borra el archivo de esta PC y sale del expediente. Queda registrado en la cadena de custodia. No se puede deshacer."
+        confirmLabel="Borrar evidencia"
+        cancelLabel="Cancelar"
+        error={removeError}
+      >
+        {pendingRemove && <RemovePreview item={pendingRemove} />}
+      </ConfirmDialog>
       <WebcamCaptureModal
         open={webcamTarget !== null}
         label={lastWebcamTarget === "funcionario" ? "Foto del perito" : "Foto del titular"}
@@ -453,6 +539,28 @@ export function CaptureStep({
             </FxBanner>
           )}
 
+          {/* ── Grabación en curso de otro caso / origen desconocido / otro celular ── */}
+          {foreignRecording && (
+            <div id={foreignNoticeId}>
+              <FxBanner tone="info" icon={<Video className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}>
+                <p className="m-0 font-semibold">{foreignTitle}</p>
+                <p className="m-0 mt-0.5 text-xs font-normal leading-relaxed">
+                  {foreignSince ? `Empezó a las ${foreignSince}. ` : ""}Para grabar en este caso, primero detenela. El archivo
+                  queda guardado en Tatana y se recupera solo al abrir el caso que la inició.
+                </p>
+                <Button type="button" size="small" severity="secondary"
+                  icon={loading.stopForeign
+                    ? <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />
+                    : <VideoOff className="h-3.5 w-3.5" aria-hidden="true" />}
+                  label={loading.stopForeign ? "Deteniendo…" : "Detener esa grabación"}
+                  onClick={onStopForeign}
+                  disabled={!!loading.stopForeign}
+                  aria-busy={!!loading.stopForeign || undefined}
+                  className="mt-2.5 min-h-11 sm:min-h-0" />
+              </FxBanner>
+            </div>
+          )}
+
           {/* ── Tarjeta: Capturar del celular ── */}
           <section aria-labelledby="capture-actions-title" className="fx-card space-y-3 p-4">
             <h3 id="capture-actions-title" className={LABEL}>
@@ -479,6 +587,7 @@ export function CaptureStep({
                 onClick={onToggleRecord}
                 disabled={recordBtnDisabled}
                 aria-busy={recordBusy || undefined}
+                aria-describedby={foreignBlocks ? foreignNoticeId : recordHelp ? recordHelpId : undefined}
                 className={cn(
                   TILE,
                   isRecording
@@ -487,13 +596,18 @@ export function CaptureStep({
                 )}
               >
                 {recordBusy
-                  ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+                  ? <Loader2 className="h-5 w-5 motion-safe:animate-spin" aria-hidden="true" />
                   : isRecording
                     ? <VideoOff className="h-5 w-5" aria-hidden="true" />
                     : <Video className="h-5 w-5 text-fx-danger" aria-hidden="true" />}
-                {loading.stopRecord ? "Deteniendo…" : loading.startRecord ? "Iniciando…" : isRecording ? "Detener" : "Grabar"}
+                {recordLabel}
               </button>
             </div>
+
+            {/* Ayuda mientras inicia o detiene (siempre montado: el lector anuncia el cambio). */}
+            <p id={recordHelpId} role="status" className="m-0 text-xs text-fx-text-2 empty:hidden">
+              {recordHelp}
+            </p>
 
             {/* Guía AirPlay de respaldo del screenshot — el backend llega acá solo si DVT y
                 USB fallaron (ej. sin Developer Mode y sin qvh instalado) */}
@@ -619,11 +733,16 @@ export function CaptureStep({
                 <div role="status" className="flex items-center gap-2 rounded-fx-lg border border-fx-danger bg-fx-danger-soft px-3 py-2.5">
                   <span className="h-2 w-2 shrink-0 rounded-full bg-fx-danger motion-safe:animate-pulse" aria-hidden="true" />
                   <span className="text-xs font-bold text-fx-danger">REC</span>
-                  <span className="flex-1 text-fx-body-sm font-semibold text-fx-text">
-                    {iosRecordMode === "on_device" ? "Grabando en el iPhone"
+                  <span className="min-w-0 flex-1 text-fx-body-sm font-semibold text-fx-text">
+                    {recordingRecovered && recordingStartedAt
+                      ? `Grabando desde ${clockTime(recordingStartedAt)}`
+                      : iosRecordMode === "on_device" ? "Grabando en el iPhone"
                       : iosRecordMode === "airplay" ? "Espejando por AirPlay"
                       : "Grabando pantalla"}
                   </span>
+                  {recordingStartedAt && (
+                    <ElapsedTime since={recordingStartedAt} className="text-fx-body-sm font-semibold text-fx-danger" />
+                  )}
                   <span className="flex items-center gap-1 text-xs text-fx-text-2 [&_svg]:text-fx-text-3">
                     {isIOS
                       ? iosRecordMode === "on_device" ? <><Smartphone className="h-3 w-3" aria-hidden="true" /> nativa</>
@@ -661,6 +780,7 @@ export function CaptureStep({
                         index={i}
                         total={screenItems.length}
                         role={roleByName.get(item.name)}
+                        notice={noticeOf(item)}
                         uploadState={uploadStateOf(item)}
                         removeDisabled={removeBlocked}
                         onSelect={() => setSelectedKey(item.key)}
@@ -801,7 +921,9 @@ export function CaptureStep({
                   file={selected.remoteFile!}
                   originalURL={selected.url}
                   variants={videoVariants[selected.name] ?? []}
-                  isPending={pendingVariantFiles.has(selected.name)}
+                  variantStatus={Object.values(variantStatus[selected.name] ?? {})}
+                  storedInCase={!!selected.remoteFile?.storedInCase}
+                  validation={notices.recordings[selected.name]}
                   onRemove={() => removeItem(selected)}
                   removeDisabled={removeBlocked}
                 />
@@ -860,6 +982,30 @@ export function CaptureStep({
                         aria-label={`Eliminar ${selected.originalName ?? selected.name}`}
                         onClick={() => removeItem(selected)}
                         disabled={removeBlocked} />
+                      {noticeOf(selected) === "black" && (
+                        <div
+                          role="status"
+                          className={cn(
+                            "basis-full rounded-fx-lg border border-fx-warning bg-fx-warning-soft px-3 py-2.5",
+                            ENTER,
+                          )}
+                        >
+                          <p className="m-0 flex items-start gap-2 text-xs font-medium text-fx-text">
+                            <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0 text-fx-warning" aria-hidden="true" />
+                            La captura salió negra. ¿Pantalla apagada o app que bloquea capturas?
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2 pl-[1.375rem]">
+                            <Button type="button" size="small" severity="secondary" label="Conservar"
+                              onClick={() => onKeepBlack?.(selected.name)}
+                              className="min-h-11 sm:min-h-0" />
+                            <Button type="button" size="small" severity="danger" outlined label="Borrar"
+                              icon={<Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
+                              onClick={() => removeItem(selected)}
+                              disabled={removeBlocked}
+                              className="min-h-11 sm:min-h-0" />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
@@ -929,6 +1075,8 @@ export function CaptureStep({
 /* Default estable de `localBlobs` (un `{}` literal en el destructuring sería nuevo en cada render). */
 const NO_LOCAL_BLOBS: Record<string, LocalBlobInfo> = {};
 const NO_UPLOAD_STATES: Record<string, FileUploadState> = {};
+const NO_VARIANT_STATUS: Record<string, Record<string, VideoVariantStatus>> = {};
+const NO_NOTICES: EvidenceNotices = { recordings: {}, black: {}, keptBlack: [] };
 
 /* Subtítulo de bloque del paso (misma convención que la parte 2). */
 const LABEL = "m-0 flex items-center gap-1.5 text-fx-label uppercase text-fx-text-2";
@@ -944,3 +1092,30 @@ const TILE = cn(
   FOCUS_RING,
 );
 const TILE_IDLE = "border-fx-border-strong bg-fx-surface-2 text-fx-text enabled:hover:bg-fx-surface-3";
+
+/** Ficha del archivo dentro del diálogo de borrado: miniatura o ícono, nombre y tamaño. */
+function RemovePreview({ item }: { item: GItem }) {
+  const { label, Icon } = kindMeta(item.kind);
+  const isImage = item.kind === "screenshot" || item.kind === "local-image";
+  return (
+    <div className="flex items-center gap-3 rounded-fx-md border border-fx-border bg-fx-surface-2 p-2.5">
+      {isImage ? (
+        <SafeImg
+          src={srcOf(item)}
+          alt=""
+          className="h-14 w-14 shrink-0 rounded-fx-sm object-cover"
+        />
+      ) : (
+        <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-fx-sm bg-fx-surface-3 text-fx-text-2">
+          <Icon className="h-5 w-5" aria-hidden="true" />
+        </span>
+      )}
+      <div className="min-w-0">
+        <p className="m-0 break-all font-mono text-fx-body-sm text-fx-text" translate="no">{item.name}</p>
+        <p className="m-0 mt-0.5 text-xs text-fx-text-3">
+          {label}{typeof item.sizeBytes === "number" ? ` · ${formatBytes(item.sizeBytes)}` : ""}
+        </p>
+      </div>
+    </div>
+  );
+}

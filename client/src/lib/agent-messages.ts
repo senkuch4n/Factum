@@ -11,7 +11,7 @@ import {
 import { formatBytes } from "./format";
 import type { AgentIdentity } from "@/hooks/useAgentIdentity";
 
-export type AgentAction = "save" | "preview" | "generate" | "reveal" | "copy";
+export type AgentAction = "save" | "preview" | "generate" | "reveal" | "copy" | "record";
 
 const fmt = (n: number | null | undefined) => (typeof n === "number" && Number.isFinite(n) ? formatBytes(n) : null);
 
@@ -56,6 +56,19 @@ export function agentStatusMessage(
   return identity?.outdatedReason === "min_version" ? agentMinVersionMessage(identity) : AGENT_OUTDATED_MESSAGE;
 }
 
+/** Mismo caso generándose en otra pestaña o ventana (DT9). Se muestra como advertencia. */
+export const GENERATION_BUSY_MESSAGE = "Este caso ya se está generando en otra pestaña o ventana. Esperá a que termine.";
+
+/** Textos por defecto de los errores de grabación, si Tatana no manda `error` (SDD §7.2). */
+export const RECORDING_ERROR_TEXT = {
+  already_recording: "Ya hay una grabación en curso en esta PC. Detenela antes de empezar otra.",
+  recording_start_timeout:
+    "El celular no empezó a grabar a tiempo. Desbloquealo, dejalo con la pantalla encendida y volvé a intentar.",
+  not_recording: "La grabación ya se había detenido.",
+  recording_empty: "La grabación no se guardó: el archivo quedó vacío. Volvé a grabar.",
+  recording_unreadable: "La grabación no se guardó: el archivo no se puede leer como video. Volvé a grabar.",
+} as const;
+
 export function agentErrorMessage(err: unknown, ctx: { name?: string; action: AgentAction }): string {
   const name = ctx.name ?? "el archivo";
   if (!(err instanceof AgentError)) {
@@ -68,7 +81,17 @@ export function agentErrorMessage(err: unknown, ctx: { name?: string; action: Ag
   if (err.kind === "aborted") return "Se canceló la operación.";
 
   const b = err.body;
+  // Grabación (grabacion-android-robusta §7.2): el `error` de Tatana ya viene en castellano.
+  const tatanaText = typeof b?.error === "string" && b.error.trim() ? b.error.trim() : null;
   switch (err.code) {
+    case "already_recording":
+    case "recording_start_timeout":
+    case "not_recording":
+    case "recording_empty":
+    case "recording_unreadable":
+      return tatanaText ?? RECORDING_ERROR_TEXT[err.code];
+    case "empty_evidence":
+      return `${ctx.name ?? "El archivo"} está vacío (0 bytes) y no se guarda como evidencia.`;
     case "origin_not_allowed": {
       // Build arg opcional (despliegue-nube, DT17): vacío en la instalación local.
       const url = process.env.NEXT_PUBLIC_TATANA_DOWNLOAD_URL;
@@ -98,7 +121,8 @@ export function agentErrorMessage(err: unknown, ctx: { name?: string; action: Ag
       return `Algunos archivos de la evidencia cambiaron o faltan en esta PC${list ? ` (${list})` : ""}. No se generó nada; revisá la carpeta del caso.`;
     }
     case "zip_in_progress":
-      return "Ya se está armando el ZIP de este caso en esta PC.";
+      // Generar desde dos pestañas (wizard-concurrencia-pestanas DT9): advertencia, no error.
+      return ctx.action === "generate" ? GENERATION_BUSY_MESSAGE : "Ya se está armando el ZIP de este caso en esta PC.";
     case "zip_failed":
       return "No se pudo armar o verificar el ZIP en esta PC; la evidencia quedó intacta. Reintentá.";
     case "zip_not_found":
@@ -106,7 +130,9 @@ export function agentErrorMessage(err: unknown, ctx: { name?: string; action: Ag
     case "agent_updating":
       return "Tatana se está actualizando. Esperá unos segundos y reintentá.";
   }
-  const detail = typeof b?.error === "string" && b.error.trim() ? b.error.trim() : null;
+  const detail = tatanaText;
+  // Grabación: los errores de iPhone y de scrcpy ya vienen en castellano y se muestran tal cual.
+  if (ctx.action === "record" && detail) return detail;
   return detail ? `Tatana respondió con un error: ${detail}` : `Tatana respondió con un error (${err.status}).`;
 }
 

@@ -9,13 +9,23 @@ public static class ProcessStop
     private static readonly TimeSpan HelperTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan AfterFailedSignalWait = TimeSpan.FromSeconds(1);
 
-    // true = cerró limpio con la señal; false = hubo que matarlo.
+    // true = cerró limpio con la señal (SIGINT/Ctrl+C o, si se escaló, SIGTERM); false = hubo que matarlo.
+    // escalateAfter (grabacion-android-robusta §5.2, solo macOS/Linux): si el proceso sigue vivo ese tiempo
+    // después de la SIGINT, se manda SIGTERM. El timeout total se cuenta desde la primera señal. En Windows se
+    // ignora. Sin escalateAfter, el comportamiento es el de siempre.
     public static async Task<bool> StopGracefullyAsync(Process p, TimeSpan timeout, ILogger log,
-        string name, CancellationToken ct = default)
+        string name, CancellationToken ct = default, TimeSpan? escalateAfter = null) =>
+        (await StopAsync(p, timeout, log, name, ct, escalateAfter)).Clean;
+
+    /// <summary>Igual que <see cref="StopGracefullyAsync"/>, pero informa además si hubo escalado a SIGTERM.</summary>
+    public static async Task<ProcessStopResult> StopAsync(Process p, TimeSpan timeout, ILogger log,
+        string name, CancellationToken ct = default, TimeSpan? escalateAfter = null)
     {
-        if (HasExitedSafe(p)) return true;
+        if (HasExitedSafe(p)) return new ProcessStopResult(true, false);
 
         var wait = timeout;
+        var escalated = false;
+        var signalAt = Stopwatch.StartNew();
         if (OperatingSystem.IsWindows())
         {
             var code = await SendWindowsCtrlCAsync(p.Id, log, ct);
@@ -27,29 +37,49 @@ public static class ProcessStop
         }
         else
         {
-            await SendSigintAsync(p.Id, ct);
+            await SendSignalAsync(p.Id, "-2", ct);
+            if (escalateAfter is { } esc && esc > TimeSpan.Zero && esc < timeout)
+            {
+                if (!await WaitForExitAsync(p, esc, ct))
+                {
+                    log.LogWarning("{Name}: SIGINT sin efecto; se envía SIGTERM", name);
+                    await SendSignalAsync(p.Id, "-15", ct);
+                    escalated = true;
+                }
+                wait = timeout - signalAt.Elapsed;
+                if (wait < TimeSpan.Zero) wait = TimeSpan.Zero;
+            }
         }
 
-        using (var timeoutCts = new CancellationTokenSource(wait))
-        using (var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token))
+        if (await WaitForExitAsync(p, wait, ct))
         {
-            try
-            {
-                await p.WaitForExitAsync(linked.Token);
-                var exit = SafeExitCode(p);
-                log.LogInformation("{Name} detenido limpiamente (exit {Code})", name, exit);
-                return true;
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                // Timeout: se fuerza abajo.
-            }
+            var exit = SafeExitCode(p);
+            log.LogInformation("{Name} detenido limpiamente (exit {Code}{Sig})", name, exit,
+                escalated ? ", con SIGTERM" : "");
+            return new ProcessStopResult(true, escalated);
         }
 
         try { p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { /* ya terminó */ }
         try { await p.WaitForExitAsync(ct); } catch (InvalidOperationException) { }
         log.LogWarning("{Name} no respondió a la señal; se forzó el cierre", name);
-        return false;
+        return new ProcessStopResult(false, escalated);
+    }
+
+    // true si el proceso terminó dentro de `wait`. Una cancelación de ct se propaga.
+    private static async Task<bool> WaitForExitAsync(Process p, TimeSpan wait, CancellationToken ct)
+    {
+        if (HasExitedSafe(p)) return true;
+        using var timeoutCts = new CancellationTokenSource(wait);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        try
+        {
+            await p.WaitForExitAsync(linked.Token);
+            return true;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return HasExitedSafe(p);
+        }
     }
 
     // Lanza `Factum.Agent.exe --ctrl-c <pid>` (o `dotnet Factum.Agent.dll --ctrl-c <pid>` en
@@ -97,19 +127,19 @@ public static class ProcessStop
         }
     }
 
-    // Unix: SIGINT con `kill -2`, igual que antes de esta HU.
-    private static async Task SendSigintAsync(int pid, CancellationToken ct)
+    // Unix: `kill -2` (SIGINT) o `kill -15` (SIGTERM).
+    private static async Task SendSignalAsync(int pid, string signal, CancellationToken ct)
     {
         try
         {
-            using var sigint = Process.Start(new ProcessStartInfo
+            using var kill = Process.Start(new ProcessStartInfo
             {
                 FileName        = "kill",
                 UseShellExecute = false,
                 CreateNoWindow  = true,
-                ArgumentList    = { "-2", pid.ToString(System.Globalization.CultureInfo.InvariantCulture) },
+                ArgumentList    = { signal, pid.ToString(System.Globalization.CultureInfo.InvariantCulture) },
             });
-            if (sigint is not null) await sigint.WaitForExitAsync(ct);
+            if (kill is not null) await kill.WaitForExitAsync(ct);
         }
         catch (System.ComponentModel.Win32Exception) { /* sin kill → cae al Kill por timeout */ }
     }
@@ -126,3 +156,6 @@ public static class ProcessStop
         catch (InvalidOperationException) { return -1; }
     }
 }
+
+/// <summary>Resultado de <see cref="ProcessStop.StopAsync"/>: <c>Clean</c> = terminó con una señal; <c>Escalated</c> = hubo SIGTERM.</summary>
+public readonly record struct ProcessStopResult(bool Clean, bool Escalated);

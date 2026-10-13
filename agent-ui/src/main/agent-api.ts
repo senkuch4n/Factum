@@ -10,7 +10,12 @@ import {
   type EnterMaintenanceResult, type MaintenanceRaw,
 } from './updater/maintenance-outcome'
 
-/** `kind` ∈ recording_android | recording_ios | airplay_session | video_postprocess | request. */
+/**
+ * `kind` ∈ recording_android | recording_ios | airplay_session | request en `operations`
+ * (bloquean la actualización). `video_postprocess` viene en `background_operations`
+ * (no bloquea; Tatana lo cancela al entrar en mantenimiento). Un Tatana anterior a
+ * `video_postprocess_v1` todavía lo manda en `operations`.
+ */
 export interface AgentOperation {
   kind: string
   since: string
@@ -32,6 +37,8 @@ export interface AgentStateResponse {
   busy: boolean
   maintenance: boolean
   operations: AgentOperation[]
+  /** Operaciones que no bloquean y se cancelan al actualizar. `[]` con un Tatana viejo. */
+  background_operations: AgentOperation[]
   local_config: AgentLocalConfig
 }
 
@@ -91,6 +98,9 @@ export async function getAgentState(port: number): Promise<AgentStateResponse | 
     busy: raw.busy === true,
     maintenance: raw.maintenance === true,
     operations: Array.isArray(raw.operations) ? raw.operations.filter((o) => o && typeof o.kind === 'string') : [],
+    background_operations: Array.isArray(raw.background_operations)
+      ? raw.background_operations.filter((o) => o && typeof o.kind === 'string')
+      : [],
     local_config: {
       path: String(raw.local_config?.path ?? ''),
       exists: raw.local_config?.exists === true,

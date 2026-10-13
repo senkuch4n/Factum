@@ -1,3 +1,4 @@
+using Factum.Agent.Common;
 using Factum.Agent.Services;
 using Factum.Agent.Services.Ios;
 using Microsoft.AspNetCore.Mvc;
@@ -47,12 +48,15 @@ public sealed class AirplayShotController(IIosService ios) : ControllerBase
         }
     }
 
+    // wizard-concurrencia-pestanas §5.1: cada screenshot_taken de las marcas lleva serial/case_id/origin_id.
     [HttpPost("stop")]
-    public async Task<IActionResult> Stop(string serial, CancellationToken ct)
+    public async Task<IActionResult> Stop(string serial,
+        [FromQuery(Name = "case_id")] string? caseId, [FromQuery(Name = "origin_id")] string? originId,
+        CancellationToken ct)
     {
         try
         {
-            var files = await ios.StopAirplayShotSessionAsync(ct);
+            var files = await ios.StopAirplayShotSessionAsync(serial, EventAttribution.From(caseId, originId), ct);
             return Ok(new { files = files.Select(f => new { filename = f.Filename, url = f.Url }) });
         }
         catch (IosException ex)

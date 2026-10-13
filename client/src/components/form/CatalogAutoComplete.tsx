@@ -16,7 +16,8 @@
  *   alcanzables con Tab adentro del listbox: el camino por teclado es el
  *   botón "Administrar sugerencias" junto a la etiqueta y el pie del panel.
  * - Teclado: flecha abajo abre la lista (Prime solo la abre al tipear o con
- *   el botón), flechas recorren, Enter elige, Escape cierra.
+ *   el botón), flechas recorren, Enter elige, Escape cierra. Enter con la
+ *   lista abierta nunca envía el formulario que lo contiene.
  */
 
 import { useCallback, useRef, useState } from "react";
@@ -166,6 +167,13 @@ export function CatalogAutoComplete({
           if (e.key === "ArrowDown" && !acRef.current?.getOverlay()) {
             e.preventDefault();
             acRef.current?.search(e, "", "dropdown");
+          }
+          // Enter con la lista abierta: Prime solo hace `preventDefault` si hay
+          // una opción resaltada (y la elige). Sin resaltado, el Enter enviaría
+          // el `<form>` del paso: lo frenamos y cerramos la lista. Cerrada, envía.
+          if (e.key === "Enter" && !e.nativeEvent.isComposing && acRef.current?.getOverlay()) {
+            e.preventDefault();
+            acRef.current?.hide();
           }
         },
       },

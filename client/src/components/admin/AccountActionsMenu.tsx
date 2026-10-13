@@ -53,7 +53,7 @@ export function AccountActionsMenu({ user, isSelf, onAction, className }: Props)
 
   const items = useMemo<MenuItem[]>(() => {
     const a = accountActions(user, isSelf);
-    const icon = (I: React.ElementType) => <I className="h-4 w-4" aria-hidden="true" />;
+    const icon = (I: React.ElementType<{ className?: string }>) => <I className="h-4 w-4" aria-hidden="true" />;
     const list: MenuItem[] = [
       { label: "Editar", icon: icon(Pencil), command: () => onAction("edit", user) },
       // Cualquier cuenta, incluida la propia y las suspendidas (marca-por-cliente §9.6).

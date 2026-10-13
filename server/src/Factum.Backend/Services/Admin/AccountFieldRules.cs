@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Factum.Backend.Common;
 using Factum.Backend.Services.Auth;
 
 namespace Factum.Backend.Services.Admin;
@@ -26,8 +27,11 @@ public static partial class AccountFieldRules
     [GeneratedRegex(@"^[^\s@]+@[^\s@]+\.[^\s@]+$", RegexOptions.CultureInvariant)]
     private static partial Regex EmailPattern();
 
-    /// <summary>Trim de los bordes; <c>null</c> → <c>""</c>. Los saltos de línea internos se conservan.</summary>
-    public static string Normalize(string? value) => value?.Trim() ?? string.Empty;
+    /// <summary>
+    /// SafeText multilínea (informe-formato-fixes §5.2) y trim de los bordes; <c>null</c> → <c>""</c>.
+    /// Los saltos de línea internos se conservan.
+    /// </summary>
+    public static string Normalize(string? value) => SafeText.Clean(value, TextShape.MultiLine).Trim();
 
     public static FieldError? Dni(string? value) =>
         DniFormat.IsValid(Normalize(value)) ? null : new FieldError(AdminErrors.FieldDni, AdminErrors.MsgDni);

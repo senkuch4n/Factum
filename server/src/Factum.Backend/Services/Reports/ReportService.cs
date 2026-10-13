@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using Factum.Backend.Common;
 using Factum.Backend.DTOs;
 using Factum.Backend.Models;
 using Factum.Backend.Services.Branding;
@@ -96,16 +97,62 @@ public sealed class ReportService : IReportService
 
     // ── Flujo D10 (§7.1) ──────────────────────────────────────────────────────
 
-    /// <summary>Nombre del ZIP de evidencia del caso (los dos flujos).</summary>
+    /// <summary>Largo máximo del texto saneado que va en el nombre del ZIP y del DOCX.</summary>
+    internal const int MaxSafeNameLength = 60;
+
+    /// <summary>Regex de Tatana (Factum.Agent/Common/AgentFileNames.cs, ZipNameRegex). Mantener idéntica.</summary>
+    internal static readonly Regex ZipNameRegex =
+        new(@"^evidencia_[\p{L}\p{N}_]{1,60}\.zip$", RegexOptions.CultureInvariant);
+
+    /// <summary>Nombre del ZIP de evidencia del caso (los dos flujos), con la regla vigente.</summary>
     internal static string ZipFilenameFor(Case cas) =>
         $"evidencia_{Sanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}")}.zip";
+
+    /// <summary>Nombre del ZIP con la regla anterior a wizard-pulido-ux (solo para reconocer intentos viejos, DT10).</summary>
+    internal static string LegacyZipFilenameFor(Case cas) =>
+        $"evidencia_{LegacySanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}")}.zip";
+
+    /// <summary>
+    /// Nombre del ZIP a usar al abrir un intento (wizard-pulido-ux DT10): (1) el ya registrado en el
+    /// caso si es válido para Tatana; (2) el de un intento abierto si es válido y los datos del caso no
+    /// cambiaron desde entonces (coincide con la regla nueva o con la vieja); (3) la regla nueva.
+    /// </summary>
+    internal static string ResolveZipFilename(Case cas)
+    {
+        if (!string.IsNullOrEmpty(cas.ZipFilename) && ZipNameRegex.IsMatch(cas.ZipFilename))
+            return cas.ZipFilename;
+
+        var current = ZipFilenameFor(cas);
+        var p = cas.PendingGeneration?.ZipFilename;
+        if (!string.IsNullOrEmpty(p) && ZipNameRegex.IsMatch(p)
+            && (string.Equals(p, current, StringComparison.Ordinal)
+                || string.Equals(p, LegacyZipFilenameFor(cas), StringComparison.Ordinal)))
+            return p;
+
+        return current;
+    }
+
+    /// <summary>
+    /// Base común del ZIP y del DOCX (DT11): el medio de <c>evidencia_{base}.zip</c>; si el nombre no
+    /// tiene esa forma, el Sanitize de los datos del caso.
+    /// </summary>
+    internal static string StemFromZip(string zipFilename, Case cas)
+    {
+        const string prefix = "evidencia_", suffix = ".zip";
+        if (zipFilename is not null
+            && zipFilename.Length > prefix.Length + suffix.Length
+            && zipFilename.StartsWith(prefix, StringComparison.Ordinal)
+            && zipFilename.EndsWith(suffix, StringComparison.Ordinal))
+            return zipFilename[prefix.Length..^suffix.Length];
+        return Sanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}");
+    }
 
     public async Task<ReportResult> GenerateAsync(Case cas, List<FileInfoDto> files,
         string caseDir, CancellationToken ct = default)
     {
-        var safeName = Sanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}");
-        var docxPath = Path.Combine(caseDir, $"informe_pericial_{safeName}.docx");
         var zipFilename = ZipFilenameFor(cas);
+        var safeName = StemFromZip(zipFilename, cas);
+        var docxPath = Path.Combine(caseDir, $"informe_pericial_{safeName}.docx");
         var zipPath = Path.Combine(caseDir, zipFilename);
 
         // 0. Marca del dueño del caso (marca-por-cliente §6.6), ANTES de escribir artefactos: si Mongo
@@ -160,8 +207,16 @@ public sealed class ReportService : IReportService
                 brand, ct);
             reportHash = await Sha256Async(docxPath);
         }
-        catch
+        catch (Exception ex)
         {
+            // zip-verificacion-stored D-T5: detalle de la entrada que no pasó la verificación, solo al log
+            // (nunca la contraseña). El error hacia el cliente no cambia.
+            if (ex is EvidenceZipVerificationException { Entry: { } d })
+                logger.LogError(
+                    "Verificación del ZIP del caso {CaseId} ({NroReferencia}) falló: {Reason}. Entrada {Entry}, {Size} bytes, método {Method}, cifrada {Encrypted}, SHA-256 esperado {Expected}, obtenido {Actual}",
+                    cas.Id, cas.NroReferencia, ex.Message, d.Name, d.Size, d.Method, d.Encrypted, d.ExpectedSha256,
+                    d.ActualSha256);
+
             // Solo los dos artefactos de ESTE intento. Los archivos sueltos de la evidencia no se
             // tocan: con el caso en Error, el perito puede reintentar.
             foreach (var artifact in new[] { zipPath, docxPath })
@@ -195,17 +250,23 @@ public sealed class ReportService : IReportService
         IReadOnlyDictionary<string, string> hashes, string imagesDir, string outputDir,
         string zipFilename, string zipHash, CancellationToken ct = default)
     {
-        var safeName = Sanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}");
+        var safeName = StemFromZip(zipFilename, cas);
         var docxPath = Path.Combine(outputDir, $"informe_pericial_{safeName}.docx");
 
-        // 1. Restos de un intento anterior con los nombres de ESTE caso. Ningún evidencia_*.zip.
-        foreach (var stale in new[]
-                 {
-                     docxPath, Path.ChangeExtension(docxPath, ".pdf"),
-                     Path.Combine(outputDir, $"informe_forense_{safeName}.docx"),
-                     Path.Combine(outputDir, $"informe_forense_{safeName}.pdf"),
-                 })
-            if (File.Exists(stale)) File.Delete(stale);
+        // 1. Restos de un intento anterior con los nombres de ESTE caso (con la base del ZIP y, si es
+        // distinta, con la de los datos del caso, DT11). Ningún evidencia_*.zip.
+        var stems = new List<string> { safeName };
+        var dataStem = Sanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}");
+        if (!string.Equals(dataStem, safeName, StringComparison.Ordinal)) stems.Add(dataStem);
+        foreach (var stem in stems)
+            foreach (var stale in new[]
+                     {
+                         Path.Combine(outputDir, $"informe_pericial_{stem}.docx"),
+                         Path.Combine(outputDir, $"informe_pericial_{stem}.pdf"),
+                         Path.Combine(outputDir, $"informe_forense_{stem}.docx"),
+                         Path.Combine(outputDir, $"informe_forense_{stem}.pdf"),
+                     })
+                if (File.Exists(stale)) File.Delete(stale);
 
         // 2. Evidencia en orden ordinal (tabla y anexo).
         var ordered = evidence
@@ -359,6 +420,14 @@ public sealed class ReportService : IReportService
             foreach (var (_, root) in parts)
                 RemoveUnknownPlaceholders(root, warned);
 
+            // Pie de portada con el membrete (footer2 de la v6): se identifica antes de que B-R2 borre
+            // los marcadores {#MEMBRETE}…{/MEMBRETE}.
+            var membreteParts = parts
+                .Where(x => x.Part is FooterPart &&
+                            x.Root.Descendants<Paragraph>().Any(p => ParagraphText(p).Trim() == "{#MEMBRETE}"))
+                .Select(x => x.Part)
+                .ToHashSet();
+
             // B-R2: bloques condicionales.
             foreach (var (_, root) in parts)
                 ResolveBlocks(root, conditions);
@@ -366,6 +435,22 @@ public sealed class ReportService : IReportService
             // B-R2b: colores de marca. La plantilla trae el centinela del primario (= verde de
             // Factum, el default).
             BrandColors.Apply(mainPart, brand.PrimaryColor, brand.AccentColor);
+
+            // B-R2c (informe-formato-fixes §6.4): densidad de la portada para que entre en una página.
+            var cover = new CoverInput(
+                CausaRow: $"{values["{tipoCausa}"]} N° {values["{numeroCausa}"]}",
+                Caratula: values["{caratula}"],
+                PeritoRow: $"{values["{nombrePerito}"]} · M.P. {values["{matriculaPerito}"]}",
+                OrganizationName: values["{ORGANIZACION}"],
+                ContactLines: brand.ContactLines.Select(ReportValues.Clean).ToList(),
+                HasLogo: brand.Logo is not null);
+            var coverLevel = ReportCoverLayout.ChooseLevel(cover);
+            if (!ReportCoverLayout.FitsAtLevel(cover, coverLevel))
+                logger.LogWarning("Informe: la portada del caso {CaseId} puede no entrar en una página " +
+                                  "(estimado {Twips} twips en el nivel {Level})", cas.Id,
+                    ReportCoverLayout.EstimateTwips(cover, coverLevel), coverLevel);
+            if (coverLevel > 0)
+                ApplyCoverLevel(body, coverLevel);
 
             // B-R3: {LOGO_ORGANIZACION[:WxH]} → logo y {ISOTIPO_ORGANIZACION[:WxH]} → isotipo
             // (o párrafo vacío).
@@ -379,8 +464,16 @@ public sealed class ReportService : IReportService
 
             // B-R4: multilínea. {CONTACTO} (saltos dentro del run) y los textos del perito
             // (un párrafo por línea).
-            foreach (var (_, root) in parts)
-                ReplaceMultilinePlaceholder(root, "{CONTACTO}", brand.ContactLines, values, resolved);
+            // Nivel 2 de portada: en el membrete, el contacto va unido con " · " en un renglón a 8 pt.
+            foreach (var (part, root) in parts)
+            {
+                if (coverLevel == 2 && membreteParts.Contains(part) && brand.ContactLines.Count > 0)
+                    ReplaceMultilinePlaceholder(root, "{CONTACTO}",
+                        [string.Join(ReportCoverLayout.ContactSeparator, brand.ContactLines)], values, resolved,
+                        ReportCoverLayout.JoinedContactHalfPoints);
+                else
+                    ReplaceMultilinePlaceholder(root, "{CONTACTO}", brand.ContactLines, values, resolved);
+            }
             var multiline = new (string Placeholder, string Value)[]
             {
                 ("{objetoInforme}", texts.ObjetoInforme),
@@ -412,14 +505,21 @@ public sealed class ReportService : IReportService
             // acento ya resuelto, no un centinela.
             FillHashTable(body, files, hashes, zipFilename, zipHash, brand.AccentColor, resolved);
 
-            // B-R6: texto, por run y en una sola pasada.
-            foreach (var (_, root) in parts)
+            // B-R6: texto, por run y en una sola pasada. Los headers usan valores recortados
+            // (informe-formato-fixes §6.5: encabezado interior de 2 líneas como máximo); el cuerpo y
+            // los pies, los completos. joinAdjacent: reglas H14 (punto doble y doble espacio).
+            var headerValues = HeaderValues(values);
+            foreach (var (part, root) in parts)
+            {
+                var dict = part is HeaderPart ? headerValues : values;
                 foreach (var para in root.Descendants<Paragraph>().ToList())
                     if (!resolved.Contains(para))
                         RewriteParagraph(para, TextPlaceholderRegex,
-                            m => values.TryGetValue(m.Value, out var v) ? v : null);
+                            m => dict.TryGetValue(m.Value, out var v) ? v : null, joinAdjacent: true);
+            }
 
             // B-R7: imágenes con pie de foto.
+            // capAtNative (informe-formato-fixes §6.2): ninguna captura se amplía más allá de 96 dpi.
             ReplaceWithImages(mainPart, body, "{capturasImeiModelo}", imagesDir, imeiShots,
                 IdentShotMaxW, IdentShotMaxH,
                 (_, name) => $"Captura de identificación (IMEI y modelo) – {name}", ref drawId);
@@ -440,6 +540,8 @@ public sealed class ReportService : IReportService
 
             // B-R9
             WarnLeftovers(parts, resolved);
+            // B-R9b (informe-formato-fixes §6.1): red de seguridad, nada inválido en XML llega a Save.
+            SanitizeAllParts(mainPart);
             doc.Save();
         }, ct);
     }
@@ -692,7 +794,12 @@ public sealed class ReportService : IReportService
     // y recorta de los w:t siguientes los fragmentos del placeholder que caigan ahí. Los runs y
     // sus rPr se conservan (los rótulos en negrita siguen en negrita y el valor no), y los
     // valores insertados no se vuelven a escanear. replacement == null → se deja el match.
-    private static void RewriteParagraph(Paragraph para, Regex regex, Func<Match, string?> replacement)
+    // joinAdjacent (informe-formato-fixes §6.6, H14; solo B-R6): mirando el texto ORIGINAL del
+    // párrafo, (1) si el valor termina en '.' y lo que sigue al placeholder es '.', ese punto se
+    // consume ("Lic.." → "Lic."); (2) si el valor es "" y el placeholder está entre dos espacios, se
+    // consume el de después ("causa  N°" → "causa N°").
+    private static void RewriteParagraph(Paragraph para, Regex regex, Func<Match, string?> replacement,
+        bool joinAdjacent = false)
     {
         var texts = OwnTexts(para);
         if (texts.Count == 0) return;
@@ -717,6 +824,15 @@ public sealed class ReportService : IReportService
             while (i < texts.Count - 1 && starts[i] + texts[i].Text.Length <= m.Index) i++;
 
             var remaining = m.Length;
+            if (joinAdjacent)
+            {
+                var end = m.Index + m.Length;
+                var next = end < full.Length ? full[end] : '\0';
+                if (value.EndsWith('.') && next == '.')
+                    remaining++;
+                else if (value.Length == 0 && next == ' ' && m.Index > 0 && full[m.Index - 1] == ' ')
+                    remaining++;
+            }
             var local = m.Index - starts[i];
             var first = texts[i];
             var take = Math.Min(remaining, first.Text.Length - local);
@@ -732,6 +848,126 @@ public sealed class ReportService : IReportService
                 t.Space = SpaceProcessingModeValues.Preserve;
                 remaining -= cut;
             }
+        }
+    }
+
+    // ── §6.5: encabezado interior de 2 líneas como máximo ───────────────────
+
+    internal const int HeaderOrganizationMax = 60;
+    internal const int HeaderCausaMax = 70;
+    internal const int HeaderTipoCausaMax = 30;
+
+    /// <summary>Copia de los valores con {ORGANIZACION} y la referencia de la causa recortados con "…".</summary>
+    internal static Dictionary<string, string> HeaderValues(IReadOnlyDictionary<string, string> values)
+    {
+        var h = new Dictionary<string, string>(values, StringComparer.Ordinal);
+        if (h.TryGetValue("{ORGANIZACION}", out var org))
+            h["{ORGANIZACION}"] = ReportValues.Ellipsize(org, HeaderOrganizationMax);
+
+        var tipo = h.GetValueOrDefault("{tipoCausa}", "");
+        var numero = h.GetValueOrDefault("{numeroCausa}", "");
+        static int Len(string x) => new StringInfo(x).LengthInTextElements;
+        if (Len(tipo) + Len(numero) > HeaderCausaMax)
+        {
+            tipo = ReportValues.Ellipsize(tipo, HeaderTipoCausaMax);
+            numero = ReportValues.Ellipsize(numero, Math.Max(1, HeaderCausaMax - Len(tipo)));
+            h["{tipoCausa}"] = tipo;
+            h["{numeroCausa}"] = numero;
+        }
+        return h;
+    }
+
+    // ── B-R2c: densidad de la portada (§6.4) ─────────────────────────────────
+
+    private const string CoverSubtitle = "Inspección técnica de dispositivo móvil";
+
+    // Anclas sin placeholders nuevos: la portada son los hijos del body hasta el primer párrafo con
+    // sectPr; ahí, el espaciador (line 1800 exacto), el subtítulo y el párrafo de {caratula} de la
+    // primera tabla. Un ancla que falta solo se loguea.
+    private void ApplyCoverLevel(Body body, int level)
+    {
+        var cover = new List<OpenXmlElement>();
+        foreach (var child in body.ChildElements)
+        {
+            cover.Add(child);
+            if (child is Paragraph p && p.ParagraphProperties?.GetFirstChild<SectionProperties>() is not null)
+                break;
+        }
+        var paragraphs = cover.OfType<Paragraph>().ToList();
+
+        var spacer = paragraphs.FirstOrDefault(p =>
+            p.ParagraphProperties?.SpacingBetweenLines is { } sp && sp.Line?.Value == "1800" &&
+            sp.LineRule?.Value == LineSpacingRuleValues.Exact);
+        if (spacer is not null) spacer.ParagraphProperties!.SpacingBetweenLines!.Line = ReportCoverLayout.SpacerLine[level];
+        else logger.LogWarning("Plantilla: no se encontró el espaciador de la portada");
+
+        var subtitle = paragraphs.FirstOrDefault(p => ParagraphText(p).Trim() == CoverSubtitle);
+        if (subtitle?.ParagraphProperties?.SpacingBetweenLines is { } subSp)
+            subSp.After = ReportCoverLayout.SubtitleAfter[level];
+        else logger.LogWarning("Plantilla: no se encontró el subtítulo de la portada");
+
+        var caratula = cover.OfType<Table>().FirstOrDefault()?.Descendants<Paragraph>()
+            .FirstOrDefault(p => ParagraphText(p).Contains("{caratula}"));
+        if (caratula is not null)
+        {
+            var size = ReportCoverLayout.CaratulaHalfPoints[level];
+            foreach (var run in caratula.Elements<Run>())
+                SetFontSize(run.RunProperties ??= new RunProperties(), size);
+            var pPr = caratula.ParagraphProperties ??= new ParagraphProperties();
+            var mark = pPr.ParagraphMarkRunProperties ??= new ParagraphMarkRunProperties();
+            mark.RemoveAllChildren<FontSize>();
+            mark.RemoveAllChildren<FontSizeComplexScript>();
+            mark.Append(new FontSize { Val = size }, new FontSizeComplexScript { Val = size });
+        }
+        else logger.LogWarning("Plantilla: no se encontró la carátula de la portada");
+    }
+
+    private static void SetFontSize(RunProperties rPr, string halfPoints)
+    {
+        rPr.FontSize = new FontSize { Val = halfPoints };
+        rPr.FontSizeComplexScript = new FontSizeComplexScript { Val = halfPoints };
+    }
+
+    // ── B-R9b: red de seguridad de caracteres (§6.1) ─────────────────────────
+
+    // Todo texto que va a XML pasa por SafeText multilínea (C0 salvo \t\n\r, bidi, no-caracteres y
+    // surrogates sueltos). Con una plantilla válida y los Clean de cada camino no cambia nada; si algo
+    // cambia, se loguea la parte y el tipo de elemento (nunca el texto).
+    private void SanitizeAllParts(MainDocumentPart mainPart)
+    {
+        var roots = new List<(OpenXmlPart Part, OpenXmlElement? Root)> { (mainPart, mainPart.Document) };
+        roots.AddRange(mainPart.HeaderParts.Select(h => ((OpenXmlPart)h, (OpenXmlElement?)h.Header)));
+        roots.AddRange(mainPart.FooterParts.Select(f => ((OpenXmlPart)f, (OpenXmlElement?)f.Footer)));
+        if (mainPart.FootnotesPart is { } fn) roots.Add((fn, fn.Footnotes));
+        if (mainPart.EndnotesPart is { } en) roots.Add((en, en.Endnotes));
+
+        foreach (var (part, root) in roots)
+        {
+            if (root is null) continue;
+            var changed = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var e in root.Descendants())
+            {
+                switch (e)
+                {
+                    case Text t when Dirty(t.Text, out var c): t.Text = c; changed.Add("w:t"); break;
+                    case FieldCode f when Dirty(f.Text, out var c): f.Text = c; changed.Add("w:instrText"); break;
+                    case DWP.DocProperties dp:
+                        if (Dirty(dp.Name?.Value, out var n)) { dp.Name = n; changed.Add("wp:docPr"); }
+                        if (Dirty(dp.Description?.Value, out var d)) { dp.Description = d; changed.Add("wp:docPr"); }
+                        break;
+                    case PIC.NonVisualDrawingProperties nv when Dirty(nv.Name?.Value, out var c):
+                        nv.Name = c; changed.Add("pic:cNvPr"); break;
+                }
+            }
+            if (changed.Count > 0)
+                logger.LogWarning("Informe: se limpiaron caracteres inválidos en {Part} ({Elements})",
+                    part.Uri, string.Join(", ", changed));
+        }
+
+        static bool Dirty(string? value, out string clean)
+        {
+            clean = SafeText.Clean(value, TextShape.MultiLine);
+            return value is not null && clean != value;
         }
     }
 
@@ -755,7 +991,7 @@ public sealed class ReportService : IReportService
                     new SpacingBetweenLines { Before = "120", After = "60" },
                     new Justification { Val = JustificationValues.Center });
                 target.InsertBeforeSelf(BuildImageParagraph(mainPart, ImageSource.FromFile(path),
-                    maxW, maxH, ref drawId, pPr));
+                    maxW, maxH, ref drawId, pPr, capAtNative: true));
                 target.InsertBeforeSelf(BuildCaptionParagraph(caption(n, name)));
             }
             if (n == 0)
@@ -837,7 +1073,7 @@ public sealed class ReportService : IReportService
                     new SpacingBetweenLines { Before = "120", After = "60" },
                     new Justification { Val = JustificationValues.Center });
                 image.Anchor.InsertBeforeSelf(BuildImageParagraphForRel(relId, filename, width, height,
-                    AnnexShotMaxW, AnnexShotMaxH, ref drawId, pPr));
+                    AnnexShotMaxW, AnnexShotMaxH, ref drawId, pPr, capAtNative: true));
                 var captionParagraph = BuildCaptionParagraph(caption);
                 image.Anchor.InsertBeforeSelf(captionParagraph);
                 resolved.Add(captionParagraph);
@@ -929,19 +1165,25 @@ public sealed class ReportService : IReportService
 
     // Imagen ajustada SIN recortar (fit) dentro de maxW × maxH, manteniendo la proporción.
     // paragraphProperties: si viene, reemplaza al pPr por defecto (centrado, 6 pt arriba y abajo).
+    // capAtNative: capturas (identificación, anexo y cuerpo); logo, isotipo y sello mantienen su caja (DA1).
     private static Paragraph BuildImageParagraph(OpenXmlPart owner,
         ImageSource source, long maxW, long maxH, ref uint drawId,
-        ParagraphProperties? paragraphProperties = null)
+        ParagraphProperties? paragraphProperties = null, bool capAtNative = false)
     {
         var relId = EmbedImagePart(owner, source);
         return BuildImageParagraphForRel(relId, source.Name, source.Width, source.Height, maxW, maxH,
-            ref drawId, paragraphProperties);
+            ref drawId, paragraphProperties, capAtNative);
     }
+
+    // 914 400 EMU por pulgada / 96 dpi.
+    private const long EmuPerPixel96 = 9_525;
 
     // Párrafo con el dibujo de una parte ya embebida (relId), ajustado sin recortar a maxW × maxH.
     // Lo comparten BuildImageParagraph y las capturas del cuerpo (B-R7b), que reutilizan la parte.
+    // capAtNative (informe-formato-fixes §6.2, H07): si el ajuste amplía la imagen más allá de su
+    // tamaño nativo a 96 dpi, se usa el nativo. Como la proporción se mantiene, alcanza con el ancho.
     private static Paragraph BuildImageParagraphForRel(string relId, string name, int imgW, int imgH,
-        long maxW, long maxH, ref uint drawId, ParagraphProperties? paragraphProperties)
+        long maxW, long maxH, ref uint drawId, ParagraphProperties? paragraphProperties, bool capAtNative = false)
     {
         (imgW, imgH) = (Math.Max(1, imgW), Math.Max(1, imgH));
 
@@ -949,6 +1191,8 @@ public sealed class ReportService : IReportService
         double ratio = (double)imgH / imgW;
         if (ratio * maxW <= maxH) { dispW = maxW; dispH = (long)(maxW * ratio); }
         else { dispH = maxH; dispW = (long)(maxH / ratio); }
+        if (capAtNative && dispW > imgW * EmuPerPixel96)
+            (dispW, dispH) = (imgW * EmuPerPixel96, imgH * EmuPerPixel96);
 
         var drawing = BuildDrawing(relId, name, dispW, dispH, drawId++);
 
@@ -1119,8 +1363,10 @@ public sealed class ReportService : IReportService
     // formato del run original), separadas por <w:br/>. El resto de los placeholders del
     // párrafo se resuelven acá mismo, pieza por pieza y en una sola pasada, y el párrafo queda
     // marcado como resuelto (B-R6 no lo vuelve a escanear).
+    // fontHalfPoints: si viene, tamaño del run resultante (nivel 2 de portada, §6.4).
     private static void ReplaceMultilinePlaceholder(OpenXmlElement root, string placeholder,
-        IReadOnlyList<string> lines, IReadOnlyDictionary<string, string> values, HashSet<Paragraph> resolved)
+        IReadOnlyList<string> lines, IReadOnlyDictionary<string, string> values, HashSet<Paragraph> resolved,
+        string? fontHalfPoints = null)
     {
         foreach (var para in root.Descendants<Paragraph>().ToList())
         {
@@ -1150,6 +1396,8 @@ public sealed class ReportService : IReportService
             }
 
             foreach (var r in runs.Skip(1).ToList()) r.Remove();
+            if (fontHalfPoints is not null)
+                SetFontSize(firstRun.RunProperties ??= new RunProperties(), fontHalfPoints);
             resolved.Add(para);
         }
     }
@@ -1455,9 +1703,25 @@ public sealed class ReportService : IReportService
         });
     }
 
-    // Recorta sobre el string ya filtrado y sin '_' en los extremos (antes cortaba con el largo
-    // previo al Trim y explotaba con ArgumentOutOfRangeException). Vacío → "caso".
+    // wizard-pulido-ux DT12: NFC (las tildes quedan como un solo carácter), todo lo que no es letra
+    // ni dígito pasa a '_' (los surrogates también, así el corte nunca parte un par), sin '_' en los
+    // extremos y, si supera 60, se corta en el último '_' con índice <= 60 para no partir una
+    // palabra (sin separador, corte duro en 60). Los '_' repetidos NO se colapsan. Vacío → "caso".
     internal static string Sanitize(string s)
+    {
+        var nfc = (s ?? string.Empty).Normalize(NormalizationForm.FormC);
+        var filtered = new string(nfc.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray()).Trim('_');
+        if (filtered.Length > MaxSafeNameLength)
+        {
+            var cut = filtered.LastIndexOf('_', MaxSafeNameLength);
+            filtered = (cut > 0 ? filtered[..cut] : filtered[..MaxSafeNameLength]).TrimEnd('_');
+        }
+        return filtered.Length == 0 ? "caso" : filtered;
+    }
+
+    // Regla anterior a wizard-pulido-ux (copia textual), solo para reconocer nombres de intentos
+    // abiertos antes del deploy (ResolveZipFilename, DT10). No usar para nombres nuevos.
+    private static string LegacySanitize(string s)
     {
         var filtered = new string(s.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray()).Trim('_');
         filtered = filtered[..Math.Min(filtered.Length, 60)];

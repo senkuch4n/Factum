@@ -86,10 +86,50 @@ public sealed class LocalConfigInspectorTests : IDisposable
         Assert.False(st.OverridesAllowedOrigins);
     }
 
+    // tatana-ws-y-hosts T-04 (D4 = A): JSON válido con valores inválidos → se ignora entero.
+    [Theory]
+    [InlineData("{\"Agent\":{\"MaxUploadBytes\":\"16GB\"}}", "Agent:MaxUploadBytes")]
+    [InlineData("{\"Agent\":{\"MaxUploadBytes\":0}}", "Agent:MaxUploadBytes")]
+    [InlineData("{\"Agent\":{\"MinFreeBytes\":-1}}", "Agent:MinFreeBytes")]
+    [InlineData("{\"Agent\":{\"AllowedOrigins\":[\"http://localhost:3000/app\"]}}", "Agent:AllowedOrigins")]
+    [InlineData("{\"Agent\":{\"AllowedOrigins\":[\"*\"]}}", "Agent:AllowedOrigins")]
+    [InlineData("{\"Agent\":{\"Port\":\"ocho\"}}", "Agent:Port")]
+    [InlineData("{\"Agent\":{\"AllowedHosts\":[\"*\"]}}", "Agent:AllowedHosts")]
+    [InlineData("{\"Agent\":{\"VideoPostprocess\":{\"TimeoutFactor\":\"x\"}}}", "Agent:VideoPostprocess:TimeoutFactor")]
+    public void ValoresInvalidos_SeIgnoraEntero(string text, string key)
+    {
+        var st = LocalConfigInspector.InspectText("x", text);
+        Assert.True(st.Exists);
+        Assert.False(st.Loaded);
+        Assert.NotNull(st.Error);
+        Assert.Contains(key, st.Error);
+        Assert.False(st.Error!.EndsWith('.'));
+        Assert.False(st.OverridesAllowedOrigins);
+    }
+
+    // Claves duplicadas: pasan JsonDocument pero el proveedor de configuración las rechaza al arrancar.
+    [Fact]
+    public void ClaveDuplicada_SeIgnora()
+    {
+        var st = LocalConfigInspector.InspectText("x", "{\"Agent\":{\"Mock\":true,\"Mock\":false}}");
+        Assert.False(st.Loaded);
+        Assert.StartsWith("JSON inválido: ", st.Error);
+        Assert.False(st.OverridesAllowedOrigins);
+    }
+
+    [Fact]
+    public void AllowedHostsDeLaRaiz_SeIgnoraSinError()
+    {
+        var st = LocalConfigInspector.InspectText("x", "{\"AllowedHosts\":\"*\"}");
+        Assert.True(st.Loaded);
+        Assert.Null(st.Error);
+    }
+
     // D9/D10: la config local del perito nunca se toca, ni siquiera cuando está rota.
     [Theory]
     [InlineData("{ \"Agent\": { \"AllowedOrigins\": [\"https://ci.invalid\"] } }")]
     [InlineData("{ roto")]
+    [InlineData("{\"Agent\":{\"MaxUploadBytes\":\"16GB\"}}")]
     public void InspeccionarNoModificaElArchivo(string text)
     {
         var path = Path.Combine(_dir, "appsettings.Local.json");

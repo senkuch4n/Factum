@@ -18,16 +18,52 @@ export const EMPTY_PARAGRAPH = "&nbsp;";
 
 const NBSP = " ";
 
+/** Code point que el saneo quita (C0 salvo `\t \n \r`, bidi y no-caracteres). DEL y C1 se conservan. */
+function isStrippedCodePoint(cp: number): boolean {
+  if (cp < 0x20) return cp !== 0x09 && cp !== 0x0a && cp !== 0x0d;
+  if (cp >= 0x202a && cp <= 0x202e) return true;
+  if (cp >= 0x2066 && cp <= 0x2069) return true;
+  if (cp >= 0xfdd0 && cp <= 0xfdef) return true;
+  return (cp & 0xfffe) === 0xfffe;
+}
+
 /**
- * Limpieza igual a `ReportValues.Clean` del backend: `\r\n`/`\r` → `\n`,
- * tab → espacio y fuera los caracteres de control `< 0x20` salvo `\n`.
+ * Limpieza igual a `ReportValues.Clean` + `SafeText.Clean(MultiLine)` del
+ * backend (informe-formato-fixes §5.1 y §5.3), en el mismo orden:
+ * 1. por code point, fuera los C0 salvo `\t \n \r`, los controles bidi
+ *    (U+202A-202E, U+2066-2069), los no-caracteres (U+FDD0-FDEF y U+xFFFE/
+ *    U+xFFFF de los 17 planos) y los surrogates sin pareja. DEL y C1
+ *    (U+007F-U+009F), LRM/RLM, ZWJ, NBSP, BOM, etc. se conservan;
+ * 2. después `\r\n`/`\r` → `\n` y tab → espacio.
  */
 export function cleanText(text: string): string {
-  return text
-    .replace(/\r\n?/g, "\n")
-    .replace(/\t/g, " ")
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u0009\u000B-\u001F]/g, "");
+  let out = "";
+  let start = 0; // inicio del tramo pendiente de copiar, para no concatenar de a un carácter
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    let drop: boolean;
+    let width = 1;
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const next = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        width = 2;
+        drop = isStrippedCodePoint(((c - 0xd800) << 10) + (next - 0xdc00) + 0x10000);
+      } else {
+        drop = true; // alto sin bajo
+      }
+    } else if (c >= 0xdc00 && c <= 0xdfff) {
+      drop = true; // bajo sin alto
+    } else {
+      drop = isStrippedCodePoint(c);
+    }
+    if (drop) {
+      out += text.slice(start, i);
+      start = i + width;
+    }
+    i += width - 1;
+  }
+  out += text.slice(start);
+  return out.replace(/\r\n?/g, "\n").replace(/\t/g, " ");
 }
 
 /**

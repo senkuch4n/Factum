@@ -14,7 +14,7 @@ type ErrKind = "NotAllowed" | "NotFound" | "InUse" | "Other";
 interface Props {
   open: boolean;
   label: string;
-  icon: React.ElementType;
+  icon: React.ElementType<{ className?: string }>;
   onCapture: (blob: Blob, filename: string) => void;
   onClose: () => void;
 }
@@ -133,15 +133,23 @@ function WebcamBody({ label, onCapture, onClose }: Omit<Props, "open" | "icon">)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Guards sincrónicos de doble clic (wizard-concurrencia-pestanas DT8): `toBlob` es
+  // asíncrono y "Usar esta foto" no debe agregar la misma foto dos veces.
+  const capturingRef = useRef(false);
+  const confirmedRef = useRef(false);
+
   function capture() {
     const video  = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas || !videoReady) return;
+    if (!video || !canvas || !videoReady || capturingRef.current) return;
+    capturingRef.current = true;
     canvas.width  = video.videoWidth  || 1280;
     canvas.height = video.videoHeight || 720;
     canvas.getContext("2d")?.drawImage(video, 0, 0);
     canvas.toBlob(blob => {
+      capturingRef.current = false;
       if (!blob) return;
+      confirmedRef.current = false;
       stopStream();
       const url = URL.createObjectURL(blob);
       setCapturedBlob(blob);
@@ -158,7 +166,8 @@ function WebcamBody({ label, onCapture, onClose }: Omit<Props, "open" | "icon">)
   }
 
   function confirm() {
-    if (!capturedBlob) return;
+    if (!capturedBlob || confirmedRef.current) return;
+    confirmedRef.current = true;
     const d  = new Date();
     const ts = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}_${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
     onCapture(capturedBlob, `foto_${label.replace(/\s+/g, "_")}_${ts}.jpg`);

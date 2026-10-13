@@ -122,6 +122,16 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
             : throw new AgentHttpException(400, AgentErrorCodes.InvalidFilename,
                 "Nombre de archivo inválido: no puede tener rutas ni los caracteres < > : \" | ? *");
 
+    /// <summary>
+    /// Nombre de un archivo que ENTRA (upload-check, upload, import): además rechaza controles bidi y C1
+    /// (tatana-ws-y-hosts T-13, D-A4).
+    /// </summary>
+    internal static string RequireNewName(string? filename) =>
+        AgentFileNames.IsValidNewName(filename)
+            ? filename!
+            : throw new AgentHttpException(400, AgentErrorCodes.InvalidFilename,
+                "Nombre de archivo inválido: no puede tener rutas, caracteres de control ni los caracteres < > : \" | ? *");
+
     public string CaseDir(string caseId) => Path.Combine(_casesRoot, RequireCaseId(caseId));
 
     // Defensa en profundidad: el archivo resuelto tiene que estar exactamente en la carpeta.
@@ -134,12 +144,14 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
     public async Task<EvidenceFileInfo> ImportAsync(string caseId, string? filename, CancellationToken ct)
     {
         var dir = CaseDir(caseId);
-        var name = RequireName(filename);
+        var name = RequireNewName(filename);
         var source = Child(_root, name);
         var dest = Child(dir, name);
 
         if (File.Exists(source))
         {
+            // grabacion-android-robusta §5.11 (Duda 4 A): nunca entra un archivo de 0 B. No se mueve ni se borra.
+            if (new FileInfo(source).Length == 0) throw EmptyEvidence(name);
             if (File.Exists(dest))
                 throw new AgentHttpException(409, AgentErrorCodes.FileExists,
                     $"Ya hay un archivo {name} en la carpeta del caso");
@@ -166,6 +178,11 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
         {
             throw new AgentHttpException(404, AgentErrorCodes.FileNotFound, $"El archivo {name} no existe");
         }
+        else if (new FileInfo(dest).Length == 0)
+        {
+            // Reimportación de un archivo vacío que ya estaba en la carpeta del caso: tampoco se registra.
+            throw EmptyEvidence(name);
+        }
 
         string hash;
         try
@@ -186,9 +203,10 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
     public long CheckUpload(string caseId, string? filename, long? size)
     {
         CaseDir(caseId);
-        var name = RequireName(filename);
+        var name = RequireNewName(filename);
         if (size is not { } length || length < 0)
             throw new AgentHttpException(400, AgentErrorCodes.LengthRequired, "Falta el tamaño del archivo (Content-Length)");
+        if (length == 0) throw EmptyEvidence(name);
         if (length > _maxUploadBytes)
             throw new AgentHttpException(413, AgentErrorCodes.FileTooLarge,
                 $"El archivo {name} pesa {FormatBytes(length)} y el máximo que acepta Tatana es {FormatBytes(_maxUploadBytes)}",
@@ -201,6 +219,9 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
         }
         return _maxUploadBytes;
     }
+
+    private static AgentHttpException EmptyEvidence(string name) =>
+        new(422, AgentErrorCodes.EmptyEvidence, $"{name} está vacío (0 bytes) y no se guarda como evidencia.");
 
     private static AgentHttpException InsufficientStorage(string name, long? size, long required, long? available,
         Exception? inner = null) =>
@@ -300,7 +321,7 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
 
     private bool IsDiskFull(IOException ex, long remaining)
     {
-        if (ex.HResult is 28 or unchecked((int)0x80070070) or unchecked((int)0x80070027)) return true;
+        if (DiskErrors.IsDiskFull(ex)) return true;
         return _probe.GetAvailableFreeBytes(_root) is { } f && f < remaining;
     }
 

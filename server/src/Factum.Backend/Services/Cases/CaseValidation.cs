@@ -1,11 +1,12 @@
 using System.Globalization;
+using Factum.Backend.Common;
 using Factum.Backend.DTOs;
 using Factum.Backend.Models;
 using Factum.Backend.Services.Reports;
 
 namespace Factum.Backend.Services.Cases;
 
-/// <summary>Campos de la causa ya normalizados (trim; null → "").</summary>
+/// <summary>Campos de la causa ya normalizados (SafeText + trim; null → "").</summary>
 public sealed record CaseFields(
     string NroReferencia, string NombreDenunciante, string DniDenunciante,
     string NombreTribunal, string OrganismoTribunal, string SalaTribunal, string IntegrantesTribunal,
@@ -27,7 +28,7 @@ public sealed record CaseFields(
             C(r.TipoCausa), C(r.Caratula), C(r.ParteDenunciante), C(r.ParteDenunciada),
             C(r.ObjetoCausa), C(r.AmbitoCausa), C(r.FechaIntervencion),
             C(r.NombreProponente), C(r.ProfesionProponente), C(r.MatriculaProponente),
-            C(r.TipoDispositivo), C(r.LineaDispositivo), r.Observaciones?.Trim(), integrantes);
+            C(r.TipoDispositivo), C(r.LineaDispositivo), SafeText.CleanOrNull(r.Observaciones, TextShape.MultiLine)?.Trim(), integrantes);
     }
 
     public static CaseFields From(UpdateCaseRequest r)
@@ -40,10 +41,11 @@ public sealed record CaseFields(
             C(r.TipoCausa), C(r.Caratula), C(r.ParteDenunciante), C(r.ParteDenunciada),
             C(r.ObjetoCausa), C(r.AmbitoCausa), C(r.FechaIntervencion),
             C(r.NombreProponente), C(r.ProfesionProponente), C(r.MatriculaProponente),
-            C(r.TipoDispositivo), C(r.LineaDispositivo), r.Observaciones?.Trim(), integrantes);
+            C(r.TipoDispositivo), C(r.LineaDispositivo), SafeText.CleanOrNull(r.Observaciones, TextShape.MultiLine)?.Trim(), integrantes);
     }
 
-    private static string C(string? s) => (s ?? string.Empty).Trim();
+    // informe-formato-fixes §5.2: SafeText (una línea) → Trim; los largos se validan después.
+    private static string C(string? s) => SafeText.Clean(s, TextShape.SingleLine).Trim();
 }
 
 /// <summary>Resultado de una validación: obligatorios faltantes y/o un error (largo o valor inválido).</summary>
@@ -188,6 +190,18 @@ public static class CaseValidation
     // ── Textos del paso Informe ──────────────────────────────────────────────
 
     public const string InvalidFormatMessage = "El campo formato no es válido";
+
+    // wizard-concurrencia-pestanas DT13: conteos de operaciones_base.
+    public const int MaxReportCount = 100000;
+    public const string InvalidReportCountsMessage = "Las cantidades de Operaciones realizadas no son válidas";
+
+    /// <summary>null (no vino) es válido; si vino, cada conteo entre 0 y 100000.</summary>
+    public static bool IsValidReportCounts(ReportCountsDto? c)
+    {
+        if (c is null) return true;
+        static bool Ok(int n) => n is >= 0 and <= MaxReportCount;
+        return Ok(c.Capturas) && Ok(c.Grabaciones) && Ok(c.ArchivosExtraidos) && Ok(c.Otros);
+    }
 
     /// <summary>
     /// Formato, largos y contenido (editor-texto-enriquecido §4.2 y §6.6). El tope cuenta el

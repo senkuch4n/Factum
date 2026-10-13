@@ -15,24 +15,46 @@ namespace Factum.Agent.Controllers;
 [ApiController]
 [Route("agent")]
 public sealed class AgentStateController(OperationTracker tracker, LocalConfigStatus localConfig,
-    IOptions<AgentOptions> opts) : ControllerBase
+    IOptions<AgentOptions> opts, IVideoPostprocessService post, IEnumerable<IRecordingStateSource> recordingSources,
+    RecordingRegistry registry) : ControllerBase
 {
     public const int DefaultTtlSeconds = 120;
     public const int MinTtlSeconds = 10;
     public const int MaxTtlSeconds = 600;
+    public const string KindVideoPostprocess = "video_postprocess";
 
     [HttpGet("state")]
     public ActionResult<AgentStateResponse> State()
     {
         var ops = tracker.Snapshot();
+        // ios-grabacion-larga §4.5: operaciones que NO bloquean y se cancelan al entrar en mantenimiento.
+        List<AgentOperationDto> background = post.BackgroundSince is { } since
+            ? [new AgentOperationDto(KindVideoPostprocess, since, null)]
+            : [];
         return Ok(new AgentStateResponse(
             AgentVersion.Current,
             HealthController.ResolveMode(opts.Value),
             ops.Count > 0,
             tracker.InMaintenance,
             ops.Select(AgentOperationDto.From).ToList(),
+            background,
             new LocalConfigDto(localConfig.Path, localConfig.Exists, localConfig.Loaded,
-                localConfig.OverridesAllowedOrigins, localConfig.Error)));
+                localConfig.OverridesAllowedOrigins, localConfig.Error),
+            // grabacion-android-robusta §6.5: siempre presentes (pueden ser []).
+            ActiveRecordings(),
+            registry.Unclaimed()));
+    }
+
+    // Una fuente que falla no tumba /agent/state (mismo criterio que OperationTracker.Snapshot).
+    private List<RecordingStateDto> ActiveRecordings()
+    {
+        var list = new List<RecordingStateDto>();
+        foreach (var s in recordingSources)
+        {
+            try { list.AddRange(s.ActiveRecordings); }
+            catch { /* sin datos de esa fuente */ }
+        }
+        return list;
     }
 
     // El body es opcional (un `curl -X POST` pelado tiene que andar): se lee a mano en vez de
@@ -45,6 +67,8 @@ public sealed class AgentStateController(OperationTracker tracker, LocalConfigSt
         if (!tracker.TryEnterMaintenance(ttl, out var expiresAt, out var busy))
             return Conflict(new MaintenanceBusyResponse("Hay operaciones en curso", AgentErrorCodes.AgentBusy,
                 busy.Select(AgentOperationDto.From).ToList()));
+        // D7: ya en mantenimiento, se cancela el post-proceso de video (no espera a que limpie).
+        post.CancelAll("agent_update");
         return Ok(new MaintenanceResponse(true, expiresAt));
     }
 
@@ -110,4 +134,6 @@ public sealed record AgentOperationDto(string Kind, DateTimeOffset Since, string
 public sealed record LocalConfigDto(string Path, bool Exists, bool Loaded, bool OverridesAllowedOrigins, string? Error);
 
 public sealed record AgentStateResponse(string Version, string Mode, bool Busy, bool Maintenance,
-    IReadOnlyList<AgentOperationDto> Operations, LocalConfigDto LocalConfig);
+    IReadOnlyList<AgentOperationDto> Operations, IReadOnlyList<AgentOperationDto> BackgroundOperations,
+    LocalConfigDto LocalConfig, IReadOnlyList<RecordingStateDto> Recordings,
+    IReadOnlyList<UnclaimedRecordingDto> UnclaimedRecordings);

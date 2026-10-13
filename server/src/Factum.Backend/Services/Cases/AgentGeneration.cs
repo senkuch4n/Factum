@@ -38,70 +38,111 @@ public sealed partial class CaseService
 
     // ── §5.2 PUT /api/cases/{id}/evidence ────────────────────────────────────
 
+    public const int MaxRegisterAttempts = 3;
+
+    // wizard-concurrencia-pestanas DT10: registro idempotente + concurrencia optimista. Un re-registro
+    // idéntico no escribe ni emite eventos; otro sha256 deja evidence_updated. La escritura exige que
+    // EvidenceRevision no haya cambiado desde la lectura; si cambió, se relee y se replanifica (hasta 3
+    // intentos, después 409 evidence_busy).
     public async Task<Result<EvidenceResponse>> RegisterEvidenceAsync(string id, RegisterEvidenceRequest request,
         string officerDni, CancellationToken ct = default)
     {
-        var (cas, error) = await LoadOwnedAsync<EvidenceResponse>(id, officerDni, ct);
-        if (cas is null) return error!;
-        if (!IsEditable(cas))
-            return EvidenceFail<EvidenceResponse>(ErrorKind.Conflict, NotEditableMessage, EvidenceErrorCodes.CaseNotEditable);
-        if (!IsAgent(cas))
-            return EvidenceFail<EvidenceResponse>(ErrorKind.Conflict, EvidenceManifest.EvidenceOnServerMessage,
-                EvidenceErrorCodes.EvidenceOnServer);
-
         var validation = EvidenceManifest.ValidateItems(request.Host, request.Items);
-        if (!validation.IsValid)
-            return validation.Filename is null
-                ? EvidenceFail<EvidenceResponse>(ErrorKind.Validation, validation.Error!, EvidenceErrorCodes.InvalidManifest)
-                : EvidenceFail<EvidenceResponse>(ErrorKind.Validation, validation.Error!, EvidenceErrorCodes.InvalidManifest,
-                    ("filename", validation.Filename));
 
-        var host = request.Host!;
-        var hostname = host.Hostname!.Trim();
-        var firstRegistration = cas.Evidence.Count == 0 || cas.EvidenceHost is null;
-        if (!firstRegistration && !EvidenceManifest.SameHost(hostname, cas.EvidenceHost!.Hostname))
-            return OtherPc<EvidenceResponse>(cas);
-
-        var now = DateTime.UtcNow;
-        var merged = EvidenceManifest.Upsert(cas.Evidence, validation.Items, now);
-        // El host se fija en el primer registro (o con el manifiesto vacío); después solo se
-        // actualizan la versión de Tatana y la carpeta del caso.
-        var evidenceHost = firstRegistration
-            ? new EvidenceHost
-            {
-                Hostname = hostname,
-                OsUser = host.OsUser?.Trim() ?? "",
-                AgentVersion = host.AgentVersion?.Trim() ?? "",
-                CaseDirectory = host.CaseDirectory?.Trim() ?? "",
-                RegisteredAt = now,
-            }
-            : new EvidenceHost
-            {
-                Hostname = cas.EvidenceHost!.Hostname,
-                OsUser = cas.EvidenceHost.OsUser,
-                AgentVersion = string.IsNullOrWhiteSpace(host.AgentVersion) ? cas.EvidenceHost.AgentVersion : host.AgentVersion.Trim(),
-                CaseDirectory = string.IsNullOrWhiteSpace(host.CaseDirectory) ? cas.EvidenceHost.CaseDirectory : host.CaseDirectory.Trim(),
-                RegisteredAt = cas.EvidenceHost.RegisteredAt,
-            };
-        var sources = EvidenceManifest.MergeFileSources(cas.FileSources, validation.Items);
-
-        if (!await _repo.RegisterEvidenceAsync(id, merged, evidenceHost, sources, ct))
-            return EvidenceFail<EvidenceResponse>(ErrorKind.Conflict, NotEditableMessage, EvidenceErrorCodes.CaseNotEditable);
-
-        _log.LogInformation("Caso {CaseId}: {N} archivo(s) registrados en el manifiesto desde {Host}",
-            id, validation.Items.Count, evidenceHost.Hostname);
-        // trazabilidad-caso (DT8): un evidence_added por archivo del lote, con filename/sha256/size y
-        // el host del manifiesto (agent_mode no viaja en el manifiesto → null). Best-effort.
-        foreach (var item in validation.Items)
+        for (var attempt = 1; attempt <= MaxRegisterAttempts; attempt++)
         {
-            var evt = CaseEventFor(cas, CaseEventTypes.EvidenceAdded);
-            evt.Filename = item.Filename;
-            evt.Hostname = evidenceHost.Hostname;
-            evt.OsUser = evidenceHost.OsUser;
-            evt.Detail = new CaseEventDetail { Sha256 = item.Sha256, Size = item.Size };
-            await RecordEventAsync(evt);
+            var (cas, error) = await LoadOwnedAsync<EvidenceResponse>(id, officerDni, ct);
+            if (cas is null) return error!;
+            if (!IsEditable(cas))
+                return EvidenceFail<EvidenceResponse>(ErrorKind.Conflict, NotEditableMessage, EvidenceErrorCodes.CaseNotEditable);
+            if (!IsAgent(cas))
+                return EvidenceFail<EvidenceResponse>(ErrorKind.Conflict, EvidenceManifest.EvidenceOnServerMessage,
+                    EvidenceErrorCodes.EvidenceOnServer);
+
+            if (!validation.IsValid)
+                return validation.Filename is null
+                    ? EvidenceFail<EvidenceResponse>(ErrorKind.Validation, validation.Error!, EvidenceErrorCodes.InvalidManifest)
+                    : EvidenceFail<EvidenceResponse>(ErrorKind.Validation, validation.Error!, EvidenceErrorCodes.InvalidManifest,
+                        ("filename", validation.Filename));
+
+            var host = request.Host!;
+            var hostname = host.Hostname!.Trim();
+            var firstRegistration = cas.Evidence.Count == 0 || cas.EvidenceHost is null;
+            if (!firstRegistration && !EvidenceManifest.SameHost(hostname, cas.EvidenceHost!.Hostname))
+                return OtherPc<EvidenceResponse>(cas);
+
+            var now = DateTime.UtcNow;
+            var plan = EvidenceManifest.PlanRegistration(cas.Evidence, validation.Items, now);
+            if (!plan.Changed)
+            {
+                // Todo ya estaba registrado igual: no se escribe nada (ni el host) y no hay eventos.
+                _log.LogInformation("Caso {CaseId}: {N} archivo(s) ya registrados sin cambios", id, validation.Items.Count);
+                return Result.Ok(new EvidenceResponse(cas.Evidence, cas.EvidenceHost));
+            }
+
+            // El host se fija en el primer registro (o con el manifiesto vacío); después solo se
+            // actualizan la versión de Tatana y la carpeta del caso.
+            var evidenceHost = firstRegistration
+                ? new EvidenceHost
+                {
+                    Hostname = hostname,
+                    OsUser = host.OsUser?.Trim() ?? "",
+                    AgentVersion = host.AgentVersion?.Trim() ?? "",
+                    CaseDirectory = host.CaseDirectory?.Trim() ?? "",
+                    RegisteredAt = now,
+                }
+                : new EvidenceHost
+                {
+                    Hostname = cas.EvidenceHost!.Hostname,
+                    OsUser = cas.EvidenceHost.OsUser,
+                    AgentVersion = string.IsNullOrWhiteSpace(host.AgentVersion) ? cas.EvidenceHost.AgentVersion : host.AgentVersion.Trim(),
+                    CaseDirectory = string.IsNullOrWhiteSpace(host.CaseDirectory) ? cas.EvidenceHost.CaseDirectory : host.CaseDirectory.Trim(),
+                    RegisteredAt = cas.EvidenceHost.RegisteredAt,
+                };
+            var sources = EvidenceManifest.MergeFileSources(cas.FileSources, validation.Items);
+
+            if (!await _repo.RegisterEvidenceAsync(id, cas.EvidenceRevision, plan.Merged, evidenceHost, sources, ct))
+            {
+                // No matcheó: o dejó de ser editable (lo detecta la relectura) o la revisión cambió (carrera).
+                _log.LogInformation("Caso {CaseId}: el manifiesto cambió durante el registro (intento {N})", id, attempt);
+                // Espera corta con jitter antes de releer: con varias pestañas a la vez, evita que choquen
+                // de nuevo en el mismo instante y agoten los intentos.
+                if (attempt < MaxRegisterAttempts)
+                    await Task.Delay(Random.Shared.Next(15, 60) * attempt, ct);
+                continue;
+            }
+
+            _log.LogInformation(
+                "Caso {CaseId}: registro de {N} archivo(s) desde {Host}: {Added} nuevo(s), {Updated} actualizado(s)",
+                id, validation.Items.Count, evidenceHost.Hostname, plan.Added.Count, plan.Updated.Count);
+            // trazabilidad-caso (DT8): un evidence_added por archivo nuevo, con filename/sha256/size y el
+            // host del manifiesto (agent_mode no viaja en el manifiesto → null). Best-effort.
+            foreach (var item in plan.Added)
+            {
+                var evt = CaseEventFor(cas, CaseEventTypes.EvidenceAdded);
+                evt.Filename = item.Filename;
+                evt.Hostname = evidenceHost.Hostname;
+                evt.OsUser = evidenceHost.OsUser;
+                evt.Detail = new CaseEventDetail { Sha256 = item.Sha256, Size = item.Size };
+                await RecordEventAsync(evt);
+            }
+            // DT10: mismo nombre con otro contenido.
+            foreach (var (item, previous) in plan.Updated)
+            {
+                var evt = CaseEventFor(cas, CaseEventTypes.EvidenceUpdated);
+                evt.Filename = item.Filename;
+                evt.Hostname = evidenceHost.Hostname;
+                evt.OsUser = evidenceHost.OsUser;
+                evt.Detail = new CaseEventDetail { Sha256 = item.Sha256, Size = item.Size, PreviousSha256 = previous };
+                await RecordEventAsync(evt);
+            }
+            return Result.Ok(new EvidenceResponse(plan.Merged, evidenceHost));
         }
-        return Result.Ok(new EvidenceResponse(merged, evidenceHost));
+
+        _log.LogWarning("Caso {CaseId}: registro de evidencia abandonado tras {N} intentos en carrera", id,
+            MaxRegisterAttempts);
+        return EvidenceFail<EvidenceResponse>(ErrorKind.Conflict, EvidenceManifest.EvidenceBusyMessage,
+            EvidenceErrorCodes.EvidenceBusy);
     }
 
     // ── §5.3 DELETE /api/cases/{id}/evidence/{filename} ──────────────────────
@@ -174,9 +215,13 @@ public sealed partial class CaseService
         {
             Id = Guid.NewGuid().ToString("N"),
             Password = _reportSettings.EncryptZip ? ReportService.GeneratePassword() : null,
-            ZipFilename = ReportService.ZipFilenameFor(cas),
+            ZipFilename = ReportService.ResolveZipFilename(cas),
             CreatedAt = DateTime.UtcNow,
         };
+        // wizard-pulido-ux DT10: un nombre ya registrado (caso o intento previo) se conserva.
+        if (!string.Equals(pending.ZipFilename, ReportService.ZipFilenameFor(cas), StringComparison.Ordinal))
+            _log.LogInformation("Caso {CaseId}: se conserva el nombre de ZIP ya registrado {ZipFilename}",
+                id, pending.ZipFilename);
         // Pisa cualquier intento anterior. No cambia el Status (D-T3).
         if (!await _repo.SetPendingGenerationAsync(id, pending, ct))
             return EvidenceFail<PrepareGenerationResponse>(ErrorKind.Conflict, NotEditableMessage,

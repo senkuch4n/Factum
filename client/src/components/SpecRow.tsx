@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
  * `accent` = dato destacado (no es selección ni CTA: sin color de acento).
  */
 export function SpecRow({ icon: Icon, label, value, mono = false, accent = false }: {
-  icon: React.ElementType; label: string; value: string; mono?: boolean; accent?: boolean;
+  icon: React.ElementType<{ className?: string }>; label: string; value: string; mono?: boolean; accent?: boolean;
 }) {
   return (
     <div className="flex items-center gap-2.5 border-b border-fx-border py-2 last:border-0">

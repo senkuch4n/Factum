@@ -39,10 +39,11 @@ public sealed class ExpertProfileService(IExpertProfileRepository repo) : IExper
     public async Task<Result<ExpertProfileResponse>> SaveAsync(User user, ExpertProfileRequest request,
         CancellationToken ct = default)
     {
-        var nombre = (request.Nombre ?? "").Trim();
-        var matricula = (request.Matricula ?? "").Trim();
-        var profesion = (request.Profesion ?? "").Trim();
-        var caracter = (request.Caracter ?? "").Trim();
+        // informe-formato-fixes §5.2: SafeText (una línea) → Trim, antes de validar.
+        var nombre = SafeText.Clean(request.Nombre, TextShape.SingleLine).Trim();
+        var matricula = SafeText.Clean(request.Matricula, TextShape.SingleLine).Trim();
+        var profesion = SafeText.Clean(request.Profesion, TextShape.SingleLine).Trim();
+        var caracter = SafeText.Clean(request.Caracter, TextShape.SingleLine).Trim();
 
         var outcome = CaseValidation.ValidateProfile(nombre, matricula, profesion, caracter, request.Tratamiento);
         if (outcome.Error is not null)

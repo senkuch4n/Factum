@@ -38,6 +38,13 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
             // ios_developer_mode_v1: POST /devices/{serial}/ios/developer-mode (ios-herramientas-windows §4.3).
             // real_version_v1: "version" es la real (D-T2; sin esto la web la trata como desconocida).
             // agent_state_v1: GET /agent/state y POST/DELETE /agent/maintenance (tatana-instalador-autoupdate §5.4).
+            // video_postprocess_v1: variants_expected/variants en el stop, video_variant_status, GET
+            // /video-postprocess/status y /agent/state.background_operations (ios-grabacion-larga §4.7).
+            // recording_state_v1: case_id/started_at en el start, validation en el stop, recordings y
+            // unclaimed_recordings en /agent/state, y los códigos nuevos (grabacion-android-robusta §5.12).
+            // event_attribution_v1: serial/case_id/origin_id en screenshot_taken, photo_taken, recording_started y
+            // recording_stopped (wizard-concurrencia-pestanas §5.1). device_preview_v1: POST /devices/{serial}/preview
+            // + GET /previews/{filename}, sin evento WS (DT5).
             capabilities = Capabilities,
         });
     }
@@ -58,7 +65,8 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
     });
 
     internal static readonly string[] Capabilities =
-        ["case_evidence_v1", "ios_developer_mode_v1", "real_version_v1", "agent_state_v1"];
+        ["case_evidence_v1", "ios_developer_mode_v1", "real_version_v1", "agent_state_v1", "video_postprocess_v1",
+         "recording_state_v1", "event_attribution_v1", "device_preview_v1"];
 
     /// <summary><c>--mode</c> gana (D-T15); sin él, la heurística de <c>tools/</c> (portátil).</summary>
     internal static string ResolveMode(AgentOptions o) => o.InstallMode ?? (IsPortable() ? "portable" : "installed");

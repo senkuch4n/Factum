@@ -119,3 +119,102 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-07 — Ronda 7 commiteada (2cd8572) pero GitHub rechaza TODO push al repo con Internal Server Error (probado con commit vacío a rama tmp; githubstatus dice operational). Reintento automático cada 2 min (40 min) + seguimiento del ensayo.
 - 2026-10-07 — Ronda 7 (run 37642777147): la subida de prueba recibe HTTP 400 de Tatana (nombre y caseId válidos → probable length_required o incomplete_upload). Ronda 8: capturar el body y reproducir local antes de otro ensayo.
 - 2026-10-07 — Ronda 8: el 400 era invalid_case_id (la prueba usaba un ObjectId; Tatana exige Guid). Reproducido local en 18766: con Guid la subida lenta queda en curso ~40 s con busy=true y termina 200; sin bug de Tatana. SDD corregida (curl con Guid). Push al PR #28.
+- 2026-10-07 — (resumen agregado el 2026-10-12) PR #28 mergeado; PR #29 develop→main; tatana-release OK → release Tatana v1.4.0 (tag tatana-v1.4.0).
+- 2026-10-09 — (resumen agregado el 2026-10-12) Batch HU #42–#47 (diseño --fx-*, PrimeReact, KPIs, breakdown, trazabilidad, versionado) en PRs #37–#39, y #48 separar-metricas-vista en PR #40; todas aprobadas. PR #41 develop→main.
+- 2026-10-12 — Repaso de pendientes: cerrados a mano #42–#48 (en main por PR #41). Queda abierta #7 hasta la prueba en Windows con iPhone (§12.3). Sin HU activa.
+- 2026-10-12 — Pedido del usuario: pruebas de calidad contra el sistema (ej. subir una grabación de 10 min o más sin que se caiga) y revisar la UI del formulario de inspección. Exploración inicial.
+- 2026-10-12 — Exploración: formulario = paso 2 del wizard en /dashboard (7 hallazgos de UI); subidas: Tatana 16 GiB/backend 4 GiB OK, pero webcam corta a 10:00 (CameraRecordModal MAX_SECONDS=600), iOS espera MCI sin timeout, AirPlay queda pendiente para siempre (confirmado en código), Caddy nube 300MB. Esperando definiciones del usuario.
+- 2026-10-12 — Usuario: local, video grabado con Tatana, webcam a 60 min. Rama fix/webcam-limite-60min (MAX_SECONDS=3600, tsc OK, sin commit). Stack local levantado (backend 8080, Tatana 8765, client 3000). Lanzado agente QA de subida larga simulada (sin celular) -> scratchpad/qa-subida-larga.md.
+- 2026-10-12 — QA subida larga (simulada): import 12 min Android/iOS OK (<1 s, hash OK), subida 3,5 GiB OK, ZIP 5,5 GB OK en 8,9 min (Zip64; nivel 6 sobre video). Falla iOS: postproceso MCI ~2 h 50 min para 12 min y bloquea guardar; si MCI falla no hay evento → pendiente para siempre. Limpieza verificada. -> scratchpad/qa-subida-larga.md
+- 2026-10-12 — PR #49 (webcam 60 min) contra develop. Alta HU #50 ios-grabacion-larga, #51 zip-evidencia-sin-recomprimir, #52 formulario-inspeccion-ux. Usuario pide modo autónomo: hacer todas las HU sin parar; si una se traba, pasar a la siguiente. Tomada #50, rama feat/ios-grabacion-larga, afinando.
+- 2026-10-12 — #51 afinada → validada en modo autónomo con todas las recomendadas (D1A D2A D3A D4B D5A D6A D7A). Adelantada; queda en validada.
+- 2026-10-12 — #50 afinada → validada (9 dudas, todas A; suma agent-ui por D7) → en_arquitectura. Lanzado architect.
+- 2026-10-12 — #52 afinada → validada (7 dudas, todas A). Adelantada; queda en validada. Lanzado architect (SDD adelantada).
+- 2026-10-12 — #52 SDD lista (adelantada) -> Refactorizaciones/formulario-inspeccion-ux.md. Queda en validada hasta su turno.
+- 2026-10-12 — #51 SDD lista (adelantada) -> Refactorizaciones/zip-evidencia-sin-recomprimir.md. Queda en validada hasta su turno.
+- 2026-10-12 — #50 SDD lista -> Refactorizaciones/ios-grabacion-larga.md; verify OK; arquitectura_lista → implementando. Lanzados implementer-backend y implementer-frontend (opus). Tatana de fondo detenido para no chocar.
+- 2026-10-12 — #50 implementer-frontend done -> progress/impl_frontend_ios-grabacion-larga.md (tsc client/agent-ui OK, agent-ui test 26/26; prueba de navegador §11.3 pendiente). Esperando backend.
+- 2026-10-12 — #50 implementer-backend done -> progress/impl_backend_ios-grabacion-larga.md. en_revision; lanzado reviewer.
+- 2026-10-12 — #50 review APROBADA → aprobada (modo autónomo, sin prueba manual previa). PR #53 contra develop. Pendiente prueba manual del usuario (lista en PR). Sigue #51.
+- 2026-10-12 — #51 tomada, rama feat/zip-evidencia-sin-recomprimir, SDD ya lista → implementando. Lanzado implementer-backend (opus).
+- 2026-10-12 — #51 implementer-backend done -> progress/impl_backend_zip-evidencia-sin-recomprimir.md. en_revision; lanzado reviewer.
+- 2026-10-12 — #51 review APROBADA → aprobada. PR #54 contra develop (190,5 s → 54,3 s). Sigue #52.
+- 2026-10-12 — #52 tomada, rama feat/formulario-inspeccion-ux, SDD ya lista → implementando. Lanzado implementer-frontend (opus).
+- 2026-10-12 — #52 implementer-frontend done -> progress/impl_frontend_formulario-inspeccion-ux.md. en_revision; lanzado reviewer.
+- 2026-10-12 — #52 review APROBADA → aprobada. PR #55 contra develop. Modo autónomo terminado: #50, #51, #52 en Hecho (PRs #53, #54, #55) + PR #49 webcam. Solo queda #7 (prueba física Windows+iPhone, no automatizable). Stack local (backend :8080, client :3000) sigue arriba.
+- 2026-10-13 — Alta #56 formulario-causa-rediseno (pedido: usar ui-ux-pro-max/3d para mejorar e innovar el formulario de datos de la causa). Rama feat/formulario-causa-rediseno apilada sobre feat/formulario-inspeccion-ux (PR #55 sin mergear, mismos archivos). afinando; lanzado afinador.
+- 2026-10-13 — #56 afinada -> docs/hu-formulario-causa-rediseno.md (11 dudas). afinada_pendiente_validacion; esperando al usuario.
+- 2026-10-13 — #56 validada por el usuario: D1 A (ficha viva), D2 B (modelo 3D con R3F), D3 A, D4 A; D5–D11 recomendadas. en_arquitectura; lanzado architect.
+- 2026-10-13 — #56 SDD lista -> Refactorizaciones/formulario-causa-rediseno.md (three 0.186.1, R3F 9.8.1, sin drei). P1 del usuario: B (girar ±25°, botón aparte para ampliar). implementando; lanzado implementer-frontend (opus).
+- 2026-10-13 — #56 implementer-frontend done -> progress/impl_frontend_formulario-causa-rediseno.md. en_revision; lanzado reviewer.
+- 2026-10-13 — #56 review APROBADA -> progress/review_formulario-causa-rediseno.md (3D gzip 236 KiB, nada de three en carga inicial). Esperando prueba manual del usuario antes de commit/PR.
+- 2026-10-13 — #56 prueba manual del usuario: 'tosco todavía'. Diagnóstico en pantalla -> progress/feedback_usuario_formulario-causa-rediseno.md. rechazada_reintentando (1); relanzado implementer-frontend.
+- 2026-10-13 — #56 reintento 1 done (aplanado, etiquetas en una línea, grilla, ficha sin scroll con 3D arriba, max-w-7xl, tokens --fx-control-*, --fx-device-body). Verificado a ojo por el orquestador en 1366. en_revision; lanzado reviewer.
+- 2026-10-13 — #56 re-revisión APROBADA. Esperando OK visual del usuario y decisión sobre tamaño del teléfono 3D.
+- 2026-10-13 — #56 usuario: 'me gusta mucho más, pero llenar los datos me abruma'. Elige acordeón de una sección a la vez. rechazada_reintentando (2, último). Relanzado implementer-frontend.
+- 2026-10-13 — #56 reintento 2 done (acordeón guiado). Verificado a ojo por el orquestador en 1366 claro: una sección abierta, resúmenes con 'Precargado · revisar' y Editar, Siguiente con 'A continuación'. en_revision; lanzado reviewer.
+- 2026-10-13 — #56 re-revisión (reintento 2) APROBADA. Esperando OK del usuario para commit/PR.
+- 2026-10-13 — #56 OK del usuario ('ahora me gusta más'). Commit + push + PR.
+- 2026-10-13 — #56 aprobada; PR abierto (apilado sobre #55).
+- 2026-10-13 — Mergeados en orden #49, #53, #54, #55 (conflicto con #53 en page.tsx resuelto: onConnected + useDeviceConnection, tsc OK) y #57. develop local actualizado; Tatana y backend reiniciados sobre develop.
+- 2026-10-13 — Pedido: QA de robustez (skill qa-testing adaptada: sin agent-browser ni bypass de QA → Claude in Chrome + usuarios QA sembrados por _id). Lanzados 3 agentes: API backend, Tatana (instancia mock propia :8766), E2E navegador con Samsung (incluye grabación de 11 min). Reportes -> scratchpad/qa/.
+- 2026-10-13 — QA robustez terminada (4 frentes). Bloqueantes: C1 ZIP falla en verificación (Stored+AES async, expuesto por #54), C2 grabación Android pierde ~2 min / 0 B registrado. Consolidado -> scratchpad/qa/INFORME.md. 6 HU propuestas. Quedan 2 casos QA sin poder borrar (sin endpoint).
+- 2026-10-13 — Usuario OK: borrados por id los 2 casos QA (cases 2, case_events 19, agent_events 12), carpetas de Evidencia y dev-data, 3 previews de agent-data (queda screenshot_20261013_105818_026.png, dudoso). Alta HU #58 zip-verificacion-stored, #59 grabacion-android-robusta, #60 tatana-ws-y-hosts, #61 wizard-concurrencia-pestanas, #62 informe-formato-fixes, #63 api-hardening. Reportes QA copiados a docs/qa/2026-10-13/. Tomada #58, rama feat/zip-verificacion-stored, afinando.
+- 2026-10-13 — #58 afinada -> docs/hu-zip-verificacion-stored.md (6 dudas). Esperando validación.
+- 2026-10-13 — #60 afinada (adelantada) -> docs/hu-tatana-ws-y-hosts.md (6 dudas). Por validar.
+- 2026-10-13 — #62 afinada (adelantada) -> docs/hu-informe-formato-fixes.md (6 dudas). Por validar.
+- 2026-10-13 — #58 validada por el usuario (todas recomendadas) → en_arquitectura; lanzado architect.
+- 2026-10-13 — #59 afinada (adelantada) -> docs/hu-grabacion-android-robusta.md (9 dudas). Por validar.
+- 2026-10-13 — #63 afinada (adelantada) -> docs/hu-api-hardening.md (9 dudas). Por validar.
+- 2026-10-13 — #60 y #63 validadas por el orquestador (delegación del usuario: técnicas con recomendadas). SDD adelantadas.
+- 2026-10-13 — #59 validada por el usuario (todas A). SDD adelantada; lanzado architect.
+- 2026-10-13 — #61 afinada (adelantada) -> docs/hu-wizard-concurrencia-pestanas.md (11 dudas). Por validar.
+- 2026-10-13 — #62 validada por el usuario (todas recomendadas, sin script, 4 cm). SDD adelantada; lanzado architect.
+- 2026-10-13 — #58 SDD lista -> Refactorizaciones/zip-verificacion-stored.md; implementando; lanzado implementer-backend (opus).
+- 2026-10-13 — #61 validada por el usuario (todas recomendadas; D10 parte la HU). Alta wizard-pulido-ux con el Bloque 2. SDD #61 adelantada; lanzado architect.
+- 2026-10-13 — #64 afinada (adelantada) -> docs/hu-wizard-pulido-ux.md (5 dudas). Por validar.
+- 2026-10-13 — #63 SDD lista (adelantada). Superposición de saneo con #62 resuelta: SafeText y puntos de entrada en #62 (validación D1 A); nota en api-hardening.md §4.8; mensaje al architect de #62.
+- 2026-10-13 — #60 SDD lista (adelantada) -> Refactorizaciones/tatana-ws-y-hosts.md.
+- 2026-10-13 — #62 SDD lista (adelantada) -> Refactorizaciones/informe-formato-fixes.md.
+- 2026-10-13 — #61 SDD lista (adelantada) -> Refactorizaciones/wizard-concurrencia-pestanas.md.
+- 2026-10-13 — #59 SDD lista (adelantada) -> Refactorizaciones/grabacion-android-robusta.md. Causa C2 casi confirmada: con --no-video-playback scrcpy ignora SIGINT/SIGTERM (Tatana lo mata → pierde buffer o 0 B); con --no-window cierra limpio. Ojo: Tatana lanzado en segundo plano hereda SIGINT ignorado (nuestro entorno de QA). Riesgo: Windows sin medir (flags de config para revertir).
+- 2026-10-13 — #58 implementer-backend done -> progress/impl_backend_zip-verificacion-stored.md. D1 rama A (ZIP bien escrito; falla solo la lectura async, que además se saltea el HMAC). D5 NO cumple: verificación 1,7× más lenta (48 s vs 28 s en 5,5 GB) → consultar al usuario. en_revision; lanzado reviewer.
+- 2026-10-13 — #58 review APROBADA -> progress/review_zip-verificacion-stored.md. Esperando decisión del usuario sobre D5 (1,7×) y su OK para commit/PR.
+- 2026-10-13 — #58: usuario acepta 1,7× (opción a), sin issue upstream (huecos quitados), pide mergear. Commit + PR + merge.
+- 2026-10-13 — #58 mergeada (PR #65) y aprobada. Tomada #59, rama feat/grabacion-android-robusta; SDD lista → implementando. Tatana de fondo detenido para que los implementadores usen el Samsung.
+- 2026-10-13 — #64 validada por el usuario (todas A). SDD adelantada; lanzado architect.
+- 2026-10-13 — #59 implementer-frontend done -> progress/impl_frontend_grabacion-android-robusta.md (tsc OK; prueba de navegador §11.3 pendiente hasta que termine el backend). Esperando backend.
+- 2026-10-13 — #64 SDD lista (adelantada) -> Refactorizaciones/wizard-pulido-ux.md. Decisiones del arquitecto DT6/7/9/10/12 informadas al usuario. Implementar después de #59.
+- 2026-10-13 — #59 implementer-backend done -> progress/impl_backend_grabacion-android-robusta.md. Grabación real de 12 min: 721,3 s grabados / 721,1 s de archivo, stop 0,2 s, scrcpy cierra limpio. en_revision; lanzado reviewer.
+- 2026-10-13 — #59 review APROBADA. Levanto Tatana de la rama para la prueba manual del usuario.
+- 2026-10-13 — #59 OK del usuario. Commit + PR + merge.
+- 2026-10-13 — #59 mergeada (PR #66) y aprobada. Sigue #60.
+- 2026-10-13 — Tomada #60, rama feat/tatana-ws-y-hosts → implementando.
+- 2026-10-13 — #60 implementer-backend done -> progress/impl_backend_tatana-ws-y-hosts.md. en_revision; lanzado reviewer.
+- 2026-10-13 — Usuario: no promover develop→main hasta cerrar todas las HU, salvo que lo pida.
+- 2026-10-13 — #60 review APROBADA. Smoke test del orquestador con la web antes de pedir OK.
+- 2026-10-13 — #60 OK del usuario. Commit + PR + merge.
+- 2026-10-13 — #60 mergeada (PR #67). Tomada #61, rama feat/wizard-concurrencia-pestanas → implementando (backend+Tatana y frontend).
+- 2026-10-13 — #61 implementer-frontend done -> progress/impl_frontend_wizard-concurrencia-pestanas.md (tsc OK). Esperando backend.
+- 2026-10-13 — #61 implementer-backend done -> progress/impl_backend_wizard-concurrencia-pestanas.md (reutiliza RecordingRegistry de #59; record/start con case_id no-GUID → 400 invalid_case_id). en_revision; lanzado reviewer.
+- 2026-10-13 — #61 RECHAZADA (1ª) -> progress/review_wizard-concurrencia-pestanas.md: GenerateStep.tsx:397 onConfirm devuelve la promesa y el modal 'Generar igual' queda abierto con spinner. Relanzado implementer-frontend.
+- 2026-10-13 — #61 corrección del modal hecha. en_revision; relanzado reviewer.
+- 2026-10-13 — #61 re-revisión APROBADA. Esperando prueba manual del usuario (dos pestañas).
+- 2026-10-13 — #61 OK del usuario. Commit + PR + merge.
+- 2026-10-13 — #61 mergeada (PR #68). Tomada #62, rama feat/informe-formato-fixes → implementando.
+- 2026-10-13 — #62 implementer-frontend done -> progress/impl_frontend_informe-formato-fixes.md (tsc OK; paridad con backend pendiente para el reviewer). Esperando backend.
+- 2026-10-13 — #62 implementer-backend done -> progress/impl_backend_informe-formato-fixes.md. en_revision; lanzado reviewer.
+- 2026-10-13 — #62 review APROBADA. Backend reiniciado en la rama para la prueba manual.
+- 2026-10-13 — #62 OK del usuario. Commit + PR + merge.
+- 2026-10-13 — #62 mergeada (PR #69). Tomada #63, rama feat/api-hardening → implementando (SDD actualizada: SafeText ya en develop, DEL/C1 se conservan).
+- 2026-10-13 — #63 implementer-backend done -> progress/impl_backend_api-hardening.md (1065 tests OK). en_revision; lanzado reviewer.
+- 2026-10-13 — Usuario pide: cuando estén #63 y #64, promover develop→main si es viable.
+- 2026-10-13 — #63 review APROBADA. Backend reiniciado en la rama.
+- 2026-10-13 — #63 OK del usuario. Commit + PR + merge.
+- 2026-10-13 — #63 mergeada (PR #70). Tomada #64, rama feat/wizard-pulido-ux → implementando (backend ZipFilenameFor + client).
+- 2026-10-13 — #64 implementer-backend done -> progress/impl_backend_wizard-pulido-ux.md. Esperando frontend. Pregunta del usuario: qué pasa si un perito no actualiza Tatana → hoy nada cambió en prod; lanzado análisis de compatibilidad web nueva vs Tatana 1.4.0 antes de promover.
+- 2026-10-13 — Compatibilidad web develop vs Tatana 1.4.0: sin rotos; degradado grave iOS en Windows (import 409 file_busy mientras 1.4.0 corre MCI; reintentable, sin pérdida). Recomendación: release Tatana 1.5.0 junto con la promoción. -> docs/qa/2026-10-13/compat-web-develop-tatana-1.4.0.md
+- 2026-10-13 — #64 implementer-frontend done (tsc OK). Pedido ajuste: chip tapa 'Métricas' a 390 px; F13 rangos si se puede; DT9 signo invertido en SDD (implementación correcta).
+- 2026-10-13 — #64 ajustes del orquestador hechos. en_revision; lanzado reviewer.
+- 2026-10-13 — #64 review APROBADA. Backend reiniciado en la rama para la prueba manual.
+- 2026-10-13 — #64 OK del usuario. Commit + PR + merge. Sigue QA final de develop antes de promover.

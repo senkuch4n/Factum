@@ -1,3 +1,4 @@
+using Factum.Agent.Common;
 using Factum.Agent.Services;
 using Factum.Agent.Services.Ios;
 using Factum.Agent.WebSockets;
@@ -14,10 +15,14 @@ public sealed class ScreenshotController(
     IFileStorageService storage,
     AgentWebSocketHub hub) : ControllerBase
 {
+    // wizard-concurrencia-pestanas §5.1: case_id/origin_id opcionales (solo atribución del evento; inválido → null).
     [HttpPost]
     public async Task<IActionResult> Take(string serial,
-        [FromQuery] string? platform, [FromQuery] string? method, CancellationToken ct)
+        [FromQuery] string? platform, [FromQuery] string? method,
+        [FromQuery(Name = "case_id")] string? caseId, [FromQuery(Name = "origin_id")] string? originId,
+        CancellationToken ct)
     {
+        var attr = EventAttribution.From(caseId, originId);
         try
         {
             var path = storage.NewFilePath("screenshot", "png");
@@ -31,7 +36,10 @@ public sealed class ScreenshotController(
             await hub.BroadcastAsync(new AgentEvent
             {
                 Type = "screenshot_taken",
-                Data = new { filename, url = $"/files/{filename}" }
+                Data = new
+                {
+                    filename, url = $"/files/{filename}", serial, case_id = attr.CaseId, origin_id = attr.OriginId,
+                },
             }, ct);
 
             return Ok(new { filename, url = $"/files/{filename}" });

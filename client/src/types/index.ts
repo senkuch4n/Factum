@@ -1,6 +1,6 @@
 export type {
   User, Case, DeviceInput, PublicConfig,
-  PeritoSnapshot, ReportTexts, ReportTextsInput, ReportTextFormat, ReportTextsRequest, ReportTextDefaults,
+  PeritoSnapshot, ReportTexts, ReportTextsInput, ReportTextFormat, ReportTextsRequest, ReportTextDefaults, ReportCounts, AgentFailedAction,
   CaptureRole, CaptureRoleValue, ReportImage,
   ExpertProfile, ExpertProfileRequest, CaseDataRequest, FileSource, Tratamiento,
   AuthMode, AuthModeInfo, UserRole, ChangePasswordRequest, ChangePasswordField, CatalogId, CatalogEntry, CatalogsResponse,
@@ -15,6 +15,11 @@ export type {
   ReportVersionTrigger, ReportTextVersion, ReportTextVersionTexts,
 } from "@/lib/api";
 export type { Device, AgentEvent, AgentFile, VideoVariant, AgentInfo } from "@/lib/agent";
+export type {
+  VideoVariantStatus, VideoVariantState, VideoVariantReason, RecordingStoppedData,
+  RecordingValidation, RecordingValidationStatus, RecordingStateEntry, UnclaimedRecording, RecordingPhase,
+  RecordingStartedData, AgentRecordingState, ScreenshotTakenData, PhotoTakenData, AgentAttribution,
+} from "@/lib/agent";
 
 /**
  * Archivo de la bandeja del paso 3 (única definición: `capture/gallery.ts` la
@@ -40,7 +45,7 @@ export interface CapturedFile {
 export type EvidenceErrorCode =
   | "evidence_on_agent" | "evidence_on_server" | "evidence_on_other_pc" | "case_not_editable"
   | "invalid_manifest" | "no_evidence" | "generation_stale" | "manifest_mismatch" | "missing_images"
-  | "image_hash_mismatch" | "invalid_zip_info" | "request_too_large";
+  | "image_hash_mismatch" | "invalid_zip_info" | "request_too_large" | "evidence_busy";
 
 /**
  * Una fila de integrante del paso 2. `key` es estable (React y foco al
@@ -89,7 +94,8 @@ export interface ProfileFormData {
   tratamiento: "suscripto" | "suscripta";
 }
 
-export type IosRecordMode = "video_only" | "with_mic" | "on_device" | "airplay";
+/** Una sola definición en `lib/agent.ts` (la usa también `RecordingStateEntry.ios_mode`). */
+export type { IosRecordMode } from "@/lib/agent";
 
 /* ── Subida de evidencia (subida-archivos-grandes, SDD §6.1) ── */
 

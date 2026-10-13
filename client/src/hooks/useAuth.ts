@@ -17,12 +17,17 @@ export function useAuth(options?: { withHistory?: boolean }) {
   const [historyCases, setHistory] = useState<Case[]>([]);
   const [historyLoading, setHisLoad] = useState(false);
 
-  const loadHistory = useCallback(() => {
-    setHisLoad(true);
+  /**
+   * Recarga el historial. `silent` no toca `historyLoading` (sin parpadeo de la
+   * lista): lo usan las recargas de fondo del wizard (wizard-concurrencia-pestanas DT15).
+   */
+  const loadHistory = useCallback((opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent) setHisLoad(true);
     api.listCases()
       .then(r => setHistory(r.cases))
       .catch(() => {})
-      .finally(() => setHisLoad(false));
+      .finally(() => { if (!silent) setHisLoad(false); });
   }, []);
 
   useEffect(() => {

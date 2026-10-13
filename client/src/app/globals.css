@@ -63,6 +63,15 @@
   --fx-info:              #1f62b8;
   --fx-info-soft:         #e4eefa;
 
+  /* Controles de formulario (formulario-causa-rediseno, reintento 1): fondo
+     propio y borde más liviano que --fx-border-strong, que sigue ≥ 3:1 contra
+     la tarjeta y el fondo del control (WCAG 1.4.11): #8a929a/#fff = 3.15. */
+  --fx-control-bg:        #ffffff;
+  --fx-control-border:    #8a929a;
+  /* Chasis del teléfono (marco 2D y modelo 3D): grafito, protagonista sobre
+     la ficha clara y separado del fondo en la oscura. */
+  --fx-device-body:       #2b2f35;
+
   /* Tipografía (las variables --font-* las define next/font en <html>) */
   --fx-font-sans: var(--font-sans), system-ui, sans-serif;
   --fx-font-mono: var(--font-mono), ui-monospace, monospace;
@@ -135,6 +144,11 @@
   --fx-danger-soft:       #2c1415;
   --fx-info:              #63b3ff;
   --fx-info-soft:         #0f1f30;
+
+  /* Controles: #5d646c/#141619 = 3.03, /#101215 = 3.13 (≥ 3:1). */
+  --fx-control-bg:        #101215;
+  --fx-control-border:    #5d646c;
+  --fx-device-body:       #3a3f46;
 
   /* Elevación — oscuro */
   --fx-shadow-1: 0 1px 2px rgba(0,0,0,.5);
@@ -460,10 +474,22 @@
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+/* Apertura de una sección del acordeón guiado del paso 2: el contenido sale
+   desde su encabezado (solo opacidad + 4 px; sin animar altura; solo con motion-safe:). */
+@keyframes fx-section-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
 /* Entrada escalonada del saludo del dashboard (GreetingHeadline; solo con motion-safe:). */
 @keyframes fx-word-in {
   from { opacity: 0; filter: blur(8px); transform: translateY(12px); }
   to   { opacity: 1; filter: blur(0); transform: none; }
+}
+/* Destello del dato que cambió en la Ficha de la causa al salir del campo
+   (CaseSummaryCard; solo con motion-safe:, oculto con motion-reduce:). */
+@keyframes fx-summary-flash {
+  from { opacity: 1; }
+  to   { opacity: 0; }
 }
 /* Barra indeterminada del envío de evidencia (UploadProgressPanel; solo con motion-safe:). */
 @keyframes fx-indeterminate {

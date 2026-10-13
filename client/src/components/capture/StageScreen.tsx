@@ -9,10 +9,12 @@ import { srcOf, type GItem } from "./gallery";
 /**
  * Imagen con fallback: si el archivo no carga (agente mock, red, archivo
  * movido) se muestra un ícono en vez del ícono roto del navegador.
+ * El error queda atado a la URL que falló: si `src` cambia (el archivo pasó
+ * de la raíz de Tatana a la carpeta del caso), se vuelve a intentar (M8).
  */
 export function SafeImg({ src, alt, className }: { src?: string; alt: string; className?: string }) {
-  const [errored, setErrored] = useState(false);
-  if (!src || errored) {
+  const [erroredSrc, setErroredSrc] = useState<string | null>(null);
+  if (!src || erroredSrc === src) {
     return (
       <div className={cn("flex items-center justify-center bg-fx-surface-3 text-fx-text-3", className)}>
         <ImageIcon className="h-6 w-6" aria-hidden="true" />
@@ -20,7 +22,7 @@ export function SafeImg({ src, alt, className }: { src?: string; alt: string; cl
     );
   }
   /* contenido de imagen */
-  return <img src={src} alt={alt} className={className} onError={() => setErrored(true)} />;
+  return <img src={src} alt={alt} className={className} onError={() => setErroredSrc(src)} />;
 }
 
 /**

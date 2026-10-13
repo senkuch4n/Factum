@@ -7,7 +7,7 @@
 
 import { REPORT_TEXT_FORMAT, extractReportImageRefs, isBlankReportText } from "@/lib/report-markdown";
 import type {
-  Case, CaseDataRequest, CaseFormData, IntegranteRow, ProfileFormData, ReportImage, ReportTextsInput,
+  Case, CaseDataRequest, CaseFormData, IntegranteRow, ProfileFormData, ReportCounts, ReportImage, ReportTextsInput,
 } from "@/types";
 import { cleanCatalogValue, normalizeCatalogKey } from "@/lib/catalogs";
 
@@ -211,22 +211,15 @@ export function validateCaseForm(
 }
 
 /**
- * Orden visual de los campos del paso 2 (perfil → actuación → partes → equipo),
- * para enfocar el primer error.
+ * Orden visual de los campos del paso 2 (perfil → causa → destinatario →
+ * partes → equipo; formulario-causa-rediseno §6.3), para enfocar el primer error.
  */
 export const CASE_FORM_FOCUS_ORDER: string[] = [
   ...PROFILE_REQUIRED_KEYS.map(profileErrorKey),
-  "nombre_tribunal",
-  "tipo_causa",
-  "nro_referencia",
-  "caratula",
-  "fecha_intervencion",
-  "parte_denunciante",
-  "parte_denunciada",
-  "nombre_proponente",
-  "nombre_denunciante",
-  "tipo_dispositivo",
-  "imei",
+  "nro_referencia", "fecha_intervencion", "caratula", "tipo_causa",   // Causa (orden visual)
+  "nombre_tribunal",                                                   // Destinatario
+  "parte_denunciante", "parte_denunciada", "nombre_proponente",        // Partes
+  "nombre_denunciante", "tipo_dispositivo", "imei",                    // Equipo
 ];
 
 /** id del input que corresponde a una clave de error del paso 2. */
@@ -312,22 +305,74 @@ export function getMissingRequirements(cas: Case, opts?: { reportImages?: Report
 /* ── Precarga (§8.2) ────────────────────────────────────────────────── */
 
 /**
+ * Estado de la precarga visible de un caso nuevo (formulario-causa-rediseno §6.2).
+ * Vive en `page.tsx` porque `CaseFormStep` se desmonta al ir al paso 1 y volver.
+ */
+export interface CasePrefill {
+  /** id del caso de origen; null = el perito eligió "Empezar en blanco". */
+  sourceId: string | null;
+  /** El perito tocó "Mantener": se ocultan aviso y marcas. */
+  confirmed: boolean;
+}
+
+/** Campos que se copian de la causa de origen (los mismos de siempre; D3 A). */
+export const PREFILL_KEYS = [
+  "nombre_tribunal", "organismo_tribunal", "sala_tribunal", "integrantes",
+  "tipo_causa", "nombre_proponente", "profesion_proponente", "matricula_proponente",
+] as const satisfies readonly (keyof CaseFormData)[];
+export type PrefillKey = (typeof PREFILL_KEYS)[number];
+
+const isPericial = (c: Case) => (c.schema_version ?? 0) >= 1;
+
+/** Primer caso pericial (schema_version >= 1) de un historial ordenado por created_at desc. */
+export function lastPericialCase(historyCases: Case[]): Case | null {
+  return historyCases.find(isPericial) ?? null;
+}
+
+/** Causas elegibles como origen de la precarga: schema_version >= 1 (mismo criterio de siempre). */
+export function prefillSources(historyCases: Case[]): Case[] {
+  return historyCases.filter(isPericial);
+}
+
+/** Valores reutilizables de una causa (tribunal y proponente). */
+export function prefillFromCase(cas: Case): Pick<CaseFormData, PrefillKey> {
+  return {
+    nombre_tribunal: cas.nombre_tribunal ?? "",
+    organismo_tribunal: cas.organismo_tribunal ?? "",
+    sala_tribunal: cas.sala_tribunal ?? "",
+    integrantes: integrantesFromCase(cas).map(v => newIntegranteRow(v)),
+    tipo_causa: cas.tipo_causa ?? "",
+    nombre_proponente: cas.nombre_proponente ?? "",
+    profesion_proponente: cas.profesion_proponente ?? "",
+    matricula_proponente: cas.matricula_proponente ?? "",
+  };
+}
+
+/**
  * Datos que se repiten entre causas (tribunal y proponente), tomados del caso
  * pericial más reciente. `historyCases` viene ordenado por `created_at` desc.
  */
 export function prefillFromLastCase(historyCases: Case[]): Partial<CaseFormData> {
-  const last = historyCases.find(c => (c.schema_version ?? 0) >= 1);
-  if (!last) return {};
-  return {
-    nombre_tribunal: last.nombre_tribunal ?? "",
-    organismo_tribunal: last.organismo_tribunal ?? "",
-    sala_tribunal: last.sala_tribunal ?? "",
-    integrantes: integrantesFromCase(last).map(v => newIntegranteRow(v)),
-    tipo_causa: last.tipo_causa ?? "",
-    nombre_proponente: last.nombre_proponente ?? "",
-    profesion_proponente: last.profesion_proponente ?? "",
-    matricula_proponente: last.matricula_proponente ?? "",
-  };
+  const last = lastPericialCase(historyCases);
+  return last ? prefillFromCase(last) : {};
+}
+
+/**
+ * Claves reutilizables cuyo valor actual es igual (y no vacío) al de la causa
+ * de origen: son las "precargadas sin revisar". Editar una la saca sola.
+ */
+export function prefilledKeys(form: CaseFormData, source: Pick<CaseFormData, PrefillKey>): Set<PrefillKey> {
+  const out = new Set<PrefillKey>();
+  for (const k of PREFILL_KEYS) {
+    if (k === "integrantes") {
+      const a = joinIntegrantes(cleanIntegrantes(form.integrantes.map(r => r.value)));
+      const b = joinIntegrantes(cleanIntegrantes(source.integrantes.map(r => r.value)));
+      if (a && a === b) out.add(k);
+    } else if (form[k].trim() && form[k] === source[k]) {
+      out.add(k);
+    }
+  }
+  return out;
 }
 
 /** Claves de texto del formulario (todas menos la lista de integrantes). */
@@ -441,3 +486,37 @@ export const CAPTURE_ROLE_LABELS: Record<"imei_modelo" | "nombre_dispositivo", s
   imei_modelo: "IMEI y modelo",
   nombre_dispositivo: "Nombre del dispositivo",
 };
+
+/* ── Conteos de "Operaciones realizadas" (wizard-concurrencia-pestanas DT13) ── */
+
+/** `true` si los cuatro conteos coinciden. */
+export function sameCounts(a: ReportCounts, b: ReportCounts): boolean {
+  return a.capturas === b.capturas
+    && a.grabaciones === b.grabaciones
+    && a.archivos_extraidos === b.archivos_extraidos
+    && a.otros === b.otros;
+}
+
+/**
+ * `true` si "Operaciones realizadas" se armó con otras cantidades que las
+ * actuales. Sin base guardada (casos anteriores) o sin defaults, no hay aviso.
+ */
+export function countsOutdated(base: ReportCounts | null | undefined, current: ReportCounts | null | undefined): boolean {
+  return !!base && !!current && !sameCounts(base, current);
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * "3 capturas, 1 grabación y 2 archivos extraídos". Capturas y grabaciones
+ * siempre aparecen; archivos extraídos y otros, solo si no son 0.
+ */
+export function countsSummary(c: ReportCounts): string {
+  const parts = [
+    plural(c.capturas, "captura", "capturas"),
+    plural(c.grabaciones, "grabación", "grabaciones"),
+  ];
+  if (c.archivos_extraidos > 0) parts.push(plural(c.archivos_extraidos, "archivo extraído", "archivos extraídos"));
+  if (c.otros > 0) parts.push(plural(c.otros, "otro archivo", "otros archivos"));
+  return parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} y ${parts[parts.length - 1]}`;
+}

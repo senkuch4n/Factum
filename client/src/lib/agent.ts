@@ -4,9 +4,38 @@
  */
 
 import type { ManifestFile } from "./api";
+import { getTabOriginId } from "./tab-origin";
 
 export const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:8765";
 export function agentFileURL(filename: string) { return `${AGENT_URL}/files/${filename}`; }
+
+/**
+ * Atribución de una captura (wizard-concurrencia-pestanas DT1/DT3): el caso que
+ * la pidió. El `origin_id` de la pestaña lo agrega siempre el cliente.
+ */
+export interface AgentAttribution {
+  caseId?: string | null;
+}
+
+/**
+ * Query `case_id`/`origin_id` (los POST sin body; CORS de Tatana no permite headers propios).
+ * `null` = pedido sin dueño (vista previa con un Tatana viejo, detener una grabación ajena).
+ */
+function attributionParams(attribution?: AgentAttribution | null): URLSearchParams {
+  const p = new URLSearchParams();
+  if (attribution === null) return p;
+  if (attribution?.caseId) p.set("case_id", attribution.caseId);
+  p.set("origin_id", getTabOriginId());
+  return p;
+}
+
+/** Body `case_id`/`origin_id` (record/start, webcam/capture). */
+function attributionBody(attribution?: AgentAttribution): { case_id?: string; origin_id: string } {
+  return {
+    ...(attribution?.caseId ? { case_id: attribution.caseId } : {}),
+    origin_id: getTabOriginId(),
+  };
+}
 
 /** Mensaje cuando `fetch` ni siquiera llega a Tatana (agente cerrado o puerto ocupado). */
 const AGENT_UNREACHABLE = "No se pudo conectar con Tatana. Revisá que esté abierto en esta PC.";
@@ -47,11 +76,149 @@ export interface AgentEvent {
   data: Record<string, unknown>;
 }
 
+/** `GET /agent/state` → `operations[]` (existe en todo Tatana con `agent_state_v1`). */
+export interface AgentOperation {
+  kind: string;            // "recording_android" | "recording_ios" | "airplay_session" | "request" | …
+  since: string;           // ISO-8601
+  detail?: string | null;  // Tatana omite los null
+}
+
+/** Kinds de `operations[]` que indican una grabación en curso en la PC. */
+export const RECORDING_OPERATION_KINDS = ["recording_android", "recording_ios"] as const;
+
 export interface VideoVariant {
   label: string;
   filename: string;
   url: string;
 }
+
+/* ── ios-grabacion-larga (SDD §6.1): post-proceso de video en segundo plano ── */
+
+export type VideoVariantLabel = "Suavizado" | "RIFE" | "MCI"; // "MCI" solo puede venir en §4.4 known:false (legado)
+export type VideoVariantState = "pending" | "running" | "ready" | "failed" | "timeout" | "skipped" | "cancelled";
+export type VideoVariantReason =
+  | "ffmpeg_error" | "timeout" | "too_long" | "insufficient_disk" | "source_missing"
+  | "removed" | "agent_update" | "agent_stopping" | "internal_error";
+
+/** `video_variant_status` (WS, null explícitos) e items de `GET /video-postprocess/status` (HTTP, null omitidos). */
+export interface VideoVariantStatus {
+  original_filename: string;
+  label: VideoVariantLabel | string;   // tolerante a etiquetas futuras
+  state: VideoVariantState;
+  progress?: number | null;
+  filename?: string | null;
+  url?: string | null;
+  reason?: VideoVariantReason | string | null;
+  message?: string | null;             // solo log; no se muestra
+  updated_at: string;
+}
+
+/* ── grabacion-android-robusta (SDD §7.1): validación y estado observable de la grabación ── */
+
+export type RecordingValidationStatus = "ok" | "incomplete" | "empty" | "unreadable";
+
+/** `validation` de stop, `recording_stopped`, `unclaimed_recordings[]` y del error 422 (solo Android). */
+export interface RecordingValidation {
+  status: RecordingValidationStatus;
+  recorded_seconds: number;
+  duration_seconds?: number | null;
+  duration_checked: boolean;
+  forced_stop: boolean;
+  started_at: string;
+  stopped_at: string;
+}
+
+export type IosRecordMode = "video_only" | "with_mic" | "on_device" | "airplay";
+export type RecordingPhase = "starting" | "recording" | "stopping";
+
+/** `GET /agent/state` → `recordings[]` (HTTP: los null se omiten). */
+export interface RecordingStateEntry {
+  platform: "android" | "ios";
+  serial: string;
+  state: RecordingPhase;
+  requested_at: string;
+  started_at?: string | null;
+  filename?: string | null;
+  case_id?: string | null;
+  android_with_mic?: boolean | null;
+  ios_mode?: IosRecordMode | null;
+}
+
+/** `GET /agent/state` → `unclaimed_recordings[]`: detenidas (ok/incomplete) que nadie importó. */
+export interface UnclaimedRecording {
+  platform: "android" | "ios";
+  serial: string;
+  filename: string;
+  case_id?: string | null;
+  stopped_at: string;
+  validation?: RecordingValidation | null;
+}
+
+export interface AgentRecordingState {
+  recordings: RecordingStateEntry[];
+  unclaimed_recordings: UnclaimedRecording[];
+}
+
+/** Evento WS `recording_started` (`data`). `case_id`/`origin_id` pueden venir `null`. */
+export interface RecordingStartedData {
+  serial: string;
+  platform: "android" | "ios";
+  case_id?: string | null;
+  /** Pestaña que la pidió (wizard-concurrencia-pestanas); falta en un Tatana anterior. */
+  origin_id?: string | null;
+  started_at?: string;
+  filename?: string;
+}
+
+/**
+ * Evento WS `screenshot_taken` (`data`). `serial`/`case_id`/`origin_id` faltan
+ * en un Tatana anterior a `event_attribution_v1`.
+ */
+export interface ScreenshotTakenData {
+  filename: string;
+  url: string;
+  serial?: string;
+  case_id?: string | null;
+  origin_id?: string | null;
+}
+
+/** Evento WS `photo_taken` (`data`): webcam de Tatana, sin `serial`. */
+export interface PhotoTakenData {
+  type?: string;
+  filename: string;
+  url: string;
+  case_id?: string | null;
+  origin_id?: string | null;
+}
+
+/**
+ * Respuesta de `POST /record/stop` (200) y evento WS `recording_stopped`.
+ * En la falla `recording_empty`/`recording_unreadable` del WS: `filename`/`url`
+ * en `null`, con `error` y `code`.
+ */
+export interface RecordingStoppedData {
+  filename: string | null;
+  url: string | null;
+  platform?: "android" | "ios";
+  serial?: string;
+  case_id?: string | null;
+  /** Pestaña que inició la grabación (wizard-concurrencia-pestanas); falta en un Tatana anterior. */
+  origin_id?: string | null;
+  /** Solo Android con Tatana `recording_state_v1`; iOS: `null`/ausente. */
+  validation?: RecordingValidation | null;
+  error?: string | null;
+  code?: AgentErrorCode | null;
+  /** Falta en un Tatana anterior a video_postprocess_v1. */
+  variants_expected?: boolean;
+  variants?: string[];
+}
+
+export interface VideoPostprocessStatusResponse {
+  items: { original_filename: string; known: boolean; variants: VideoVariantStatus[] }[];
+}
+
+/** Tope de `filename` por pedido de `GET /video-postprocess/status` (SDD §4.4). */
+const POSTPROCESS_STATUS_BATCH = 50;
 
 export interface AgentInfo {
   hostname: string;
@@ -98,7 +265,11 @@ export type IosDeveloperModeStatus = "enabled" | "restarting" | "manual_required
  * - `real_version_v1`: `version` es la versión real de Tatana. Sin ella, `version`
  *   no es confiable (los Tatana anteriores dicen siempre "2.0.0") y se trata
  *   como anterior a cualquier mínimo (tatana-instalador-autoupdate, D-T2);
- * - `agent_state_v1`: `GET /agent/state` y modo mantenimiento (D5).
+ * - `agent_state_v1`: `GET /agent/state` y modo mantenimiento (D5);
+ * - `video_postprocess_v1`: variantes de video en segundo plano, `video_variant_status`
+ *   y `GET /video-postprocess/status` (ios-grabacion-larga);
+ * - `recording_state_v1`: `recordings`/`unclaimed_recordings` en `GET /agent/state`,
+ *   `case_id` en el start y validación de la grabación (grabacion-android-robusta).
  */
 export interface AgentHealth {
   status: string;
@@ -191,7 +362,10 @@ export type AgentErrorCode =
   // iPhone (ios-herramientas-windows §4.1): el `error` que acompaña ya viene en castellano.
   | "ios_apple_service_missing" | "ios_device_not_found" | "ios_not_trusted" | "ios_locked"
   | "ios_developer_mode_disabled" | "ios_ddi_mount_failed" | "ios_tunnel_failed" | "ios_admin_required"
-  | "ios_tools_missing" | "ios_capture_failed" | "ios_recording_empty" | "airplay_unavailable";
+  | "ios_tools_missing" | "ios_capture_failed" | "ios_recording_empty" | "airplay_unavailable"
+  // Grabación (grabacion-android-robusta §6): start/stop y evidencia de 0 B.
+  | "already_recording" | "recording_start_timeout" | "not_recording" | "recording_empty"
+  | "recording_unreadable" | "empty_evidence";
 
 /** Cuerpo de error de Tatana (claves literales en snake_case). */
 export interface AgentErrorBody {
@@ -203,6 +377,8 @@ export interface AgentErrorBody {
   available_bytes?: number | null;
   received_bytes?: number;
   files?: { filename: string; reason: "missing" | "size" | "hash" }[];
+  /** 422 `recording_empty`/`recording_unreadable` del stop. */
+  validation?: RecordingValidation;
 }
 
 /**
@@ -316,6 +492,25 @@ export interface PulledFile {
   error?: string;
 }
 
+/** Tatana sin `POST /devices/{serial}/preview` (anterior a `device_preview_v1`): no se reintenta el 404. */
+let previewUnsupported = false;
+
+/** El Tatana conectado no tiene el endpoint de vista previa (DT5). */
+export class PreviewUnsupportedError extends Error {
+  constructor() {
+    super("Tatana no tiene vista previa");
+    this.name = "PreviewUnsupportedError";
+  }
+}
+
+/** URL absoluta de una vista previa (`url` = `/previews/<archivo>`). */
+export function previewFileURL(url: string): string {
+  return `${AGENT_URL}${url}`;
+}
+
+/** Capabilities de `/health` de la conexión actual (ver `supportsRecordingState`). */
+let capabilitiesCache: string[] | null = null;
+
 export const agent = {
   baseURL: AGENT_URL,
 
@@ -348,8 +543,19 @@ export const agent = {
     return res.json();
   },
 
-  async takeScreenshot(serial: string, platform: "android" | "ios" = "android"): Promise<{ filename: string; url: string }> {
-    const url = `${AGENT_URL}/devices/${serial}/screenshot${platform === "ios" ? "?platform=ios" : ""}`;
+  /**
+   * Captura de evidencia (paso 3). Va con `case_id`/`origin_id` para que el
+   * `screenshot_taken` solo lo tome esta pestaña o las del mismo caso.
+   */
+  async takeScreenshot(
+    serial: string,
+    platform: "android" | "ios" = "android",
+    attribution?: AgentAttribution | null,
+  ): Promise<{ filename: string; url: string }> {
+    const q = attributionParams(attribution);
+    if (platform === "ios") q.set("platform", "ios");
+    const qs = q.toString();
+    const url = `${AGENT_URL}/devices/${serial}/screenshot${qs ? `?${qs}` : ""}`;
     let res: Response;
     try {
       res = await fetch(url, { method: "POST" });
@@ -358,6 +564,36 @@ export const agent = {
     }
     // D7: el motivo real que manda Tatana (`{ error, code }`); el fallback solo si no viene.
     if (!res.ok) throw await readAgentError(res, "Error tomando screenshot");
+    return res.json();
+  },
+
+  /**
+   * Vista previa del paso 2 (wizard-concurrencia-pestanas DT5): `POST
+   * /devices/{serial}/preview`. No es evidencia: Tatana la guarda aparte y no
+   * emite ningún evento. Un Tatana sin el endpoint (404) lanza
+   * `PreviewUnsupportedError`; el llamador cae a `takeScreenshot` sin atribución.
+   */
+  async takePreview(
+    serial: string,
+    platform: "android" | "ios" = "android",
+  ): Promise<{ filename: string; url: string }> {
+    if (previewUnsupported) throw new PreviewUnsupportedError();
+    const q = platform === "ios" ? "?platform=ios" : "";
+    let res: Response;
+    try {
+      res = await fetch(`${AGENT_URL}/devices/${encodeURIComponent(serial)}/preview${q}`, { method: "POST", cache: "no-store" });
+    } catch {
+      throw new Error(AGENT_UNREACHABLE);
+    }
+    if (res.status === 404) {
+      // Un 404 con `{ error }` es del celular (no encontrado); sin cuerpo de Tatana, es la ruta que no existe.
+      const body = (await res.clone().json().catch(() => null)) as { error?: unknown } | null;
+      if (!body || typeof body.error !== "string") {
+        previewUnsupported = true;
+        throw new PreviewUnsupportedError();
+      }
+    }
+    if (!res.ok) throw await readAgentError(res, "Error tomando la vista previa");
     return res.json();
   },
 
@@ -385,10 +621,14 @@ export const agent = {
     return res.json();
   },
 
-  async stopAirplayShot(serial: string): Promise<{ files: { filename: string; url: string }[] }> {
+  async stopAirplayShot(
+    serial: string,
+    attribution?: AgentAttribution,
+  ): Promise<{ files: { filename: string; url: string }[] }> {
     let res: Response;
     try {
-      res = await fetch(`${AGENT_URL}/devices/${serial}/screenshot/airplay/stop`, { method: "POST" });
+      const q = attributionParams(attribution).toString();
+      res = await fetch(`${AGENT_URL}/devices/${serial}/screenshot/airplay/stop?${q}`, { method: "POST" });
     } catch {
       throw new Error(AGENT_UNREACHABLE);
     }
@@ -411,50 +651,137 @@ export const agent = {
     return res.json();
   },
 
+  /**
+   * Inicia la grabación. Con `recording_state_v1` vuelve recién cuando el celular
+   * empezó a capturar (`started_at` = inicio real). Errores: `AgentError`
+   * (`already_recording` 409, `recording_start_timeout` 504, `invalid_case_id` 400…).
+   */
   async startRecording(
     serial: string,
     androidVersion: number,
     platform: "android" | "ios" = "android",
-    iosMode?: "video_only" | "with_mic" | "on_device" | "airplay",
+    iosMode?: IosRecordMode,
     androidWithMic?: boolean,
-  ): Promise<{ filename: string }> {
-    let res: Response;
-    try {
-      res = await fetch(`${AGENT_URL}/devices/${serial}/record/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          android_version: androidVersion, platform, ios_mode: iosMode,
-          android_with_mic: androidWithMic,
-        }),
-      });
-    } catch {
-      throw new Error(AGENT_UNREACHABLE);
-    }
-    if (!res.ok) throw await readAgentError(res, "Error iniciando grabación");
-    return res.json();
+    caseId?: string | null,
+  ): Promise<{ filename?: string; state?: string; started_at?: string; case_id?: string }> {
+    return agentJSON(`/devices/${encodeURIComponent(serial)}/record/start`, jsonInit("POST", {
+      android_version: androidVersion, platform, ios_mode: iosMode,
+      android_with_mic: androidWithMic,
+      // `case_id` (grabacion-android-robusta) + `origin_id` de esta pestaña (wizard-concurrencia-pestanas).
+      ...attributionBody({ caseId }),
+    }));
   },
 
-  async stopRecording(serial: string, platform: "android" | "ios" = "android"): Promise<{ filename: string; url: string }> {
-    const url = `${AGENT_URL}/devices/${serial}/record/stop${platform === "ios" ? "?platform=ios" : ""}`;
-    let res: Response;
-    try {
-      res = await fetch(url, { method: "POST" });
-    } catch {
-      throw new Error(AGENT_UNREACHABLE);
-    }
-    if (!res.ok) throw await readAgentError(res, "Error deteniendo grabación");
-    return res.json();
+  /**
+   * Detiene la grabación. `variants_expected`/`variants` faltan en un Tatana
+   * anterior a `video_postprocess_v1`; `validation`, en uno anterior a
+   * `recording_state_v1` y en iOS. No-2xx: `AgentError` con `code` y `body.validation`.
+   */
+  async stopRecording(
+    serial: string,
+    platform: "android" | "ios" = "android",
+    attribution?: AgentAttribution | null,
+  ): Promise<RecordingStoppedData> {
+    // Tatana usa la atribución del inicio; esta solo cuenta si no la tiene registrada.
+    const q = attributionParams(attribution);
+    if (platform === "ios") q.set("platform", "ios");
+    const qs = q.toString();
+    return agentJSON<RecordingStoppedData>(`/devices/${encodeURIComponent(serial)}/record/stop${qs ? `?${qs}` : ""}`, { method: "POST" });
   },
 
-  async captureWebcam(type: "funcionario" | "denunciante"): Promise<{ filename: string; url: string }> {
+  /**
+   * Grabaciones en curso y detenidas sin importar (`GET /agent/state`). `null`
+   * ante cualquier error o si Tatana no manda ninguno de los dos campos (viejo).
+   */
+  async agentState(): Promise<AgentRecordingState | null> {
+    try {
+      const r = await agentJSON<Partial<AgentRecordingState>>("/agent/state", { signal: AbortSignal.timeout(3000) });
+      if (!r || typeof r !== "object") return null;
+      const hasRec = Array.isArray(r.recordings);
+      const hasUnclaimed = Array.isArray(r.unclaimed_recordings);
+      if (!hasRec && !hasUnclaimed) return null;
+      return {
+        recordings: hasRec ? r.recordings! : [],
+        unclaimed_recordings: hasUnclaimed ? r.unclaimed_recordings! : [],
+      };
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Operaciones en curso de Tatana (`GET /agent/state` → `operations`). `null`
+   * ante cualquier error o si la respuesta no trae `operations` (array). Timeout 3 s.
+   */
+  async agentOperations(): Promise<AgentOperation[] | null> {
+    try {
+      const res = await fetch(`${AGENT_URL}/agent/state`, { cache: "no-store", signal: AbortSignal.timeout(3000) });
+      if (!res.ok) return null;
+      const body = (await res.json()) as { operations?: unknown } | null;
+      return Array.isArray(body?.operations) ? (body.operations as AgentOperation[]) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * `true` si Tatana expone el estado de grabación (`recording_state_v1`). Se
+   * cachea por conexión: `resetCapabilities()` lo invalida (en `onConnected`).
+   * Un error de red no se cachea.
+   */
+  async supportsRecordingState(): Promise<boolean> {
+    if (capabilitiesCache) return capabilitiesCache.includes("recording_state_v1");
+    try {
+      const h = await this.health();
+      capabilitiesCache = Array.isArray(h.capabilities) ? h.capabilities : [];
+      return capabilitiesCache.includes("recording_state_v1");
+    } catch {
+      return false;
+    }
+  },
+
+  /** Olvida las capabilities cacheadas (Tatana reconectado: puede ser otra versión). */
+  resetCapabilities(): void {
+    capabilitiesCache = null;
+    // Tatana reconectado: puede ser una versión con vista previa.
+    previewUnsupported = false;
+  },
+
+  async captureWebcam(type: "funcionario" | "denunciante", attribution?: AgentAttribution): Promise<{ filename: string; url: string }> {
     const res = await fetch(`${AGENT_URL}/webcam/capture`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type }),
+      body: JSON.stringify({ type, ...attributionBody(attribution) }),
     });
     if (!res.ok) throw new Error("Error capturando foto");
     return res.json();
+  },
+
+  /**
+   * Estado del post-proceso de las grabaciones pedidas (SDD §4.4), en lotes de 50.
+   * Cualquier error (404 de un Tatana viejo incluido) devuelve `null` sin tirar:
+   * el estado de las variantes es solo visual.
+   */
+  async videoPostprocessStatus(filenames: string[]): Promise<VideoPostprocessStatusResponse | null> {
+    if (filenames.length === 0) return { items: [] };
+    try {
+      const items: VideoPostprocessStatusResponse["items"] = [];
+      for (let i = 0; i < filenames.length; i += POSTPROCESS_STATUS_BATCH) {
+        const batch = filenames.slice(i, i + POSTPROCESS_STATUS_BATCH);
+        const query = batch.map(f => `filename=${encodeURIComponent(f)}`).join("&");
+        const res = await fetch(`${AGENT_URL}/video-postprocess/status?${query}`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) return null;
+        const data = (await res.json()) as Partial<VideoPostprocessStatusResponse>;
+        if (!Array.isArray(data.items)) return null;
+        items.push(...data.items);
+      }
+      return { items };
+    } catch {
+      return null;
+    }
   },
 
   async listFiles(): Promise<AgentFile[]> {

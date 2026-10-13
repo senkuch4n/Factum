@@ -1,15 +1,22 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { agent } from "@/lib/agent";
+import { agent, AGENT_URL } from "@/lib/agent";
 import type { Device, AgentEvent } from "@/types";
 
-export function useAgentConnection(onEvent: (e: AgentEvent) => void) {
+/**
+ * Conexión con Tatana (health + WebSocket, con reintento cada 3 s).
+ * `onConnected` se llama cada vez que el WebSocket abre: en la primera conexión
+ * y en cada reconexión (ios-grabacion-larga, Duda 9 A).
+ */
+export function useAgentConnection(onEvent: (e: AgentEvent) => void, onConnected?: () => void) {
   const [agentOnline, setAgent] = useState(false);
   const [devices, setDevices]   = useState<Device[]>([]);
   const [loadingDev, setLoadDev] = useState(false);
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
+  const onConnectedRef = useRef(onConnected);
+  onConnectedRef.current = onConnected;
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -28,10 +35,7 @@ export function useAgentConnection(onEvent: (e: AgentEvent) => void) {
       if (destroyed) return;
       let online = false;
       try {
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:8765"}/health`,
-          { signal: AbortSignal.timeout(5000) },
-        );
+        const res = await fetch(`${AGENT_URL}/health`, { signal: AbortSignal.timeout(5000) });
         online = res.ok;
       } catch {
         online = false;
@@ -48,6 +52,7 @@ export function useAgentConnection(onEvent: (e: AgentEvent) => void) {
         }
         onEventRef.current(e);
       });
+      ws.onopen = () => { if (!destroyed) onConnectedRef.current?.(); };
       ws.onerror = () => { if (!destroyed) scheduleRetry(); };
       ws.onclose = () => { if (!destroyed) scheduleRetry(); };
     }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "primereact/button";
 import { Tag } from "primereact/tag";
 import {
@@ -13,7 +13,13 @@ import { agent, agentFileURL, type ZipProgress } from "@/lib/agent";
 import { formatBytesPair } from "@/lib/format";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
-import { describeMissing, getMissingRequirements, type MissingRequirement } from "@/lib/pericial";
+import {
+  countsOutdated, countsSummary, describeMissing, getMissingRequirements, type MissingRequirement,
+} from "@/lib/pericial";
+import { api } from "@/lib/api";
+import type { ReportCounts } from "@/types";
+import { FxBanner } from "@/components/feedback/FxBanner";
+import { ConfirmDialog } from "@/components/overlay/ConfirmDialog";
 import { useReportImages } from "@/lib/report-images";
 import { StepHeader } from "@/components/wizard/StepHeader";
 import { StepActions } from "@/components/wizard/StepActions";
@@ -35,6 +41,16 @@ interface Props {
   agentBlocker?: string | null;
   /** Progreso de la generación en dos tramos (solo flujo agent). */
   progress?: GenerateProgress | null;
+  /**
+   * Avisos para revisar antes de generar (grabacion-android-robusta §7.10).
+   * Informativos: no bloquean ni cambian `blocked`.
+   */
+  reviewNotices?: { incompleteRecordings: string[]; blackScreenshots: string[] };
+  /** Lleva al texto "Operaciones realizadas" del paso 4 (aviso de cantidades, DT13). */
+  onReviewOperaciones?: () => void;
+  /** Advertencia de la generación (p. ej. el mismo caso generándose en otra pestaña, DT9). */
+  notice?: string | null;
+  onDismissNotice?: () => void;
 }
 
 /** Tramo actual de la generación del flujo agent y, en el primero, el avance del ZIP (WS). */
@@ -95,7 +111,7 @@ function Thumb({ name, kind, url }: { name: string; kind: "image" | "video" | "d
 /* ── Confirmación de una identidad (perito / titular) con su foto. ── */
 function IdentityConfirm({
   label, role, icon: Icon, file, urlOf,
-}: { label: string; role: string; icon: React.ElementType; file?: CapturedFile; urlOf: (f: CapturedFile) => string }) {
+}: { label: string; role: string; icon: React.ElementType<{ className?: string }>; file?: CapturedFile; urlOf: (f: CapturedFile) => string }) {
   const [errored, setErrored] = useState(false);
   const showImg = !!file && !errored;
   return (
@@ -134,7 +150,7 @@ function IdentityConfirm({
 /* ── Grupo de evidencia — título + conteo + fila de miniaturas. ── */
 function EvidenceGroup({
   title, icon: Icon, items, kind, urlOf,
-}: { title: string; icon: React.ElementType; items: CapturedFile[]; kind: "image" | "video" | "doc"; urlOf: (f: CapturedFile) => string }) {
+}: { title: string; icon: React.ElementType<{ className?: string }>; items: CapturedFile[]; kind: "image" | "video" | "doc"; urlOf: (f: CapturedFile) => string }) {
   if (items.length === 0) return null;
   return (
     <div>
@@ -152,8 +168,27 @@ function EvidenceGroup({
 
 export function GenerateStep({
   currentCase, files, loading, serverMissing = [], onBack, onGenerate, onGoToField,
-  agentBlocker = null, progress = null,
+  agentBlocker = null, progress = null, reviewNotices, onReviewOperaciones, notice = null, onDismissNotice,
 }: Props) {
+  // ── Cantidades de "Operaciones realizadas" vs. la evidencia actual (DT13). Best-effort:
+  //    si los defaults fallan o el backend no manda conteos, no hay aviso. ──
+  const [currentCounts, setCurrentCounts] = useState<ReportCounts | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.getReportTextDefaults(currentCase.id)
+      .then(d => { if (alive) setCurrentCounts(d.operaciones_base ?? null); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [currentCase.id]);
+  const countsBase = currentCase.report_texts?.operaciones_base ?? null;
+  const countsStale = countsOutdated(countsBase, currentCounts);
+  const [confirmCounts, setConfirmCounts] = useState(false);
+
+  function handleGenerateClick() {
+    if (countsStale) { setConfirmCounts(true); return; }
+    onGenerate();
+  }
+
   // Solo se promete cifrado si el backend lo tiene activo (`encrypt_zip`).
   const { encryptZip } = usePublicConfig();
   const agentMode = currentCase.evidence_storage === "agent";
@@ -329,6 +364,50 @@ export function GenerateStep({
         )}
       </section>
 
+      {/* ── Revisá antes de generar: grabaciones incompletas y capturas negras (no bloquea) ── */}
+      {reviewNotices && <ReviewNotices {...reviewNotices} />}
+
+      {/* ── "Operaciones realizadas" armada con otras cantidades (no bloquea) ── */}
+      {countsStale && currentCounts && (
+        <FxBanner tone="warn">
+          <p className="m-0">
+            La evidencia cambió después de armar «Operaciones realizadas» (ahora: {countsSummary(currentCounts)}).
+          </p>
+          {onReviewOperaciones && (
+            <Button
+              type="button"
+              severity="secondary"
+              size="small"
+              icon={<ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />}
+              iconPos="right"
+              label="Revisar texto"
+              onClick={onReviewOperaciones}
+              className="mt-2 min-h-11 sm:min-h-0"
+            />
+          )}
+        </FxBanner>
+      )}
+
+      {/* ── Advertencia de la generación (otra pestaña generando el mismo caso) ── */}
+      {notice && <FxBanner tone="warn" onClose={onDismissNotice}>{notice}</FxBanner>}
+
+      <ConfirmDialog
+        open={confirmCounts}
+        onOpenChange={setConfirmCounts}
+        // Llaves a propósito: no devolver la promesa de la generación. Si
+        // ConfirmDialog la recibe, queda abierto con spinner durante todo el
+        // armado del ZIP (DT14) y tapa el progreso. El guard de doble clic y
+        // el Web Lock viven en handleGenerate, no acá.
+        onConfirm={() => { onGenerate(); }}
+        tone="neutral"
+        title="Las cantidades del informe no coinciden con la evidencia"
+        description={countsBase && currentCounts
+          ? `«Operaciones realizadas» se armó con ${countsSummary(countsBase)}; ahora hay ${countsSummary(currentCounts)}. Si las corregiste a mano, podés generar igual.`
+          : undefined}
+        confirmLabel="Generar igual"
+        cancelLabel="Volver"
+      />
+
       {/* ── Progreso en dos tramos (flujo agent) ── */}
       {agentMode && loading && progress && <GenerateStages progress={progress} />}
 
@@ -350,7 +429,7 @@ export function GenerateStep({
           loading={loading}
           disabled={loading || blocked}
           aria-describedby={missing.length > 0 ? "generate-missing-title" : agentBlocker ? "generate-agent-title" : undefined}
-          onClick={onGenerate}
+          onClick={handleGenerateClick}
           className="w-full sm:flex-1 min-h-11"
         />
       </StepActions>
@@ -436,5 +515,35 @@ function GenerateStages({ progress }: { progress: GenerateProgress }) {
         })}
       </ol>
     </section>
+  );
+}
+
+/** "1 grabación incompleta, 2 capturas negras" (singular y plural). */
+export function reviewNoticesSummary(incomplete: number, black: number): string {
+  const parts: string[] = [];
+  if (incomplete > 0) parts.push(`${incomplete} ${incomplete === 1 ? "grabación incompleta" : "grabaciones incompletas"}`);
+  if (black > 0) parts.push(`${black} ${black === 1 ? "captura negra" : "capturas negras"}`);
+  return parts.join(", ");
+}
+
+/** Bloque informativo antes de "Generar informe pericial". No bloquea (Duda 7 A). */
+function ReviewNotices({ incompleteRecordings, blackScreenshots }: { incompleteRecordings: string[]; blackScreenshots: string[] }) {
+  if (incompleteRecordings.length === 0 && blackScreenshots.length === 0) return null;
+  const names = [...incompleteRecordings, ...blackScreenshots];
+  return (
+    <div
+      role="status"
+      className="rounded-fx-lg border border-fx-warning bg-fx-warning-soft px-4 py-3 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]"
+    >
+      <p className="m-0 flex items-start gap-2 text-fx-body-sm font-semibold text-fx-text">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-fx-warning" aria-hidden="true" />
+        Revisá antes de generar: {reviewNoticesSummary(incompleteRecordings.length, blackScreenshots.length)}
+      </p>
+      <ul className="m-0 mt-1.5 list-none space-y-0.5 pl-6">
+        {names.map(n => (
+          <li key={n} translate="no" className="truncate font-mono text-xs text-fx-text-2" title={n}>{n}</li>
+        ))}
+      </ul>
+    </div>
   );
 }
