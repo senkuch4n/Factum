@@ -112,10 +112,22 @@ public sealed class EvidenceZipTests : IDisposable
         var zip = ZipPath();
         await EvidenceZip.WriteAsync(zip, paths, Password, CancellationToken.None);
 
+        var realHash = expected["screenshot_2.png"];
         expected["screenshot_2.png"] = new string('0', 64);
         var ex = await Assert.ThrowsAsync<EvidenceZipVerificationException>(() =>
             EvidenceZip.VerifyAsync(zip, expected, Password, CancellationToken.None));
         Assert.Contains("screenshot_2.png", ex.Message);
+
+        // zip-verificacion-stored D-T3: datos de la entrada para el log, sin la contraseña.
+        Assert.NotNull(ex.Entry);
+        Assert.Equal("screenshot_2.png", ex.Entry.Name);
+        Assert.Equal(10 * 1024, ex.Entry.Size);
+        Assert.Equal("Stored", ex.Entry.Method);
+        Assert.True(ex.Entry.Encrypted);
+        Assert.Equal(new string('0', 64), ex.Entry.ExpectedSha256);
+        Assert.Equal(realHash, ex.Entry.ActualSha256);
+        Assert.DoesNotContain(Password, ex.Message);
+        Assert.DoesNotContain(Password, ex.Entry.ToString());
     }
 
     [Fact]
@@ -440,8 +452,7 @@ public sealed class EvidenceZipTests : IDisposable
     [Fact]
     public async Task SevenZip_TestsMixedZip()
     {
-        var sevenZip = new[] { "/opt/homebrew/bin/7zz", "/usr/local/bin/7zz", "/usr/bin/7zz" }
-            .FirstOrDefault(File.Exists);
+        var sevenZip = SevenZipPath();
         if (sevenZip is null)
         {
             _output.WriteLine("7zz no está instalado: test omitido (sin aserciones).");
@@ -460,7 +471,223 @@ public sealed class EvidenceZipTests : IDisposable
         Assert.NotEqual(0, koExit);
     }
 
-    private async Task<(int Exit, string Output)> RunSevenZipTest(string exe, string password, string zip)
+    private Task<(int Exit, string Output)> RunSevenZipTest(string exe, string password, string zip) =>
+        RunSevenZip(exe, "t", "-p" + password, zip);
+
+    // ── zip-verificacion-stored: barrido de tamaños (QA 2026-10-13 C1) ──────────
+
+    // Bordes de los bloques AES (16 B), de los buffers de 4 KiB y 80 KiB y los tamaños del QA (T1).
+    public static readonly int[] SweepSizes =
+    [
+        0, 1, 2, 15, 16, 17, 31, 32, 33, 4079, 4080, 4081, 4094, 4095, 4096, 4097, 4098, 4111, 4112, 4113,
+        8191, 8192, 8193, 16383, 16384, 16385, 44208, 44210, 44212, 44214, 44216, 44218, 44660, 65535, 65536,
+        65537, 81919, 81920, 81921, 163840, 163841,
+    ];
+
+    // Secuencia exacta del diagnóstico (SDD §3): new Random(1) en este orden. Con la lectura async de
+    // SharpZipLib 1.4.2, 4095 y 44216 dan "Auth code missing" y 44214 da otro hash.
+    private static readonly int[] QaSequence = [4095, 4096, 44214, 44216, 44660];
+
+    private (List<string> Paths, Dictionary<string, string> Expected) MakeQaSequence(string dir)
+    {
+        Directory.CreateDirectory(dir);
+        var rnd = new Random(1);
+        var paths = new List<string>();
+        foreach (var size in QaSequence)
+        {
+            var data = new byte[size];
+            rnd.NextBytes(data);
+            var p = Path.Combine(dir, $"captura_{size}.png");
+            File.WriteAllBytes(p, data);
+            paths.Add(p);
+        }
+        var txt = Path.Combine(dir, "registro.txt");
+        File.WriteAllText(txt, string.Concat(Enumerable.Repeat("línea de registro con tildes áéí\n", 500)));
+        paths.Add(txt);
+        return (paths, paths.ToDictionary(p => Path.GetFileName(p), Sha256, StringComparer.Ordinal));
+    }
+
+    private string MakeSeeded(string dir, int size, string ext)
+    {
+        Directory.CreateDirectory(dir);
+        var data = new byte[size];
+        new Random(size).NextBytes(data);
+        var p = Path.Combine(dir, $"f{size}{ext}");
+        File.WriteAllBytes(p, data);
+        return p;
+    }
+
+    [Theory]
+    [InlineData(".png", true)]
+    [InlineData(".png", false)]
+    [InlineData(".txt", true)]
+    [InlineData(".txt", false)]
+    public async Task Sweep_RoundTrip_AllSizes(string ext, bool encrypted)
+    {
+        var password = encrypted ? Password : null;
+        var expectedMethod = ext == ".png" ? CompressionMethod.Stored : CompressionMethod.Deflated;
+        var dir = Path.Combine(_root, "sweep");
+        var failures = new List<string>();
+        foreach (var size in SweepSizes)
+        {
+            var file = MakeSeeded(dir, size, ext);
+            var name = Path.GetFileName(file);
+            var expected = new Dictionary<string, string>(StringComparer.Ordinal) { [name] = Sha256(file) };
+            var zip = ZipPath($"sweep_{size}.zip");
+            try
+            {
+                await EvidenceZip.WriteAsync(zip, [file], password, CancellationToken.None);
+                await EvidenceZip.VerifyAsync(zip, expected, password, CancellationToken.None);
+                using var zf = new ZipFile(zip);
+                var e = zf.GetEntry(name);
+                // Las entradas vacías SharpZipLib las guarda siempre con Stored (ver RoundTrip_Encrypted_MixedMethods).
+                var method = size == 0 ? CompressionMethod.Stored : expectedMethod;
+                if (e is null || e.CompressionMethod != method)
+                    failures.Add($"{size}: método {e?.CompressionMethod} y se esperaba {method}");
+            }
+            catch (EvidenceZipVerificationException ex)
+            {
+                failures.Add($"{size}: {ex.Message} ({ex.InnerException?.Message})");
+            }
+        }
+        Assert.True(failures.Count == 0,
+            $"{ext} {(encrypted ? "cifrado" : "sin cifrar")}, tamaños que fallan:\n{string.Join("\n", failures)}");
+    }
+
+    [Fact]
+    public async Task Sweep_QaSequence_Encrypted_Stored()
+    {
+        var (paths, expected) = MakeQaSequence(Path.Combine(_root, "qa"));
+        var zip = ZipPath();
+
+        await EvidenceZip.WriteAsync(zip, paths, Password, CancellationToken.None);
+        await EvidenceZip.VerifyAsync(zip, expected, Password, CancellationToken.None);
+    }
+
+    // Solo Tatana (T3b): el otro camino de WriteAsync, con onProgress.
+    [Fact]
+    public async Task Sweep_QaSequence_Encrypted_Stored_WithProgress()
+    {
+        var (paths, expected) = MakeQaSequence(Path.Combine(_root, "qa"));
+        var zip = ZipPath();
+        long reported = 0;
+
+        await EvidenceZip.WriteAsync(zip, paths, Password, CancellationToken.None, n => reported += n);
+        await EvidenceZip.VerifyAsync(zip, expected, Password, CancellationToken.None);
+
+        Assert.Equal(paths.Sum(p => new FileInfo(p).Length), reported);
+    }
+
+    [Fact]
+    public async Task Sweep_DetectsCorruption_Stored_Encrypted()
+    {
+        var file = MakeSeeded(Path.Combine(_root, "corrupt"), 44214, ".png");
+        var name = Path.GetFileName(file);
+        var expected = new Dictionary<string, string>(StringComparer.Ordinal) { [name] = Sha256(file) };
+        var zip = ZipPath();
+        await EvidenceZip.WriteAsync(zip, [file], Password, CancellationToken.None);
+        await EvidenceZip.VerifyAsync(zip, expected, Password, CancellationToken.None);
+
+        // Offset de los datos de la entrada: cabecera local (30 B + nombre + extra), después 16 B de sal y
+        // 2 del verificador de AES. Se invierte un byte en la mitad del contenido cifrado.
+        long dataStart;
+        using (var zf = new ZipFile(zip))
+        {
+            var e = zf.GetEntry(name);
+            Assert.NotNull(e);
+            Assert.Equal(CompressionMethod.Stored, e.CompressionMethod);
+            await using var raw = File.OpenRead(zip);
+            var header = new byte[30];
+            raw.Position = e.Offset;
+            raw.ReadExactly(header);
+            var nameLen = header[26] | (header[27] << 8);
+            var extraLen = header[28] | (header[29] << 8);
+            dataStart = e.Offset + 30 + nameLen + extraLen + 16 + 2;
+        }
+        await using (var fs = new FileStream(zip, FileMode.Open, FileAccess.ReadWrite))
+        {
+            var pos = dataStart + 44214 / 2;
+            fs.Position = pos;
+            var b = fs.ReadByte();
+            fs.Position = pos;
+            fs.WriteByte((byte)~b);
+        }
+
+        var ex = await Assert.ThrowsAsync<EvidenceZipVerificationException>(() =>
+            EvidenceZip.VerifyAsync(zip, expected, Password, CancellationToken.None));
+        Assert.True(ex.Message.Contains("no coincide con su hash") || ex.Message.Contains("no se puede leer"),
+            ex.Message);
+        Assert.DoesNotContain(Password, ex.Message);
+        _output.WriteLine(ex.Message);
+    }
+
+    [Fact]
+    public async Task SevenZip_ExtractsSweepSizes()
+    {
+        var sevenZip = SevenZipPath();
+        if (sevenZip is null)
+        {
+            _output.WriteLine("7zz no está instalado: test omitido (sin aserciones).");
+            return;
+        }
+
+        var dir = Path.Combine(_root, "7z");
+        var paths = new[] { 4095, 44214, 44216, 44660 }.Select(s => MakeSeeded(dir, s, ".png")).ToList();
+        paths.Add(MakeSeeded(dir, 30000, ".txt"));
+        var expected = paths.ToDictionary(p => Path.GetFileName(p), Sha256, StringComparer.Ordinal);
+        var zip = ZipPath();
+        await EvidenceZip.WriteAsync(zip, paths, Password, CancellationToken.None);
+        await EvidenceZip.VerifyAsync(zip, expected, Password, CancellationToken.None);
+
+        var (testExit, testOut) = await RunSevenZip(sevenZip, "t", "-p" + Password, zip);
+        Assert.Equal(0, testExit);
+        Assert.Contains("Everything is Ok", testOut);
+
+        var outDir = Path.Combine(_root, "x");
+        var (xExit, _) = await RunSevenZip(sevenZip, "x", "-p" + Password, "-o" + outDir, zip);
+        Assert.Equal(0, xExit);
+        foreach (var (name, hash) in expected)
+            Assert.Equal(hash, Sha256(Path.Combine(outDir, name)));
+    }
+
+    // Canario de la librería (D-T8): mientras SharpZipLib no redefina ZipAESStream.ReadAsync(Memory<byte>, …),
+    // leer una entrada AES Stored con SHA256.HashDataAsync da otro hash o "Auth code missing" en algún tamaño.
+    // Es el motivo de que VerifyAsync lea con Read(byte[], int, int).
+    private const string UpstreamIssue =
+        "ZipAESStream.ReadAsync(Memory<byte>) de SharpZipLib (no reportado upstream; detalle en progress/impl_backend_zip-verificacion-stored.md)";
+
+    [Fact]
+    public async Task SharpZipLib_AesReadAsyncMemory_StillBroken_SeeUpstreamIssue()
+    {
+        var (paths, expected) = MakeQaSequence(Path.Combine(_root, "canario"));
+        var zip = ZipPath();
+        await EvidenceZip.WriteAsync(zip, paths, Password, CancellationToken.None);
+
+        var wrong = new List<string>();
+        using var zf = new ZipFile(zip) { Password = Password };
+        foreach (ZipEntry e in zf)
+        {
+            try
+            {
+                await using var s = zf.GetInputStream(e);
+                var hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(s));
+                if (hash != expected[e.Name]) wrong.Add($"{e.Name}: hash distinto");
+            }
+            catch (ZipException ex)
+            {
+                wrong.Add($"{e.Name}: {ex.Message}");
+            }
+        }
+        _output.WriteLine(string.Join("\n", wrong));
+        Assert.True(wrong.Count > 0,
+            $"SharpZipLib ya lee bien con ReadAsync(Memory): ver issue {UpstreamIssue}; se puede borrar este " +
+            "test y evaluar volver a async en VerifyAsync");
+    }
+
+    private static string? SevenZipPath() =>
+        new[] { "/opt/homebrew/bin/7zz", "/usr/local/bin/7zz", "/usr/bin/7zz" }.FirstOrDefault(File.Exists);
+
+    private async Task<(int Exit, string Output)> RunSevenZip(string exe, params string[] args)
     {
         var psi = new ProcessStartInfo(exe)
         {
@@ -469,9 +696,7 @@ public sealed class EvidenceZipTests : IDisposable
             RedirectStandardError = true,
             UseShellExecute = false,
         };
-        psi.ArgumentList.Add("t");
-        psi.ArgumentList.Add("-p" + password);
-        psi.ArgumentList.Add(zip);
+        foreach (var a in args) psi.ArgumentList.Add(a);
 
         using var p = Process.Start(psi)!;
         p.StandardInput.Close(); // stdin cerrado, como </dev/null
@@ -488,7 +713,7 @@ public sealed class EvidenceZipTests : IDisposable
             throw new TimeoutException("7zz no terminó en 60 s");
         }
         var output = (await stdout) + (await stderr);
-        _output.WriteLine($"7zz exit {p.ExitCode}: {output.Trim()}");
+        _output.WriteLine($"7zz {args[0]} exit {p.ExitCode}: {output.Trim()}");
         return (p.ExitCode, output);
     }
 

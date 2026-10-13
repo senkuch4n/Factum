@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Factum.Agent.Common;
 using Factum.Agent.Models;
 using Factum.Agent.Services;
+using Factum.Agent.Services.Evidence;
 
 namespace Factum.Agent.Tests;
 
@@ -202,5 +203,26 @@ public sealed class CaseZipServiceTests : IDisposable
         Assert.Equal(3, Directory.GetFiles(CaseDir).Length);
         _zips.DiscardPending(CaseId, CaseRef, ZipName);
         Assert.Equal(3, Directory.GetFiles(CaseDir).Length);
+    }
+
+    // ── zip-verificacion-stored D4: texto de zip_failed ──────────────────────
+
+    [Fact]
+    public void ZipFailedMessage_Verification_IsD4Text()
+    {
+        var msg = CaseZipService.ZipFailedMessage(
+            new EvidenceZipVerificationException("No se pudo verificar el ZIP de evidencia: x.png no se puede leer"));
+        Assert.Equal(
+            "La evidencia está intacta, pero el ZIP armado no pasó el control de integridad. Si se repite, contactá a soporte.",
+            msg);
+        Assert.DoesNotContain("Reintentá", msg);
+        Assert.DoesNotContain("borr", msg, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ZipFailedMessage_Other_IsGeneric()
+    {
+        Assert.Equal("No se pudo armar o verificar el ZIP en esta PC; la evidencia quedó intacta",
+            CaseZipService.ZipFailedMessage(new IOException("disco")));
     }
 }
