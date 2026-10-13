@@ -194,3 +194,10 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-13 — Usuario: no promover develop→main hasta cerrar todas las HU, salvo que lo pida.
 - 2026-10-13 — #60 review APROBADA. Smoke test del orquestador con la web antes de pedir OK.
 - 2026-10-13 — #60 OK del usuario. Commit + PR + merge.
+- 2026-10-13 — #60 mergeada (PR #67). Tomada #61, rama feat/wizard-concurrencia-pestanas → implementando (backend+Tatana y frontend).
+- 2026-10-13 — #61 implementer-frontend done -> progress/impl_frontend_wizard-concurrencia-pestanas.md (tsc OK). Esperando backend.
+- 2026-10-13 — #61 implementer-backend done -> progress/impl_backend_wizard-concurrencia-pestanas.md (reutiliza RecordingRegistry de #59; record/start con case_id no-GUID → 400 invalid_case_id). en_revision; lanzado reviewer.
+- 2026-10-13 — #61 RECHAZADA (1ª) -> progress/review_wizard-concurrencia-pestanas.md: GenerateStep.tsx:397 onConfirm devuelve la promesa y el modal 'Generar igual' queda abierto con spinner. Relanzado implementer-frontend.
+- 2026-10-13 — #61 corrección del modal hecha. en_revision; relanzado reviewer.
+- 2026-10-13 — #61 re-revisión APROBADA. Esperando prueba manual del usuario (dos pestañas).
+- 2026-10-13 — #61 OK del usuario. Commit + PR + merge.
