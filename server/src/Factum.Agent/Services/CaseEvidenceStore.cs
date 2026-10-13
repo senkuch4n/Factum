@@ -122,6 +122,16 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
             : throw new AgentHttpException(400, AgentErrorCodes.InvalidFilename,
                 "Nombre de archivo inválido: no puede tener rutas ni los caracteres < > : \" | ? *");
 
+    /// <summary>
+    /// Nombre de un archivo que ENTRA (upload-check, upload, import): además rechaza controles bidi y C1
+    /// (tatana-ws-y-hosts T-13, D-A4).
+    /// </summary>
+    internal static string RequireNewName(string? filename) =>
+        AgentFileNames.IsValidNewName(filename)
+            ? filename!
+            : throw new AgentHttpException(400, AgentErrorCodes.InvalidFilename,
+                "Nombre de archivo inválido: no puede tener rutas, caracteres de control ni los caracteres < > : \" | ? *");
+
     public string CaseDir(string caseId) => Path.Combine(_casesRoot, RequireCaseId(caseId));
 
     // Defensa en profundidad: el archivo resuelto tiene que estar exactamente en la carpeta.
@@ -134,7 +144,7 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
     public async Task<EvidenceFileInfo> ImportAsync(string caseId, string? filename, CancellationToken ct)
     {
         var dir = CaseDir(caseId);
-        var name = RequireName(filename);
+        var name = RequireNewName(filename);
         var source = Child(_root, name);
         var dest = Child(dir, name);
 
@@ -193,7 +203,7 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
     public long CheckUpload(string caseId, string? filename, long? size)
     {
         CaseDir(caseId);
-        var name = RequireName(filename);
+        var name = RequireNewName(filename);
         if (size is not { } length || length < 0)
             throw new AgentHttpException(400, AgentErrorCodes.LengthRequired, "Falta el tamaño del archivo (Content-Length)");
         if (length == 0) throw EmptyEvidence(name);
@@ -311,7 +321,7 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
 
     private bool IsDiskFull(IOException ex, long remaining)
     {
-        if (ex.HResult is 28 or unchecked((int)0x80070070) or unchecked((int)0x80070027)) return true;
+        if (DiskErrors.IsDiskFull(ex)) return true;
         return _probe.GetAvailableFreeBytes(_root) is { } f && f < remaining;
     }
 

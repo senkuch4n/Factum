@@ -225,4 +225,178 @@ public sealed class CaseZipServiceTests : IDisposable
         Assert.Equal("No se pudo armar o verificar el ZIP en esta PC; la evidencia quedó intacta",
             CaseZipService.ZipFailedMessage(new IOException("disco")));
     }
+
+    // ── tatana-ws-y-hosts: bajas del QA ──────────────────────────────────────
+
+    private sealed class FixedProbe(long? free) : IAgentDiskProbe
+    {
+        public List<string> Paths { get; } = [];
+        public long? GetAvailableFreeBytes(string path)
+        {
+            Paths.Add(path);
+            return free;
+        }
+    }
+
+    private string EvidenceRoot => Path.Combine(_root, "Evidencia");
+
+    // T-08
+    [Fact]
+    public async Task Build_EmptyPassword_Is400_AndCreatesNothing()
+    {
+        var files = Seed();
+        var ex = await Assert.ThrowsAsync<AgentHttpException>(() => _zips.BuildAsync(CaseId, Request(files, ""), default));
+        Assert.Equal((400, AgentErrorCodes.InvalidPassword), (ex.Status, ex.Code));
+        Assert.Equal("La contraseña del ZIP no puede estar vacía", ex.Message);
+        Assert.False(Directory.Exists(EvidenceRoot));
+    }
+
+    // T-09
+    [Fact]
+    public async Task Build_PasswordOver99Bytes_Is400()
+    {
+        var pw = new string('ñ', 50); // 100 bytes UTF-8
+        var ex = await Assert.ThrowsAsync<AgentHttpException>(() => _zips.BuildAsync(CaseId, Request(Seed(), pw), default));
+        Assert.Equal((400, AgentErrorCodes.InvalidPassword), (ex.Status, ex.Code));
+        Assert.DoesNotContain(pw, ex.Message);
+        Assert.False(Directory.Exists(EvidenceRoot));
+    }
+
+    [Fact]
+    public async Task Build_Password99AsciiBytes_Ok()
+    {
+        var res = await _zips.BuildAsync(CaseId, Request(Seed(), new string('a', 99)), default);
+        Assert.True(res.Encrypted);
+    }
+
+    [Fact]
+    public async Task Build_SpacePassword_Ok()
+    {
+        var res = await _zips.BuildAsync(CaseId, Request(Seed(), " "), default);
+        Assert.True(res.Encrypted);
+    }
+
+    // T-06
+    [Fact]
+    public async Task Build_EvidenceChanged_LeavesNoFolders()
+    {
+        var files = Seed();
+        File.Delete(Path.Combine(CaseDir, files[0].Filename!));
+        var ex = await Assert.ThrowsAsync<AgentHttpException>(() => _zips.BuildAsync(CaseId, Request(files), default));
+        Assert.Equal(409, ex.Status);
+        Assert.False(Directory.Exists(EvidenceRoot));
+    }
+
+    [Fact]
+    public async Task Build_InsufficientStorage_Prechecks_OnExistingAncestor_AndLeavesNoFolders()
+    {
+        var probe = new FixedProbe(10);
+        var opts = new AgentOptions
+        {
+            DataDirectory = Path.Combine(_root, "agent-data"),
+            EvidenceDirectory = EvidenceRoot,
+            MinFreeBytes = 0,
+        };
+        var zips = new CaseZipService(opts, _store, probe: probe);
+        var ex = await Assert.ThrowsAsync<AgentHttpException>(() => zips.BuildAsync(CaseId, Request(Seed()), default));
+        Assert.Equal((507, AgentErrorCodes.InsufficientStorage), (ex.Status, ex.Code));
+        Assert.False(Directory.Exists(EvidenceRoot));
+        // Se midió sobre una carpeta que existe (el prechequeo no queda muerto en el primer ZIP del caso).
+        Assert.All(probe.Paths, p => Assert.True(Directory.Exists(p), p));
+    }
+
+    [Fact]
+    public async Task Build_FailureWhileZipping_RemovesOnlyFoldersItCreated()
+    {
+        // Un "archivo" que es una carpeta pasa el paso 4 (manifiesto) solo si existe como archivo; en su lugar se
+        // fuerza la falla con un ZIP cuyo .part no se puede crear: la carpeta pendiente es un archivo.
+        var files = Seed();
+        Directory.CreateDirectory(Final);
+        File.WriteAllText(Path.Combine(Final, "otro.txt"), "del perito");
+        Directory.CreateDirectory(Path.Combine(Final, ".factum"));
+        File.WriteAllText(PendingDir, "no es carpeta");
+
+        var ex = await Assert.ThrowsAsync<AgentHttpException>(() => _zips.BuildAsync(CaseId, Request(files), default));
+        Assert.Equal((500, AgentErrorCodes.StorageError), (ex.Status, ex.Code));
+        Assert.True(File.Exists(Path.Combine(Final, "otro.txt"))); // lo preexistente queda
+        Assert.True(Directory.Exists(Path.Combine(Final, ".factum")));
+    }
+
+    [Fact]
+    public void ExistingAncestor_SubeHastaUnoQueExiste()
+    {
+        Directory.CreateDirectory(_root);
+        Assert.Equal(Path.GetFullPath(_root), CaseZipService.ExistingAncestor(Path.Combine(_root, "a", "b", "c")));
+        Assert.Equal(Path.GetFullPath(_root), CaseZipService.ExistingAncestor(_root));
+    }
+
+    // T-07
+    [Fact]
+    public void ClassifyBuildFailure_MissingFile_Is409()
+    {
+        Directory.CreateDirectory(_root);
+        var present = Path.Combine(_root, "ok.png");
+        File.WriteAllText(present, "x");
+        var gone = Path.Combine(_root, "borrado.png");
+        var ex = CaseZipService.ClassifyBuildFailure(new FileNotFoundException("x", gone), [present, gone], () => 1000, 10, 0);
+        Assert.Equal((409, AgentErrorCodes.EvidenceChanged), (ex.Status, ex.Code));
+        var changes = Assert.IsType<List<EvidenceChange>>(ex.Extra!["files"]);
+        Assert.Equal([new EvidenceChange("borrado.png", "missing")], changes);
+    }
+
+    [Fact]
+    public void ClassifyBuildFailure_DiskFull_Is507()
+    {
+        var io = new IOException("No space left on device", 28);
+        var ex = CaseZipService.ClassifyBuildFailure(io, [], () => 1234, 5000, 100);
+        Assert.Equal((507, AgentErrorCodes.InsufficientStorage), (ex.Status, ex.Code));
+        Assert.Equal(5100L, ex.Extra!["required_bytes"]);
+        Assert.Equal(1234L, ex.Extra!["available_bytes"]);
+        Assert.StartsWith("No hay espacio en el disco de esta PC para guardar el ZIP", ex.Message);
+    }
+
+    [Fact]
+    public void ClassifyBuildFailure_IoWithLowFreeSpace_Is507()
+    {
+        var ex = CaseZipService.ClassifyBuildFailure(new IOException("write"), [], () => 10, 5000, 0);
+        Assert.Equal(507, ex.Status);
+    }
+
+    [Fact]
+    public void ClassifyBuildFailure_Other_Is500()
+    {
+        var ex = CaseZipService.ClassifyBuildFailure(new InvalidOperationException("x"), [], () => 10, 5000, 0);
+        Assert.Equal((500, AgentErrorCodes.ZipFailed), (ex.Status, ex.Code));
+        var io = CaseZipService.ClassifyBuildFailure(new IOException("x"), [], () => 1_000_000, 5000, 0);
+        Assert.Equal((500, AgentErrorCodes.ZipFailed), (io.Status, io.Code));
+        // Archivo "faltante" que en realidad sigue ahí → no es evidence_changed.
+        var fnf = CaseZipService.ClassifyBuildFailure(new FileNotFoundException("x"), [], () => null, 5000, 0);
+        Assert.Equal(500, fnf.Status);
+    }
+
+    // T-05
+    [Fact]
+    public void CleanupOrphanParts_OnlyZipParts()
+    {
+        var pending = Path.Combine(EvidenceRoot, "X_11111111", ".factum", "pendiente");
+        Directory.CreateDirectory(pending);
+        foreach (var f in new[] { "evidencia_X.zip.part", "evidencia_X.zip", "evidencia_X.zip.sha256", "otro.part" })
+            File.WriteAllText(Path.Combine(pending, f), "x");
+        Directory.CreateDirectory(Path.Combine(EvidenceRoot, "vacia_22222222", ".factum", "pendiente"));
+        File.WriteAllText(Path.Combine(EvidenceRoot, "X_11111111", "evidencia_X.zip.part"), "fuera de pendiente");
+
+        Assert.Equal(1, _zips.CleanupOrphanParts());
+
+        Assert.Equal(["evidencia_X.zip", "evidencia_X.zip.sha256", "otro.part"],
+            Directory.GetFiles(pending).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.True(File.Exists(Path.Combine(EvidenceRoot, "X_11111111", "evidencia_X.zip.part")));
+        Assert.True(Directory.Exists(Path.Combine(EvidenceRoot, "vacia_22222222", ".factum", "pendiente")));
+    }
+
+    [Fact]
+    public void CleanupOrphanParts_WithoutEvidenceDirectory_IsZero()
+    {
+        Assert.Equal(0, _zips.CleanupOrphanParts());
+        Assert.False(Directory.Exists(EvidenceRoot));
+    }
 }

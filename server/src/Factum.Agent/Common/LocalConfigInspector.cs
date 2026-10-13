@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 
 namespace Factum.Agent.Common;
@@ -8,8 +9,12 @@ namespace Factum.Agent.Common;
 /// </summary>
 /// <param name="Path">Ruta absoluta del archivo (exista o no).</param>
 /// <param name="Exists">El archivo existe.</param>
-/// <param name="Loaded">Existe, es un objeto JSON válido y se agregó como fuente de configuración.</param>
-/// <param name="Error">Motivo por el que se ignoró (JSON inválido o ilegible); null si está bien o no existe.</param>
+/// <param name="Loaded">Existe, es un objeto JSON válido con valores válidos y se agregó como fuente de configuración.</param>
+/// <param name="Error">
+/// Motivo por el que se ignoró ENTERO, sin punto final: JSON inválido o ilegible, o un valor inválido que nombra la
+/// clave (p. ej. <c>Agent:MaxUploadBytes no es un número: '16GB'</c>, tatana-ws-y-hosts §4.4). null si está bien o
+/// no existe.
+/// </param>
 /// <param name="OverridesAllowedOrigins">Define <c>Agent:AllowedOrigins</c>: las actualizaciones no cambian los orígenes.</param>
 public sealed record LocalConfigStatus(string Path, bool Exists, bool Loaded, string? Error, bool OverridesAllowedOrigins);
 
@@ -54,6 +59,24 @@ public static class LocalConfigInspector
             });
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
                 return new LocalConfigStatus(path, true, false, "el archivo no es un objeto JSON", false);
+
+            // tatana-ws-y-hosts §4.4: se arma la config aislada con el mismo proveedor que usa el host (las
+            // claves duplicadas pasan JsonDocument pero tiran ahí) y se validan los valores. Uno inválido →
+            // se ignora el archivo entero (D4 = A).
+            IConfiguration localOnly;
+            try
+            {
+                localOnly = new ConfigurationBuilder()
+                    .AddJsonStream(new MemoryStream(Encoding.UTF8.GetBytes(text)))
+                    .Build();
+            }
+            catch (Exception ex) when (ex is FormatException or InvalidDataException)
+            {
+                return new LocalConfigStatus(path, true, false, "JSON inválido: " + ex.Message.TrimEnd('.'), false);
+            }
+            if (LocalConfigValidator.Validate(localOnly) is { } error)
+                return new LocalConfigStatus(path, true, false, error, false);
+
             return new LocalConfigStatus(path, true, true, null, DefinesAllowedOrigins(doc.RootElement));
         }
         catch (JsonException ex)
