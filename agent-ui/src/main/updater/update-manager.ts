@@ -301,7 +301,7 @@ export class UpdateManager extends EventEmitter {
   }
 
   private async runCheck(): Promise<UpdateState> {
-    this.set({ phase: 'checking' }, { clear: ['reason', 'percent', 'busyOperations'] })
+    this.set({ phase: 'checking' }, { clear: ['reason', 'percent', 'busyOperations', 'backgroundOperations'] })
     let firstRejection: UpdateReason | null = null
     for (const url of this.urls) {
       const outcome = await this.tryUrl(url)
@@ -424,6 +424,18 @@ export class UpdateManager extends EventEmitter {
     else this.set({}, { clear: ['busyOperations'] })
   }
 
+  /**
+   * Operaciones en segundo plano de `/agent/state.background_operations`. Solo
+   * informan (aviso de que se cancelan): no participan de `isReadyAndFree()`.
+   */
+  setBackgroundOperations(kinds: string[]): void {
+    if (this.state.phase !== 'ready') return
+    const next = [...new Set(kinds)]
+    if (sameList(next, this.state.backgroundOperations)) return
+    if (next.length) this.set({ backgroundOperations: next })
+    else this.set({}, { clear: ['backgroundOperations'] })
+  }
+
   isReadyAndFree(): boolean {
     return this.state.phase === 'ready' && (this.state.busyOperations?.length ?? 0) === 0
   }
@@ -454,7 +466,7 @@ export class UpdateManager extends EventEmitter {
       // 'ok' (en mantenimiento) o 'unreachable' (el proceso del agente no corre o nadie
       // escucha el puerto: no puede haber operaciones en curso).
 
-      this.set({ phase: 'installing' }, { clear: ['busyOperations'] })
+      this.set({ phase: 'installing' }, { clear: ['busyOperations', 'backgroundOperations'] })
       updaterLog.info(`Instalando v${this.state.availableVersion} (relanzar=${opts.relaunch}).`)
 
       const binDir = agentProcess.binaryDir()

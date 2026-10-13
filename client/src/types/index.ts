@@ -15,6 +15,9 @@ export type {
   ReportVersionTrigger, ReportTextVersion, ReportTextVersionTexts,
 } from "@/lib/api";
 export type { Device, AgentEvent, AgentFile, VideoVariant, AgentInfo } from "@/lib/agent";
+export type {
+  VideoVariantStatus, VideoVariantState, VideoVariantReason, RecordingStoppedData,
+} from "@/lib/agent";
 
 /**
  * Archivo de la bandeja del paso 3 (única definición: `capture/gallery.ts` la

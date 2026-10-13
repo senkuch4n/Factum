@@ -42,6 +42,8 @@ interface TatanaUpdateState {
   reason?: 'firma_invalida' | 'clave_desconocida' | 'manifiesto_invalido' | 'no_coincide_con_manifiesto'
          | 'hash_no_coincide' | 'sin_canal' | 'sin_claves' | 'no_empaquetado' | 'instalacion_fallida'
   busyOperations?: string[]
+  /** `kind`s en segundo plano que se cancelan al actualizar (ios-grabacion-larga). */
+  backgroundOperations?: string[]
   notifiedVersion?: string
 }
 

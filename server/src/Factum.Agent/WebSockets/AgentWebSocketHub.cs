@@ -6,7 +6,16 @@ using Factum.Agent.Models;
 
 namespace Factum.Agent.WebSockets;
 
-public sealed class AgentWebSocketHub : IDisposable
+/// <summary>
+/// Emisor de eventos al WebSocket (ios-grabacion-larga §5.3). Lo implementa <see cref="AgentWebSocketHub"/>;
+/// existe para que el post-proceso se pueda probar con un sink falso.
+/// </summary>
+public interface IAgentEventSink
+{
+    Task BroadcastAsync(AgentEvent evt, CancellationToken ct = default);
+}
+
+public sealed class AgentWebSocketHub : IAgentEventSink, IDisposable
 {
     private readonly ConcurrentDictionary<Guid, WebSocket> _clients = new();
     private readonly ILogger<AgentWebSocketHub> _log;

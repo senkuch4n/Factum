@@ -38,6 +38,17 @@ public sealed class AgentOptions
     /// <summary>Espacio libre que tiene que quedar después de una subida o del ZIP. Default 1 GiB.</summary>
     public long MinFreeBytes { get; set; } = 1L * 1024 * 1024 * 1024;
 
+    // ── ios-grabacion-larga (§5.1) ───────────────────────────────────────────
+
+    /// <summary>Post-proceso de grabaciones iOS (variantes de previsualización). Ver <see cref="VideoPostprocessOptions"/>.</summary>
+    public VideoPostprocessOptions VideoPostprocess { get; set; } = new();
+
+    /// <summary>
+    /// Solo con <see cref="Mock"/> = true: MP4 que se copia como "grabación" iOS al detener (para probar el
+    /// post-proceso sin iPhone, DA9). No va en appsettings.json: variable de entorno, CLI o appsettings.Local.json.
+    /// </summary>
+    public string? MockIosRecordingSource { get; set; }
+
     /// <summary>Ruta absoluta de la carpeta base del ZIP (config o default por SO).</summary>
     public string ResolveEvidenceDirectory() =>
         ResolveEvidenceDirectory(EvidenceDirectory, DataDirectory, OperatingSystem.IsWindows(),
@@ -69,6 +80,92 @@ public sealed class AgentOptions
             return Path.GetFullPath(Path.Combine(dataDirectory, "evidencia"));
         return Path.Combine(userProfile, "Factum", "Evidencia");
     }
+}
+
+/// <summary>
+/// Config <c>Agent:VideoPostprocess:*</c> (ios-grabacion-larga §5.1). Un valor inválido no impide arrancar:
+/// <see cref="Normalize"/> loguea un warning y vuelve al default de ese campo (DA6).
+/// </summary>
+public sealed class VideoPostprocessOptions
+{
+    public const int DefaultBlendMaxSourceSeconds = 0;
+    public const int DefaultRifeMaxSourceSeconds = 120;
+    public const double DefaultTimeoutFactor = 3.0;
+    public const int DefaultTimeoutExtraSeconds = 120;
+    public const int DefaultTimeoutMinSeconds = 300;
+    public const int DefaultTimeoutMaxSeconds = 7200;
+    public const int DefaultProgressIntervalSeconds = 3;
+
+    /// <summary>false = sin variantes (como AirPlay): <c>variants: []</c>.</summary>
+    public bool Enabled { get; set; } = true;
+    /// <summary>Umbral de duración del original para "Suavizado". 0 = sin límite.</summary>
+    public int BlendMaxSourceSeconds { get; set; } = DefaultBlendMaxSourceSeconds;
+    /// <summary>Umbral de duración del original para "RIFE". 0 = sin límite (DA3).</summary>
+    public int RifeMaxSourceSeconds { get; set; } = DefaultRifeMaxSourceSeconds;
+    /// <summary>Plazo = factor × duración + extra, acotado entre mínimo y máximo.</summary>
+    public double TimeoutFactor { get; set; } = DefaultTimeoutFactor;
+    public int TimeoutExtraSeconds { get; set; } = DefaultTimeoutExtraSeconds;
+    public int TimeoutMinSeconds { get; set; } = DefaultTimeoutMinSeconds;
+    /// <summary>También es el plazo si no se conoce la duración (DA7).</summary>
+    public int TimeoutMaxSeconds { get; set; } = DefaultTimeoutMaxSeconds;
+    /// <summary>Intervalo mínimo entre eventos de progreso.</summary>
+    public int ProgressIntervalSeconds { get; set; } = DefaultProgressIntervalSeconds;
+
+    /// <summary>Corrige, campo por campo, los valores inválidos al default (con un warning). Devuelve this.</summary>
+    public VideoPostprocessOptions Normalize(ILogger? log)
+    {
+        void Warn(string field, object value, object fallback) =>
+            log?.LogWarning("Agent:VideoPostprocess:{Field} inválido ({Value}); se usa {Default}", field, value, fallback);
+
+        if (BlendMaxSourceSeconds < 0)
+        {
+            Warn(nameof(BlendMaxSourceSeconds), BlendMaxSourceSeconds, DefaultBlendMaxSourceSeconds);
+            BlendMaxSourceSeconds = DefaultBlendMaxSourceSeconds;
+        }
+        if (RifeMaxSourceSeconds < 0)
+        {
+            Warn(nameof(RifeMaxSourceSeconds), RifeMaxSourceSeconds, DefaultRifeMaxSourceSeconds);
+            RifeMaxSourceSeconds = DefaultRifeMaxSourceSeconds;
+        }
+        if (!(TimeoutFactor > 0) || double.IsInfinity(TimeoutFactor))
+        {
+            Warn(nameof(TimeoutFactor), TimeoutFactor, DefaultTimeoutFactor);
+            TimeoutFactor = DefaultTimeoutFactor;
+        }
+        if (TimeoutExtraSeconds < 0)
+        {
+            Warn(nameof(TimeoutExtraSeconds), TimeoutExtraSeconds, DefaultTimeoutExtraSeconds);
+            TimeoutExtraSeconds = DefaultTimeoutExtraSeconds;
+        }
+        if (TimeoutMinSeconds < 0)
+        {
+            Warn(nameof(TimeoutMinSeconds), TimeoutMinSeconds, DefaultTimeoutMinSeconds);
+            TimeoutMinSeconds = DefaultTimeoutMinSeconds;
+        }
+        if (TimeoutMaxSeconds <= 0)
+        {
+            Warn(nameof(TimeoutMaxSeconds), TimeoutMaxSeconds, DefaultTimeoutMaxSeconds);
+            TimeoutMaxSeconds = DefaultTimeoutMaxSeconds;
+        }
+        if (TimeoutMinSeconds > TimeoutMaxSeconds)
+        {
+            // Los dos vuelven al default: no se sabe cuál de los dos está mal.
+            log?.LogWarning(
+                "Agent:VideoPostprocess:TimeoutMinSeconds ({Min}) mayor que TimeoutMaxSeconds ({Max}); se usan {DMin} y {DMax}",
+                TimeoutMinSeconds, TimeoutMaxSeconds, DefaultTimeoutMinSeconds, DefaultTimeoutMaxSeconds);
+            TimeoutMinSeconds = DefaultTimeoutMinSeconds;
+            TimeoutMaxSeconds = DefaultTimeoutMaxSeconds;
+        }
+        if (ProgressIntervalSeconds < 1)
+        {
+            Warn(nameof(ProgressIntervalSeconds), ProgressIntervalSeconds, DefaultProgressIntervalSeconds);
+            ProgressIntervalSeconds = DefaultProgressIntervalSeconds;
+        }
+        return this;
+    }
+
+    /// <summary>Copia (Normalize no toca las opciones compartidas de IOptions).</summary>
+    public VideoPostprocessOptions Clone() => (VideoPostprocessOptions)MemberwiseClone();
 }
 
 public sealed class Device

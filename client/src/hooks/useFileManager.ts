@@ -1,20 +1,27 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { agent, AgentError, type AgentInfo, type EvidenceFileInfo } from "@/lib/agent";
+import {
+  agent, AgentError, type AgentInfo, type EvidenceFileInfo, type VideoPostprocessStatusResponse,
+} from "@/lib/agent";
 import { api, ApiError, UploadError, type EvidenceResponse, type EvidenceStorage } from "@/lib/api";
 import { agentErrorMessage, agentStatusMessage } from "@/lib/agent-messages";
 import { isRoleEligible } from "@/lib/pericial";
 import { uploadErrorMessage, type UploadMessage } from "@/lib/upload-messages";
 import { ensureAgentIdentity, isSameHostFor } from "@/hooks/useAgentIdentity";
 import type {
-  Case, CapturedFile, CaptureRole, CaptureRoleValue, VideoVariant, FileUploadState, UploadProgress,
+  Case, CapturedFile, CaptureRole, CaptureRoleValue, VideoVariant, VideoVariantState, VideoVariantStatus,
+  FileUploadState, UploadProgress,
 } from "@/types";
 
 /** Intervalo mínimo entre actualizaciones de la barra (los `progress` del XHR llegan cada pocos ms). */
 const PROGRESS_THROTTLE_MS = 120;
 
-/** `file_busy` (Windows, ffmpeg generando variantes): reintento a los 5 s, hasta 3 veces (SDD §7.4). */
+/**
+ * `file_busy` (Windows, archivo tomado por otro proceso): reintento a los 5 s, hasta 3 veces
+ * (SDD §7.4). Desde ios-grabacion-larga el post-proceso de Tatana trabaja sobre una copia,
+ * así que solo lo dispara un Tatana anterior a `video_postprocess_v1` (DA2).
+ */
 const BUSY_RETRY_MS = 5000;
 const BUSY_MAX_RETRIES = 3;
 
@@ -32,6 +39,16 @@ export interface BoundCase {
 /** `evidence_storage` efectivo: sin el campo (backend anterior) es el flujo de hoy. */
 export const storageOf = (cas: Pick<Case, "evidence_storage"> | null | undefined): EvidenceStorage | null =>
   cas ? (cas.evidence_storage === "agent" ? "agent" : "server") : null;
+
+/** Grabaciones de iPhone: las únicas con variantes de post-proceso en Tatana. */
+const IOS_RECORDING_RE = /^grabacion_ios_.+\.mp4$/i;
+
+/** Estados en los que una variante ya no cambia (SDD §4.3). */
+const TERMINAL_VARIANT_STATES: ReadonlySet<VideoVariantState> = new Set(["ready", "failed", "timeout", "skipped", "cancelled"]);
+export const isVariantTerminal = (s: VideoVariantState) => TERMINAL_VARIANT_STATES.has(s);
+
+/** Estado visual de las variantes: original → etiqueta → último estado conocido. */
+export type VariantStatusMap = Record<string, Record<string, VideoVariantStatus>>;
 
 const devWarn = (...args: unknown[]) => {
   if (process.env.NODE_ENV !== "production") console.warn(...args);
@@ -56,7 +73,9 @@ export function useFileManager() {
   const filesRef                            = useRef<CapturedFile[]>([]);
   const [loading, setLoading]               = useState<Record<string, boolean>>({});
   const [videoVariants, setVideoVariants]   = useState<Record<string, VideoVariant[]>>({});
-  const [pendingVariantFiles, setPending]   = useState<Set<string>>(new Set());
+  // Estado de las variantes de cada grabación (ios-grabacion-larga). Solo visual:
+  // guardar el original nunca depende de esto.
+  const [variantStatus, setVariantStatus]   = useState<VariantStatusMap>({});
   const pendingBlobs                        = useRef<Map<string, Blob>>(new Map());
   const [localBlobs, setLocalBlobsState]    = useState<Record<string, LocalBlobInfo>>({});
   // Espejo de `localBlobs` para revocar las URLs al desmontar (el cleanup no ve el estado).
@@ -85,8 +104,6 @@ export function useFileManager() {
   // PC del caso: `info` de Tatana + carpeta de trabajo, una vez por caso.
   const hostRef                             = useRef<{ caseId: string; info: AgentInfo; caseDirectory: string } | null>(null);
   const [agentHost, setAgentHost]           = useState<AgentInfo | null>(null);
-  // Espejo de `pendingVariantFiles` para la cola (iOS esperando la variante MCI).
-  const pendingVariantRef                   = useRef<Set<string>>(new Set());
 
   // Mismo patrón que `setLocalBlobs`: se calcula sobre el ref (fuera del updater,
   // así StrictMode no lo duplica) y se publica el resultado.
@@ -143,25 +160,98 @@ export function useFileManager() {
       if (cur.some(v => v.filename === d.filename)) return prev;
       return { ...prev, [d.original_filename]: [...cur, { label: d.label, filename: d.filename, url: d.url }] };
     });
-    if (d.label === "MCI") {
-      pendingVariantRef.current.delete(d.original_filename);
-      setPending(prev => { const n = new Set(prev); n.delete(d.original_filename); return n; });
-      // La grabación iOS quedó lista: ahora sí se puede mover a la carpeta del caso.
-      const f = filesRef.current.find(x => x.name === d.original_filename);
-      if (f && !f.uploaded && boundRef.current?.storage === "agent") enqueueSaveRef.current(f.name);
-    }
   }, []);
 
-  const markPendingVariant = useCallback((filename: string) => {
-    pendingVariantRef.current.add(filename);
-    setPending(prev => new Set([...prev, filename]));
+  /**
+   * `recording_stopped` / respuesta del stop: marca como `pending` las etiquetas
+   * planeadas que todavía no tienen estado. Nunca pisa uno que ya llegó (el
+   * `running` de Tatana puede adelantarse a `recording_stopped`).
+   */
+  const expectVariants = useCallback((filename: string, labels: string[]) => {
+    if (labels.length === 0) return;
+    const now = new Date().toISOString();
+    setVariantStatus(prev => {
+      const cur = prev[filename] ?? {};
+      const missing = labels.filter(l => !(l in cur));
+      if (missing.length === 0) return prev;
+      const next = { ...cur };
+      missing.forEach(label => {
+        next[label] = { original_filename: filename, label, state: "pending", updated_at: now };
+      });
+      return { ...prev, [filename]: next };
+    });
   }, []);
+
+  /**
+   * Aplica un estado de Tatana (WS o `GET /video-postprocess/status`). Se descarta
+   * si ya hay uno posterior o si ya terminó y el nuevo no (eventos fuera de orden).
+   * El `pending` local siempre se reemplaza: su `updated_at` sale del reloj del
+   * navegador, no del de Tatana. `ready` además suma la pestaña.
+   */
+  const applyVariantStatus = useCallback((s: VideoVariantStatus) => {
+    if (!s?.original_filename || !s.label || !s.state) return;
+    setVariantStatus(prev => {
+      const cur = prev[s.original_filename] ?? {};
+      const old = cur[s.label];
+      if (old && old.state !== "pending") {
+        if (isVariantTerminal(old.state) && !isVariantTerminal(s.state)) return prev;
+        if (Date.parse(old.updated_at) > Date.parse(s.updated_at)) return prev;
+      }
+      return { ...prev, [s.original_filename]: { ...cur, [s.label]: s } };
+    });
+    if (s.state === "ready" && s.filename) {
+      addVideoVariant({
+        original_filename: s.original_filename,
+        label: s.label,
+        filename: s.filename,
+        url: s.url ?? `/files/${s.filename}`,
+      });
+    }
+  }, [addVideoVariant]);
+
+  /**
+   * Resultado de `GET /video-postprocess/status`. `known: false` (Tatana se
+   * reinició o no lo procesó): se corta todo lo que seguía en curso y se suman
+   * las variantes completas que haya en disco.
+   */
+  const syncVariantStatus = useCallback((res: VideoPostprocessStatusResponse) => {
+    res.items.forEach(item => {
+      if (!item.known) {
+        setVariantStatus(prev => {
+          const cur = prev[item.original_filename];
+          if (!cur) return prev;
+          const kept = Object.fromEntries(Object.entries(cur).filter(([, v]) => isVariantTerminal(v.state)));
+          if (Object.keys(kept).length === Object.keys(cur).length) return prev;
+          return { ...prev, [item.original_filename]: kept };
+        });
+      }
+      item.variants.forEach(v => {
+        if (item.known || v.state === "ready") applyVariantStatus(v);
+      });
+    });
+  }, [applyVariantStatus]);
+
+  /** Pregunta a Tatana por las grabaciones de iPhone de la bandeja (al conectar o restaurar). */
+  const refreshVariantStatus = useCallback(async () => {
+    const names = filesRef.current.map(f => f.name).filter(n => IOS_RECORDING_RE.test(n));
+    if (names.length === 0) return;
+    const res = await agent.videoPostprocessStatus(names);
+    if (res) syncVariantStatus(res);
+  }, [syncVariantStatus]);
 
   /** Saca un archivo de la bandeja y del estado local (blob URL incluida). */
   function dropLocal(filename: string) {
     pendingBlobs.current.delete(filename);
     saveQueueRef.current = saveQueueRef.current.filter(n => n !== filename);
     setFiles(prev => prev.filter(f => f.name !== filename));
+    const without = <T,>(m: Record<string, T>) => {
+      if (!(filename in m)) return m;
+      const rest = { ...m };
+      delete rest[filename];
+      return rest;
+    };
+    setVariantStatus(without);
+    setVideoVariants(without);
     setUploadStates(s => {
       if (!(filename in s)) return s;
       const rest = { ...s };
@@ -421,8 +511,6 @@ export function useFileManager() {
   async function saveOne(caseId: string, name: string, signal: AbortSignal): Promise<boolean> {
     const file = filesRef.current.find(f => f.name === name);
     if (!file || file.uploaded) return false;
-    // 1. iOS esperando la variante MCI: el original todavía se usa en la raíz.
-    if (pendingVariantRef.current.has(name)) return false;
 
     setUploadStates(s => ({ ...s, [name]: "uploading" }));
     const blob = pendingBlobs.current.get(name);
@@ -433,7 +521,7 @@ export function useFileManager() {
       emitProgress({ index: 1, total: 1 + pendingCount, name, ...p }, force);
     };
 
-    // 2. Copia (Blob del navegador) o movimiento (archivo de Tatana) + SHA-256.
+    // 1. Copia (Blob del navegador) o movimiento (archivo de Tatana) + SHA-256.
     let info: EvidenceFileInfo;
     if (blob) {
       progress({ phase: "checking", loaded: 0, totalBytes: blob.size }, true);
@@ -451,7 +539,7 @@ export function useFileManager() {
       info = await agent.importEvidence(caseId, name);
     }
 
-    // 3. Registro en el expediente.
+    // 2. Registro en el expediente.
     progress({ phase: "registering", loaded: 0, totalBytes: null }, true);
     const host = await ensureHost(caseId);
     const res = await api.registerEvidence(caseId, {
@@ -465,7 +553,7 @@ export function useFileManager() {
     });
     boundRef.current?.onEvidence?.(res);
 
-    // 4. Marcado. Un Blob ya guardado deja de ocupar memoria: la vista sale de Tatana.
+    // 3. Marcado. Un Blob ya guardado deja de ocupar memoria: la vista sale de Tatana.
     setFiles(prev => prev.map(f => f.name === name
       ? { ...f, uploaded: true, storedInCase: true, sha256: info.sha256, size: info.size, availability: "here" }
       : f));
@@ -480,7 +568,7 @@ export function useFileManager() {
     clearUploadState(name);
     busyRetriesRef.current.delete(name);
 
-    // 5. Marca de rol local hecha antes de guardar: se persiste ahora.
+    // 4. Marca de rol local hecha antes de guardar: se persiste ahora.
     const role = filesRef.current.find(f => f.name === name)?.captureRole;
     if (role && isRoleEligible(name)) {
       try {
@@ -591,15 +679,11 @@ export function useFileManager() {
       busyTimersRef.current.forEach(t => clearTimeout(t));
       busyTimersRef.current.clear();
       busyRetriesRef.current.clear();
+      // Las variantes de video no se esperan: siguen en segundo plano (ios-grabacion-larga D1).
       const pending = filesRef.current.filter(f => !f.uploaded);
-      const waitingVariant = pending.find(f => pendingVariantRef.current.has(f.name));
-      pending.forEach(f => { if (!pendingVariantRef.current.has(f.name)) enqueueSave(f.name); });
+      pending.forEach(f => enqueueSave(f.name));
       await drainQueue();
 
-      if (waitingVariant) {
-        onError(agentErrorMessage(new AgentError("http", 409, { code: "file_busy" }), { name: waitingVariant.name, action: "save" }));
-        return;
-      }
       if (filesRef.current.some(f => !f.uploaded)) {
         // Los mensajes de cada archivo ya salieron por `onError` (o fue una cancelación).
         if (lastSaveErrorRef.current) onError(lastSaveErrorRef.current);
@@ -668,6 +752,8 @@ export function useFileManager() {
       return [...restored, ...prev.filter(f => !names.has(f.name))];
     });
     if (boundRef.current?.storage === "agent") extras.forEach(n => enqueueSave(n));
+    // Variantes en curso o ya generadas de las grabaciones de iPhone (no bloquea la restauración).
+    if (restored.some(f => IOS_RECORDING_RE.test(f.name))) void refreshVariantStatus();
   }
 
   /** Cancela el guardado del archivo actual (flujo agent). */
@@ -679,20 +765,21 @@ export function useFileManager() {
     busyTimersRef.current.forEach(t => clearTimeout(t));
     busyTimersRef.current.clear();
     busyRetriesRef.current.clear();
-    pendingVariantRef.current.clear();
     pendingBlobs.current.clear();
     Object.values(localBlobsRef.current).forEach(b => URL.revokeObjectURL(b.url));
     setLocalBlobs(() => ({}));
     setFiles(() => []);
     setVideoVariants({});
-    setPending(new Set());
+    setVariantStatus({});
     setUploadStates({});
     setUploadNotice(null);
   }
 
   return {
-    files, loading, videoVariants, pendingVariantFiles: pendingVariantFiles, pendingBlobs, localBlobs,
-    setLoad, addFile, addVideoVariant, markPendingVariant,
+    files, loading, videoVariants, pendingBlobs, localBlobs,
+    setLoad, addFile, addVideoVariant,
+    // Post-proceso de video (ios-grabacion-larga)
+    variantStatus, expectVariants, applyVariantStatus, refreshVariantStatus,
     removeFile, setCaptureRole, handlePhotoBlob, handleUploadAndContinueLegacy, clearFiles,
     uploadProgress, uploadStates, uploadNotice, dismissUploadNotice, cancelUpload,
     // Flujo agent (zip-local-informe-servidor)
