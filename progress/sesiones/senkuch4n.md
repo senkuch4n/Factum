@@ -181,3 +181,10 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-13 — #58 implementer-backend done -> progress/impl_backend_zip-verificacion-stored.md. D1 rama A (ZIP bien escrito; falla solo la lectura async, que además se saltea el HMAC). D5 NO cumple: verificación 1,7× más lenta (48 s vs 28 s en 5,5 GB) → consultar al usuario. en_revision; lanzado reviewer.
 - 2026-10-13 — #58 review APROBADA -> progress/review_zip-verificacion-stored.md. Esperando decisión del usuario sobre D5 (1,7×) y su OK para commit/PR.
 - 2026-10-13 — #58: usuario acepta 1,7× (opción a), sin issue upstream (huecos quitados), pide mergear. Commit + PR + merge.
+- 2026-10-13 — #58 mergeada (PR #65) y aprobada. Tomada #59, rama feat/grabacion-android-robusta; SDD lista → implementando. Tatana de fondo detenido para que los implementadores usen el Samsung.
+- 2026-10-13 — #64 validada por el usuario (todas A). SDD adelantada; lanzado architect.
+- 2026-10-13 — #59 implementer-frontend done -> progress/impl_frontend_grabacion-android-robusta.md (tsc OK; prueba de navegador §11.3 pendiente hasta que termine el backend). Esperando backend.
+- 2026-10-13 — #64 SDD lista (adelantada) -> Refactorizaciones/wizard-pulido-ux.md. Decisiones del arquitecto DT6/7/9/10/12 informadas al usuario. Implementar después de #59.
+- 2026-10-13 — #59 implementer-backend done -> progress/impl_backend_grabacion-android-robusta.md. Grabación real de 12 min: 721,3 s grabados / 721,1 s de archivo, stop 0,2 s, scrcpy cierra limpio. en_revision; lanzado reviewer.
+- 2026-10-13 — #59 review APROBADA. Levanto Tatana de la rama para la prueba manual del usuario.
+- 2026-10-13 — #59 OK del usuario. Commit + PR + merge.
