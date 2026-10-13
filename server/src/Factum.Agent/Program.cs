@@ -129,6 +129,10 @@ builder.Services.AddSingleton<AppleServiceProbe>();
 builder.Services.AddSingleton<IosService>();
 builder.Services.AddSingleton<IIosService>(sp => sp.GetRequiredService<IosService>());
 builder.Services.AddSingleton<IOperationSource>(sp => sp.GetRequiredService<IosService>());
+// grabacion-android-robusta §5.12: grabaciones en curso y detenidas sin importar en /agent/state.
+builder.Services.AddSingleton<IRecordingStateSource>(sp => sp.GetRequiredService<AdbService>());
+builder.Services.AddSingleton<IRecordingStateSource>(sp => sp.GetRequiredService<IosService>());
+builder.Services.AddSingleton<RecordingRegistry>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<OperationTracker>();
 builder.Services.AddSingleton<IWebcamService, WebcamService>();

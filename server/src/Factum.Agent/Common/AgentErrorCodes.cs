@@ -45,4 +45,18 @@ public static class AgentErrorCodes
     public const string AgentBusy = "agent_busy";
     /// <summary>403 de <c>/agent/maintenance</c>: solo se acepta sin <c>Origin</c> ni <c>Sec-Fetch-Site</c>.</summary>
     public const string MaintenanceLocalOnly = "maintenance_local_only";
+
+    // ── Grabación de Android y evidencia vacía (grabacion-android-robusta §5.11) ──
+    /// <summary>422 de import/upload-check/upload: el archivo tiene 0 bytes y no se guarda como evidencia.</summary>
+    public const string EmptyEvidence = "empty_evidence";
+    /// <summary>409 del start: ya hay una grabación de Android en curso.</summary>
+    public const string AlreadyRecording = "already_recording";
+    /// <summary>504 del start: scrcpy no confirmó que el celular empezó a capturar a tiempo.</summary>
+    public const string RecordingStartTimeout = "recording_start_timeout";
+    /// <summary>422 del stop: la grabación quedó vacía (0 B) y se borró.</summary>
+    public const string RecordingEmpty = "recording_empty";
+    /// <summary>422 del stop: la grabación no se puede leer como video; se movió a <c>descartes/</c>.</summary>
+    public const string RecordingUnreadable = "recording_unreadable";
+    /// <summary>409 del stop: no hay una grabación en curso (mismo código que tatana-ws-y-hosts, T-14).</summary>
+    public const string NotRecording = "not_recording";
 }

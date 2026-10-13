@@ -14,10 +14,12 @@ public interface IIosService
     bool IsAvailable { get; }
     Task<List<Device>> ListDevicesAsync(CancellationToken ct = default);
     Task<string> TakeScreenshotAsync(string udid, string outputPath, string method = "auto", CancellationToken ct = default);
-    Task StartRecordingAsync(string udid, string mode, string outputPath, CancellationToken ct = default);
+    /// <summary><paramref name="caseId"/> se guarda en la sesión para /agent/state (grabacion-android-robusta §5.9).</summary>
+    Task StartRecordingAsync(string udid, string mode, string outputPath, string? caseId = null, CancellationToken ct = default);
     /// <summary>
     /// Detiene la grabación. <see cref="IosStopResult.Variants"/> = etiquetas de variantes planeadas por el
     /// post-proceso ([] en airplay, on_device, mock sin fuente o sin ffmpeg; ios-grabacion-larga §5.4).
+    /// Sin grabación: <see cref="RecordingNotActiveException"/>.
     /// </summary>
     Task<IosStopResult> StopRecordingAsync(string udid, CancellationToken ct = default);
 
@@ -35,8 +37,9 @@ public interface IIosService
     Task<string> EnableDeveloperModeAsync(string udid, CancellationToken ct = default);
 }
 
-/// <summary>Resultado del stop de una grabación iOS (ios-grabacion-larga §5.4).</summary>
-public sealed record IosStopResult(string OutputPath, IReadOnlyList<string> Variants);
+/// <summary>Resultado del stop de una grabación iOS (ios-grabacion-larga §5.4; grabacion-android-robusta §5.9).</summary>
+public sealed record IosStopResult(string OutputPath, IReadOnlyList<string> Variants, string? CaseId = null,
+    string Serial = "");
 
 // Modos de grabación iOS:
 //   video_only  → capturas DVT → ffmpeg MP4 (~2 FPS; limitación de iOS 26)
@@ -49,7 +52,7 @@ public sealed record IosStopResult(string OutputPath, IReadOnlyList<string> Vari
 // DDI montado. Todo lo de pymobiledevice3 pasa por un solo helper Python multiplataforma
 // (Services/Ios/ios_helper.py, SDD ios-herramientas-windows §6.2): listado, preparación del iPhone
 // (Modo Desarrollador + DDI), captura, grabación (DVT → pipe PNG → ffmpeg H.264) y Modo Desarrollador.
-public sealed class IosService : IIosService, IOperationSource
+public sealed class IosService : IIosService, IOperationSource, IRecordingStateSource
 {
     // Las herramientas externas (ffmpeg, qvh, uxplay, rife) se resuelven con el helper común
     // ToolResolver: tools/<dir>/<exe> junto al exe → PATH → Homebrew (solo fuera de Windows). qvh
@@ -100,6 +103,10 @@ public sealed class IosService : IIosService, IOperationSource
         public string OutputPath = string.Empty;
         public string SessionId  = string.Empty;
         public string DataDir    = string.Empty;
+        public string Udid       = string.Empty;
+        public string? CaseId;
+        // grabacion-android-robusta §5.9: true mientras corre StopRecordingAsync (/agent/state → "stopping").
+        public volatile bool Stopping;
         public readonly DateTimeOffset Started = DateTimeOffset.UtcNow;
         // DVT recorder (helper Python que maneja su propio ffmpeg)
         public DvtRecorder? Dvt;
@@ -152,6 +159,14 @@ public sealed class IosService : IIosService, IOperationSource
             return ops;
         }
     }
+
+    // grabacion-android-robusta §5.9: el start de iOS bloquea hasta grabar, así que siempre es "recording"
+    // (o "stopping" mientras corre el stop).
+    public IEnumerable<RecordingStateDto> ActiveRecordings =>
+        _session is { } s
+            ? [new RecordingStateDto("ios", s.Udid, s.Stopping ? "stopping" : "recording", s.Started, s.Started,
+                Path.GetFileName(s.OutputPath), s.CaseId, null, s.Mode)]
+            : [];
 
     // ── Python, helper y disponibilidad (§6.1) ────────────────────────────────
 
@@ -707,7 +722,7 @@ public sealed class IosService : IIosService, IOperationSource
 
     // ── Recording — start ─────────────────────────────────────────────────────
 
-    public async Task StartRecordingAsync(string udid, string mode, string outputPath,
+    public async Task StartRecordingAsync(string udid, string mode, string outputPath, string? caseId = null,
         CancellationToken ct = default)
     {
         await _recordLock.WaitAsync(ct);
@@ -723,6 +738,8 @@ public sealed class IosService : IIosService, IOperationSource
                 OutputPath = outputPath,
                 SessionId  = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss"),
                 DataDir    = Path.GetDirectoryName(outputPath)!,
+                Udid       = udid,
+                CaseId     = caseId,
             };
 
             if (_mock)
@@ -775,80 +792,90 @@ public sealed class IosService : IIosService, IOperationSource
         await _recordLock.WaitAsync(ct);
         try
         {
-            var session = _session ?? throw new InvalidOperationException("Sin grabación iOS activa");
-            _session    = null;
-
-            if (_mock)
+            // grabacion-android-robusta §5.9: la sesión sigue visible como "stopping" hasta el finally.
+            var session = _session ?? throw new RecordingNotActiveException();
+            session.Stopping = true;
+            try
             {
-                // DA9: con Agent:MockIosRecordingSource se copia ese MP4 y se corre el post-proceso real
-                // (solo video_only/with_mic, como con iPhone). Sin fuente: archivo vacío y sin variantes.
-                if (!string.IsNullOrWhiteSpace(_mockRecordingSource) && File.Exists(_mockRecordingSource))
-                {
-                    File.Copy(_mockRecordingSource, session.OutputPath, overwrite: true);
-                    IReadOnlyList<string> mockVariants = session.Mode is "video_only" or "with_mic"
-                        ? _post.Start(session.OutputPath, null)
-                        : [];
-                    return new IosStopResult(session.OutputPath, mockVariants);
-                }
-                await File.WriteAllBytesAsync(session.OutputPath, Array.Empty<byte>(), ct);
-                return new IosStopResult(session.OutputPath, []);
+                var r = await StopSessionAsync(udid, session, ct);
+                return r with { CaseId = session.CaseId, Serial = session.Udid.Length > 0 ? session.Udid : udid };
             }
-
-            if (session.Mode == "on_device")
-                return new IosStopResult(await PullNewRecordingAsync(udid, session, ct), []);
-
-            if (session.Mode == "airplay")
-            {
-                // uxplay: SIGTERM → finaliza MP4 → renombra al path esperado
-                await StopAirplayAsync(session, ct);
-                // Corregir desfase A/V: en AirPlay el audio llega antes que el video
-                if (File.Exists(session.OutputPath))
-                    await FixAirplaySyncAsync(session.OutputPath, ct);
-            }
-            else if (session.Dvt is { } dvt)
-            {
-                // with_mic: el mic se detiene antes que el recorder (SDD grabacion-android-windows §6.4).
-                if (session.Mode == "with_mic") await StopAudioAsync(session);
-
-                // "stop" por stdin → el helper cierra ffmpeg → MP4 completo (§6.7).
-                DvtStopResult result;
-                await using (dvt) result = await dvt.StopAsync(ct);
-                if (!result.Ok)
-                {
-                    TryDelete(session.OutputPath);
-                    if (session.Mic is { } failedMic) TryDelete(failedMic.AudioPath);
-                    throw result.Error ?? IosErrors.RecordingEmptyFrom(null, IosErrors.ReasonNoFrames, _isWindows);
-                }
-
-                // with_mic: mux audio PC en el MP4
-                if (session.Mode == "with_mic" && session.Mic is { } mic &&
-                    File.Exists(mic.AudioPath) && File.Exists(session.OutputPath))
-                    await MuxAudioIntoVideoAsync(session.OutputPath, mic.AudioPath, ct);
-            }
-            else
-            {
-                // Burst fallback (incluye mux de audio si with_mic). Antes el mic nunca se
-                // detenía en este camino y el ffmpeg final leía un audio a medio escribir.
-                if (session.Mode == "with_mic") await StopAudioAsync(session);
-                await StopBurstAsync(session, ct);
-            }
-
-            // §4.4 b: nunca se devuelve un archivo que no existe.
-            if (!File.Exists(session.OutputPath) || new FileInfo(session.OutputPath).Length == 0)
-            {
-                TryDelete(session.OutputPath);
-                throw IosErrors.RecordingEmptyFrom(session.StartError, IosErrors.ReasonNoFrames, _isWindows);
-            }
-
-            // Variantes solo para grabaciones DVT/burst (airplay ya es 30fps nativo). Start abre el
-            // original antes de volver y encola el trabajo; nunca espera a ffmpeg (ios-grabacion-larga §5.3).
-            IReadOnlyList<string> variants = session.Mode != "airplay"
-                ? _post.Start(session.OutputPath, DateTimeOffset.UtcNow - session.Started)
-                : [];
-
-            return new IosStopResult(session.OutputPath, variants);
+            finally { _session = null; }
         }
         finally { _recordLock.Release(); }
+    }
+
+    private async Task<IosStopResult> StopSessionAsync(string udid, IosSession session, CancellationToken ct)
+    {
+        if (_mock)
+        {
+            // DA9: con Agent:MockIosRecordingSource se copia ese MP4 y se corre el post-proceso real
+            // (solo video_only/with_mic, como con iPhone). Sin fuente: archivo vacío y sin variantes.
+            if (!string.IsNullOrWhiteSpace(_mockRecordingSource) && File.Exists(_mockRecordingSource))
+            {
+                File.Copy(_mockRecordingSource, session.OutputPath, overwrite: true);
+                IReadOnlyList<string> mockVariants = session.Mode is "video_only" or "with_mic"
+                    ? _post.Start(session.OutputPath, null)
+                    : [];
+                return new IosStopResult(session.OutputPath, mockVariants);
+            }
+            await File.WriteAllBytesAsync(session.OutputPath, Array.Empty<byte>(), ct);
+            return new IosStopResult(session.OutputPath, []);
+        }
+
+        if (session.Mode == "on_device")
+            return new IosStopResult(await PullNewRecordingAsync(udid, session, ct), []);
+
+        if (session.Mode == "airplay")
+        {
+            // uxplay: SIGTERM → finaliza MP4 → renombra al path esperado
+            await StopAirplayAsync(session, ct);
+            // Corregir desfase A/V: en AirPlay el audio llega antes que el video
+            if (File.Exists(session.OutputPath))
+                await FixAirplaySyncAsync(session.OutputPath, ct);
+        }
+        else if (session.Dvt is { } dvt)
+        {
+            // with_mic: el mic se detiene antes que el recorder (SDD grabacion-android-windows §6.4).
+            if (session.Mode == "with_mic") await StopAudioAsync(session);
+
+            // "stop" por stdin → el helper cierra ffmpeg → MP4 completo (§6.7).
+            DvtStopResult result;
+            await using (dvt) result = await dvt.StopAsync(ct);
+            if (!result.Ok)
+            {
+                TryDelete(session.OutputPath);
+                if (session.Mic is { } failedMic) TryDelete(failedMic.AudioPath);
+                throw result.Error ?? IosErrors.RecordingEmptyFrom(null, IosErrors.ReasonNoFrames, _isWindows);
+            }
+
+            // with_mic: mux audio PC en el MP4
+            if (session.Mode == "with_mic" && session.Mic is { } mic &&
+                File.Exists(mic.AudioPath) && File.Exists(session.OutputPath))
+                await MuxAudioIntoVideoAsync(session.OutputPath, mic.AudioPath, ct);
+        }
+        else
+        {
+            // Burst fallback (incluye mux de audio si with_mic). Antes el mic nunca se
+            // detenía en este camino y el ffmpeg final leía un audio a medio escribir.
+            if (session.Mode == "with_mic") await StopAudioAsync(session);
+            await StopBurstAsync(session, ct);
+        }
+
+        // §4.4 b: nunca se devuelve un archivo que no existe.
+        if (!File.Exists(session.OutputPath) || new FileInfo(session.OutputPath).Length == 0)
+        {
+            TryDelete(session.OutputPath);
+            throw IosErrors.RecordingEmptyFrom(session.StartError, IosErrors.ReasonNoFrames, _isWindows);
+        }
+
+        // Variantes solo para grabaciones DVT/burst (airplay ya es 30fps nativo). Start abre el
+        // original antes de volver y encola el trabajo; nunca espera a ffmpeg (ios-grabacion-larga §5.3).
+        IReadOnlyList<string> variants = session.Mode != "airplay"
+            ? _post.Start(session.OutputPath, DateTimeOffset.UtcNow - session.Started)
+            : [];
+
+        return new IosStopResult(session.OutputPath, variants);
     }
 
     // ── DVT recorder mode (§6.7) ─────────────────────────────────────────────

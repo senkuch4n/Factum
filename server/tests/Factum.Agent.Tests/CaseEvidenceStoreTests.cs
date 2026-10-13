@@ -50,6 +50,50 @@ public sealed class CaseEvidenceStoreTests : IDisposable
         Assert.Equal(info.Sha256, again.Sha256);
     }
 
+    // ── grabacion-android-robusta §5.11: nunca evidencia de 0 B ───────────────
+
+    [Fact]
+    public async Task Import_ArchivoVacio_422EmptyEvidence_SinMover()
+    {
+        var store = NewStore();
+        var src = Path.Combine(_root, "grabacion_vacia.mkv");
+        File.WriteAllBytes(src, []);
+        var ex = await Assert.ThrowsAsync<AgentHttpException>(() => store.ImportAsync(CaseId, "grabacion_vacia.mkv", default));
+        Assert.Equal(422, ex.Status);
+        Assert.Equal(AgentErrorCodes.EmptyEvidence, ex.Code);
+        Assert.Contains("grabacion_vacia.mkv está vacío (0 bytes)", ex.Message);
+        Assert.True(File.Exists(src));
+        Assert.False(File.Exists(Path.Combine(CaseDir, "grabacion_vacia.mkv")));
+    }
+
+    [Fact]
+    public async Task Import_VacioYaEnElCaso_422()
+    {
+        var store = NewStore();
+        Directory.CreateDirectory(CaseDir);
+        File.WriteAllBytes(Path.Combine(CaseDir, "v.png"), []);
+        var ex = await Assert.ThrowsAsync<AgentHttpException>(() => store.ImportAsync(CaseId, "v.png", default));
+        Assert.Equal(AgentErrorCodes.EmptyEvidence, ex.Code);
+        Assert.True(File.Exists(Path.Combine(CaseDir, "v.png"))); // no se borra nada
+    }
+
+    [Fact]
+    public async Task Import_UnByte_Ok()
+    {
+        var store = NewStore();
+        File.WriteAllBytes(Path.Combine(_root, "uno.bin"), [7]);
+        var info = await store.ImportAsync(CaseId, "uno.bin", default);
+        Assert.Equal(1, info.Size);
+    }
+
+    [Fact]
+    public void CheckUpload_Size0_422EmptyEvidence()
+    {
+        var ex = Assert.Throws<AgentHttpException>(() => NewStore().CheckUpload(CaseId, "a.png", 0));
+        Assert.Equal(422, ex.Status);
+        Assert.Equal(AgentErrorCodes.EmptyEvidence, ex.Code);
+    }
+
     [Fact]
     public async Task Import_UppercaseId_UsesCanonicalFolder()
     {

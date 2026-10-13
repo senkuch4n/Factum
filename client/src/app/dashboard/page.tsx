@@ -6,12 +6,13 @@ import { Loader2, Plus, Play, ChevronRight, ArrowLeft, Smartphone, HelpCircle, L
 import { Button } from "primereact/button";
 import { api, ApiError, type DeviceInput, type ZipLocation } from "@/lib/api";
 import { agent, AgentError, type ZipProgress } from "@/lib/agent";
-import { agentErrorMessage, agentStatusMessage } from "@/lib/agent-messages";
+import { agentErrorMessage, agentStatusMessage, RECORDING_ERROR_TEXT } from "@/lib/agent-messages";
 import { useAgentIdentity, ensureAgentIdentity, isSameHostFor } from "@/hooks/useAgentIdentity";
 import { syncedFolderMessage } from "@/components/ResultStep";
 import type { GenerateProgress } from "@/components/dashboard/GenerateStep";
 import type {
   Device, AgentEvent, Case, CaseFormData, ProfileFormData, RecordingStoppedData, VideoVariantStatus,
+  UnclaimedRecording,
 } from "@/types";
 import {
   CASE_MESSAGES, EMPTY_CASE_FORM, PROFILE_REQUIRED_KEYS, PROFILE_MESSAGES,
@@ -26,7 +27,8 @@ import { useAgentConnection } from "@/hooks/useAgentConnection";
 import { useDeviceConnection } from "@/hooks/useDeviceConnection";
 import { useAgentIosStatus } from "@/hooks/useAgentIosStatus";
 import { useFileManager, storageOf } from "@/hooks/useFileManager";
-import { useRecording } from "@/hooks/useRecording";
+import { useRecording, sameId } from "@/hooks/useRecording";
+import { useEvidenceNotices } from "@/hooks/useEvidenceNotices";
 import { useAirplayShotSession } from "@/hooks/useAirplayShotSession";
 import { AgentChip } from "@/components/dashboard/AgentChip";
 import { GreetingHeadline } from "@/components/dashboard/GreetingHeadline";
@@ -223,13 +225,52 @@ export default function Dashboard() {
     ? syncedFolderMessage(identity.info.evidence_directory ?? "")
     : null;
 
+  // ── Avisos de evidencia (grabacion-android-robusta §7.4): incompletas y capturas negras ──
+  const {
+    notices: evidenceNotices, setRecordingValidation, keepBlack, forget: forgetNotice, summary: reviewNotices,
+  } = useEvidenceNotices(currentCaseId, files);
+
+  // Caso y celular por ref: los lee `useRecording` (recuperación por `/agent/state`) sin recrear callbacks.
+  const currentCaseIdRef = useRef<string | null>(currentCaseId);
+  useEffect(() => { currentCaseIdRef.current = currentCaseId; }, [currentCaseId]);
+  const filesRef = useRef(files);
+  useEffect(() => { filesRef.current = files; }, [files]);
+  // Aviso informativo de grabación: recuperadas de este caso o detenida desde el aviso de "otro caso".
+  const [recordingInfo, setRecordingInfo] = useState("");
+
+  /** Grabaciones detenidas de este caso que nadie importó: se agregan (el guardado automático las importa). */
+  const handleUnclaimed = useCallback((list: UnclaimedRecording[]) => {
+    const fresh = list.filter(u => !filesRef.current.some(f => f.name === u.filename));
+    if (fresh.length === 0) return;
+    fresh.forEach(u => {
+      addFile(u.filename);
+      if (u.validation) setRecordingValidation(u.filename, u.validation);
+    });
+    setRecordingInfo(fresh.length === 1
+      ? "Se recuperó 1 grabación de este caso que se había detenido desde otra pestaña o desde otro caso."
+      : `Se recuperaron ${fresh.length} grabaciones de este caso que se habían detenido desde otra pestaña o desde otro caso.`);
+  }, [addFile, setRecordingValidation]);
+
+  // El aviso de recuperación se cierra solo a los 6 s (o con la ×).
+  useEffect(() => {
+    if (!recordingInfo) return;
+    const id = setTimeout(() => setRecordingInfo(""), 6000);
+    return () => clearTimeout(id);
+  }, [recordingInfo]);
+
   const {
     isRecording, disconnectedDuringRecord, deviceOffline,
     iosModePicker, iosRecordMode, airplayReceiverName, androidWithMic,
-    isRecordingRef, loading: recLoading,
+    startedAt: recordingStartedAt, remotePhase: recordingPhase, foreignRecording, recordingRecovered,
+    isRecordingRef, foreignStopsRef, inFlightRef: recInFlightRef, loading: recLoading,
     setRecording, setDiscoRec, setDeviceOffline, setAirplayName, setIosModePicker, setAndroidWithMic,
-    handleToggleRecord, handleSelectIosMode, resetRecording,
-  } = useRecording(addFile, expectVariants);
+    handleToggleRecord, handleSelectIosMode, resetRecording, refresh: refreshRecording, stopForeign,
+  } = useRecording(addFile, expectVariants, {
+    getCaseId: () => currentCaseIdRef.current,
+    getSerial: () => selDeviceRef.current?.serial ?? null,
+    onValidation: setRecordingValidation,
+    onUnclaimed: handleUnclaimed,
+  });
 
   const {
     active: shotActive, connected: shotConnected, receiverName: shotReceiverName,
@@ -252,18 +293,38 @@ export default function Dashboard() {
           else { setDeviceOffline(true); }
         } else {
           setDeviceOffline(false);
+          // El celular volvió: se reconcilia con lo que dice Tatana (puede seguir grabando).
+          void refreshRecording();
         }
       }
     }
-    if (event.type === "recording_started") setRecording(true);
+    if (event.type === "recording_started") {
+      // Con `recording_state_v1` manda Tatana (puede ser de otro caso); si no, como antes.
+      void agent.supportsRecordingState().then(ok => { if (ok) void refreshRecording(); else setRecording(true); });
+    }
     if (event.type === "recording_stopped") {
-      setRecording(false); setAirplayName(null);
+      setAirplayName(null);
       const d = event.data as unknown as RecordingStoppedData;
-      if (d.filename) {
+      // Nunca se importa en silencio una grabación de otro caso (§7.6, regla `mine`).
+      const foreignStop = !!d.filename && foreignStopsRef.current.has(d.filename);
+      const mine = !foreignStop && (d.case_id
+        ? sameId(d.case_id, currentCaseIdRef.current)
+        : isRecordingRef.current);
+      if (d.filename && mine) {
         addFile(d.filename);
+        if (d.validation) setRecordingValidation(d.filename, d.validation);
         // Sin `variants_expected` (Tatana viejo) no se marca nada: el guardado nunca espera (DA2).
         if (d.platform === "ios" && d.variants_expected === true) expectVariants(d.filename, d.variants ?? []);
       }
+      // Falla de una grabación de este caso detenida desde otra pestaña (la propia la avisa el stop).
+      if (!d.filename && d.code && mine && !recInFlightRef.current.stop) {
+        const code = d.code as keyof typeof RECORDING_ERROR_TEXT;
+        setGlobal(d.error?.trim() || RECORDING_ERROR_TEXT[code] || "La grabación no se guardó. Volvé a grabar.");
+      }
+      void agent.supportsRecordingState().then(ok => {
+        if (ok) void refreshRecording();
+        else setRecording(false);
+      });
     }
     if (event.type === "airplay_receiver_ready") {
       setAirplayName((event.data as { receiver_name: string }).receiver_name);
@@ -289,10 +350,14 @@ export default function Dashboard() {
     }
     if (event.type === "airplay_shot_connected") handleShotConnected();
     if (event.type === "airplay_shot_timeout") handleShotTimeout(msg => setGlobal(msg));
-  }, [addFile, addVideoVariant, expectVariants, applyVariantStatus, setRecording, setDiscoRec, setDeviceOffline, setAirplayName, isRecordingRef, handleShotConnected, handleShotTimeout]);
+  }, [addFile, addVideoVariant, expectVariants, applyVariantStatus, setRecording, setDiscoRec, setDeviceOffline, setAirplayName, isRecordingRef, foreignStopsRef, recInFlightRef, setRecordingValidation, refreshRecording, handleShotConnected, handleShotTimeout]);
 
-  // Al conectar o reconectar el WS, se recupera el estado de las variantes en curso (Duda 9 A).
-  const handleAgentConnected = useCallback(() => { void refreshVariantStatus(); }, [refreshVariantStatus]);
+  // Al conectar o reconectar el WS, se recupera el estado de las variantes y de la grabación en curso (Duda 9 A).
+  const handleAgentConnected = useCallback(() => {
+    agent.resetCapabilities();
+    void refreshVariantStatus();
+    void refreshRecording();
+  }, [refreshVariantStatus, refreshRecording]);
   const { agentOnline, devices, loadingDev, refreshDevices } = useAgentConnection(handleWsEvent, handleAgentConnected);
   const deviceConnection = useDeviceConnection(agentOnline, devices, loadingDev, selDevice?.serial ?? null);
   // ios-herramientas-windows §9.4: servicio de Apple y AirPlay según `/health.ios`.
@@ -302,6 +367,12 @@ export default function Dashboard() {
   // Tatana se cerró o se volvió a abrir: se revalida la identidad (estado de los avisos del paso 3/5).
   const refreshIdentity = identity.refresh;
   useEffect(() => { void refreshIdentity(); }, [agentOnline, refreshIdentity]);
+
+  // Paso 3 (al entrar, o al cambiar de caso o de celular): ¿hay una grabación en curso en Tatana?
+  const selSerial = selDevice?.serial ?? null;
+  useEffect(() => {
+    if (step === 3 && currentCaseId && agentOnline) void refreshRecording();
+  }, [step, currentCaseId, selSerial, agentOnline, refreshRecording]);
 
   // ── Auto-detect resume device ─────────────────────────────────────
   useEffect(() => {
@@ -589,6 +660,7 @@ export default function Dashboard() {
     setIsResuming(false); setFocusFieldId(null); setGenerateMissing([]);
     setSyncWarningDismissed(false);
     setCasePrefill(null);
+    setRecordingInfo("");
     if (!opts.keepMode) { refreshHistory(); setMode("history"); }
   }
 
@@ -672,6 +744,10 @@ export default function Dashboard() {
   }
 
   const { greeting, formattedDate } = useGreetingClock();
+
+  // Banner "Retomando": el celular del caso (o el seleccionado) ya está conectado.
+  const resumeSerial = currentCase?.device.serial ?? selDevice?.serial ?? null;
+  const resumeDeviceConnected = !!resumeSerial && devices.some(d => d.serial === resumeSerial);
 
   const draftCases = useMemo(() => historyCases.filter(c => c.status === "draft"), [historyCases]);
 
@@ -905,6 +981,9 @@ export default function Dashboard() {
                     {statusMsg}
                   </FxBanner>
                 )}
+                {recordingInfo && step === 3 && (
+                  <FxBanner tone="info" onClose={() => setRecordingInfo("")}>{recordingInfo}</FxBanner>
+                )}
                 {isResuming && step === 3 && currentCase && (
                   <FxBanner tone="info" icon={<Play className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}>
                     <p className="m-0 font-semibold">Retomando inspección · {currentCase.nro_referencia}</p>
@@ -912,12 +991,14 @@ export default function Dashboard() {
                       {currentStorage === "agent" ? (
                         <>
                           {currentCase.device.manufacturer} {currentCase.device.model} — la evidencia guardada en esta PC se recupera de la carpeta del caso.
-                          Reconectá el dispositivo para capturar más evidencia.
+                          {resumeDeviceConnected ? " El celular está conectado: podés seguir capturando." : " Reconectá el dispositivo para capturar más evidencia."}
                         </>
                       ) : (
                         <>
                           {currentCase.device.manufacturer} {currentCase.device.model} — los archivos de evidencia no se almacenan en el servidor.
-                          Reconectá el dispositivo para capturar nueva evidencia y volver a generar el informe.
+                          {resumeDeviceConnected
+                            ? " El celular está conectado: podés seguir capturando."
+                            : " Reconectá el dispositivo para capturar nueva evidencia y volver a generar el informe."}
                         </>
                       )}
                     </p>
@@ -991,6 +1072,13 @@ export default function Dashboard() {
                           {step === 3 && selDevice && (
                             <CaptureStep
                               isRecording={isRecording}
+                              recordingStartedAt={recordingStartedAt}
+                              recordingPhase={recordingPhase}
+                              recordingRecovered={recordingRecovered}
+                              foreignRecording={foreignRecording}
+                              onStopForeign={() => { void stopForeign(setGlobal, msg => setRecordingInfo(msg)); }}
+                              notices={evidenceNotices}
+                              onKeepBlack={keepBlack}
                               androidVersion={selDevice.android_version}
                               platform={selDevice.platform ?? "android"}
                               deviceSerial={selDevice.serial}
@@ -1041,6 +1129,7 @@ export default function Dashboard() {
                               }}
                               onDismissDisconnect={() => setDiscoRec(false)}
                               onRemoveFile={name => {
+                                forgetNotice(name);
                                 void removeFile(name, {
                                   caseId: currentCase?.id,
                                   onError: setGlobal,
@@ -1101,6 +1190,7 @@ export default function Dashboard() {
                               onGoToField={goToField}
                               agentBlocker={agentLock?.message ?? null}
                               progress={generateProgress}
+                              reviewNotices={reviewNotices}
                             />
                           )}
 
