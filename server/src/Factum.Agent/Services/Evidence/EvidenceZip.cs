@@ -3,6 +3,7 @@
 // Un cambio en una de las dos copias va también en la otra (y en sus tests:
 // server/tests/Factum.Backend.Tests/EvidenceZipTests.cs y server/tests/Factum.Agent.Tests/EvidenceZipTests.cs).
 // Diferencia única: WriteAsync acepta un callback opcional de progreso (bytes leídos).
+using System.Collections.Frozen;
 using System.Security.Cryptography;
 using ICSharpCode.SharpZipLib.Zip;
 
@@ -13,6 +14,11 @@ namespace Factum.Agent.Services.Evidence;
 /// §3.3 y §5.3). Con contraseña, cada entrada va cifrada con AES-256 (WinZip AE-2); sin contraseña,
 /// el mismo escritor genera un ZIP en claro (DT3).
 /// <para>
+/// Método por entrada (zip-evidencia-sin-recomprimir D2): los formatos que ya vienen comprimidos
+/// (<see cref="StoredExtensions"/>: video, audio, imagen, archivos comprimidos) se guardan con Stored,
+/// sin recomprimir; el resto va con Deflate nivel 6. El cifrado no cambia según el método.
+/// </para>
+/// <para>
 /// Ningún mensaje de error de esta clase incluye la contraseña.
 /// </para>
 /// </summary>
@@ -22,13 +28,43 @@ internal static class EvidenceZip
     public const string EncryptionAes256Ae2 = "aes256-ae2";
 
     private const int AesKeySize = 256;
-    private const int CompressionLevel = 6; // equivale al CompressionLevel.Optimal anterior
+    // Solo aplica a las entradas Deflate (ver MethodFor); equivale al CompressionLevel.Optimal anterior.
+    private const int CompressionLevel = 6;
     private const string ErrorPrefix = "No se pudo verificar el ZIP de evidencia: ";
+
+    /// <summary>
+    /// Extensiones (sin punto, en minúsculas) de formatos que ya vienen comprimidos: se guardan con Stored
+    /// (zip-evidencia-sin-recomprimir D2). El resto va con Deflate nivel 6.
+    /// </summary>
+    internal static readonly FrozenSet<string> StoredExtensions = new[]
+    {
+        // video
+        "mp4", "mkv", "mov", "m4v", "webm", "3gp", "avi",
+        // audio
+        "mp3", "m4a", "aac", "ogg", "opus", "amr",
+        // imagen
+        "jpg", "jpeg", "png", "heic", "heif", "webp", "gif",
+        // comprimidos / paquetes ("x.tar.gz" cae en "gz")
+        "zip", "7z", "rar", "gz", "apk", "ipa",
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Método de compresión de una entrada según la extensión de su nombre (sin mirar el contenido,
+    /// sin distinguir mayúsculas): Stored si está en <see cref="StoredExtensions"/>, Deflated si no.
+    /// </summary>
+    internal static CompressionMethod MethodFor(string fileName)
+    {
+        var ext = Path.GetExtension(fileName);          // ".MP4", "" si no tiene
+        return ext.Length > 1 && StoredExtensions.Contains(ext[1..])
+            ? CompressionMethod.Stored
+            : CompressionMethod.Deflated;
+    }
 
     /// <summary>
     /// Escribe <paramref name="zipPath"/> (FileMode.CreateNew) con cada archivo de
     /// <paramref name="filePaths"/> como entrada plana (solo el nombre). Cifrado AES-256 si
-    /// <paramref name="password"/> no es null. Cierra el archivo antes de volver.
+    /// <paramref name="password"/> no es null. Cada entrada va con Stored o Deflate nivel 6 según
+    /// <see cref="MethodFor"/> (zip-evidencia-sin-recomprimir). Cierra el archivo antes de volver.
     /// </summary>
     public static async Task WriteAsync(string zipPath, IReadOnlyList<string> filePaths,
         string? password, CancellationToken ct, Action<long>? onProgress = null)
@@ -50,6 +86,8 @@ internal static class EvidenceZip
             var entry = new ZipEntry(Path.GetFileName(path))
             {
                 DateTime = now,
+                // Stored para lo que ya viene comprimido (video, imagen, ...), Deflate para el resto.
+                CompressionMethod = MethodFor(path),
                 // Regla 3: Size siempre, para que Dynamic sepa si la entrada necesita Zip64.
                 Size = new FileInfo(path).Length,
                 // Regla 4: nombres en UTF-8 (bit 11): los device_pull_* pueden traer tildes.
@@ -87,7 +125,9 @@ internal static class EvidenceZip
     /// <summary>
     /// Reabre el ZIP en SOLO LECTURA y comprueba que tenga exactamente las entradas de
     /// <paramref name="expectedSha256ByName"/>, cifradas (o no) según <paramref name="password"/>,
-    /// y que el SHA-256 de cada entrada descomprimida coincida. Lanza
+    /// y que el SHA-256 de cada entrada (descomprimida si corresponde; Stored o Deflate) coincida con el
+    /// del manifiesto. Una entrada Stored alterada se detecta por ese SHA-256 (SharpZipLib no valida el
+    /// HMAC de AES al leer). Lanza
     /// <see cref="EvidenceZipVerificationException"/> si algo no cuadra. No modifica el archivo.
     /// </summary>
     public static async Task VerifyAsync(string zipPath,
