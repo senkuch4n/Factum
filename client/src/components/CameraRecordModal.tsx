@@ -18,7 +18,7 @@ interface Props {
   onClose: () => void;
 }
 
-const MAX_SECONDS = 600; // 10 min — corte automático para evitar archivos gigantes por olvido
+const MAX_SECONDS = 3600; // 60 min — corte automático para evitar archivos gigantes por olvido
 
 const ERROR_GUIDES: Record<ErrKind, { title: string; steps: string[]; extra?: string }> = {
   NotAllowed: {
