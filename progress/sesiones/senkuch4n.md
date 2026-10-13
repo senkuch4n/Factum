@@ -119,3 +119,26 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-07 — Ronda 7 commiteada (2cd8572) pero GitHub rechaza TODO push al repo con Internal Server Error (probado con commit vacío a rama tmp; githubstatus dice operational). Reintento automático cada 2 min (40 min) + seguimiento del ensayo.
 - 2026-10-07 — Ronda 7 (run 37642777147): la subida de prueba recibe HTTP 400 de Tatana (nombre y caseId válidos → probable length_required o incomplete_upload). Ronda 8: capturar el body y reproducir local antes de otro ensayo.
 - 2026-10-07 — Ronda 8: el 400 era invalid_case_id (la prueba usaba un ObjectId; Tatana exige Guid). Reproducido local en 18766: con Guid la subida lenta queda en curso ~40 s con busy=true y termina 200; sin bug de Tatana. SDD corregida (curl con Guid). Push al PR #28.
+- 2026-10-07 — (resumen agregado el 2026-10-12) PR #28 mergeado; PR #29 develop→main; tatana-release OK → release Tatana v1.4.0 (tag tatana-v1.4.0).
+- 2026-10-09 — (resumen agregado el 2026-10-12) Batch HU #42–#47 (diseño --fx-*, PrimeReact, KPIs, breakdown, trazabilidad, versionado) en PRs #37–#39, y #48 separar-metricas-vista en PR #40; todas aprobadas. PR #41 develop→main.
+- 2026-10-12 — Repaso de pendientes: cerrados a mano #42–#48 (en main por PR #41). Queda abierta #7 hasta la prueba en Windows con iPhone (§12.3). Sin HU activa.
+- 2026-10-12 — Pedido del usuario: pruebas de calidad contra el sistema (ej. subir una grabación de 10 min o más sin que se caiga) y revisar la UI del formulario de inspección. Exploración inicial.
+- 2026-10-12 — Exploración: formulario = paso 2 del wizard en /dashboard (7 hallazgos de UI); subidas: Tatana 16 GiB/backend 4 GiB OK, pero webcam corta a 10:00 (CameraRecordModal MAX_SECONDS=600), iOS espera MCI sin timeout, AirPlay queda pendiente para siempre (confirmado en código), Caddy nube 300MB. Esperando definiciones del usuario.
+- 2026-10-12 — Usuario: local, video grabado con Tatana, webcam a 60 min. Rama fix/webcam-limite-60min (MAX_SECONDS=3600, tsc OK, sin commit). Stack local levantado (backend 8080, Tatana 8765, client 3000). Lanzado agente QA de subida larga simulada (sin celular) -> scratchpad/qa-subida-larga.md.
+- 2026-10-12 — QA subida larga (simulada): import 12 min Android/iOS OK (<1 s, hash OK), subida 3,5 GiB OK, ZIP 5,5 GB OK en 8,9 min (Zip64; nivel 6 sobre video). Falla iOS: postproceso MCI ~2 h 50 min para 12 min y bloquea guardar; si MCI falla no hay evento → pendiente para siempre. Limpieza verificada. -> scratchpad/qa-subida-larga.md
+- 2026-10-12 — PR #49 (webcam 60 min) contra develop. Alta HU #50 ios-grabacion-larga, #51 zip-evidencia-sin-recomprimir, #52 formulario-inspeccion-ux. Usuario pide modo autónomo: hacer todas las HU sin parar; si una se traba, pasar a la siguiente. Tomada #50, rama feat/ios-grabacion-larga, afinando.
+- 2026-10-12 — #51 afinada → validada en modo autónomo con todas las recomendadas (D1A D2A D3A D4B D5A D6A D7A). Adelantada; queda en validada.
+- 2026-10-12 — #50 afinada → validada (9 dudas, todas A; suma agent-ui por D7) → en_arquitectura. Lanzado architect.
+- 2026-10-12 — #52 afinada → validada (7 dudas, todas A). Adelantada; queda en validada. Lanzado architect (SDD adelantada).
+- 2026-10-12 — #52 SDD lista (adelantada) -> Refactorizaciones/formulario-inspeccion-ux.md. Queda en validada hasta su turno.
+- 2026-10-12 — #51 SDD lista (adelantada) -> Refactorizaciones/zip-evidencia-sin-recomprimir.md. Queda en validada hasta su turno.
+- 2026-10-12 — #50 SDD lista -> Refactorizaciones/ios-grabacion-larga.md; verify OK; arquitectura_lista → implementando. Lanzados implementer-backend y implementer-frontend (opus). Tatana de fondo detenido para no chocar.
+- 2026-10-12 — #50 implementer-frontend done -> progress/impl_frontend_ios-grabacion-larga.md (tsc client/agent-ui OK, agent-ui test 26/26; prueba de navegador §11.3 pendiente). Esperando backend.
+- 2026-10-12 — #50 implementer-backend done -> progress/impl_backend_ios-grabacion-larga.md. en_revision; lanzado reviewer.
+- 2026-10-12 — #50 review APROBADA → aprobada (modo autónomo, sin prueba manual previa). PR #53 contra develop. Pendiente prueba manual del usuario (lista en PR). Sigue #51.
+- 2026-10-12 — #51 tomada, rama feat/zip-evidencia-sin-recomprimir, SDD ya lista → implementando. Lanzado implementer-backend (opus).
+- 2026-10-12 — #51 implementer-backend done -> progress/impl_backend_zip-evidencia-sin-recomprimir.md. en_revision; lanzado reviewer.
+- 2026-10-12 — #51 review APROBADA → aprobada. PR #54 contra develop (190,5 s → 54,3 s). Sigue #52.
+- 2026-10-12 — #52 tomada, rama feat/formulario-inspeccion-ux, SDD ya lista → implementando. Lanzado implementer-frontend (opus).
+- 2026-10-12 — #52 implementer-frontend done -> progress/impl_frontend_formulario-inspeccion-ux.md. en_revision; lanzado reviewer.
+- 2026-10-12 — #52 review APROBADA → aprobada. PR #55 contra develop. Modo autónomo terminado: #50, #51, #52 en Hecho (PRs #53, #54, #55) + PR #49 webcam. Solo queda #7 (prueba física Windows+iPhone, no automatizable). Stack local (backend :8080, client :3000) sigue arriba.
