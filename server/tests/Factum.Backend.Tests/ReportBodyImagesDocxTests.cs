@@ -174,7 +174,8 @@ public sealed class ReportBodyImagesDocxTests : IDisposable
         Assert.NotNull(image.ParagraphProperties.KeepNext);
         var extent = inline.Extent!;
         Assert.True(extent.Cx!.Value <= MaxW && extent.Cy!.Value <= MaxH);
-        Assert.Equal(MaxW, extent.Cx!.Value);                 // 90 × 30: manda el ancho
+        // informe-formato-fixes §6.2 (H07): 90 × 30 px ya no se amplía; va a su tamaño nativo a 96 dpi.
+        Assert.Equal(90 * 9_525L, extent.Cx!.Value);
         Assert.Equal(3.0, (double)extent.Cx!.Value / extent.Cy!.Value, 3);
         Assert.Equal(Shot2, inline.GetFirstChild<DWP.DocProperties>()!.Name!.Value);
 

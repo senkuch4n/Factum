@@ -209,7 +209,8 @@ public sealed partial class CaseService : ICaseService
     {
         var fields = CaseFields.From(request);
         var d = request.Device;
-        var imei = (d?.Imei ?? string.Empty).Trim();
+        // informe-formato-fixes §5.2: device con SafeText (una línea); Trim solo donde ya estaba.
+        var imei = SafeText.Clean(d?.Imei, TextShape.SingleLine).Trim();
 
         var outcome = CaseValidation.ValidateCaseData(fields, imei);
         if (outcome.Error is not null) return Result.Invalid<Case>(outcome.Error);
@@ -249,14 +250,14 @@ public sealed partial class CaseService : ICaseService
             Officer = officer,
             Device = d is not null ? new DeviceInfo
             {
-                Serial = d.Serial ?? string.Empty,
-                Name = (d.Name ?? string.Empty).Trim(),
-                Manufacturer = d.Manufacturer ?? string.Empty,
-                Model = d.Model ?? string.Empty,
+                Serial = SafeText.Clean(d.Serial, TextShape.SingleLine),
+                Name = SafeText.Clean(d.Name, TextShape.SingleLine).Trim(),
+                Manufacturer = SafeText.Clean(d.Manufacturer, TextShape.SingleLine),
+                Model = SafeText.Clean(d.Model, TextShape.SingleLine),
                 AndroidVersion = d.AndroidVersion,
                 Imei = imei,
                 Platform = d.Platform ?? "android",
-                OsVersion = d.OsVersion ?? string.Empty,
+                OsVersion = SafeText.Clean(d.OsVersion, TextShape.SingleLine),
             } : new DeviceInfo(),
             Status = CaseStatus.Draft,
             CreatedAt = DateTime.UtcNow,
@@ -283,7 +284,7 @@ public sealed partial class CaseService : ICaseService
         if (!IsEditable(cas)) return Result.Conflict<Case>(NotEditableMessage);
 
         var fields = CaseFields.From(request);
-        var newImei = request.Imei?.Trim();
+        var newImei = SafeText.CleanOrNull(request.Imei, TextShape.SingleLine)?.Trim();
         var effectiveImei = string.IsNullOrEmpty(newImei) ? cas.Device.Imei : newImei;
 
         var outcome = CaseValidation.ValidateCaseData(fields, effectiveImei);
@@ -347,6 +348,10 @@ public sealed partial class CaseService : ICaseService
         if (cas is null) return error!;
         if (!IsEditable(cas)) return Result.Conflict<ReportTexts>(NotEditableMessage);
 
+        // informe-formato-fixes §5.2: los 8 textos se limpian (multilínea) ANTES de validar; todo lo
+        // que sigue (validación, ReportTexts, snapshot de versionado) usa el request limpio.
+        // formato, trigger y restored_from no se tocan.
+        request = CleanReportTexts(request);
         var validationError = CaseValidation.ValidateReportTexts(request);
         if (validationError is not null) return Result.Invalid<ReportTexts>(validationError);
         // versionado-informe: trigger ∈ {null,"","save","restore"}; restored_from solo con "restore".
@@ -407,6 +412,18 @@ public sealed partial class CaseService : ICaseService
             return Result.Conflict<ReportTexts>(NotEditableMessage);
         return Result.Ok(texts);
     }
+
+    internal static ReportTextsDto CleanReportTexts(ReportTextsDto r) => r with
+    {
+        ObjetoInforme = SafeText.CleanOrNull(r.ObjetoInforme, TextShape.MultiLine),
+        OperacionesRealizadas = SafeText.CleanOrNull(r.OperacionesRealizadas, TextShape.MultiLine),
+        AseguramientoEvidencia = SafeText.CleanOrNull(r.AseguramientoEvidencia, TextShape.MultiLine),
+        Resultados = SafeText.CleanOrNull(r.Resultados, TextShape.MultiLine),
+        ValoracionTecnica = SafeText.CleanOrNull(r.ValoracionTecnica, TextShape.MultiLine),
+        Conclusiones = SafeText.CleanOrNull(r.Conclusiones, TextShape.MultiLine),
+        NotasTecnicas = SafeText.CleanOrNull(r.NotasTecnicas, TextShape.MultiLine),
+        Reserva = SafeText.CleanOrNull(r.Reserva, TextShape.MultiLine),
+    };
 
     public async Task<Result<ReportTextVersionsResponse>> GetReportTextVersionsAsync(string id,
         string officerDni, CancellationToken ct = default)

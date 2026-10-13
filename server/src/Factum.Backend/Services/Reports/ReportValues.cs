@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Factum.Backend.Common;
 using Factum.Backend.DTOs;
 using Factum.Backend.Models;
 using Factum.Backend.Services.Branding;
@@ -14,18 +15,29 @@ public static class ReportValues
 {
     public const string NoInformado = "No informado";
 
-    /// <summary>Sanitizado de §7.2: \r\n → \n, \t → espacio, sin controles &lt; 0x20 salvo \n.</summary>
+    /// <summary>
+    /// §7.2 + informe-formato-fixes §5.3: primero <see cref="SafeText"/> (multilínea: quita C0 salvo
+    /// \t \n \r, bidi, no-caracteres y surrogates sueltos; conserva DEL/C1), después \r\n → \n,
+    /// \r → \n y \t → espacio. Espejo exacto de <c>cleanText</c> en <c>client/src/lib/report-markdown.ts</c>.
+    /// </summary>
     public static string Clean(string? value)
     {
-        if (string.IsNullOrEmpty(value)) return string.Empty;
-        var s = value.Replace("\r\n", "\n").Replace('\r', '\n');
-        var sb = new StringBuilder(s.Length);
-        foreach (var ch in s)
-        {
-            if (ch == '\t') sb.Append(' ');
-            else if (ch == '\n' || ch >= 0x20) sb.Append(ch);
-        }
-        return sb.ToString();
+        var s = SafeText.Clean(value, TextShape.MultiLine);
+        if (s.Length == 0) return s;
+        return s.Replace("\r\n", "\n").Replace('\r', '\n').Replace('\t', ' ');
+    }
+
+    /// <summary>
+    /// informe-formato-fixes §6.5: hasta <paramref name="maxTextElements"/> elementos de texto
+    /// (<see cref="StringInfo"/>: no parte pares surrogate ni secuencias ZWJ). Si pasa, se cortan
+    /// max-1, TrimEnd y "…".
+    /// </summary>
+    public static string Ellipsize(string value, int maxTextElements)
+    {
+        if (string.IsNullOrEmpty(value) || maxTextElements <= 0) return value ?? string.Empty;
+        var info = new StringInfo(value);
+        if (info.LengthInTextElements <= maxTextElements) return value;
+        return info.SubstringByTextElements(0, Math.Max(0, maxTextElements - 1)).TrimEnd() + "…";
     }
 
     public static string ElSuscripto(PeritoSnapshot? perito) =>
@@ -112,7 +124,8 @@ public static class ReportValues
             ["{horaInspeccion}"] = hora,
             ["{tipoDispositivo}"] = cas.TipoDispositivo.Trim(),
             ["{titularDispositivo}"] = cas.NombreDenunciante.Trim(),
-            ["{marcaModeloDispositivo}"] = MarcaModelo(cas.Device),
+            // informe-formato-fixes H13: "No informado" como Línea/Objeto/Ámbito.
+            ["{marcaModeloDispositivo}"] = OrNoInformado(MarcaModelo(cas.Device)),
             ["{imeiDispositivo}"] = cas.Device.Imei.Trim(),
             // Identidad de la organización emisora (Branding). Vacío si no está configurada.
             ["{ORGANIZACION}"] = brand.OrganizationName ?? string.Empty,

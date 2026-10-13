@@ -107,6 +107,49 @@ FACTUM_RENDER_DIR=/tmp/render dotnet test server/tests/Factum.Backend.Tests \
 Después de regenerar la v6: `--check`, mirar el render, abrirla en Word y
 correr `dotnet test` (los tests comparan el texto pericial contra la v4).
 
+### v6: arreglos de #62 (informe-formato-fixes)
+
+Ver `Refactorizaciones/informe-formato-fixes.md` §7. En `build_plantilla_v4.py`
+(frases fijas y sangrías, se heredan en la v6):
+
+- **H10:** "En fecha {fechaInspeccion}, siendo las {horaInspeccion} horas, se
+  procedió…" (antes "siendo horas {horaInspeccion}").
+- **H12:** se elimina el párrafo fijo "Se constató:" (`543E58FA`, con huella).
+- **H11:** Notas técnicas (`7290E48F`), Reserva (`516E02D3`) y "Desde su
+  generación…" (`05004875`, conserva sus runs) toman el pPr normalizado
+  (primera línea de 4 cm, `firstLine=2268`) como el resto de las descripciones.
+
+En `build_plantilla_v6.py`:
+
+- **H01, firma indivisible:** `FIRMA_BLOCK` (los 7 párrafos de "SE DEJA
+  CONSTANCIA…" al carácter del perito) con `keepNext`; `keepLines` en los que
+  pueden envolver (`4FC2AE2A`, `3EAB1E3F`, `6AA98C58`, `4F0EBB3D`), y
+  `keepNext` en el filete del cierre (el isotipo queda con el bloque).
+- **H16, idioma:** `rPrDefault` con `<w:lang w:val="es-AR" w:eastAsia="en-US"
+  w:bidi="ar-SA"/>` y todo `w:lang w:val="en-US"` de `document.xml` y
+  `styles.xml` pasa a `es-AR`.
+- **H17, orden de esquema de `styles.xml`:** los hijos de cada `<w:style>` se
+  reordenan según `CT_Style` (solo hermanos, sin cambiar valores). Un hijo
+  desconocido aborta con `FALLA: ancla styles`. OpenXmlValidator (Microsoft
+  365) pasa de 29 errores a 0.
+- `--check` agrega: (a) firma con `keepNext`/`keepLines`; (b) ningún `en-US` y
+  `rPrDefault` en es-AR; (c) estilos en orden de esquema; (d) las anclas de
+  portada que usa `ReportService` (B-R2c): el espaciador `w:line="1800"`
+  exacto, el subtítulo con `w:after="1650"` y `{caratula}` a `sz 22` en la
+  ficha; (e) `{CONTACTO}` en `footer2` dentro de `MEMBRETE`; (f) que no quede
+  "Se constató:" ni "siendo horas".
+
+La portada en una página (densidad por niveles) y el recorte del encabezado
+interior no tocan la plantilla: los aplica `ReportService` al generar
+(`ReportCoverLayout`). Los renders de regresión de los 11 informes del QA
+están en `ReportQaRegressionTests` (`FACTUM_RENDER_DIR` fuera del repo, y
+`FACTUM_SOFFICE=1` para convertir a PDF y verificar portada y firma):
+
+```bash
+FACTUM_RENDER_DIR=/tmp/render FACTUM_SOFFICE=1 dotnet test server/tests/Factum.Backend.Tests \
+  --filter "FullyQualifiedName~ReportQaRegression|FullyQualifiedName~Muestras"
+```
+
 ## v5 (reproducible, sin uso)
 
 Especificación: `Refactorizaciones/informe-diseno-modelo.md`. Para

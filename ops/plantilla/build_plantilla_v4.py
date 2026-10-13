@@ -194,6 +194,9 @@ def fingerprint(paras, order):
         "08C61010": lambda t: t.startswith("Parte que lo propone:"),
         "3162E6AB": lambda t: t.startswith("Ámbito:"),
         "5FECA2F2": lambda t: t.startswith("En fecha"),
+        # #62 (H12): el "Se constató:" fijo se elimina; (H11) "Desde su generación…" toma la sangría.
+        "543E58FA": lambda t: t == "Se constató:",
+        "05004875": lambda t: t.startswith("Desde su generación"),
         "14341833": lambda t: t.startswith("Tipo:"),
         "15EF193E": lambda t: t.startswith("Marca y modelo:"),
         "490B4C01": lambda t: t.startswith("IMEI:"),
@@ -307,8 +310,8 @@ def build_document(doc, ids):
     new["3162E6AB"] = rebuild("3162E6AB", "**Ámbito:** {ambitoCausa}")
     new["5FECA2F2"] = rebuild(
         "5FECA2F2",
-        "En fecha {fechaInspeccion}, siendo horas {horaInspeccion}, se procedió a la "
-        "inspección técnica del dispositivo:")
+        "En fecha {fechaInspeccion}, siendo las {horaInspeccion} horas, se procedió a la "
+        "inspección técnica del dispositivo:")  # #62 (H10)
     new["14341833"] = rebuild("14341833", "**Tipo:** {tipoDispositivo}")
     new["15EF193E"] = rebuild("15EF193E", "**Marca y modelo:** {marcaModeloDispositivo}")
     new["490B4C01"] = rebuild("490B4C01", "**IMEI:** {imeiDispositivo}")
@@ -327,11 +330,17 @@ def build_document(doc, ids):
     new["10CF937D"] = rebuild("10CF937D", "{descripcionValoracionTecnica}", ppr=norm_ppr)
     new["08A80D56"] = rebuild("08A80D56", "{descripcionConclusiones}", ppr=norm_ppr)
     new["05D9340B"] = marker("{#descripcionNotasTecnicas}", "notas-open") + paras["05D9340B"]
-    new["7290E48F"] = (rebuild("7290E48F", "{descripcionNotasTecnicas}")
+    # #62 (H11): Notas técnicas y Reserva con la misma sangría (primera línea de 4 cm) que el resto.
+    new["7290E48F"] = (rebuild("7290E48F", "{descripcionNotasTecnicas}", ppr=norm_ppr)
                        + marker("{/descripcionNotasTecnicas}", "notas-close"))
     new["10E394C7"] = marker("{#descripcionReserva}", "res-open") + paras["10E394C7"]
-    new["516E02D3"] = (rebuild("516E02D3", "{descripcionReserva}")
+    new["516E02D3"] = (rebuild("516E02D3", "{descripcionReserva}", ppr=norm_ppr)
                        + marker("{/descripcionReserva}", "res-close"))
+    # #62 (H12): sin "Se constató:" fijo (el párrafo se elimina).
+    new["543E58FA"] = ""
+    # #62 (H11): "Desde su generación…" conserva sus runs y toma el pPr normalizado.
+    p = paras["05004875"]
+    new["05004875"] = open_tag(p) + norm_ppr + "".join(runs_of(p)) + "</w:p>"
 
     # Celdas de la tabla de hashes (A3, "Tabla").
     def cell_ppr(p, jc=None, sz=None, fonts=None):

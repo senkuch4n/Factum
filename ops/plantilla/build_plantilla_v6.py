@@ -119,6 +119,32 @@ ANEXO_TITLE = "6A0EA424"
 FIRMA_CARACTER = v5.FIRMA_CARACTER
 HASH_HEAD = ("04E11EDC", "4B698602")
 
+# ── #62 (informe-formato-fixes) ────────────────────────────────────────────────
+# H01: bloque de cierre indivisible. keepNext en los 7 parrafos (y en el filete del cierre, asi el
+# isotipo queda con el bloque); keepLines en los que pueden envolver.
+FIRMA_BLOCK = ["4FC2AE2A", "29CDCD40", "21DB9123", "38A8E121", "3EAB1E3F", "6AA98C58", "4F0EBB3D"]
+FIRMA_KEEP_LINES = {"4FC2AE2A", "3EAB1E3F", "6AA98C58", "4F0EBB3D"}
+FIRMA_FINGERPRINT = {
+    "4FC2AE2A": lambda t: t.startswith("SE DEJA CONSTANCIA"),
+    "29CDCD40": lambda t: t == "",
+    "21DB9123": lambda t: t == "",
+    "38A8E121": lambda t: t == "______________________________",
+    "3EAB1E3F": lambda t: t == "{nombrePerito}",
+    "6AA98C58": lambda t: t == "{profesionPerito} – M.P. {matriculaPerito}",
+    "4F0EBB3D": lambda t: t == "{caracterPerito}",
+}
+# H16: idioma por defecto del documento.
+LANG_DEFAULT = '<w:lang w:val="es-AR" w:eastAsia="en-US" w:bidi="ar-SA"/>'
+LANG_EN = '<w:lang w:val="en-US"/>'
+LANG_ES = '<w:lang w:val="es-AR"/>'
+# H17: orden de los hijos de <w:style> segun CT_Style.
+STYLE_ORDER = ["w:name", "w:aliases", "w:basedOn", "w:next", "w:link", "w:autoRedefine",
+               "w:hidden", "w:uiPriority", "w:semiHidden", "w:unhideWhenUsed", "w:qFormat",
+               "w:locked", "w:personal", "w:personalCompose", "w:personalReply", "w:rsid",
+               "w:pPr", "w:rPr", "w:tblPr", "w:trPr", "w:tcPr", "w:tblStylePr"]
+# Anclas de portada que usa ReportService (B-R2c, SDD #62 §6.4).
+COVER_SUBTITLE = "Inspección técnica de dispositivo móvil"
+
 
 # ── Parrafos nuevos (semilla "v6:") ────────────────────────────────────────────
 
@@ -280,6 +306,20 @@ def fingerprint(paras, order):
     for pid in PLAIN_TITLES:
         if "<w:numPr>" in paras[pid]:
             raise Falla("ancla " + pid)
+    for pid, ok in FIRMA_FINGERPRINT.items():
+        if pid not in paras or not ok(para_text(paras[pid]).strip()):
+            raise Falla("ancla " + pid)
+    i = order.index(FIRMA_BLOCK[0])
+    if order[i:i + len(FIRMA_BLOCK)] != FIRMA_BLOCK:
+        raise Falla("ancla firma")
+
+
+def keep_together(p, keep_lines):
+    """#62 H01: keepNext (y keepLines si corresponde) en el pPr del parrafo."""
+    updates = {"w:keepNext": "<w:keepNext/>"}
+    if keep_lines:
+        updates["w:keepLines"] = "<w:keepLines/>"
+    return with_ppr(p, set_children(get_ppr(p) or "<w:pPr></w:pPr>", "w:pPr", PPR_ORDER, updates))
 
 
 def cover(ids):
@@ -529,12 +569,17 @@ def build_document(doc, ids):
     # Anexo: mismo aspecto que un titulo, centrado, sin numero ni filete.
     new[ANEXO_TITLE] = restyle_runs(paras[ANEXO_TITLE], TITLE_RPR)
 
+    # #62 H01: el bloque de firma no se separa (keepNext en los 7 y en el filete del cierre).
+    for pid in FIRMA_BLOCK:
+        if pid != FIRMA_CARACTER:
+            new[pid] = keep_together(paras[pid], pid in FIRMA_KEEP_LINES)
+
     # Cierre: filete centrado + isotipo.
-    new[FIRMA_CARACTER] = paras[FIRMA_CARACTER] + "".join([
+    new[FIRMA_CARACTER] = keep_together(paras[FIRMA_CARACTER], FIRMA_CARACTER in FIRMA_KEEP_LINES) + "".join([
         para(ids, "cierre:fil",
              rule_ppr(18, 'w:left="%d" w:right="%d"' % ((TEXT_W - 540) // 2 + 1,
                                                         (TEXT_W - 540) // 2),
-                      'w:before="480" w:after="0" w:line="40" w:lineRule="exact"')),
+                      'w:before="480" w:after="0" w:line="40" w:lineRule="exact"', keep=True)),
         marker(ids, "cierre:open", "{#ISOTIPO}"),
         para(ids, "cierre:iso", '<w:pPr><w:spacing w:before="240" w:after="0" w:line="240" '
                                 'w:lineRule="auto"/><w:jc w:val="center"/></w:pPr>',
@@ -607,7 +652,8 @@ def build_styles(st):
         raise Falla("ancla styles")
     inner = rd.group(0)[len("<w:rPrDefault>"):-len("</w:rPrDefault>")]
     new_rd = "<w:rPrDefault>" + set_children(inner, "w:rPr", RPR_ORDER,
-                                             {"w:color": color(TEXT2)}) + "</w:rPrDefault>"
+                                             {"w:color": color(TEXT2),
+                                              "w:lang": LANG_DEFAULT}) + "</w:rPrDefault>"  # #62 H16
     st = st.replace(d.group(0), d.group(0).replace(rd.group(0), new_rd, 1), 1)
     n = re.search(r'<w:style w:type="paragraph" w:default="1" w:styleId="1">.*?</w:style>', st,
                   re.S)
@@ -616,7 +662,27 @@ def build_styles(st):
         raise Falla("ancla styles")
     nn = n.group(0).replace(rn.group(0), set_children(rn.group(0), "w:rPr", RPR_ORDER,
                                                       {"w:color": color(TEXT2)}), 1)
-    return st.replace(n.group(0), nn, 1)
+    st = st.replace(n.group(0), nn, 1)
+    # #62 H16: ningun estilo en ingles.
+    st = st.replace(LANG_EN, LANG_ES)
+    # #62 H17: hijos de cada <w:style> en el orden del esquema (solo se reordenan hermanos).
+    return re.sub(r'<w:style\b[^>]*>.*?</w:style>', lambda m: order_style(m.group(0)), st, flags=re.S)
+
+
+def order_style(style_xml):
+    open_, inner, close = v5.split_container(style_xml, "w:style")
+    kids = children(inner)
+    for name, _ in kids:
+        if name not in STYLE_ORDER:
+            raise Falla("ancla styles")
+    kids = sorted(kids, key=lambda k: STYLE_ORDER.index(k[0]))  # sorted es estable
+    return open_ + "".join(x for _, x in kids) + close
+
+
+def style_in_order(style_xml):
+    _, inner, _ = v5.split_container(style_xml, "w:style")
+    ranks = [STYLE_ORDER.index(n) if n in STYLE_ORDER else -1 for n, _ in children(inner)]
+    return -1 not in ranks and ranks == sorted(ranks)
 
 
 def build(src, dst):
@@ -655,6 +721,7 @@ def build(src, dst):
     footer2 = build_footer2(footer_src, ids)
     footer1 = build_footer1(footer_src, ids)
     doc = v5.tnr_to_arial(doc)
+    doc = doc.replace(LANG_EN, LANG_ES)  # #62 H16
 
     rels = data["word/_rels/document.xml.rels"].decode("utf-8")
     if "rIdHdr2" in rels or "rIdFtr2" in rels or 'Target="footer1.xml"' not in rels:
@@ -826,7 +893,53 @@ def check(src, dst):
     # 8. Pagina N de M.
     if " PAGE " not in f1 or " NUMPAGES " not in f1:
         fails.add("FALLA:numeracion")
+
+    # 9. #62 (informe-formato-fixes).
+    check_v62(doc, sty, f2, xml_parts, fails)
     return sorted(fails)
+
+
+def check_v62(doc, sty, f2, xml_parts, fails):
+    paras = {para_id(p): p for p in PARA_RE.findall(doc) if para_id(p)}
+    # (a) Firma indivisible.
+    for pid in FIRMA_BLOCK:
+        p = get_ppr(paras.get(pid, ""))
+        if "<w:keepNext/>" not in p or (pid in FIRMA_KEEP_LINES) != ("<w:keepLines/>" in p):
+            fails.add("FALLA:firma")
+    fil = [p for p in PARA_RE.findall(doc)
+           if 'w:ind w:left="%d" w:right="%d"' % ((TEXT_W - 540) // 2 + 1, (TEXT_W - 540) // 2) in p]
+    if len(fil) != 1 or "<w:keepNext/>" not in fil[0]:
+        fails.add("FALLA:firma")
+    # (b) Idioma.
+    if any('w:lang w:val="en-US"' in x for x in xml_parts.values()):
+        fails.add("FALLA:idioma")
+    d = re.search(r'<w:rPrDefault>.*?</w:rPrDefault>', sty, re.S)
+    if not d or LANG_DEFAULT not in d.group(0):
+        fails.add("FALLA:idioma")
+    # (c) Orden de esquema de los estilos.
+    if not all(style_in_order(x) for x in re.findall(r'<w:style\b[^>]*>.*?</w:style>', sty, re.S)):
+        fails.add("FALLA:orden-estilos")
+    # (d) Anclas de portada (B-R2c): la portada son los parrafos hasta el primer sectPr.
+    cut = doc.find("<w:sectPr")
+    cover_xml = doc[:cut] if cut >= 0 else ""
+    cover_paras = PARA_RE.findall(cover_xml)
+    if sum('w:line="1800" w:lineRule="exact"' in p for p in cover_paras) != 1:
+        fails.add("FALLA:portada")
+    sub = [p for p in cover_paras if para_text(p).strip() == COVER_SUBTITLE]
+    if len(sub) != 1 or 'w:after="1650"' not in sub[0]:
+        fails.add("FALLA:portada")
+    t = re.search(r"<w:tbl>.*?</w:tbl>", cover_xml, re.S)
+    car = [p for p in PARA_RE.findall(t.group(0)) if "{caratula}" in para_text(p)] if t else []
+    if len(car) != 1 or '<w:sz w:val="22"/>' not in car[0]:
+        fails.add("FALLA:portada")
+    # (e) {CONTACTO} en footer2, dentro del bloque MEMBRETE.
+    o, c, k = f2.find("{#MEMBRETE}"), f2.find("{/MEMBRETE}"), f2.find("{CONTACTO}")
+    if not (0 <= o < k < c):
+        fails.add("FALLA:membrete")
+    # (f) Frases corregidas.
+    text = "".join(para_text(p) for p in PARA_RE.findall(doc))
+    if "Se constató:" in text or "siendo horas" in text or "siendo las {horaInspeccion} horas" not in text:
+        fails.add("FALLA:frases")
 
 
 def main():

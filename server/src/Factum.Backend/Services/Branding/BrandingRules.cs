@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Factum.Backend.Common;
 using Factum.Backend.DTOs;
 using Factum.Backend.Infrastructure;
 using Factum.Backend.Models;
@@ -73,8 +74,9 @@ public static class BrandingRules
             (isotypeHasFile && isotypeAction != BrandingImageAction.Replace))
             return Fail(BrandingErrors.FieldMetadata, BrandingErrors.MsgInvalidRequest);
 
-        // 2. organization_name.
-        var name = m.OrganizationName?.Trim() ?? "";
+        // 2. organization_name. informe-formato-fixes §5.2: bidi, no-caracteres y surrogates sueltos se
+        // quitan en silencio; los controles C0 siguen dando el 400 MsgControlChars de siempre.
+        var name = SafeText.StripInvisible(m.OrganizationName).Trim();
         if (name.Length > BrandingService.MaxNameLength)
             return Fail(BrandingErrors.FieldOrganizationName, BrandingErrors.MsgNameTooLong);
         if (HasControlChars(name))
@@ -85,7 +87,7 @@ public static class BrandingRules
         var lines = new List<string>();
         for (var i = 0; i < raw.Count; i++)
         {
-            var line = raw[i]?.Trim() ?? "";
+            var line = SafeText.StripInvisible(raw[i]).Trim();
             if (line.Length > BrandingService.MaxContactLineLength)
                 return Fail(BrandingErrors.FieldContactLines, BrandingErrors.MsgContactLineTooLong, index: i);
             if (HasControlChars(line))
