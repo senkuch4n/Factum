@@ -5,6 +5,7 @@ using Factum.Backend.Models;
 using Factum.Backend.Services.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Factum.Backend.Controllers;
 
@@ -14,7 +15,8 @@ namespace Factum.Backend.Controllers;
 public sealed class AuthController(
     IAuthService authService,
     AuthSettings authSettings,
-    IUserAccountService accounts) : ControllerBase
+    IUserAccountService accounts,
+    ILoginThrottle throttle) : ControllerBase
 {
     /// <summary>usuarios-locales §5.1: modo + largos de contraseña (siempre; en dev/external, los defaults).</summary>
     [HttpGet("mode")]
@@ -30,15 +32,23 @@ public sealed class AuthController(
         });
     }
 
-    /// <summary>§5.2. En local: 401 invalid_credentials / 429 account_locked / 403 account_suspended, con code.</summary>
+    /// <summary>
+    /// §5.2. En local: 401 invalid_credentials / 429 account_locked / 403 account_suspended, con code.
+    /// api-hardening §4.4: además, 429 account_locked + Retry-After por IP (middleware, política "login") y
+    /// por DNI (acá, antes de validar credenciales: no suma intentos fallidos), en todos los modos.
+    /// </summary>
     [HttpPost("login")]
     [AllowAnonymous]
+    [EnableRateLimiting(LoginRateLimit.PolicyName)]
     [ProducesResponseType<LoginResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken ct)
     {
+        if (throttle.TryAcquire(request.Dni) is { } wait)
+            return LoginRateLimit.Rejection(HttpContext, wait, LoginRateLimit.Scope.Dni, request.Dni);
+
         var result = await authService.LoginAsync(request, ct);
         if (result.IsSuccess) return Ok(result.Value);
 

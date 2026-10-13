@@ -28,14 +28,14 @@ public interface ICaseService
         CancellationToken ct = default);
     /// <summary>
     /// versionado-informe: historial de versiones de report_texts del caso propio (más reciente
-    /// primero). 404 si no existe, 403 si es de otro perito. Funciona en cualquier Status.
+    /// primero). 404 si no existe o es de otro perito. Funciona en cualquier Status.
     /// </summary>
     Task<Result<ReportTextVersionsResponse>> GetReportTextVersionsAsync(string id, string officerDni,
         CancellationToken ct = default);
     /// <summary>
     /// trazabilidad-caso: eventos de cadena de custodia del caso, ascendente por timestamp. Dueño
-    /// (por Officer.Dni) o superadmin (<paramref name="actorRole"/>). 404 si no existe, 403 si es
-    /// ajeno y no superadmin.
+    /// (por Officer.Dni) o superadmin (<paramref name="actorRole"/>). 404 si no existe o si es
+    /// ajeno y no superadmin (api-hardening §4.7).
     /// </summary>
     Task<Result<List<CaseEvent>>> ListEventsAsync(string id, User actor, string actorRole,
         CancellationToken ct = default);
@@ -166,15 +166,26 @@ public sealed partial class CaseService : ICaseService
         return cases;
     }
 
-    // Caso del dueño, o el error que corresponde (404 / 403). Con EvidenceStorage resuelto.
+    // Caso del dueño, o 404 (api-hardening §4.7, D7 A: un caso ajeno responde igual que uno
+    // inexistente, para no confirmar que el id existe; el intento queda en el log). Con EvidenceStorage resuelto.
     private async Task<(Case? Case, Result<T>? Error)> LoadOwnedAsync<T>(string id, string officerDni,
         CancellationToken ct)
     {
         var cas = await _repo.FindByIdAsync(id, ct);
-        if (cas is null) return (null, Result.NotFound<T>());
-        if (cas.Officer.Dni != officerDni) return (null, Result.Forbidden<T>());
-        return (ResolveStorage(cas), null);
+        switch (CaseAccess.Check(cas, officerDni))
+        {
+            case CaseAccessResult.NotFound:
+                return (null, Result.NotFound<T>());
+            case CaseAccessResult.Foreign:
+                LogForeignAccess(officerDni, id);
+                return (null, Result.NotFound<T>());
+            default:
+                return (ResolveStorage(cas!), null);
+        }
     }
+
+    private void LogForeignAccess(string requesterDni, string caseId) =>
+        _log.LogWarning("Acceso a caso ajeno: {Dni} pidió {CaseId}", requesterDni, caseId);
 
     // zip-local-informe-servidor §3.2: completa EvidenceStorage EN MEMORIA (el repositorio nunca
     // hace Replace, así que esto no se persiste). Solo lee el disco y no crea la carpeta del caso.
@@ -444,10 +455,16 @@ public sealed partial class CaseService : ICaseService
         CancellationToken ct = default)
     {
         var cas = await _repo.FindByIdAsync(id, ct);
-        if (cas is null) return Result.NotFound<List<CaseEvent>>();
         // Dueño o superadmin (D9-A). En dev/external el rol siempre es "cliente": solo vale el dueño.
-        if (cas.Officer.Dni != actor.Dni && actorRole != UserRoles.Superadmin)
-            return Result.Forbidden<List<CaseEvent>>();
+        // api-hardening §4.7: ajeno y no superadmin → 404, igual que inexistente.
+        switch (CaseAccess.Check(cas, actor.Dni, allowSuperadmin: true, actorRole == UserRoles.Superadmin))
+        {
+            case CaseAccessResult.NotFound:
+                return Result.NotFound<List<CaseEvent>>();
+            case CaseAccessResult.Foreign:
+                LogForeignAccess(actor.Dni, id);
+                return Result.NotFound<List<CaseEvent>>();
+        }
         var events = await _caseEvents.ListByCaseAsync(id, ct);
         return Result.Ok(events);
     }
@@ -822,7 +839,7 @@ public sealed partial class CaseService : ICaseService
     public const string NoEncryptedZipMessage = "Este caso no tiene un ZIP cifrado";
 
     // Único lugar (además de la respuesta de generate) por donde sale la contraseña. Caso ajeno
-    // → 403 como el resto de los endpoints del caso (P1-A). Casos viejos (D8) o generados con
+    // → 404 como el resto de los endpoints del caso (api-hardening §4.7). Casos viejos (D8) o generados con
     // EncryptZip=false → 404. No se loguea nada.
     public async Task<Result<ZipPasswordResponse>> GetZipPasswordAsync(string id, string officerDni,
         CancellationToken ct = default)

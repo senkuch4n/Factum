@@ -206,3 +206,8 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-13 — #62 implementer-backend done -> progress/impl_backend_informe-formato-fixes.md. en_revision; lanzado reviewer.
 - 2026-10-13 — #62 review APROBADA. Backend reiniciado en la rama para la prueba manual.
 - 2026-10-13 — #62 OK del usuario. Commit + PR + merge.
+- 2026-10-13 — #62 mergeada (PR #69). Tomada #63, rama feat/api-hardening → implementando (SDD actualizada: SafeText ya en develop, DEL/C1 se conservan).
+- 2026-10-13 — #63 implementer-backend done -> progress/impl_backend_api-hardening.md (1065 tests OK). en_revision; lanzado reviewer.
+- 2026-10-13 — Usuario pide: cuando estén #63 y #64, promover develop→main si es viable.
+- 2026-10-13 — #63 review APROBADA. Backend reiniciado en la rama.
+- 2026-10-13 — #63 OK del usuario. Commit + PR + merge.
