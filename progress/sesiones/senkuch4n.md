@@ -188,3 +188,9 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-13 — #59 implementer-backend done -> progress/impl_backend_grabacion-android-robusta.md. Grabación real de 12 min: 721,3 s grabados / 721,1 s de archivo, stop 0,2 s, scrcpy cierra limpio. en_revision; lanzado reviewer.
 - 2026-10-13 — #59 review APROBADA. Levanto Tatana de la rama para la prueba manual del usuario.
 - 2026-10-13 — #59 OK del usuario. Commit + PR + merge.
+- 2026-10-13 — #59 mergeada (PR #66) y aprobada. Sigue #60.
+- 2026-10-13 — Tomada #60, rama feat/tatana-ws-y-hosts → implementando.
+- 2026-10-13 — #60 implementer-backend done -> progress/impl_backend_tatana-ws-y-hosts.md. en_revision; lanzado reviewer.
+- 2026-10-13 — Usuario: no promover develop→main hasta cerrar todas las HU, salvo que lo pida.
+- 2026-10-13 — #60 review APROBADA. Smoke test del orquestador con la web antes de pedir OK.
+- 2026-10-13 — #60 OK del usuario. Commit + PR + merge.
