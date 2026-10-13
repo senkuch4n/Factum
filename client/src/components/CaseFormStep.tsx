@@ -30,6 +30,7 @@ import {
 import { CATALOG_LABELS } from "@/lib/catalogs";
 import { useCatalogs } from "@/hooks/useCatalogs";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { scrollIntoContainer } from "@/lib/scroll";
 import type { DeviceConnection } from "@/hooks/useDeviceConnection";
 import type { Case, CaseFormData, CatalogId, ExpertProfile, IntegranteRow, ProfileFormData } from "@/types";
 import { FormField, FormFieldStyleContext, describedBy } from "./FormField";
@@ -82,6 +83,8 @@ function calendarPt(aria: { describedBy?: string; invalid: boolean }, onKeyDown:
         "aria-required": true,
         "aria-invalid": aria.invalid || undefined,
         "aria-describedby": aria.describedBy,
+        // Prime abre el panel con Alt+↓ (y ↓) desde el input (wizard-pulido-ux M1).
+        "aria-keyshortcuts": "Alt+ArrowDown",
         onKeyDown,
       },
     },
@@ -461,7 +464,7 @@ export function CaseFormStep({
     // Después del commit (la sección puede estar recién desplegada).
     window.setTimeout(() => {
       const el = document.getElementById(id);
-      if (el) { el.focus({ preventScroll: true }); el.scrollIntoView({ block: "center", behavior: scrollBehavior }); }
+      if (el) { el.focus({ preventScroll: true }); scrollIntoContainer(el, { block: "center", behavior: scrollBehavior }); }
     }, 60);
   }
 
@@ -471,8 +474,8 @@ export function CaseFormStep({
     window.setTimeout(() => {
       const field = document.getElementById(fieldId);
       const title = document.getElementById(`case-section-${section}-title`);
-      if (title) title.scrollIntoView({ block: "start", behavior: scrollBehavior });
-      else field?.scrollIntoView({ block: "center", behavior: scrollBehavior });
+      if (title) scrollIntoContainer(title, { block: "start", behavior: scrollBehavior });
+      else if (field) scrollIntoContainer(field, { block: "center", behavior: scrollBehavior });
       field?.focus({ preventScroll: true });
     }, 60);
   }
@@ -801,7 +804,31 @@ export function CaseFormStep({
   // Enter en "Fecha de intervención" con el selector abierto: Prime no lo
   // maneja en el input y enviaría el form → cierra el selector y no envía.
   const calendarRef = useRef<Calendar>(null);
+  // M1 (DT9): con puntero fino el panel no se abre al enfocar (Tab llega al
+  // input y se puede escribir). En táctil se mantiene: Prime usa
+  // inputMode="none" y, sin abrir al tocar, el campo quedaría sin teclado ni panel.
+  // Ojo: es `showOnFocus={coarsePointer}` (la SDD escribió `!coarsePointer`,
+  // que invierte la intención de DT9).
+  const coarsePointer = useMediaQuery("(pointer: coarse)");
+  /** El panel lo abrió el teclado (↓ / Alt+↓): al mostrarse, el foco va al día. */
+  const openedByKeyRef = useRef(false);
+  function handleCalendarShown() {
+    if (!openedByKeyRef.current) return;
+    openedByKeyRef.current = false;
+    const overlay = calendarRef.current?.getOverlay();
+    if (!overlay) return;
+    const cell =
+      overlay.querySelector<HTMLElement>('span[data-p-highlight="true"]') ??
+      overlay.querySelector<HTMLElement>('td[data-p-today="true"] span:not([data-p-disabled="true"])') ??
+      overlay.querySelector<HTMLElement>('table td span:not([data-p-disabled="true"])');
+    if (!cell) return;
+    cell.tabIndex = 0;
+    cell.focus();
+  }
   function onCalendarKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "ArrowDown" && e.currentTarget.getAttribute("aria-expanded") !== "true") {
+      openedByKeyRef.current = true;
+    }
     if (e.key === "Enter" && !e.nativeEvent.isComposing && e.currentTarget.getAttribute("aria-expanded") === "true") {
       e.preventDefault();
       calendarRef.current?.hide();
@@ -866,12 +893,23 @@ export function CaseFormStep({
               inputId={id}
               name={f.key}
               value={isoToLocalDate(value)}
-              onChange={e => set(f.key, e.value instanceof Date ? localDateToIso(e.value) : "")}
+              onChange={e => {
+                if (e.value instanceof Date) { set(f.key, localDateToIso(e.value)); return; }
+                // Escribiendo a mano: Prime manda null con cada parcial ("1", "13/1"…) y,
+                // al cambiar `value`, reescribe el input aunque tenga el foco (borraba lo
+                // tipeado sobre una fecha ya cargada). Mientras el texto no esté vacío se
+                // conserva el valor; al salir, Prime repone la última fecha válida.
+                const input = calendarRef.current?.getInput();
+                if (input && document.activeElement === input && input.value.trim() !== "") return;
+                set(f.key, "");
+              }}
               dateFormat="dd/mm/yy"
               showIcon
               icon={<CalendarIcon className="h-4 w-4" aria-hidden="true" />}
               placeholder="dd/mm/aaaa"
               invalid={!!error}
+              showOnFocus={coarsePointer}
+              onShow={handleCalendarShown}
               pt={calendarPt({ describedBy: ariaDescribedBy, invalid: !!error }, onCalendarKeyDown)}
             />
             {/* Atajos Hoy / Ayer como chips del campo (no en la línea de la etiqueta) + fecha en palabras. */}
@@ -1234,11 +1272,15 @@ export function CaseFormStep({
 
         {/* lg+: Ficha viva de la causa, sticky debajo de la navbar flotante y sin scroll
             interno (en el DOM después del form: el foco va form → ficha). Separada del
-            formulario por un divisor, no por otra tarjeta. */}
+            formulario por un divisor, no por otra tarjeta.
+            Alto (wizard-pulido-ux M3/M4): el sticky es relativo al contenedor con
+            scroll del wizard, que ya empieza debajo de la navbar (72 px), y la ficha
+            arranca a 96 px de él: 100dvh − 72 − 96 − 40 (aire inferior) = 100dvh − 13rem.
+            Con 8.5rem el borde inferior (índice) quedaba 32 px fuera de la pantalla. */}
         {isLg && (
           <aside
             aria-label="Resumen de la causa"
-            className="min-w-0 border-l border-fx-border pl-6 xl:pl-8 lg:sticky lg:top-24 lg:h-[calc(100dvh-8.5rem)] lg:self-start"
+            className="min-w-0 border-l border-fx-border pl-6 xl:pl-8 lg:sticky lg:top-24 lg:h-[calc(100dvh-13rem)] lg:self-start"
           >
             <CaseSummaryCard variant="aside" {...summaryProps} />
           </aside>

@@ -215,9 +215,13 @@ public sealed partial class CaseService
         {
             Id = Guid.NewGuid().ToString("N"),
             Password = _reportSettings.EncryptZip ? ReportService.GeneratePassword() : null,
-            ZipFilename = ReportService.ZipFilenameFor(cas),
+            ZipFilename = ReportService.ResolveZipFilename(cas),
             CreatedAt = DateTime.UtcNow,
         };
+        // wizard-pulido-ux DT10: un nombre ya registrado (caso o intento previo) se conserva.
+        if (!string.Equals(pending.ZipFilename, ReportService.ZipFilenameFor(cas), StringComparison.Ordinal))
+            _log.LogInformation("Caso {CaseId}: se conserva el nombre de ZIP ya registrado {ZipFilename}",
+                id, pending.ZipFilename);
         // Pisa cualquier intento anterior. No cambia el Status (D-T3).
         if (!await _repo.SetPendingGenerationAsync(id, pending, ct))
             return EvidenceFail<PrepareGenerationResponse>(ErrorKind.Conflict, NotEditableMessage,

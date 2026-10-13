@@ -76,6 +76,16 @@ export interface AgentEvent {
   data: Record<string, unknown>;
 }
 
+/** `GET /agent/state` → `operations[]` (existe en todo Tatana con `agent_state_v1`). */
+export interface AgentOperation {
+  kind: string;            // "recording_android" | "recording_ios" | "airplay_session" | "request" | …
+  since: string;           // ISO-8601
+  detail?: string | null;  // Tatana omite los null
+}
+
+/** Kinds de `operations[]` que indican una grabación en curso en la PC. */
+export const RECORDING_OPERATION_KINDS = ["recording_android", "recording_ios"] as const;
+
 export interface VideoVariant {
   label: string;
   filename: string;
@@ -694,6 +704,21 @@ export const agent = {
         recordings: hasRec ? r.recordings! : [],
         unclaimed_recordings: hasUnclaimed ? r.unclaimed_recordings! : [],
       };
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Operaciones en curso de Tatana (`GET /agent/state` → `operations`). `null`
+   * ante cualquier error o si la respuesta no trae `operations` (array). Timeout 3 s.
+   */
+  async agentOperations(): Promise<AgentOperation[] | null> {
+    try {
+      const res = await fetch(`${AGENT_URL}/agent/state`, { cache: "no-store", signal: AbortSignal.timeout(3000) });
+      if (!res.ok) return null;
+      const body = (await res.json()) as { operations?: unknown } | null;
+      return Array.isArray(body?.operations) ? (body.operations as AgentOperation[]) : null;
     } catch {
       return null;
     }

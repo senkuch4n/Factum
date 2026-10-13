@@ -20,6 +20,7 @@ import { CaseCard } from "./CaseCard";
 import { CaseGridCard } from "./CaseGridCard";
 import { StatusBadge } from "./StatusBadge";
 import { CaseDetailModal } from "./case-detail/CaseDetailModal";
+import { scrollIntoContainer } from "@/lib/scroll";
 
 /** Carátula del caso; los casos previos al informe pericial muestran el titular. */
 const caratulaOf = (c: Case) => c.caratula || c.nombre_denunciante;
@@ -157,8 +158,7 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
   // paginador queda abajo y, si no, el lector seguiría al final de la lista).
   function changePage(next: number) {
     setPage(next);
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    resultsRef.current?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+    if (resultsRef.current) scrollIntoContainer(resultsRef.current, { block: "start" });
     resultsRef.current?.focus({ preventScroll: true });
   }
 

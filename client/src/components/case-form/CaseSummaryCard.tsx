@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useCallback, useId, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "primereact/button";
 import { Tag } from "primereact/tag";
 import { AlertTriangle, CheckCircle2, ChevronDown, FileText, Hash, Maximize2, User } from "lucide-react";
@@ -75,11 +75,11 @@ function Flash({ keys, flash }: { keys: string[]; flash: FlashKey | null }) {
 }
 
 /** Fila con destello: el contenido va por encima del fondo animado. */
-function Row({ keys, flash, className, children }: { keys: string[]; flash: FlashKey | null; className?: string; children: React.ReactNode }) {
+function Row({ keys, flash, className, innerClassName, children }: { keys: string[]; flash: FlashKey | null; className?: string; innerClassName?: string; children: React.ReactNode }) {
   return (
     <div className={cn("relative isolate", className)}>
       <Flash keys={keys} flash={flash} />
-      <div className="relative">{children}</div>
+      <div className={cn("relative", innerClassName)}>{children}</div>
     </div>
   );
 }
@@ -103,6 +103,59 @@ export function CaseSummaryCard({
   const [specsOpen, setSpecsOpen] = useState(false);
   const specsId = useId();
   const caratulaId = useId();
+
+  // M3 (wizard-pulido-ux, D3 A): en la ficha lateral la carátula expandida es
+  // el único bloque que se encoge; si no entra, scrollea adentro. `overflowing`
+  // decide si el área es enfocable y si lleva el fundido inferior.
+  const caratulaScrolls = aside && caratulaOpen;
+  const caratulaRef = useRef<HTMLParagraphElement>(null);
+  const caratulaBlockRef = useRef<HTMLDivElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  const [atEnd, setAtEnd] = useState(true);
+  const updateScrollState = useCallback(() => {
+    const el = caratulaRef.current;
+    if (!el) return;
+    setOverflowing(el.scrollHeight > el.clientHeight + 1);
+    setAtEnd(el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
+  }, []);
+  /**
+   * Piso del bloque de la carátula: lo que miden sus filas con el texto en su
+   * mínimo (`min-height` del <p>). Sin esto, en pantallas bajas el bloque
+   * (`min-h-0`) se encogía por debajo de su contenido y el texto se dibujaba
+   * encima del índice. Con el piso, si no entra, la ficha se alarga hacia abajo
+   * en vez de superponer.
+   */
+  const measureCaratula = useCallback(() => {
+    const el = caratulaRef.current;
+    const block = caratulaBlockRef.current;
+    if (!el || !block) return;
+    const prevMin = block.style.minHeight;
+    block.style.minHeight = "";
+    const pMin = parseFloat(getComputedStyle(el).minHeight) || 0;
+    const floor = Math.ceil(block.scrollHeight - el.offsetHeight + pMin);
+    const next = `${floor}px`;
+    block.style.minHeight = next;
+    if (prevMin !== next) {
+      // El piso cambió el layout: el estado de scroll se lee en el próximo frame.
+      requestAnimationFrame(updateScrollState);
+    }
+    updateScrollState();
+  }, [updateScrollState]);
+  useLayoutEffect(() => {
+    const block = caratulaBlockRef.current;
+    if (!caratulaScrolls) {
+      if (block) block.style.minHeight = "";
+      setOverflowing(false);
+      setAtEnd(true);
+      return;
+    }
+    const el = caratulaRef.current;
+    if (!el || !block) return;
+    measureCaratula();
+    const ro = new ResizeObserver(() => measureCaratula());
+    ro.observe(el);
+    return () => { ro.disconnect(); block.style.minHeight = ""; };
+  }, [caratulaScrolls, measureCaratula, form.caratula]);
 
   const nro = form.nro_referencia.trim();
   const tipo = form.tipo_causa.trim();
@@ -137,11 +190,17 @@ export function CaseSummaryCard({
       )}
     >
       {/* 1. Equipo: el teléfono es el protagonista de la ficha. */}
-      <div className={cn(aside && "flex min-h-0 flex-1 flex-col")}>
+      {/* En `aside` el wrapper es `contents`: escenario y metadatos son hijos
+          directos de la columna, así el escenario (flex-1, mínimo 9rem) es lo
+          único que cede alto y nada se superpone (DT16). Mismo orden de DOM. */}
+      <div className={cn(aside && "contents")}>
         <div
           className={cn(
             "relative isolate flex justify-center overflow-hidden rounded-fx-lg bg-[radial-gradient(ellipse_closest-side_at_50%_48%,var(--fx-surface-3)_0%,transparent_100%)] pb-2 pt-4",
-            aside && "min-h-[9rem] max-h-[25rem] flex-1",
+            // < 800 px de alto el teléfono cede hasta 6rem: con la navbar fuera del
+            // scroll (M4) la ficha tiene 72 px menos y, con 9rem, el índice quedaba
+            // recortado abajo (y, con la carátula abierta, superpuesto). M3.
+            aside && "min-h-[9rem] max-h-[25rem] flex-1 [@media(max-height:799px)]:min-h-[6rem]",
           )}
         >
           {/* Sombra de apoyo, decorativa. */}
@@ -158,7 +217,8 @@ export function CaseSummaryCard({
           />
         </div>
 
-        <div className="mt-3 flex shrink-0 items-start gap-2">
+        <div className={cn(aside && "-mt-1 shrink-0")}>
+        <div className={cn("flex shrink-0 items-start gap-2", !aside && "mt-3")}>
           <img src={isIOS ? "/apple.svg" : "/android.svg"} alt="" width={14} height={14} className="mt-0.5 h-3.5 w-3.5 shrink-0 dark:invert" />
           <div className="min-w-0 flex-1">
             <p className="m-0 truncate font-medium text-fx-text" title={model}>{model}</p>
@@ -213,10 +273,17 @@ export function CaseSummaryCard({
             {imeiManual && <ImeiMissingNotice className={SHORT_COMPACT} />}
           </div>
         )}
+        </div>
       </div>
 
       {/* 2. Carátula: expediente, tipo, fecha y carátula, como en el informe. */}
-      <div className="shrink-0 space-y-2.5 border-t border-fx-border pt-4">
+      <div
+        ref={caratulaBlockRef}
+        className={cn(
+          "border-t border-fx-border pt-4",
+          caratulaScrolls ? "flex min-h-0 shrink flex-col gap-2.5" : "shrink-0 space-y-2.5",
+        )}
+      >
         <Row keys={["nro_referencia", "tipo_causa"]} flash={flashKey}>
           <Caption>Expediente</Caption>
           <div className="mt-0.5 flex items-baseline gap-2">
@@ -238,8 +305,29 @@ export function CaseSummaryCard({
             )}
           </p>
         </Row>
-        <Row keys={["caratula"]} flash={flashKey}>
-          <p id={caratulaId} className={cn("m-0 whitespace-pre-line break-words text-fx-text", !caratulaOpen && "line-clamp-3 [@media(max-height:719px)]:line-clamp-2")}>
+        <Row
+          keys={["caratula"]}
+          flash={flashKey}
+          className={caratulaScrolls ? "flex min-h-0 flex-col" : undefined}
+          innerClassName={caratulaScrolls ? "flex min-h-0 flex-col" : undefined}
+        >
+          <p
+            id={caratulaId}
+            ref={caratulaRef}
+            onScroll={caratulaScrolls ? updateScrollState : undefined}
+            // Solo si desborda: área con scroll propio enfocable (teclado) y con nombre.
+            tabIndex={caratulaScrolls && overflowing ? 0 : undefined}
+            role={caratulaScrolls && overflowing ? "region" : undefined}
+            aria-label={caratulaScrolls && overflowing ? "Carátula completa" : undefined}
+            className={cn(
+              "m-0 whitespace-pre-line break-words text-fx-text",
+              !caratulaOpen && "line-clamp-3 [@media(max-height:719px)]:line-clamp-2",
+              caratulaScrolls &&
+                "min-h-[4.5em] [@media(max-height:719px)]:min-h-[3em] overflow-y-auto overscroll-contain rounded-fx-sm motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]",
+              caratulaScrolls && overflowing && "fx-focus-ring pr-1",
+              caratulaScrolls && overflowing && !atEnd && "[mask-image:linear-gradient(to_bottom,black_calc(100%-1.25rem),transparent)]",
+            )}
+          >
             {caratula || <Empty>La carátula aparece acá a medida que la escribís.</Empty>}
           </p>
           {caratula.length > CARATULA_CLAMP && (
@@ -248,7 +336,7 @@ export function CaseSummaryCard({
               onClick={() => setCaratulaOpen(o => !o)}
               aria-expanded={caratulaOpen}
               aria-controls={caratulaId}
-              className="mt-0.5 cursor-pointer rounded-fx-sm border-0 bg-transparent p-0 text-xs font-medium text-fx-accent-text underline-offset-2 hover:underline fx-focus-ring"
+              className="mt-0.5 shrink-0 self-start cursor-pointer rounded-fx-sm border-0 bg-transparent p-0 text-xs font-medium text-fx-accent-text underline-offset-2 hover:underline fx-focus-ring"
             >
               {caratulaOpen ? "Ver menos" : "Ver todo"}
             </button>

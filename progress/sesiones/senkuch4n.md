@@ -211,3 +211,10 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-13 — Usuario pide: cuando estén #63 y #64, promover develop→main si es viable.
 - 2026-10-13 — #63 review APROBADA. Backend reiniciado en la rama.
 - 2026-10-13 — #63 OK del usuario. Commit + PR + merge.
+- 2026-10-13 — #63 mergeada (PR #70). Tomada #64, rama feat/wizard-pulido-ux → implementando (backend ZipFilenameFor + client).
+- 2026-10-13 — #64 implementer-backend done -> progress/impl_backend_wizard-pulido-ux.md. Esperando frontend. Pregunta del usuario: qué pasa si un perito no actualiza Tatana → hoy nada cambió en prod; lanzado análisis de compatibilidad web nueva vs Tatana 1.4.0 antes de promover.
+- 2026-10-13 — Compatibilidad web develop vs Tatana 1.4.0: sin rotos; degradado grave iOS en Windows (import 409 file_busy mientras 1.4.0 corre MCI; reintentable, sin pérdida). Recomendación: release Tatana 1.5.0 junto con la promoción. -> docs/qa/2026-10-13/compat-web-develop-tatana-1.4.0.md
+- 2026-10-13 — #64 implementer-frontend done (tsc OK). Pedido ajuste: chip tapa 'Métricas' a 390 px; F13 rangos si se puede; DT9 signo invertido en SDD (implementación correcta).
+- 2026-10-13 — #64 ajustes del orquestador hechos. en_revision; lanzado reviewer.
+- 2026-10-13 — #64 review APROBADA. Backend reiniciado en la rama para la prueba manual.
+- 2026-10-13 — #64 OK del usuario. Commit + PR + merge. Sigue QA final de develop antes de promover.
