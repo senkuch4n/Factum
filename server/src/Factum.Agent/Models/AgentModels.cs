@@ -49,6 +49,23 @@ public sealed class AgentOptions
     /// </summary>
     public string? MockIosRecordingSource { get; set; }
 
+    // ── grabacion-android-robusta (§5.1) ─────────────────────────────────────
+
+    /// <summary>Grabación de Android con scrcpy (arranque, cierre y validación). Ver <see cref="RecordingOptions"/>.</summary>
+    public RecordingOptions Recording { get; set; } = new();
+
+    /// <summary>
+    /// Solo con <see cref="Mock"/> = true: video que se copia como "grabación" Android al detener. No va en
+    /// appsettings.json: variable de entorno, CLI o appsettings.Local.json.
+    /// </summary>
+    public string? MockAndroidRecordingSource { get; set; }
+
+    /// <summary>
+    /// Solo con <see cref="Mock"/> = true: fuerza el resultado de la validación para probar la UI:
+    /// <c>"ok"</c> | <c>"incomplete"</c> | <c>"empty"</c> | <c>"unreadable"</c>. Solo por env/CLI/appsettings.Local.json.
+    /// </summary>
+    public string? MockAndroidRecordingOutcome { get; set; }
+
     /// <summary>Ruta absoluta de la carpeta base del ZIP (config o default por SO).</summary>
     public string ResolveEvidenceDirectory() =>
         ResolveEvidenceDirectory(EvidenceDirectory, DataDirectory, OperatingSystem.IsWindows(),
@@ -166,6 +183,83 @@ public sealed class VideoPostprocessOptions
 
     /// <summary>Copia (Normalize no toca las opciones compartidas de IOptions).</summary>
     public VideoPostprocessOptions Clone() => (VideoPostprocessOptions)MemberwiseClone();
+}
+
+/// <summary>
+/// Config <c>Agent:Recording:*</c> (grabacion-android-robusta §5.1). Un valor inválido no impide arrancar:
+/// <see cref="Normalize"/> loguea un warning y vuelve al default de ese campo.
+/// </summary>
+public sealed class RecordingOptions
+{
+    public const int DefaultStartTimeoutSeconds = 20;
+    public const int DefaultStopTimeoutSeconds = 30;
+    public const int DefaultSigtermAfterSeconds = 3;
+    public const double DefaultToleranceMinSeconds = 3;
+    public const double DefaultTolerancePercent = 2;
+    public const string WindowModeNoWindow = "no_window";
+    public const string WindowModeNoVideoPlayback = "no_video_playback";
+
+    /// <summary>Tiempo máximo para ver el marcador de inicio de scrcpy.</summary>
+    public int StartTimeoutSeconds { get; set; } = DefaultStartTimeoutSeconds;
+    /// <summary>false = criterio viejo: vivo a los 1,5 s = grabando (inicio = lanzamiento + 1 s). Salida de emergencia.</summary>
+    public bool RequireStartMarker { get; set; } = true;
+    /// <summary>Espera total desde la señal hasta el kill (Duda 2 A).</summary>
+    public int StopTimeoutSeconds { get; set; } = DefaultStopTimeoutSeconds;
+    /// <summary>Solo macOS/Linux: SIGTERM si scrcpy sigue vivo este tiempo después de la SIGINT. 0 = sin escalado.</summary>
+    public int SigtermAfterSeconds { get; set; } = DefaultSigtermAfterSeconds;
+    /// <summary>Agrega <c>--stay-awake</c>.</summary>
+    public bool StayAwake { get; set; } = true;
+    /// <summary><c>"no_window"</c> → <c>--no-window</c>; <c>"no_video_playback"</c> → <c>--no-video-playback</c> (lo anterior).</summary>
+    public string WindowMode { get; set; } = WindowModeNoWindow;
+    /// <summary>Tolerancia = max(min, grabado × porcentaje / 100) (Duda 3 A).</summary>
+    public double ToleranceMinSeconds { get; set; } = DefaultToleranceMinSeconds;
+    public double TolerancePercent { get; set; } = DefaultTolerancePercent;
+
+    /// <summary>Corrige, campo por campo, los valores inválidos al default (con un warning). Devuelve this.</summary>
+    public RecordingOptions Normalize(ILogger? log)
+    {
+        void Warn(string field, object? value, object fallback) =>
+            log?.LogWarning("Agent:Recording:{Field} inválido ({Value}); se usa {Default}", field, value, fallback);
+
+        if (StartTimeoutSeconds <= 0)
+        {
+            Warn(nameof(StartTimeoutSeconds), StartTimeoutSeconds, DefaultStartTimeoutSeconds);
+            StartTimeoutSeconds = DefaultStartTimeoutSeconds;
+        }
+        if (StopTimeoutSeconds <= 0)
+        {
+            Warn(nameof(StopTimeoutSeconds), StopTimeoutSeconds, DefaultStopTimeoutSeconds);
+            StopTimeoutSeconds = DefaultStopTimeoutSeconds;
+        }
+        if (SigtermAfterSeconds < 0 || SigtermAfterSeconds >= StopTimeoutSeconds)
+        {
+            // Con el default de StopTimeoutSeconds (30) el default de SigtermAfterSeconds (3) siempre entra.
+            var fallback = DefaultSigtermAfterSeconds < StopTimeoutSeconds ? DefaultSigtermAfterSeconds : 0;
+            Warn(nameof(SigtermAfterSeconds), SigtermAfterSeconds, fallback);
+            SigtermAfterSeconds = fallback;
+        }
+        if (!(ToleranceMinSeconds > 0) || double.IsInfinity(ToleranceMinSeconds))
+        {
+            Warn(nameof(ToleranceMinSeconds), ToleranceMinSeconds, DefaultToleranceMinSeconds);
+            ToleranceMinSeconds = DefaultToleranceMinSeconds;
+        }
+        if (double.IsNaN(TolerancePercent) || TolerancePercent < 0 || TolerancePercent > 50)
+        {
+            Warn(nameof(TolerancePercent), TolerancePercent, DefaultTolerancePercent);
+            TolerancePercent = DefaultTolerancePercent;
+        }
+        var mode = WindowMode?.Trim().ToLowerInvariant();
+        if (mode is not (WindowModeNoWindow or WindowModeNoVideoPlayback))
+        {
+            Warn(nameof(WindowMode), WindowMode, WindowModeNoWindow);
+            mode = WindowModeNoWindow;
+        }
+        WindowMode = mode;
+        return this;
+    }
+
+    /// <summary>Copia (Normalize no toca las opciones compartidas de IOptions).</summary>
+    public RecordingOptions Clone() => (RecordingOptions)MemberwiseClone();
 }
 
 public sealed class Device

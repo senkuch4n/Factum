@@ -15,7 +15,8 @@ namespace Factum.Agent.Controllers;
 [ApiController]
 [Route("agent")]
 public sealed class AgentStateController(OperationTracker tracker, LocalConfigStatus localConfig,
-    IOptions<AgentOptions> opts, IVideoPostprocessService post) : ControllerBase
+    IOptions<AgentOptions> opts, IVideoPostprocessService post, IEnumerable<IRecordingStateSource> recordingSources,
+    RecordingRegistry registry) : ControllerBase
 {
     public const int DefaultTtlSeconds = 120;
     public const int MinTtlSeconds = 10;
@@ -38,7 +39,22 @@ public sealed class AgentStateController(OperationTracker tracker, LocalConfigSt
             ops.Select(AgentOperationDto.From).ToList(),
             background,
             new LocalConfigDto(localConfig.Path, localConfig.Exists, localConfig.Loaded,
-                localConfig.OverridesAllowedOrigins, localConfig.Error)));
+                localConfig.OverridesAllowedOrigins, localConfig.Error),
+            // grabacion-android-robusta §6.5: siempre presentes (pueden ser []).
+            ActiveRecordings(),
+            registry.Unclaimed()));
+    }
+
+    // Una fuente que falla no tumba /agent/state (mismo criterio que OperationTracker.Snapshot).
+    private List<RecordingStateDto> ActiveRecordings()
+    {
+        var list = new List<RecordingStateDto>();
+        foreach (var s in recordingSources)
+        {
+            try { list.AddRange(s.ActiveRecordings); }
+            catch { /* sin datos de esa fuente */ }
+        }
+        return list;
     }
 
     // El body es opcional (un `curl -X POST` pelado tiene que andar): se lee a mano en vez de
@@ -119,4 +135,5 @@ public sealed record LocalConfigDto(string Path, bool Exists, bool Loaded, bool 
 
 public sealed record AgentStateResponse(string Version, string Mode, bool Busy, bool Maintenance,
     IReadOnlyList<AgentOperationDto> Operations, IReadOnlyList<AgentOperationDto> BackgroundOperations,
-    LocalConfigDto LocalConfig);
+    LocalConfigDto LocalConfig, IReadOnlyList<RecordingStateDto> Recordings,
+    IReadOnlyList<UnclaimedRecordingDto> UnclaimedRecordings);

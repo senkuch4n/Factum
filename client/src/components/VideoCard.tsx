@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { Button } from "primereact/button";
 import { SelectButton } from "primereact/selectbutton";
-import { Info, Loader2, Play, Trash2 } from "lucide-react";
-import type { VideoVariant, VideoVariantStatus } from "@/lib/agent";
+import { AlertTriangle, Info, Loader2, Play, Trash2 } from "lucide-react";
+import type { RecordingValidation, VideoVariant, VideoVariantStatus } from "@/lib/agent";
+import { formatElapsed } from "./capture/ElapsedTime";
 import { agentFileURL } from "@/lib/agent";
 import { MEDIA_SURFACE } from "./capture/media";
 import type { CapturedFile } from "@/types";
@@ -51,7 +52,7 @@ function variantNote(s: VideoVariantStatus): string | null {
 
 /** Reproductor de una grabación del agente con sus versiones (original + variantes). */
 export function VideoCard({
-  file, variants, variantStatus = NO_STATUS, storedInCase = false, onRemove, removeDisabled, originalURL,
+  file, variants, variantStatus = NO_STATUS, storedInCase = false, onRemove, removeDisabled, originalURL, validation,
 }: {
   file: CapturedFile;
   /**
@@ -71,6 +72,12 @@ export function VideoCard({
   onRemove: () => void;
   /** Durante el envío de evidencia no se puede quitar. */
   removeDisabled?: boolean;
+  /**
+   * Validación de Tatana (grabacion-android-robusta §7.8). `ok` muestra la
+   * duración; `incomplete`, un aviso no bloqueante. Sin ella (iOS, Tatana viejo
+   * o recarga sin `sessionStorage`), como antes.
+   */
+  validation?: RecordingValidation;
 }) {
   const [activeTab, setActiveTab] = useState("original");
 
@@ -88,6 +95,8 @@ export function VideoCard({
   const inProgressName = inProgress ? variantDisplayName(inProgress.label) : "";
   const hasIndicator = !!inProgress || notes.length > 0;
   const showTabs = allTabs.length > 1 || hasIndicator;
+  const duration = typeof validation?.duration_seconds === "number" ? validation.duration_seconds : null;
+  const incomplete = validation?.status === "incomplete";
 
   return (
     <div className="overflow-hidden rounded-fx-lg border border-fx-border">
@@ -158,11 +167,25 @@ export function VideoCard({
             </p>
           ))}
         </div>
+        {incomplete && (
+          <p role="status" className="m-0 flex items-start gap-2 rounded-fx-md border border-fx-warning bg-fx-warning-soft px-2.5 py-2 text-xs font-medium text-fx-text">
+            <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0 text-fx-warning" aria-hidden="true" />
+            <span>
+              Grabación incompleta: dura {duration !== null ? formatElapsed(duration) : "menos"} de{" "}
+              {formatElapsed(validation.recorded_seconds)} grabados. Se guardó lo que se pudo capturar.
+            </span>
+          </p>
+        )}
         <div className="flex items-center gap-2">
           <Play className="h-3.5 w-3.5 shrink-0 text-fx-text-3" aria-hidden="true" />
-          <span translate="no" className="flex-1 truncate font-mono text-xs text-fx-text-2" title={file.name}>
+          <span translate="no" className="min-w-0 flex-1 truncate font-mono text-xs text-fx-text-2" title={file.name}>
             {file.name}
           </span>
+          {validation?.status === "ok" && duration !== null && (
+            <span className="shrink-0 text-xs tabular-nums text-fx-text-2" title="Duración verificada por Tatana">
+              <span className="sr-only">Duración: </span>{formatElapsed(duration)}
+            </span>
+          )}
           <Button
             type="button"
             text

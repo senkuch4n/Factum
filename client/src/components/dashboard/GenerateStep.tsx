@@ -35,6 +35,11 @@ interface Props {
   agentBlocker?: string | null;
   /** Progreso de la generación en dos tramos (solo flujo agent). */
   progress?: GenerateProgress | null;
+  /**
+   * Avisos para revisar antes de generar (grabacion-android-robusta §7.10).
+   * Informativos: no bloquean ni cambian `blocked`.
+   */
+  reviewNotices?: { incompleteRecordings: string[]; blackScreenshots: string[] };
 }
 
 /** Tramo actual de la generación del flujo agent y, en el primero, el avance del ZIP (WS). */
@@ -152,7 +157,7 @@ function EvidenceGroup({
 
 export function GenerateStep({
   currentCase, files, loading, serverMissing = [], onBack, onGenerate, onGoToField,
-  agentBlocker = null, progress = null,
+  agentBlocker = null, progress = null, reviewNotices,
 }: Props) {
   // Solo se promete cifrado si el backend lo tiene activo (`encrypt_zip`).
   const { encryptZip } = usePublicConfig();
@@ -329,6 +334,9 @@ export function GenerateStep({
         )}
       </section>
 
+      {/* ── Revisá antes de generar: grabaciones incompletas y capturas negras (no bloquea) ── */}
+      {reviewNotices && <ReviewNotices {...reviewNotices} />}
+
       {/* ── Progreso en dos tramos (flujo agent) ── */}
       {agentMode && loading && progress && <GenerateStages progress={progress} />}
 
@@ -436,5 +444,35 @@ function GenerateStages({ progress }: { progress: GenerateProgress }) {
         })}
       </ol>
     </section>
+  );
+}
+
+/** "1 grabación incompleta, 2 capturas negras" (singular y plural). */
+export function reviewNoticesSummary(incomplete: number, black: number): string {
+  const parts: string[] = [];
+  if (incomplete > 0) parts.push(`${incomplete} ${incomplete === 1 ? "grabación incompleta" : "grabaciones incompletas"}`);
+  if (black > 0) parts.push(`${black} ${black === 1 ? "captura negra" : "capturas negras"}`);
+  return parts.join(", ");
+}
+
+/** Bloque informativo antes de "Generar informe pericial". No bloquea (Duda 7 A). */
+function ReviewNotices({ incompleteRecordings, blackScreenshots }: { incompleteRecordings: string[]; blackScreenshots: string[] }) {
+  if (incompleteRecordings.length === 0 && blackScreenshots.length === 0) return null;
+  const names = [...incompleteRecordings, ...blackScreenshots];
+  return (
+    <div
+      role="status"
+      className="rounded-fx-lg border border-fx-warning bg-fx-warning-soft px-4 py-3 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]"
+    >
+      <p className="m-0 flex items-start gap-2 text-fx-body-sm font-semibold text-fx-text">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-fx-warning" aria-hidden="true" />
+        Revisá antes de generar: {reviewNoticesSummary(incompleteRecordings.length, blackScreenshots.length)}
+      </p>
+      <ul className="m-0 mt-1.5 list-none space-y-0.5 pl-6">
+        {names.map(n => (
+          <li key={n} translate="no" className="truncate font-mono text-xs text-fx-text-2" title={n}>{n}</li>
+        ))}
+      </ul>
+    </div>
   );
 }

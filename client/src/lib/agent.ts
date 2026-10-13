@@ -74,10 +74,76 @@ export interface VideoVariantStatus {
   updated_at: string;
 }
 
-export interface RecordingStoppedData {
+/* ── grabacion-android-robusta (SDD §7.1): validación y estado observable de la grabación ── */
+
+export type RecordingValidationStatus = "ok" | "incomplete" | "empty" | "unreadable";
+
+/** `validation` de stop, `recording_stopped`, `unclaimed_recordings[]` y del error 422 (solo Android). */
+export interface RecordingValidation {
+  status: RecordingValidationStatus;
+  recorded_seconds: number;
+  duration_seconds?: number | null;
+  duration_checked: boolean;
+  forced_stop: boolean;
+  started_at: string;
+  stopped_at: string;
+}
+
+export type IosRecordMode = "video_only" | "with_mic" | "on_device" | "airplay";
+export type RecordingPhase = "starting" | "recording" | "stopping";
+
+/** `GET /agent/state` → `recordings[]` (HTTP: los null se omiten). */
+export interface RecordingStateEntry {
+  platform: "android" | "ios";
+  serial: string;
+  state: RecordingPhase;
+  requested_at: string;
+  started_at?: string | null;
+  filename?: string | null;
+  case_id?: string | null;
+  android_with_mic?: boolean | null;
+  ios_mode?: IosRecordMode | null;
+}
+
+/** `GET /agent/state` → `unclaimed_recordings[]`: detenidas (ok/incomplete) que nadie importó. */
+export interface UnclaimedRecording {
+  platform: "android" | "ios";
+  serial: string;
   filename: string;
-  url: string;
+  case_id?: string | null;
+  stopped_at: string;
+  validation?: RecordingValidation | null;
+}
+
+export interface AgentRecordingState {
+  recordings: RecordingStateEntry[];
+  unclaimed_recordings: UnclaimedRecording[];
+}
+
+/** Evento WS `recording_started` (`data`). `case_id` puede venir `null`. */
+export interface RecordingStartedData {
+  serial: string;
+  platform: "android" | "ios";
+  case_id?: string | null;
+  started_at?: string;
+  filename?: string;
+}
+
+/**
+ * Respuesta de `POST /record/stop` (200) y evento WS `recording_stopped`.
+ * En la falla `recording_empty`/`recording_unreadable` del WS: `filename`/`url`
+ * en `null`, con `error` y `code`.
+ */
+export interface RecordingStoppedData {
+  filename: string | null;
+  url: string | null;
   platform?: "android" | "ios";
+  serial?: string;
+  case_id?: string | null;
+  /** Solo Android con Tatana `recording_state_v1`; iOS: `null`/ausente. */
+  validation?: RecordingValidation | null;
+  error?: string | null;
+  code?: AgentErrorCode | null;
   /** Falta en un Tatana anterior a video_postprocess_v1. */
   variants_expected?: boolean;
   variants?: string[];
@@ -137,7 +203,9 @@ export type IosDeveloperModeStatus = "enabled" | "restarting" | "manual_required
  *   como anterior a cualquier mínimo (tatana-instalador-autoupdate, D-T2);
  * - `agent_state_v1`: `GET /agent/state` y modo mantenimiento (D5);
  * - `video_postprocess_v1`: variantes de video en segundo plano, `video_variant_status`
- *   y `GET /video-postprocess/status` (ios-grabacion-larga).
+ *   y `GET /video-postprocess/status` (ios-grabacion-larga);
+ * - `recording_state_v1`: `recordings`/`unclaimed_recordings` en `GET /agent/state`,
+ *   `case_id` en el start y validación de la grabación (grabacion-android-robusta).
  */
 export interface AgentHealth {
   status: string;
@@ -230,7 +298,10 @@ export type AgentErrorCode =
   // iPhone (ios-herramientas-windows §4.1): el `error` que acompaña ya viene en castellano.
   | "ios_apple_service_missing" | "ios_device_not_found" | "ios_not_trusted" | "ios_locked"
   | "ios_developer_mode_disabled" | "ios_ddi_mount_failed" | "ios_tunnel_failed" | "ios_admin_required"
-  | "ios_tools_missing" | "ios_capture_failed" | "ios_recording_empty" | "airplay_unavailable";
+  | "ios_tools_missing" | "ios_capture_failed" | "ios_recording_empty" | "airplay_unavailable"
+  // Grabación (grabacion-android-robusta §6): start/stop y evidencia de 0 B.
+  | "already_recording" | "recording_start_timeout" | "not_recording" | "recording_empty"
+  | "recording_unreadable" | "empty_evidence";
 
 /** Cuerpo de error de Tatana (claves literales en snake_case). */
 export interface AgentErrorBody {
@@ -242,6 +313,8 @@ export interface AgentErrorBody {
   available_bytes?: number | null;
   received_bytes?: number;
   files?: { filename: string; reason: "missing" | "size" | "hash" }[];
+  /** 422 `recording_empty`/`recording_unreadable` del stop. */
+  validation?: RecordingValidation;
 }
 
 /**
@@ -355,6 +428,9 @@ export interface PulledFile {
   error?: string;
 }
 
+/** Capabilities de `/health` de la conexión actual (ver `supportsRecordingState`). */
+let capabilitiesCache: string[] | null = null;
+
 export const agent = {
   baseURL: AGENT_URL,
 
@@ -450,44 +526,78 @@ export const agent = {
     return res.json();
   },
 
+  /**
+   * Inicia la grabación. Con `recording_state_v1` vuelve recién cuando el celular
+   * empezó a capturar (`started_at` = inicio real). Errores: `AgentError`
+   * (`already_recording` 409, `recording_start_timeout` 504, `invalid_case_id` 400…).
+   */
   async startRecording(
     serial: string,
     androidVersion: number,
     platform: "android" | "ios" = "android",
-    iosMode?: "video_only" | "with_mic" | "on_device" | "airplay",
+    iosMode?: IosRecordMode,
     androidWithMic?: boolean,
-  ): Promise<{ filename: string }> {
-    let res: Response;
-    try {
-      res = await fetch(`${AGENT_URL}/devices/${serial}/record/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          android_version: androidVersion, platform, ios_mode: iosMode,
-          android_with_mic: androidWithMic,
-        }),
-      });
-    } catch {
-      throw new Error(AGENT_UNREACHABLE);
-    }
-    if (!res.ok) throw await readAgentError(res, "Error iniciando grabación");
-    return res.json();
+    caseId?: string | null,
+  ): Promise<{ filename?: string; state?: string; started_at?: string; case_id?: string }> {
+    return agentJSON(`/devices/${encodeURIComponent(serial)}/record/start`, jsonInit("POST", {
+      android_version: androidVersion, platform, ios_mode: iosMode,
+      android_with_mic: androidWithMic,
+      ...(caseId ? { case_id: caseId } : {}),
+    }));
   },
 
-  /** `variants_expected`/`variants` faltan en un Tatana anterior a `video_postprocess_v1`. */
+  /**
+   * Detiene la grabación. `variants_expected`/`variants` faltan en un Tatana
+   * anterior a `video_postprocess_v1`; `validation`, en uno anterior a
+   * `recording_state_v1` y en iOS. No-2xx: `AgentError` con `code` y `body.validation`.
+   */
   async stopRecording(
     serial: string,
     platform: "android" | "ios" = "android",
-  ): Promise<{ filename: string; url: string; variants_expected?: boolean; variants?: string[] }> {
-    const url = `${AGENT_URL}/devices/${serial}/record/stop${platform === "ios" ? "?platform=ios" : ""}`;
-    let res: Response;
+  ): Promise<RecordingStoppedData> {
+    const q = platform === "ios" ? "?platform=ios" : "";
+    return agentJSON<RecordingStoppedData>(`/devices/${encodeURIComponent(serial)}/record/stop${q}`, { method: "POST" });
+  },
+
+  /**
+   * Grabaciones en curso y detenidas sin importar (`GET /agent/state`). `null`
+   * ante cualquier error o si Tatana no manda ninguno de los dos campos (viejo).
+   */
+  async agentState(): Promise<AgentRecordingState | null> {
     try {
-      res = await fetch(url, { method: "POST" });
+      const r = await agentJSON<Partial<AgentRecordingState>>("/agent/state", { signal: AbortSignal.timeout(3000) });
+      if (!r || typeof r !== "object") return null;
+      const hasRec = Array.isArray(r.recordings);
+      const hasUnclaimed = Array.isArray(r.unclaimed_recordings);
+      if (!hasRec && !hasUnclaimed) return null;
+      return {
+        recordings: hasRec ? r.recordings! : [],
+        unclaimed_recordings: hasUnclaimed ? r.unclaimed_recordings! : [],
+      };
     } catch {
-      throw new Error(AGENT_UNREACHABLE);
+      return null;
     }
-    if (!res.ok) throw await readAgentError(res, "Error deteniendo grabación");
-    return res.json();
+  },
+
+  /**
+   * `true` si Tatana expone el estado de grabación (`recording_state_v1`). Se
+   * cachea por conexión: `resetCapabilities()` lo invalida (en `onConnected`).
+   * Un error de red no se cachea.
+   */
+  async supportsRecordingState(): Promise<boolean> {
+    if (capabilitiesCache) return capabilitiesCache.includes("recording_state_v1");
+    try {
+      const h = await this.health();
+      capabilitiesCache = Array.isArray(h.capabilities) ? h.capabilities : [];
+      return capabilitiesCache.includes("recording_state_v1");
+    } catch {
+      return false;
+    }
+  },
+
+  /** Olvida las capabilities cacheadas (Tatana reconectado: puede ser otra versión). */
+  resetCapabilities(): void {
+    capabilitiesCache = null;
   },
 
   async captureWebcam(type: "funcionario" | "denunciante"): Promise<{ filename: string; url: string }> {

@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, Check, CheckCircle2, HardDrive, Loader2, Trash2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, Check, CheckCircle2, HardDrive, Loader2, Trash2 } from "lucide-react";
 import type { CaptureRoleValue } from "@/lib/api";
 import { CAPTURE_ROLE_LABELS } from "@/lib/pericial";
 import { FOCUS_RING } from "@/lib/prime/pt/shared";
@@ -77,10 +77,19 @@ function UploadStateIcon({ state, hash, className }: { state?: TrayUploadState; 
  * `<button>` dentro de `<button>`). El check en la esquina refuerza la
  * selección para quien no distingue colores.
  */
+/** Aviso no bloqueante de un ítem (grabacion-android-robusta §7.9). */
+export type TrayNotice = "incomplete" | "black";
+
+const NOTICE_TEXT: Record<TrayNotice, string> = {
+  incomplete: "grabación incompleta",
+  black: "captura negra",
+};
+
 export function EvidenceTrayTile({
-  item, active, index, total, role, uploadState, removeDisabled, onSelect, onRemove,
+  item, active, index, total, role, notice, uploadState, removeDisabled, onSelect, onRemove,
 }: {
   item: GItem; active: boolean; index: number; total: number; role?: CaptureRoleValue;
+  notice?: TrayNotice;
   uploadState?: TrayUploadState; removeDisabled?: boolean;
   onSelect: () => void; onRemove: () => void;
 }) {
@@ -93,7 +102,7 @@ export function EvidenceTrayTile({
         type="button"
         onClick={onSelect}
         aria-pressed={active}
-        aria-label={`Ver ${meta.label.toLowerCase()} ${index + 1} de ${total} — ${item.name}${role ? ` — marcada como ${CAPTURE_ROLE_LABELS[role]}` : ""}${uploadSuffix(uploadState)}`}
+        aria-label={`Ver ${meta.label.toLowerCase()} ${index + 1} de ${total} — ${item.name}${role ? ` — marcada como ${CAPTURE_ROLE_LABELS[role]}` : ""}${notice ? ` — ${NOTICE_TEXT[notice]}` : ""}${uploadSuffix(uploadState)}`}
         className={cn(
           "block h-[76px] w-[76px] overflow-hidden rounded-fx-lg border-2 bg-fx-surface-2 transition-colors duration-fx-fast ease-fx",
           FOCUS_RING,
@@ -128,6 +137,21 @@ export function EvidenceTrayTile({
           hash={item.remoteFile?.sha256}
           className="pointer-events-none absolute left-1 top-1 h-5 w-5 bg-fx-surface-1 ring-1 ring-fx-border"
         />
+      )}
+
+      {/* Aviso (ícono + texto en el aria-label, nunca solo color). Abajo a la derecha:
+          no tapa el check de seleccionado (abajo a la izquierda) ni la marca de rol. */}
+      {notice && (
+        <span
+          aria-hidden="true"
+          title={NOTICE_TEXT[notice][0].toUpperCase() + NOTICE_TEXT[notice].slice(1)}
+          className={cn(
+            "pointer-events-none absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full",
+            "bg-fx-warning-soft text-fx-warning ring-2 ring-fx-surface-1",
+          )}
+        >
+          <AlertTriangle className="h-3 w-3" strokeWidth={2.5} aria-hidden="true" />
+        </span>
       )}
 
       {active && (

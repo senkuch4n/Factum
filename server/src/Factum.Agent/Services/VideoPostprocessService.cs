@@ -740,17 +740,7 @@ public sealed partial class VideoPostprocessService : IVideoPostprocessService, 
         maxSeconds > 0 && durationSeconds is double d && d > maxSeconds;
 
     /// <summary><c>Duration: HH:MM:SS.ss</c> del stderr de <c>ffmpeg -i</c>, en segundos; null si no está.</summary>
-    internal static double? ParseFfmpegDuration(string? stderr)
-    {
-        if (string.IsNullOrEmpty(stderr)) return null;
-        var m = DurationRegex().Match(stderr);
-        if (!m.Success) return null;
-        var h = int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
-        var min = int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture);
-        var s = double.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture);
-        var total = h * 3600 + min * 60 + s;
-        return total > 0 ? total : null;
-    }
+    internal static double? ParseFfmpegDuration(string? stderr) => FfmpegProbe.ParseDuration(stderr);
 
     /// <summary>
     /// Línea de <c>-progress</c> de ffmpeg (<c>out_time_us=</c> u <c>out_time_ms=</c>, ambos en µs) →
@@ -782,9 +772,6 @@ public sealed partial class VideoPostprocessService : IVideoPostprocessService, 
         message = message.Trim();
         return message.Length <= MaxMessageLength ? message : message[..MaxMessageLength];
     }
-
-    [GeneratedRegex(@"Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")]
-    private static partial Regex DurationRegex();
 
     [GeneratedRegex(@"^grabacion_ios_.+\.mp4$", RegexOptions.IgnoreCase)]
     private static partial Regex RecordingNameRegex();

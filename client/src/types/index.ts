@@ -17,6 +17,8 @@ export type {
 export type { Device, AgentEvent, AgentFile, VideoVariant, AgentInfo } from "@/lib/agent";
 export type {
   VideoVariantStatus, VideoVariantState, VideoVariantReason, RecordingStoppedData,
+  RecordingValidation, RecordingValidationStatus, RecordingStateEntry, UnclaimedRecording, RecordingPhase,
+  RecordingStartedData, AgentRecordingState,
 } from "@/lib/agent";
 
 /**
@@ -92,7 +94,8 @@ export interface ProfileFormData {
   tratamiento: "suscripto" | "suscripta";
 }
 
-export type IosRecordMode = "video_only" | "with_mic" | "on_device" | "airplay";
+/** Una sola definición en `lib/agent.ts` (la usa también `RecordingStateEntry.ios_mode`). */
+export type { IosRecordMode } from "@/lib/agent";
 
 /* ── Subida de evidencia (subida-archivos-grandes, SDD §6.1) ── */
 
