@@ -3,15 +3,55 @@
 import { useState } from "react";
 import { Button } from "primereact/button";
 import { SelectButton } from "primereact/selectbutton";
-import { Loader2, Play, Trash2 } from "lucide-react";
-import type { VideoVariant } from "@/lib/agent";
+import { Info, Loader2, Play, Trash2 } from "lucide-react";
+import type { VideoVariant, VideoVariantStatus } from "@/lib/agent";
 import { agentFileURL } from "@/lib/agent";
 import { MEDIA_SURFACE } from "./capture/media";
 import type { CapturedFile } from "@/types";
 
+/** Orden de presentación de las variantes (las desconocidas, al final). */
+const LABEL_ORDER = ["Suavizado", "RIFE"];
+const labelRank = (label: string) => {
+  const i = LABEL_ORDER.indexOf(label);
+  return i === -1 ? LABEL_ORDER.length : i;
+};
+
+/** Nombre visible de una variante ("versión suavizada", "versión RIFE"…). */
+export function variantDisplayName(label: string) {
+  return label === "Suavizado" ? "versión suavizada" : `versión ${label}`;
+}
+
+/**
+ * Nota discreta para una variante terminada sin pestaña (SDD §6.6), o `null` si
+ * no se muestra nada: `ready` (aparece su pestaña), quitada por el perito, o RIFE
+ * omitido por duración (es un extra opcional).
+ */
+function variantNote(s: VideoVariantStatus): string | null {
+  const name = variantDisplayName(s.label);
+  switch (s.state) {
+    case "failed":
+    case "timeout":
+      return `No se pudo generar la ${name}. El original no se modificó.`;
+    case "cancelled":
+      if (s.reason === "removed") return null;
+      if (s.reason === "agent_update" || s.reason === "agent_stopping") {
+        return `Se canceló la ${name} porque Tatana se reinició. El original no se modificó.`;
+      }
+      return `No se pudo generar la ${name}. El original no se modificó.`;
+    case "skipped":
+      if (s.reason === "insufficient_disk") {
+        return `Sin espacio en disco: no se generó la ${name}. El original no se modificó.`;
+      }
+      if (s.reason === "too_long") return s.label === "Suavizado" ? `Video largo: no se genera la ${name}.` : null;
+      return null;
+    default:
+      return null;
+  }
+}
+
 /** Reproductor de una grabación del agente con sus versiones (original + variantes). */
 export function VideoCard({
-  file, variants, isPending, onRemove, removeDisabled, originalURL,
+  file, variants, variantStatus = NO_STATUS, storedInCase = false, onRemove, removeDisabled, originalURL,
 }: {
   file: CapturedFile;
   /**
@@ -20,7 +60,14 @@ export function VideoCard({
    */
   originalURL?: string;
   variants: VideoVariant[];
-  isPending: boolean;
+  /**
+   * Estado del post-proceso de cada variante (ios-grabacion-larga). Solo visual:
+   * el original se guarda sin esperarlo. Vacío en AirPlay, `on_device`, Android
+   * o con un Tatana anterior a `video_postprocess_v1`.
+   */
+  variantStatus?: VideoVariantStatus[];
+  /** El original ya está en la carpeta del caso (cambia el texto de ayuda). */
+  storedInCase?: boolean;
   onRemove: () => void;
   /** Durante el envío de evidencia no se puede quitar. */
   removeDisabled?: boolean;
@@ -32,7 +79,15 @@ export function VideoCard({
     ...variants.map(v => ({ id: v.label, url: agentFileURL(v.filename), label: v.label })),
   ];
   const current = allTabs.find(t => t.id === activeTab) ?? allTabs[0];
-  const showTabs = allTabs.length > 1 || isPending;
+  const ordered = [...variantStatus].sort((a, b) => labelRank(a.label) - labelRank(b.label));
+  const inProgress = ordered.find(s => s.state === "pending" || s.state === "running");
+  const notes = ordered.map(variantNote).filter((n): n is string => n !== null);
+  const progress = inProgress?.state === "running" && typeof inProgress.progress === "number"
+    ? Math.max(0, Math.min(100, Math.round(inProgress.progress)))
+    : null;
+  const inProgressName = inProgress ? variantDisplayName(inProgress.label) : "";
+  const hasIndicator = !!inProgress || notes.length > 0;
+  const showTabs = allTabs.length > 1 || hasIndicator;
 
   return (
     <div className="overflow-hidden rounded-fx-lg border border-fx-border">
@@ -59,13 +114,50 @@ export function VideoCard({
               optionValue="id"
               pt={{ root: { "aria-label": "Versión del video" } }}
             />
-            {isPending && (
-              <span role="status" className="inline-flex items-center gap-1 text-xs text-fx-text-3">
-                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> procesando…
+            {inProgress && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-fx-text-2">
+                <Loader2 className="h-3 w-3 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                {/* El texto anunciado va en el `role="status"` de abajo; el porcentaje, aparte. */}
+                <span aria-hidden="true">Generando {inProgressName}…</span>
+                {progress !== null && (
+                  <span
+                    role="progressbar"
+                    aria-label={`Avance de la ${inProgressName}`}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={progress}
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    <span className="relative h-1 w-16 overflow-hidden rounded-full bg-fx-surface-3" aria-hidden="true">
+                      <span
+                        className="absolute inset-0 origin-left rounded-full bg-fx-accent motion-safe:transition-transform motion-safe:duration-fx-base motion-safe:ease-fx"
+                        style={{ transform: `scaleX(${progress / 100})` }}
+                      />
+                    </span>
+                    <span className="tabular-nums" aria-hidden="true">{progress}&nbsp;%</span>
+                  </span>
+                )}
               </span>
             )}
           </div>
         )}
+        {inProgress && (
+          <p className="m-0 text-xs text-fx-text-3">
+            {storedInCase ? "El original ya está guardado en el caso." : "El original no se modifica."}{" "}
+            La {inProgressName} es solo para ver mejor el video.
+          </p>
+        )}
+        {/* Siempre montado y solo con el estado: el lector de pantalla anuncia los cambios
+            sin robar el foco ni leer el porcentaje cada pocos segundos. */}
+        <div role="status" aria-atomic="true" className="space-y-1 empty:hidden">
+          {inProgress && <span className="sr-only">Generando {inProgressName}</span>}
+          {notes.map(n => (
+            <p key={n} className="m-0 flex items-start gap-1.5 text-xs text-fx-text-3">
+              <Info className="mt-px h-3 w-3 shrink-0" aria-hidden="true" />
+              {n}
+            </p>
+          ))}
+        </div>
         <div className="flex items-center gap-2">
           <Play className="h-3.5 w-3.5 shrink-0 text-fx-text-3" aria-hidden="true" />
           <span translate="no" className="flex-1 truncate font-mono text-xs text-fx-text-2" title={file.name}>
@@ -86,3 +178,6 @@ export function VideoCard({
     </div>
   );
 }
+
+/* Default estable (un `[]` literal en el destructuring sería nuevo en cada render). */
+const NO_STATUS: VideoVariantStatus[] = [];

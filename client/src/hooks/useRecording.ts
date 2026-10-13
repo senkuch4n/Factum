@@ -6,7 +6,8 @@ import type { Device, IosRecordMode } from "@/types";
 
 export function useRecording(
   addFile: (name: string) => void,
-  markPendingVariant: (filename: string) => void,
+  /** Marca las variantes planeadas por Tatana (solo visual; no bloquea el guardado). */
+  expectVariants: (filename: string, labels: string[]) => void,
 ) {
   const [isRecording, setRecording]               = useState(false);
   const [disconnectedDuringRecord, setDiscoRec]   = useState(false);
@@ -30,7 +31,11 @@ export function useRecording(
       setLoad("stopRecord", true);
       try {
         const stopped = await agent.stopRecording(device.serial, platform);
-        if (stopped?.filename) addFile(stopped.filename);
+        if (stopped?.filename) {
+          addFile(stopped.filename);
+          // Sin `variants_expected` (Tatana viejo) no se marca nada (DA2).
+          if (platform === "ios" && stopped.variants_expected) expectVariants(stopped.filename, stopped.variants ?? []);
+        }
       } catch (e) {
         // El agente ya limpió su estado: reintentar el stop no sirve, así que
         // igual se sale del modo grabación (abajo) y se avisa el motivo real.

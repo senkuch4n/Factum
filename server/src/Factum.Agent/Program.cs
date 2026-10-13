@@ -134,12 +134,16 @@ builder.Services.AddSingleton<OperationTracker>();
 builder.Services.AddSingleton<IWebcamService, WebcamService>();
 builder.Services.AddSingleton<IFileStorageService, FileStorageService>();
 builder.Services.AddSingleton<AgentWebSocketHub>();
+builder.Services.AddSingleton<IAgentEventSink>(sp => sp.GetRequiredService<AgentWebSocketHub>());
 builder.Services.AddSingleton<ToolInventory>();
 // zip-local-informe-servidor: carpeta de trabajo del caso y ZIP en la PC del perito.
 builder.Services.AddSingleton<IAgentDiskProbe, DriveInfoAgentDiskProbe>();
 builder.Services.AddSingleton<ICaseEvidenceStore, CaseEvidenceStore>();
 builder.Services.AddSingleton<ICaseZipService, CaseZipService>();
 builder.Services.AddSingleton<IFolderReveal, FolderReveal>();
+// ios-grabacion-larga §5.3: variantes de previsualización de grabaciones iOS, en segundo plano.
+builder.Services.AddSingleton<VideoPostprocessService>();
+builder.Services.AddSingleton<IVideoPostprocessService>(sp => sp.GetRequiredService<VideoPostprocessService>());
 
 // ── Puerto y dirección de escucha (CLI > config > default) ───────────────────
 var port = builder.Configuration.GetValue<int>("Agent:Port", 8765);
@@ -275,9 +279,13 @@ else if (localConfigStatus.Loaded)
     var zipDir = app.Services.GetRequiredService<ICaseZipService>().EvidenceDirectory;
     var store = app.Services.GetRequiredService<ICaseEvidenceStore>();
     var orphanUploads = store.CleanupOrphanUploads();
+    // ios-grabacion-larga §5.6: solo <DataDirectory>/.postprocess/ (ahí escribe únicamente Tatana).
+    var orphanPostprocess = 0;
+    try { orphanPostprocess = VideoPostprocessService.CleanupWorkDirectory(store.DataDirectory); }
+    catch (Exception ex) { logger.LogWarning(ex, "No se pudo borrar la carpeta de post-proceso huérfana"); }
     logger.LogInformation(
-        "Evidencia: carpeta de trabajo {DataDirectory}/cases, ZIP en {EvidenceDirectory}; orígenes permitidos {Lista} (temporales huérfanos borrados: {N})",
-        store.DataDirectory, zipDir, string.Join(", ", allowedOrigins), orphanUploads);
+        "Evidencia: carpeta de trabajo {DataDirectory}/cases, ZIP en {EvidenceDirectory}; orígenes permitidos {Lista} (temporales huérfanos borrados: {N}; trabajos de post-proceso huérfanos borrados: {P})",
+        store.DataDirectory, zipDir, string.Join(", ", allowedOrigins), orphanUploads, orphanPostprocess);
     if (AgentFileNames.IsSyncedFolder(zipDir))
         logger.LogWarning(
             "La carpeta de evidencia {Ruta} está dentro de una carpeta sincronizada con la nube; el ZIP se subiría a ese servicio. Configurá Agent:EvidenceDirectory fuera de OneDrive/iCloud.",
@@ -290,6 +298,17 @@ if (exposedToNetwork)
         listenUrl);
 
 await adb.EnsureServerAsync();
+
+// ios-grabacion-larga §5.6: al cerrar, se cancela el post-proceso (agent_stopping) y se le dan 5 s para
+// matar ffmpeg y limpiar la carpeta de trabajo.
+{
+    var post = app.Services.GetRequiredService<IVideoPostprocessService>();
+    app.Lifetime.ApplicationStopping.Register(() =>
+    {
+        post.CancelAll("agent_stopping");
+        post.WhenIdleAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+    });
+}
 
 // Versiones de adb/scrcpy/ffmpeg/python para /health.tools, en segundo plano.
 app.Services.GetRequiredService<ToolInventory>().WarmUp();

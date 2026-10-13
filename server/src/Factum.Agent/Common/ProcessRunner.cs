@@ -54,12 +54,16 @@ public static class ProcessRunner
     // correctamente por .NET (rutas con espacios, acentos o comillas del perfil de Windows).
     // `environment` (opcional, aditivo) suma/pisa variables del proceso hijo (ej. PYTHONUTF8 para
     // el Python de iPhone, SDD ios-herramientas-windows §6.1). `timeout` (opcional): si se vence,
-    // se mata el árbol del proceso y se devuelve ExitCode = TimeoutExitCode.
+    // se mata el árbol del proceso y se devuelve ExitCode = TimeoutExitCode. Con `timeout`, cancelar
+    // `ct` también mata el árbol y relanza OperationCanceledException. `onStdoutLine` (opcional) se
+    // invoca por cada línea de stdout además de acumularla (progreso de ffmpeg, ios-grabacion-larga
+    // §5.2); una excepción del callback se ignora.
     public const int TimeoutExitCode = -2;
 
     public static async Task<ProcessResult> RunArgumentListAsync(string executable,
         IReadOnlyList<string> args, CancellationToken ct = default,
-        IReadOnlyDictionary<string, string>? environment = null, TimeSpan? timeout = null)
+        IReadOnlyDictionary<string, string>? environment = null, TimeSpan? timeout = null,
+        Action<string>? onStdoutLine = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -78,7 +82,13 @@ public static class ProcessRunner
         using var process = new Process { StartInfo = psi };
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data != null) lock (stdout) stdout.AppendLine(e.Data); };
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data == null) return;
+            lock (stdout) stdout.AppendLine(e.Data);
+            if (onStdoutLine is not null)
+                try { onStdoutLine(e.Data); } catch { /* un callback roto no corta el proceso */ }
+        };
         process.ErrorDataReceived  += (_, e) => { if (e.Data != null) lock (stderr) stderr.AppendLine(e.Data); };
 
         try { process.Start(); }

@@ -35,3 +35,13 @@ export function busyOperationsText(kinds: ReadonlyArray<string> | undefined): st
     : 'operación en curso'
   return [...new Set((kinds ?? []).map(text))].join(', ')
 }
+
+/**
+ * Aviso de trabajo en segundo plano que se cancela al actualizar (misma función
+ * que `backgroundOperationsNotice` del main, duplicada como `busyOperationsText`).
+ */
+export function backgroundOperationsNotice(kinds: ReadonlyArray<string> | undefined): string | null {
+  return (kinds ?? []).includes('video_postprocess')
+    ? 'Al actualizar, se cancelará la versión suavizada que se está generando. Las grabaciones no se tocan.'
+    : null
+}

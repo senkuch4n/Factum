@@ -62,19 +62,38 @@ public sealed class RecordingController(
         try
         {
             string outputPath;
+            IReadOnlyList<string> variants;
             if (platform == "ios")
-                outputPath = await ios.StopRecordingAsync(serial, ct);
+            {
+                var r = await ios.StopRecordingAsync(serial, ct);
+                outputPath = r.OutputPath;
+                variants = r.Variants;
+            }
             else
+            {
                 outputPath = await adb.StopRecordingAsync(serial, ct);
+                variants = [];
+            }
 
+            // ios-grabacion-larga §4.1/§4.2: variants_expected/variants siempre presentes. Si es true, Tatana
+            // emite exactamente un video_variant_status terminal por cada etiqueta.
             var filename = Path.GetFileName(outputPath);
+            var url = $"/files/{filename}";
+            var variantsExpected = variants.Count > 0;
             await hub.BroadcastAsync(new AgentEvent
             {
                 Type = "recording_stopped",
-                Data = new { filename, url = $"/files/{filename}", platform = platform ?? "android" }
+                Data = new
+                {
+                    filename,
+                    url,
+                    platform = platform ?? "android",
+                    variants_expected = variantsExpected,
+                    variants,
+                }
             }, ct);
 
-            return Ok(new { filename, url = $"/files/{filename}" });
+            return Ok(new { filename, url, variants_expected = variantsExpected, variants });
         }
         catch (IosException ex)
         {

@@ -53,6 +53,43 @@ export interface VideoVariant {
   url: string;
 }
 
+/* ── ios-grabacion-larga (SDD §6.1): post-proceso de video en segundo plano ── */
+
+export type VideoVariantLabel = "Suavizado" | "RIFE" | "MCI"; // "MCI" solo puede venir en §4.4 known:false (legado)
+export type VideoVariantState = "pending" | "running" | "ready" | "failed" | "timeout" | "skipped" | "cancelled";
+export type VideoVariantReason =
+  | "ffmpeg_error" | "timeout" | "too_long" | "insufficient_disk" | "source_missing"
+  | "removed" | "agent_update" | "agent_stopping" | "internal_error";
+
+/** `video_variant_status` (WS, null explícitos) e items de `GET /video-postprocess/status` (HTTP, null omitidos). */
+export interface VideoVariantStatus {
+  original_filename: string;
+  label: VideoVariantLabel | string;   // tolerante a etiquetas futuras
+  state: VideoVariantState;
+  progress?: number | null;
+  filename?: string | null;
+  url?: string | null;
+  reason?: VideoVariantReason | string | null;
+  message?: string | null;             // solo log; no se muestra
+  updated_at: string;
+}
+
+export interface RecordingStoppedData {
+  filename: string;
+  url: string;
+  platform?: "android" | "ios";
+  /** Falta en un Tatana anterior a video_postprocess_v1. */
+  variants_expected?: boolean;
+  variants?: string[];
+}
+
+export interface VideoPostprocessStatusResponse {
+  items: { original_filename: string; known: boolean; variants: VideoVariantStatus[] }[];
+}
+
+/** Tope de `filename` por pedido de `GET /video-postprocess/status` (SDD §4.4). */
+const POSTPROCESS_STATUS_BATCH = 50;
+
 export interface AgentInfo {
   hostname: string;
   os_user: string;
@@ -98,7 +135,9 @@ export type IosDeveloperModeStatus = "enabled" | "restarting" | "manual_required
  * - `real_version_v1`: `version` es la versión real de Tatana. Sin ella, `version`
  *   no es confiable (los Tatana anteriores dicen siempre "2.0.0") y se trata
  *   como anterior a cualquier mínimo (tatana-instalador-autoupdate, D-T2);
- * - `agent_state_v1`: `GET /agent/state` y modo mantenimiento (D5).
+ * - `agent_state_v1`: `GET /agent/state` y modo mantenimiento (D5);
+ * - `video_postprocess_v1`: variantes de video en segundo plano, `video_variant_status`
+ *   y `GET /video-postprocess/status` (ios-grabacion-larga).
  */
 export interface AgentHealth {
   status: string;
@@ -435,7 +474,11 @@ export const agent = {
     return res.json();
   },
 
-  async stopRecording(serial: string, platform: "android" | "ios" = "android"): Promise<{ filename: string; url: string }> {
+  /** `variants_expected`/`variants` faltan en un Tatana anterior a `video_postprocess_v1`. */
+  async stopRecording(
+    serial: string,
+    platform: "android" | "ios" = "android",
+  ): Promise<{ filename: string; url: string; variants_expected?: boolean; variants?: string[] }> {
     const url = `${AGENT_URL}/devices/${serial}/record/stop${platform === "ios" ? "?platform=ios" : ""}`;
     let res: Response;
     try {
@@ -455,6 +498,33 @@ export const agent = {
     });
     if (!res.ok) throw new Error("Error capturando foto");
     return res.json();
+  },
+
+  /**
+   * Estado del post-proceso de las grabaciones pedidas (SDD §4.4), en lotes de 50.
+   * Cualquier error (404 de un Tatana viejo incluido) devuelve `null` sin tirar:
+   * el estado de las variantes es solo visual.
+   */
+  async videoPostprocessStatus(filenames: string[]): Promise<VideoPostprocessStatusResponse | null> {
+    if (filenames.length === 0) return { items: [] };
+    try {
+      const items: VideoPostprocessStatusResponse["items"] = [];
+      for (let i = 0; i < filenames.length; i += POSTPROCESS_STATUS_BATCH) {
+        const batch = filenames.slice(i, i + POSTPROCESS_STATUS_BATCH);
+        const query = batch.map(f => `filename=${encodeURIComponent(f)}`).join("&");
+        const res = await fetch(`${AGENT_URL}/video-postprocess/status?${query}`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) return null;
+        const data = (await res.json()) as Partial<VideoPostprocessStatusResponse>;
+        if (!Array.isArray(data.items)) return null;
+        items.push(...data.items);
+      }
+      return { items };
+    } catch {
+      return null;
+    }
   },
 
   async listFiles(): Promise<AgentFile[]> {
