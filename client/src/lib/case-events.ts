@@ -8,7 +8,7 @@
  */
 
 import {
-  AlertCircle, Camera, FileCheck, FolderPlus, Image, Pencil, Trash2, Upload, Video,
+  AlertCircle, AlertTriangle, Camera, FileCheck, FolderPlus, Image, Pencil, RefreshCw, Trash2, Upload, Video,
   type LucideIcon,
 } from "lucide-react";
 import type { Case, CaseEvent, CaseEventType } from "@/lib/api";
@@ -25,6 +25,8 @@ const EVENT_ICON: Record<CaseEventType, LucideIcon> = {
   evidence_removed: Trash2,
   report_generated: FileCheck,
   report_failed: AlertCircle,
+  evidence_updated: RefreshCw,
+  capture_failed: AlertTriangle,
 };
 
 /** Ícono del evento; `FolderPlus` para un tipo desconocido (backend más nuevo). */
@@ -32,12 +34,38 @@ export function eventIcon(type: string): LucideIcon {
   return EVENT_ICON[type as CaseEventType] ?? FolderPlus;
 }
 
+export type EventTone = "danger" | "warning" | "neutral";
+
 /**
- * Tono del ítem: la generación fallida resalta en rojo; el resto es neutro. No
- * se transmite nada solo por color (siempre hay ícono + texto).
+ * Tono del ítem: la generación fallida resalta en rojo; un intento de captura
+ * fallido (no es un hecho, wizard-concurrencia-pestanas D5) en el tono de
+ * advertencia; el resto es neutro. No se transmite nada solo por color
+ * (siempre hay ícono + texto).
  */
-export function eventTone(type: string): "danger" | "neutral" {
-  return type === "report_failed" ? "danger" : "neutral";
+export function eventTone(type: string): EventTone {
+  if (type === "report_failed") return "danger";
+  if (type === "capture_failed") return "warning";
+  return "neutral";
+}
+
+/** Título de un `capture_failed` según la acción que falló (`detail.failed_action`). */
+function captureFailedTitle(failed: string | undefined): string {
+  switch (failed) {
+    case "capture_video_start": return "Intento de grabación fallido";
+    case "capture_video_stop": return "No se pudo cerrar la grabación";
+    case "capture_screenshot": return "Intento de captura de pantalla fallido";
+    case "capture_photo": return "Intento de foto fallido";
+    default: return "Intento de captura fallido";
+  }
+}
+
+/** `sha256: <12 primeros del anterior>… → <12 primeros del nuevo>…` de un `evidence_updated`, o `null`. */
+export function eventHashChange(ev: CaseEvent): string | null {
+  if (ev.type !== "evidence_updated") return null;
+  const prev = ev.detail?.previous_sha256;
+  const next = ev.detail?.sha256;
+  if (!prev || !next) return null;
+  return `sha256: ${prev.slice(0, 12)}… → ${next.slice(0, 12)}…`;
 }
 
 /**
@@ -112,6 +140,10 @@ export function eventTitle(ev: CaseEvent): string {
       return "Se generó el informe";
     case "report_failed":
       return "Falló la generación del informe";
+    case "evidence_updated":
+      return "Se actualizó evidencia (contenido distinto)";
+    case "capture_failed":
+      return captureFailedTitle(ev.detail?.failed_action);
     default:
       return "Actividad del caso";
   }
@@ -119,7 +151,9 @@ export function eventTitle(ev: CaseEvent): string {
 
 /** Nombre del archivo a mostrar monoespaciado, si el evento lo trae. */
 export function eventFilename(ev: CaseEvent): string | null {
-  if (ev.type === "evidence_added" || ev.type === "evidence_removed") return ev.filename ?? null;
+  if (ev.type === "evidence_added" || ev.type === "evidence_removed" || ev.type === "evidence_updated") {
+    return ev.filename ?? null;
+  }
   return null;
 }
 

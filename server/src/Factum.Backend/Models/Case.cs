@@ -129,6 +129,14 @@ public sealed class Case
     /// </summary>
     [JsonIgnore]
     public List<ReportTextVersion> ReportTextVersions { get; set; } = [];
+
+    /// <summary>
+    /// Revisión del manifiesto de evidencia (wizard-concurrencia-pestanas DT10): concurrencia optimista
+    /// del registro. Cada escritura del manifiesto hace <c>$inc</c>. Un documento viejo sin el campo
+    /// deserializa 0 y el filtro trata 0 como "0 o inexistente". No sale en ningún JSON.
+    /// </summary>
+    [JsonIgnore]
+    public int EvidenceRevision { get; set; }
 }
 
 [BsonIgnoreExtraElements]
@@ -266,6 +274,23 @@ public sealed class ReportTexts
     [BsonIgnoreIfNull]
     public string? Formato { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    /// <summary>
+    /// Cantidades con las que se armó "Operaciones realizadas" desde los defaults
+    /// (wizard-concurrencia-pestanas DT13). null = caso anterior a esta HU o texto nunca armado desde
+    /// los defaults: no hay aviso de conteos. No entra en el versionado (ReportTextSnapshot).
+    /// </summary>
+    [BsonIgnoreIfNull]
+    public ReportCounts? OperacionesBase { get; set; }
+}
+
+/// <summary>Conteos de evidencia por clase (los mismos de <c>ReportValues.Counts</c>, DT13).</summary>
+[BsonIgnoreExtraElements]
+public sealed class ReportCounts
+{
+    public int Capturas { get; set; }
+    public int Grabaciones { get; set; }
+    public int ArchivosExtraidos { get; set; }
+    public int Otros { get; set; }
 }
 
 [BsonIgnoreExtraElements]

@@ -27,7 +27,10 @@ public interface IIosService
     // mientras el fiscal navega libremente, extrayendo un PNG por marca recién al finalizar.
     Task<string> StartAirplayShotSessionAsync(CancellationToken ct = default);
     Task<int> MarkAirplayShotAsync(CancellationToken ct = default);
-    Task<List<(string Filename, string Url)>> StopAirplayShotSessionAsync(CancellationToken ct = default);
+    /// <summary><paramref name="serial"/>/<paramref name="attribution"/> viajan en cada <c>screenshot_taken</c>
+    /// (wizard-concurrencia-pestanas §5.1).</summary>
+    Task<List<(string Filename, string Url)>> StopAirplayShotSessionAsync(string serial, EventAttribution attribution,
+        CancellationToken ct = default);
 
     // ios-herramientas-windows §6.6: AirPlay (uxplay) disponible en esta PC; en Windows nunca (D1 b).
     bool AirplayAvailable { get; }
@@ -647,7 +650,8 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
         return Task.FromResult(count);
     }
 
-    public async Task<List<(string Filename, string Url)>> StopAirplayShotSessionAsync(CancellationToken ct = default)
+    public async Task<List<(string Filename, string Url)>> StopAirplayShotSessionAsync(string serial,
+        EventAttribution attribution, CancellationToken ct = default)
     {
         await _shotLock.WaitAsync(ct);
         try
@@ -701,7 +705,7 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
                 await _hub.BroadcastAsync(new AgentEvent
                 {
                     Type = "screenshot_taken",
-                    Data = new { filename, url }
+                    Data = new { filename, url, serial, case_id = attribution.CaseId, origin_id = attribution.OriginId }
                 });
             }
 

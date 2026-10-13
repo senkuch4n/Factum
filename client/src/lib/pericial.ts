@@ -7,7 +7,7 @@
 
 import { REPORT_TEXT_FORMAT, extractReportImageRefs, isBlankReportText } from "@/lib/report-markdown";
 import type {
-  Case, CaseDataRequest, CaseFormData, IntegranteRow, ProfileFormData, ReportImage, ReportTextsInput,
+  Case, CaseDataRequest, CaseFormData, IntegranteRow, ProfileFormData, ReportCounts, ReportImage, ReportTextsInput,
 } from "@/types";
 import { cleanCatalogValue, normalizeCatalogKey } from "@/lib/catalogs";
 
@@ -486,3 +486,37 @@ export const CAPTURE_ROLE_LABELS: Record<"imei_modelo" | "nombre_dispositivo", s
   imei_modelo: "IMEI y modelo",
   nombre_dispositivo: "Nombre del dispositivo",
 };
+
+/* ── Conteos de "Operaciones realizadas" (wizard-concurrencia-pestanas DT13) ── */
+
+/** `true` si los cuatro conteos coinciden. */
+export function sameCounts(a: ReportCounts, b: ReportCounts): boolean {
+  return a.capturas === b.capturas
+    && a.grabaciones === b.grabaciones
+    && a.archivos_extraidos === b.archivos_extraidos
+    && a.otros === b.otros;
+}
+
+/**
+ * `true` si "Operaciones realizadas" se armó con otras cantidades que las
+ * actuales. Sin base guardada (casos anteriores) o sin defaults, no hay aviso.
+ */
+export function countsOutdated(base: ReportCounts | null | undefined, current: ReportCounts | null | undefined): boolean {
+  return !!base && !!current && !sameCounts(base, current);
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * "3 capturas, 1 grabación y 2 archivos extraídos". Capturas y grabaciones
+ * siempre aparecen; archivos extraídos y otros, solo si no son 0.
+ */
+export function countsSummary(c: ReportCounts): string {
+  const parts = [
+    plural(c.capturas, "captura", "capturas"),
+    plural(c.grabaciones, "grabación", "grabaciones"),
+  ];
+  if (c.archivos_extraidos > 0) parts.push(plural(c.archivos_extraidos, "archivo extraído", "archivos extraídos"));
+  if (c.otros > 0) parts.push(plural(c.otros, "otro archivo", "otros archivos"));
+  return parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} y ${parts[parts.length - 1]}`;
+}

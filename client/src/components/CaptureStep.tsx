@@ -35,11 +35,13 @@ import { StepHeader } from "./wizard/StepHeader";
 import { StepActions } from "./wizard/StepActions";
 import { MEDIA_SURFACE } from "./capture/media";
 import {
-  fileType, localKindOf, nextAdjuntoName, kindMeta,
+  fileType, localKindOf, nextAdjuntoName, kindMeta, srcOf,
   type CapturedFile, type GKind, type GItem,
 } from "./capture/gallery";
+import { ConfirmDialog } from "./overlay/ConfirmDialog";
+import { formatBytes } from "@/lib/format";
 import type { LocalBlobInfo } from "@/hooks/useFileManager";
-import { StageEmpty, StageScreen } from "./capture/StageScreen";
+import { SafeImg, StageEmpty, StageScreen } from "./capture/StageScreen";
 import { AttachmentChip, EvidenceTrayTile, type TrayUploadState } from "./capture/EvidenceTray";
 import { UploadLiveRegion, UploadProgressPanel } from "./capture/UploadProgressPanel";
 import type { UploadMessage } from "@/lib/upload-messages";
@@ -86,7 +88,11 @@ interface Props {
   captureRoles?: CaptureRole[];
   onSetCaptureRole?: (filename: string, role: CaptureRoleValue | null) => void;
   onUploadAndContinue: () => void;
-  onRemoveFile?: (filename: string) => void;
+  /**
+   * Borra un archivo después de que el perito confirma en el diálogo. `true` si
+   * salió de la bandeja; `false` si quedó (el motivo llega por `onError`).
+   */
+  onRemoveFile?: (filename: string, onError: (msg: string) => void) => Promise<boolean>;
   loading: Record<string, boolean>;
   deviceOffline?: boolean;
   disconnectedDuringRecord?: boolean;
@@ -268,9 +274,27 @@ export function CaptureStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalItems]);
 
+  // ── Borrado con confirmación (wizard-concurrencia-pestanas DT14, M2): un solo
+  //    diálogo para los cuatro disparadores (bandeja, chips, visor y VideoCard). ──
+  const [pendingRemove, setPendingRemove] = useState<GItem | null>(null);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
   function removeItem(item: GItem) {
-    if (removeBlocked) return;
-    onRemoveFile?.(item.name);
+    if (removeBlocked || !onRemoveFile) return;
+    setPendingRemove(item);
+    setRemoveError(null);
+    setRemoveOpen(true);
+  }
+
+  async function confirmRemove(): Promise<boolean> {
+    const item = pendingRemove;
+    if (!item || !onRemoveFile) return true;
+    setRemoveError(null);
+    let lastError: string | null = null;
+    const ok = await onRemoveFile(item.name, msg => { lastError = msg; });
+    if (!ok) setRemoveError(lastError ?? "No se pudo borrar la evidencia. Reintentá.");
+    return ok;
   }
 
   /** Estado de envío de un ítem: subido (en el caso), subiendo/error (esta tanda) o pendiente. */
@@ -342,6 +366,21 @@ export function CaptureStep({
     <>
       {/* ── Diálogos (siempre montados; el Dialog de Prime monta el contenido al abrir) ── */}
       <Lightbox src={lightbox} onClose={() => setLightbox(null)} />
+
+      <ConfirmDialog
+        open={removeOpen}
+        onOpenChange={open => { setRemoveOpen(open); if (!open) setRemoveError(null); }}
+        onConfirm={confirmRemove}
+        tone="destructive"
+        dismissableMask
+        title="¿Borrar esta evidencia?"
+        description="Se borra el archivo de esta PC y sale del expediente. Queda registrado en la cadena de custodia. No se puede deshacer."
+        confirmLabel="Borrar evidencia"
+        cancelLabel="Cancelar"
+        error={removeError}
+      >
+        {pendingRemove && <RemovePreview item={pendingRemove} />}
+      </ConfirmDialog>
       <WebcamCaptureModal
         open={webcamTarget !== null}
         label={lastWebcamTarget === "funcionario" ? "Foto del perito" : "Foto del titular"}
@@ -1053,3 +1092,30 @@ const TILE = cn(
   FOCUS_RING,
 );
 const TILE_IDLE = "border-fx-border-strong bg-fx-surface-2 text-fx-text enabled:hover:bg-fx-surface-3";
+
+/** Ficha del archivo dentro del diálogo de borrado: miniatura o ícono, nombre y tamaño. */
+function RemovePreview({ item }: { item: GItem }) {
+  const { label, Icon } = kindMeta(item.kind);
+  const isImage = item.kind === "screenshot" || item.kind === "local-image";
+  return (
+    <div className="flex items-center gap-3 rounded-fx-md border border-fx-border bg-fx-surface-2 p-2.5">
+      {isImage ? (
+        <SafeImg
+          src={srcOf(item)}
+          alt=""
+          className="h-14 w-14 shrink-0 rounded-fx-sm object-cover"
+        />
+      ) : (
+        <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-fx-sm bg-fx-surface-3 text-fx-text-2">
+          <Icon className="h-5 w-5" aria-hidden="true" />
+        </span>
+      )}
+      <div className="min-w-0">
+        <p className="m-0 break-all font-mono text-fx-body-sm text-fx-text" translate="no">{item.name}</p>
+        <p className="m-0 mt-0.5 text-xs text-fx-text-3">
+          {label}{typeof item.sizeBytes === "number" ? ` · ${formatBytes(item.sizeBytes)}` : ""}
+        </p>
+      </div>
+    </div>
+  );
+}

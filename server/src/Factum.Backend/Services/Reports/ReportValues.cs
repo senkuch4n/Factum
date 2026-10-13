@@ -179,6 +179,9 @@ public static class ReportValues
             .ToDictionary(kv => kv.Key, kv => ReportMarkdown.EscapeInline(kv.Value), StringComparer.Ordinal);
         string Md(string template, bool omitZeroCountLines = false) =>
             ReportMarkdown.FromLineTemplate(ReportTextRenderer.Render(template, tokens, omitZeroCountLines));
+        // wizard-concurrencia-pestanas DT13: las cantidades con las que se armó Operaciones (misma
+        // clasificación que el DOCX), así el cliente nunca reimplementa la clasificación.
+        var (cap, rec, pull, other) = Counts(files, cas);
         return new ReportTextsDto(
             ObjetoInforme: "",
             OperacionesRealizadas: Md(settings.DefaultOperacionesRealizadas, omitZeroCountLines: true),
@@ -188,6 +191,7 @@ public static class ReportValues
             Conclusiones: "",
             NotasTecnicas: Md(settings.DefaultNotasTecnicas),
             Reserva: Md(settings.DefaultReserva),
-            Formato: ReportTextFormats.Markdown);
+            Formato: ReportTextFormats.Markdown,
+            OperacionesBase: new ReportCountsDto(cap, rec, pull, other));
     }
 }

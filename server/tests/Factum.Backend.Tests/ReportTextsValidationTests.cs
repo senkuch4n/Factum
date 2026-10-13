@@ -165,4 +165,53 @@ public sealed class ReportTextsValidationTests
         Assert.Contains(logger.Messages, m =>
             m == "Report: DefaultTexts:Reserva tiene contenido no permitido (HTML); se usa el texto por defecto");
     }
+
+    // ── wizard-concurrencia-pestanas B10. operaciones_base ──────────────────
+
+    [Fact]
+    public void B10_RenderDefaults_DevuelveOperacionesBaseConLosConteos()
+    {
+        var cas = ReportTestSupport.MakeCase();
+        cas.FileSources.Add(new FileSource { Filename = "chat.db", SourcePath = "/sdcard/chat.db" });
+        var files = Files("captura_1.png", "captura_2.png", "grabacion.mp4", "notas.txt", "chat.db");
+
+        var d = ReportValues.RenderDefaults(cas, Settings(), files);
+
+        var (cap, rec, pull, other) = ReportValues.Counts(files, cas);
+        Assert.Equal(new ReportCountsDto(cap, rec, pull, other), d.OperacionesBase);
+        Assert.Equal(new ReportCountsDto(2, 1, 1, 1), d.OperacionesBase);
+    }
+
+    [Fact]
+    public void B10_RenderDefaults_SinArchivos_CerosNoNull() =>
+        Assert.Equal(new ReportCountsDto(0, 0, 0, 0),
+            ReportValues.RenderDefaults(ReportTestSupport.MakeCase(), Settings(), Files()).OperacionesBase);
+
+    [Theory]
+    [InlineData(0, 0, 0, 0, true)]
+    [InlineData(100000, 100000, 100000, 100000, true)]
+    [InlineData(-1, 0, 0, 0, false)]
+    [InlineData(0, 100001, 0, 0, false)]
+    [InlineData(0, 0, -5, 0, false)]
+    [InlineData(0, 0, 0, int.MaxValue, false)]
+    public void B10_ConteosFueraDeRango(int a, int b, int c, int d, bool ok) =>
+        Assert.Equal(ok, CaseValidation.IsValidReportCounts(new ReportCountsDto(a, b, c, d)));
+
+    [Fact]
+    public void B10_SinConteos_EsValido() => Assert.True(CaseValidation.IsValidReportCounts(null));
+
+    [Fact]
+    public void B10_OperacionesBase_EnJsonSnakeCase()
+    {
+        var opts = new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower,
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            new ReportTextsDto(OperacionesBase: new ReportCountsDto(1, 2, 3, 4)), opts);
+        Assert.Contains("\"operaciones_base\":{\"capturas\":1,\"grabaciones\":2,\"archivos_extraidos\":3,\"otros\":4}", json);
+        var back = System.Text.Json.JsonSerializer.Deserialize<ReportTextsDto>(
+            "{\"operaciones_realizadas\":\"x\"}", opts)!;
+        Assert.Null(back.OperacionesBase);
+    }
 }

@@ -6,18 +6,24 @@ import { Loader2, Plus, Play, ChevronRight, ArrowLeft, Smartphone, HelpCircle, L
 import { Button } from "primereact/button";
 import { api, ApiError, type DeviceInput, type ZipLocation } from "@/lib/api";
 import { agent, AgentError, type ZipProgress } from "@/lib/agent";
-import { agentErrorMessage, agentStatusMessage, RECORDING_ERROR_TEXT } from "@/lib/agent-messages";
+import {
+  agentErrorMessage, agentStatusMessage, GENERATION_BUSY_MESSAGE, RECORDING_ERROR_TEXT,
+} from "@/lib/agent-messages";
+import { shouldAcceptAgentEvent, type AttributedEventData, type AttributionCtx } from "@/lib/agent-event-filter";
+import { getTabOriginId } from "@/lib/tab-origin";
+import { postTabMessage, subscribeTabMessages, withGenerationLock } from "@/lib/tab-channel";
+import { useTabPresence } from "@/hooks/useTabPresence";
 import { useAgentIdentity, ensureAgentIdentity, isSameHostFor } from "@/hooks/useAgentIdentity";
 import { syncedFolderMessage } from "@/components/ResultStep";
 import type { GenerateProgress } from "@/components/dashboard/GenerateStep";
 import type {
   Device, AgentEvent, Case, CaseFormData, ProfileFormData, RecordingStoppedData, VideoVariantStatus,
-  UnclaimedRecording,
+  UnclaimedRecording, ScreenshotTakenData, PhotoTakenData,
 } from "@/types";
 import {
   CASE_MESSAGES, EMPTY_CASE_FORM, PROFILE_REQUIRED_KEYS, PROFILE_MESSAGES,
   caseToForm, formToCaseRequest, isImeiMissing, isPhoneLike, lastPericialCase, prefillFromLastCase, profileErrorKey,
-  todayIso, validateCaseForm, validateProfile, type CasePrefill,
+  reportFieldId, todayIso, validateCaseForm, validateProfile, type CasePrefill,
 } from "@/lib/pericial";
 import { useExpertProfile, profileToForm, sameProfile } from "@/hooks/useExpertProfile";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
@@ -27,7 +33,7 @@ import { useAgentConnection } from "@/hooks/useAgentConnection";
 import { useDeviceConnection } from "@/hooks/useDeviceConnection";
 import { useAgentIosStatus } from "@/hooks/useAgentIosStatus";
 import { useFileManager, storageOf } from "@/hooks/useFileManager";
-import { useRecording, sameId } from "@/hooks/useRecording";
+import { useRecording, sameId, type RecordOutcome } from "@/hooks/useRecording";
 import { useEvidenceNotices } from "@/hooks/useEvidenceNotices";
 import { useAirplayShotSession } from "@/hooks/useAirplayShotSession";
 import { AgentChip } from "@/components/dashboard/AgentChip";
@@ -140,6 +146,12 @@ export default function Dashboard() {
   const [focusFieldId, setFocusFieldId] = useState<string | null>(null);
   const [generateMissing, setGenerateMissing] = useState<string[]>([]);
   const [isResuming, setIsResuming] = useState(false);
+  /** Advertencia del paso 5: el mismo caso se está generando en otra pestaña (DT9). */
+  const [generateNotice, setGenerateNotice] = useState<string | null>(null);
+  /** Guard sincrónico de doble clic de "Generar" (DT8). */
+  const generateInFlightRef = useRef(false);
+  /** Guard sincrónico de doble clic de "Pantalla" (DT8). */
+  const screenshotInFlightRef = useRef(false);
   const [resumePending, setResumePending] = useState<Case | null>(null);
   const [resumeConnected, setResumeConnected] = useState(false);
 
@@ -168,6 +180,29 @@ export default function Dashboard() {
   const refreshHistory = useCallback(() => {
     loadHistory();
   }, [loadHistory]);
+
+  // ── Historial siempre fresco para el aviso de expediente repetido (wizard-concurrencia-pestanas DT15):
+  //    al volver la pestaña a primer plano (como mucho cada 15 s) y cuando otra pestaña crea o edita un caso. ──
+  const lastSilentReloadRef = useRef(0);
+  const reloadHistorySilently = useCallback(() => {
+    lastSilentReloadRef.current = Date.now();
+    loadHistory({ silent: true });
+  }, [loadHistory]);
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastSilentReloadRef.current < 15_000) return;
+      reloadHistorySilently();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const unsubscribe = subscribeTabMessages(msg => {
+      if (msg.type === "cases_changed") reloadHistorySilently();
+    });
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      unsubscribe();
+    };
+  }, [reloadHistorySilently]);
 
   // ── Perfil del perito (tarjeta del paso 2) ───────────────────────
   const { profile, loading: profileLoading, save: saveProfile, reload: reloadProfile } = useExpertProfile();
@@ -282,6 +317,20 @@ export default function Dashboard() {
   const loading = { ...fileLoading, ...recLoading, ...dashLoading, ...shotLoading };
 
   // ── WS event dispatcher ──────────────────────────────────────────
+  /** ¿El evento de evidencia es de esta pestaña? (wizard-concurrencia-pestanas DT1) */
+  const acceptsEvent = useCallback((
+    type: "screenshot_taken" | "photo_taken" | "recording_started" | "recording_stopped",
+    data: unknown,
+  ) => {
+    const ctx: AttributionCtx = {
+      originId: getTabOriginId(),
+      caseId: currentCaseIdRef.current,
+      serial: selDeviceRef.current?.serial ?? null,
+      step: stepRef.current,
+    };
+    return shouldAcceptAgentEvent(type, data as AttributedEventData | null, ctx);
+  }, []);
+
   const handleWsEvent = useCallback((event: AgentEvent) => {
     if (event.type === "devices_changed") {
       const newDevices = (event.data as { devices: Device[] }).devices || [];
@@ -299,17 +348,23 @@ export default function Dashboard() {
       }
     }
     if (event.type === "recording_started") {
-      // Con `recording_state_v1` manda Tatana (puede ser de otro caso); si no, como antes.
-      void agent.supportsRecordingState().then(ok => { if (ok) void refreshRecording(); else setRecording(true); });
+      // Con `recording_state_v1` manda Tatana (puede ser de otro caso: el aviso de
+      // grabación ajena sale de `/agent/state`, que no importa nada); si no, solo si es de esta pestaña.
+      const accepted = acceptsEvent("recording_started", event.data);
+      void agent.supportsRecordingState().then(ok => {
+        if (ok) void refreshRecording();
+        else if (accepted) setRecording(true);
+      });
     }
     if (event.type === "recording_stopped") {
-      setAirplayName(null);
       const d = event.data as unknown as RecordingStoppedData;
-      // Nunca se importa en silencio una grabación de otro caso (§7.6, regla `mine`).
+      const accepted = acceptsEvent("recording_stopped", d);
+      if (accepted) setAirplayName(null);
+      // Nunca se importa en silencio una grabación de otro caso (§7.6, regla `mine`) ni de otra pestaña (DT1).
       const foreignStop = !!d.filename && foreignStopsRef.current.has(d.filename);
-      const mine = !foreignStop && (d.case_id
+      const mine = accepted && !foreignStop && (d.case_id
         ? sameId(d.case_id, currentCaseIdRef.current)
-        : isRecordingRef.current);
+        : d.origin_id ? true : isRecordingRef.current);
       if (d.filename && mine) {
         addFile(d.filename);
         if (d.validation) setRecordingValidation(d.filename, d.validation);
@@ -323,7 +378,7 @@ export default function Dashboard() {
       }
       void agent.supportsRecordingState().then(ok => {
         if (ok) void refreshRecording();
-        else setRecording(false);
+        else if (accepted) setRecording(false);
       });
     }
     if (event.type === "airplay_receiver_ready") {
@@ -334,13 +389,17 @@ export default function Dashboard() {
       addVideoVariant(event.data as { original_filename: string; label: string; filename: string; url: string });
     }
     if (event.type === "photo_taken") {
-      const f = (event.data as { filename: string }).filename;
-      if (f) addFile(f);
+      const d = event.data as unknown as PhotoTakenData;
+      if (d?.filename && acceptsEvent("photo_taken", d)) addFile(d.filename);
     }
     if (event.type === "screenshot_taken") {
-      setAirplayName(null);
-      const f = (event.data as { filename: string }).filename;
-      if (f && stepRef.current !== 2) addFile(f);
+      // Lo pedido por esta pestaña ya llegó por HTTP (addFile deduplica); acá entra lo
+      // de otras pestañas del mismo caso o lo pedido sin dueño (DT6).
+      const d = event.data as unknown as ScreenshotTakenData;
+      if (acceptsEvent("screenshot_taken", d)) {
+        setAirplayName(null);
+        if (d?.filename) addFile(d.filename);
+      }
     }
     if (event.type === "zip_progress") {
       const d = event.data as unknown as ZipProgress;
@@ -350,7 +409,7 @@ export default function Dashboard() {
     }
     if (event.type === "airplay_shot_connected") handleShotConnected();
     if (event.type === "airplay_shot_timeout") handleShotTimeout(msg => setGlobal(msg));
-  }, [addFile, addVideoVariant, expectVariants, applyVariantStatus, setRecording, setDiscoRec, setDeviceOffline, setAirplayName, isRecordingRef, foreignStopsRef, recInFlightRef, setRecordingValidation, refreshRecording, handleShotConnected, handleShotTimeout]);
+  }, [acceptsEvent, addFile, addVideoVariant, expectVariants, applyVariantStatus, setRecording, setDiscoRec, setDeviceOffline, setAirplayName, isRecordingRef, foreignStopsRef, recInFlightRef, setRecordingValidation, refreshRecording, handleShotConnected, handleShotTimeout]);
 
   // Al conectar o reconectar el WS, se recupera el estado de las variantes y de la grabación en curso (Duda 9 A).
   const handleAgentConnected = useCallback(() => {
@@ -392,7 +451,7 @@ export default function Dashboard() {
   // ── Navigation ───────────────────────────────────────────────────
   const go = useCallback((n: number) => {
     setDir(n > step ? 1 : -1);
-    setStep(n); setStatus(""); setGlobal("");
+    setStep(n); setStatus(""); setGlobal(""); setGenerateNotice(null);
     if (n !== 3) setDeviceOffline(false);
     // Volver al paso 2 con el caso ya creado = modo edición con los datos guardados.
     if (n === 2 && currentCase) {
@@ -486,6 +545,9 @@ export default function Dashboard() {
             } as DeviceInput,
           });
       setCase(cas);
+      // El aviso de expediente repetido necesita el historial con este caso (acá y en las otras pestañas).
+      reloadHistorySilently();
+      postTabMessage({ type: "cases_changed" });
       // Con el IMEI ya guardado en el caso, el equipo deja de pedirlo a mano.
       if (imeiManual && cas.device?.imei && cas.device.imei !== "INGRESAR_MANUALMENTE") {
         setSelDevice(d => (d ? { ...d, imei: cas.device.imei } : d));
@@ -510,14 +572,47 @@ export default function Dashboard() {
   }
 
   async function handleScreenshot() {
-    if (!selDevice) return;
+    if (!selDevice || screenshotInFlightRef.current) return;
+    screenshotInFlightRef.current = true;
     setLoad("screenshot", true);
+    const caseId = currentCase?.id ?? null;
     try {
-      const { filename } = await agent.takeScreenshot(selDevice.serial, selDevice.platform ?? "android");
+      const { filename } = await agent.takeScreenshot(selDevice.serial, selDevice.platform ?? "android", { caseId });
       addFile(filename);
-      api.reportAgentEvent("screenshot", currentCase?.id);
-    } catch (e) { setGlobal(e instanceof Error ? e.message : "Error al capturar pantalla"); }
-    finally { setLoad("screenshot", false); setAirplayName(null); }
+      api.reportAgentEvent("screenshot", caseId);
+    } catch (e) {
+      const msg = e instanceof Error && e.message ? e.message : "Error al capturar pantalla";
+      setGlobal(msg);
+      api.reportAgentEvent("capture_failed", caseId, { failed_action: "screenshot", reason: msg });
+    } finally {
+      screenshotInFlightRef.current = false;
+      setLoad("screenshot", false);
+      setAirplayName(null);
+    }
+  }
+
+  /**
+   * Auditoría de la grabación con la confirmación de Tatana (DT12): el inicio y
+   * el fin se registran recién cuando Tatana los confirmó; un rechazo queda
+   * como `capture_failed` con el mismo texto que vio el perito.
+   */
+  function reportRecordOutcome(out: RecordOutcome, caseId: string | null) {
+    switch (out.kind) {
+      case "started": api.reportAgentEvent("capture_start", caseId); break;
+      case "stopped": api.reportAgentEvent("capture_stop", caseId); break;
+      case "start_failed":
+        api.reportAgentEvent("capture_failed", caseId, { failed_action: "capture_start", reason: out.reason });
+        break;
+      case "stop_failed":
+        api.reportAgentEvent("capture_failed", caseId, { failed_action: "capture_stop", reason: out.reason });
+        break;
+      default: break; // picker / busy: no se pidió nada a Tatana
+    }
+  }
+
+  async function runRecordAction(action: () => Promise<RecordOutcome>) {
+    const caseId = currentCase?.id ?? null;
+    reportRecordOutcome(await action(), caseId);
   }
 
   async function handleStartAirplayShot() {
@@ -532,14 +627,30 @@ export default function Dashboard() {
 
   async function handleStopAirplayShot() {
     if (!selDevice) return;
-    await handleShotStop(selDevice.serial, msg => setGlobal(msg));
+    // Las marcas extraídas llegan en la respuesta (DT6): no se depende del WS.
+    const files = await handleShotStop(selDevice.serial, msg => setGlobal(msg), { caseId: currentCase?.id ?? null });
+    files.forEach(f => addFile(f.filename));
   }
 
   async function handleGenerate() {
-    if (!currentCase) return;
-    if (storageOf(currentCase) === "agent") { await handleGenerateAgent(); return; }
-    setLoad("generate", true); setGlobal("");
+    if (!currentCase || generateInFlightRef.current) return;
+    // Guard + "Generando…" en el mismo clic, antes de cualquier `await` (DT8).
+    generateInFlightRef.current = true;
+    setLoad("generate", true); setGlobal(""); setGenerateNotice(null);
     setGenerateMissing([]);
+    if (storageOf(currentCase) === "agent") {
+      const cas = currentCase;
+      try {
+        const res = await withGenerationLock(cas.id, () => handleGenerateAgent(cas));
+        if (res.status === "busy") setGenerateNotice(GENERATION_BUSY_MESSAGE);
+      } catch {
+        setGlobal("No se pudo generar el caso. Reintentá.");
+      } finally {
+        generateInFlightRef.current = false;
+        setLoad("generate", false);
+      }
+      return;
+    }
     try {
       const res = await api.generateCase(currentCase.id);
       setResult({ zip: res.files.zip, pdf: res.files.pdf, password: res.password, encrypted: res.case.zip_encrypted === true, hash: res.zip_hash, reportHash: res.report_hash });
@@ -549,7 +660,7 @@ export default function Dashboard() {
       if (e instanceof ApiError && e.missing?.length) setGenerateMissing(e.missing);
       setGlobal(e instanceof Error ? e.message : "Error al generar el caso");
     }
-    finally { setLoad("generate", false); }
+    finally { generateInFlightRef.current = false; setLoad("generate", false); }
   }
 
   /**
@@ -557,10 +668,8 @@ export default function Dashboard() {
    * backend → ZIP verificado en Tatana → `finish` con las capturas del informe →
    * commit del ZIP. Ante un error, se descarta el ZIP provisorio.
    */
-  async function handleGenerateAgent() {
-    const cas = currentCase;
-    if (!cas) return;
-    setGlobal(""); setGenerateMissing([]);
+  async function handleGenerateAgent(cas: Case) {
+    // El guard, el estado de carga y el lock entre pestañas los pone `handleGenerate`.
 
     // 1. Sin Tatana, desactualizado u otra PC: mensaje sin llamar al backend. El caso no cambia.
     const id = await ensureAgentIdentity(true);
@@ -573,7 +682,6 @@ export default function Dashboard() {
       return;
     }
 
-    setLoad("generate", true);
     generatingCaseRef.current = cas.id;
     setGenerateProgress({ stage: "zip", zip: null });
     let prep: Awaited<ReturnType<typeof api.prepareGeneration>> | null = null;
@@ -629,7 +737,10 @@ export default function Dashboard() {
       // 6. Descarte del ZIP provisorio (best effort) y mensaje accionable.
       // También si el armado falló a mitad: DELETE es idempotente (204 aunque no haya nada).
       if (prep) agent.discardPendingZip(cas.id, prep.case_ref, prep.zip_filename).catch(() => {});
-      if (e instanceof AgentError) {
+      if (e instanceof AgentError && e.code === "zip_in_progress") {
+        // Otra pestaña o ventana armando el ZIP de este caso: advertencia, no error (DT9).
+        setGenerateNotice(agentErrorMessage(e, { action: "generate" }));
+      } else if (e instanceof AgentError) {
         setGlobal(agentErrorMessage(e, { action: "generate" }));
       } else if (e instanceof ApiError) {
         if (e.missing?.length) setGenerateMissing(e.missing);
@@ -648,7 +759,6 @@ export default function Dashboard() {
     } finally {
       generatingCaseRef.current = null;
       setGenerateProgress(null);
-      setLoad("generate", false);
     }
   }
 
@@ -657,7 +767,7 @@ export default function Dashboard() {
     setStep(1); setDir(1);
     setSelDevice(null); setCase(null); setResult(null);
     setCaseForm(EMPTY_CASE_FORM); setCaseErr({}); setStatus(""); setGlobal("");
-    setIsResuming(false); setFocusFieldId(null); setGenerateMissing([]);
+    setIsResuming(false); setFocusFieldId(null); setGenerateMissing([]); setGenerateNotice(null);
     setSyncWarningDismissed(false);
     setCasePrefill(null);
     setRecordingInfo("");
@@ -676,6 +786,8 @@ export default function Dashboard() {
 
   function startWizard() {
     resetWizard({ keepMode: true });
+    // Sin esperar: el aviso de expediente repetido usa el historial fresco cuando llega (DT15).
+    reloadHistorySilently();
     setCaseForm(newCaseForm(historyCases));
     const src = lastPericialCase(historyCases);
     setCasePrefill(src ? { sourceId: src.id, confirmed: false } : null);
@@ -748,6 +860,19 @@ export default function Dashboard() {
   // Banner "Retomando": el celular del caso (o el seleccionado) ya está conectado.
   const resumeSerial = currentCase?.device.serial ?? selDevice?.serial ?? null;
   const resumeDeviceConnected = !!resumeSerial && devices.some(d => d.serial === resumeSerial);
+
+  // ── Mismo celular en otra pestaña del wizard (DT16): aviso informativo en los pasos 2–3. ──
+  const presenceLabel = currentCase?.nro_referencia || caseForm.nro_referencia.trim() || null;
+  const tabPeers = useTabPresence({
+    enabled: mode === "wizard" && (step === 2 || step === 3) && !!selDevice,
+    serial: selDevice?.serial ?? null,
+    caseId: currentCaseId,
+    caseLabel: presenceLabel,
+    step,
+  });
+  const presenceNotice = tabPeers.length > 0
+    ? `Este celular también está abierto en otra pestaña (${tabPeers[0].caseLabel ? `caso ${tabPeers[0].caseLabel}` : "caso nuevo"}${tabPeers.length > 1 ? ` y ${tabPeers.length - 1} más` : ""}). Las capturas quedan en el caso de la pestaña donde las tomás.`
+    : null;
 
   const draftCases = useMemo(() => historyCases.filter(c => c.status === "draft"), [historyCases]);
 
@@ -981,6 +1106,11 @@ export default function Dashboard() {
                     {statusMsg}
                   </FxBanner>
                 )}
+                {presenceNotice && (step === 2 || step === 3) && (
+                  <FxBanner tone="info" icon={<Smartphone className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}>
+                    {presenceNotice}
+                  </FxBanner>
+                )}
                 {recordingInfo && step === 3 && (
                   <FxBanner tone="info" onClose={() => setRecordingInfo("")}>{recordingInfo}</FxBanner>
                 )}
@@ -1084,17 +1214,13 @@ export default function Dashboard() {
                               deviceSerial={selDevice.serial}
                               files={files}
                               onScreenshot={handleScreenshot}
-                              onToggleRecord={() => {
-                                api.reportAgentEvent(isRecording ? "capture_stop" : "capture_start", currentCase?.id);
-                                handleToggleRecord(selDevice, setGlobal);
-                              }}
+                              onToggleRecord={() => { void runRecordAction(() => handleToggleRecord(selDevice, setGlobal)); }}
                               iosModePicker={iosModePicker}
                               iosRecordMode={iosRecordMode}
                               onSelectIosMode={m => {
                                 // La tarjeta AirPlay está deshabilitada sin AirPlay; por las dudas, no se llama a Tatana.
                                 if (m === "airplay" && airplayUnavailableReason) return;
-                                api.reportAgentEvent("capture_start", currentCase?.id);
-                                handleSelectIosMode(m, selDevice, setGlobal);
+                                void runRecordAction(() => handleSelectIosMode(m, selDevice, setGlobal));
                               }}
                               onCancelIosMode={() => setIosModePicker(false)}
                               onPhotoPerito={(blob, fn) => { handlePhotoBlob(blob, fn); api.reportAgentEvent("webcam", currentCase?.id); }}
@@ -1124,15 +1250,14 @@ export default function Dashboard() {
                               disconnectedDuringRecord={disconnectedDuringRecord}
                               onRetryRecording={() => {
                                 setDiscoRec(false);
-                                api.reportAgentEvent("capture_start", currentCase?.id);
-                                handleToggleRecord(selDevice, setGlobal);
+                                void runRecordAction(() => handleToggleRecord(selDevice, setGlobal));
                               }}
                               onDismissDisconnect={() => setDiscoRec(false)}
-                              onRemoveFile={name => {
-                                forgetNotice(name);
-                                void removeFile(name, {
+                              onRemoveFile={async (name, onRemoveError) => {
+                                // Confirmado en el diálogo de CaptureStep; el error se muestra dentro del diálogo.
+                                const ok = await removeFile(name, {
                                   caseId: currentCase?.id,
-                                  onError: setGlobal,
+                                  onError: onRemoveError,
                                   onEvidence: res => setCase(c => (c ? {
                                     ...c,
                                     evidence: res.evidence,
@@ -1140,6 +1265,8 @@ export default function Dashboard() {
                                     capture_roles: c.capture_roles.filter(r => r.filename !== name),
                                   } : c)),
                                 });
+                                if (ok) forgetNotice(name);
+                                return ok;
                               }}
                               onAttachLocalFile={(blob, filename) => handlePhotoBlob(blob, filename)}
                               localBlobs={localBlobs}
@@ -1191,6 +1318,9 @@ export default function Dashboard() {
                               agentBlocker={agentLock?.message ?? null}
                               progress={generateProgress}
                               reviewNotices={reviewNotices}
+                              onReviewOperaciones={() => goToField(4, reportFieldId("operaciones_realizadas"))}
+                              notice={generateNotice}
+                              onDismissNotice={() => setGenerateNotice(null)}
                             />
                           )}
 

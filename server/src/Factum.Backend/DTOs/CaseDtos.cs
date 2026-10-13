@@ -91,8 +91,14 @@ public sealed record ReportTextsDto(
     // versionado-informe: opcionales nuevos para el historial. Default null = cliente viejo, no
     // rompe el contrato. "save" (default) o "restore". restored_from solo válido con "restore".
     string? Trigger = null,
-    string? RestoredFrom = null
+    string? RestoredFrom = null,
+    // wizard-concurrencia-pestanas DT13: conteos con los que se armó "Operaciones realizadas". En
+    // defaults: los actuales. En el PUT: presente → se guarda; null/ausente → se conserva el guardado.
+    ReportCountsDto? OperacionesBase = null
 );
+
+/// <summary><c>{ capturas, grabaciones, archivos_extraidos, otros }</c> (DT13).</summary>
+public sealed record ReportCountsDto(int Capturas, int Grabaciones, int ArchivosExtraidos, int Otros);
 
 // versionado-informe: DTOs del historial de versiones de report_texts (GET …/report-text-versions).
 // JSON snake_case_lower (Program.cs). Mismo shape que report_texts SIN updated_at.

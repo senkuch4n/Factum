@@ -273,13 +273,18 @@ export function useFileManager() {
    * Quita un archivo. Guardado en la carpeta del caso (flujo agent): primero sale
    * del manifiesto (`DELETE …/evidence`) y después se borra de la PC; si falla lo
    * primero, no se toca nada. Bloqueado mientras haya un guardado en curso.
+   * Devuelve `true` si el archivo salió de la bandeja y `false` si quedó como estaba
+   * (el motivo sale por `onError`).
    */
   async function removeFile(
     filename: string,
     opts: { caseId?: string; onError?: (msg: string) => void; onEvidence?: (res: EvidenceResponse) => void } = {},
-  ) {
+  ): Promise<boolean> {
     // Defensa: durante el envío/guardado la UI ya deshabilita quitar.
-    if (loading.upload || saveBusy) return;
+    if (loading.upload || saveBusy) {
+      opts.onError?.("Esperá a que termine el guardado de la evidencia para borrar.");
+      return false;
+    }
     const file = filesRef.current.find(f => f.name === filename);
     if (file?.storedInCase && opts.caseId) {
       const caseId = opts.caseId;
@@ -290,8 +295,10 @@ export function useFileManager() {
         } catch (e) {
           // 404: ya no estaba en el manifiesto; se sigue con el borrado local.
           if (!(e instanceof ApiError && e.status === 404)) {
-            opts.onError?.(e instanceof Error ? e.message : "No se pudo quitar el archivo del expediente");
-            return;
+            opts.onError?.(e instanceof ApiError && e.status > 0
+              ? e.message
+              : "No se pudo quitar el archivo del expediente. Revisá la conexión con el servidor y reintentá.");
+            return false;
           }
         }
       }
@@ -302,10 +309,11 @@ export function useFileManager() {
         devWarn("No se pudo borrar de la carpeta del caso", filename, e);
       }
       dropLocal(filename);
-      return;
+      return true;
     }
     agent.deleteFile(filename).catch(() => {});
     dropLocal(filename);
+    return true;
   }
 
   function handlePhotoBlob(blob: Blob, filename: string) {
@@ -522,8 +530,11 @@ export function useFileManager() {
     };
 
     // 1. Copia (Blob del navegador) o movimiento (archivo de Tatana) + SHA-256.
+    //    Si ya se movió en un intento anterior (falló solo el registro), no se vuelve a importar.
     let info: EvidenceFileInfo;
-    if (blob) {
+    if (file.storedInCase && !blob && file.sha256 && typeof file.size === "number") {
+      info = { filename: name, size: file.size, sha256: file.sha256, saved_at: "" };
+    } else if (blob) {
       progress({ phase: "checking", loaded: 0, totalBytes: blob.size }, true);
       await agent.checkEvidenceUpload(caseId, name, blob.size, signal);
       progress({ phase: "copying", loaded: 0, totalBytes: blob.size }, true);
@@ -538,6 +549,12 @@ export function useFileManager() {
       progress({ phase: "hashing", loaded: 0, totalBytes: null }, true);
       info = await agent.importEvidence(caseId, name);
     }
+    // El archivo ya está en la carpeta del caso: la vista pasa a esa URL ahora,
+    // no después del registro (M8; si el registro falla, el borrado mira la carpeta correcta).
+    const moved = info;
+    setFiles(prev => prev.map(f => f.name === name
+      ? { ...f, storedInCase: true, sha256: moved.sha256, size: moved.size }
+      : f));
 
     // 2. Registro en el expediente.
     progress({ phase: "registering", loaded: 0, totalBytes: null }, true);
@@ -613,6 +630,8 @@ export function useFileManager() {
           setUploadStates(s => ({ ...s, [current]: "error" }));
           const msg = e instanceof AgentError
             ? agentErrorMessage(e, { name: current, action: "save" })
+            : e instanceof ApiError && e.code === "evidence_busy"
+              ? `No se pudo registrar ${current}: otra pestaña está guardando evidencia de este caso. Reintentá en unos segundos.`
             : e instanceof ApiError ? `No se pudo registrar ${current} en el expediente: ${e.message}`
             : `No se pudo guardar ${current} en esta PC. Reintentá.`;
           lastSaveErrorRef.current = msg;
