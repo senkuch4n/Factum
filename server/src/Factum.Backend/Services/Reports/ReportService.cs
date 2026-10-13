@@ -97,16 +97,62 @@ public sealed class ReportService : IReportService
 
     // ── Flujo D10 (§7.1) ──────────────────────────────────────────────────────
 
-    /// <summary>Nombre del ZIP de evidencia del caso (los dos flujos).</summary>
+    /// <summary>Largo máximo del texto saneado que va en el nombre del ZIP y del DOCX.</summary>
+    internal const int MaxSafeNameLength = 60;
+
+    /// <summary>Regex de Tatana (Factum.Agent/Common/AgentFileNames.cs, ZipNameRegex). Mantener idéntica.</summary>
+    internal static readonly Regex ZipNameRegex =
+        new(@"^evidencia_[\p{L}\p{N}_]{1,60}\.zip$", RegexOptions.CultureInvariant);
+
+    /// <summary>Nombre del ZIP de evidencia del caso (los dos flujos), con la regla vigente.</summary>
     internal static string ZipFilenameFor(Case cas) =>
         $"evidencia_{Sanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}")}.zip";
+
+    /// <summary>Nombre del ZIP con la regla anterior a wizard-pulido-ux (solo para reconocer intentos viejos, DT10).</summary>
+    internal static string LegacyZipFilenameFor(Case cas) =>
+        $"evidencia_{LegacySanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}")}.zip";
+
+    /// <summary>
+    /// Nombre del ZIP a usar al abrir un intento (wizard-pulido-ux DT10): (1) el ya registrado en el
+    /// caso si es válido para Tatana; (2) el de un intento abierto si es válido y los datos del caso no
+    /// cambiaron desde entonces (coincide con la regla nueva o con la vieja); (3) la regla nueva.
+    /// </summary>
+    internal static string ResolveZipFilename(Case cas)
+    {
+        if (!string.IsNullOrEmpty(cas.ZipFilename) && ZipNameRegex.IsMatch(cas.ZipFilename))
+            return cas.ZipFilename;
+
+        var current = ZipFilenameFor(cas);
+        var p = cas.PendingGeneration?.ZipFilename;
+        if (!string.IsNullOrEmpty(p) && ZipNameRegex.IsMatch(p)
+            && (string.Equals(p, current, StringComparison.Ordinal)
+                || string.Equals(p, LegacyZipFilenameFor(cas), StringComparison.Ordinal)))
+            return p;
+
+        return current;
+    }
+
+    /// <summary>
+    /// Base común del ZIP y del DOCX (DT11): el medio de <c>evidencia_{base}.zip</c>; si el nombre no
+    /// tiene esa forma, el Sanitize de los datos del caso.
+    /// </summary>
+    internal static string StemFromZip(string zipFilename, Case cas)
+    {
+        const string prefix = "evidencia_", suffix = ".zip";
+        if (zipFilename is not null
+            && zipFilename.Length > prefix.Length + suffix.Length
+            && zipFilename.StartsWith(prefix, StringComparison.Ordinal)
+            && zipFilename.EndsWith(suffix, StringComparison.Ordinal))
+            return zipFilename[prefix.Length..^suffix.Length];
+        return Sanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}");
+    }
 
     public async Task<ReportResult> GenerateAsync(Case cas, List<FileInfoDto> files,
         string caseDir, CancellationToken ct = default)
     {
-        var safeName = Sanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}");
-        var docxPath = Path.Combine(caseDir, $"informe_pericial_{safeName}.docx");
         var zipFilename = ZipFilenameFor(cas);
+        var safeName = StemFromZip(zipFilename, cas);
+        var docxPath = Path.Combine(caseDir, $"informe_pericial_{safeName}.docx");
         var zipPath = Path.Combine(caseDir, zipFilename);
 
         // 0. Marca del dueño del caso (marca-por-cliente §6.6), ANTES de escribir artefactos: si Mongo
@@ -204,17 +250,23 @@ public sealed class ReportService : IReportService
         IReadOnlyDictionary<string, string> hashes, string imagesDir, string outputDir,
         string zipFilename, string zipHash, CancellationToken ct = default)
     {
-        var safeName = Sanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}");
+        var safeName = StemFromZip(zipFilename, cas);
         var docxPath = Path.Combine(outputDir, $"informe_pericial_{safeName}.docx");
 
-        // 1. Restos de un intento anterior con los nombres de ESTE caso. Ningún evidencia_*.zip.
-        foreach (var stale in new[]
-                 {
-                     docxPath, Path.ChangeExtension(docxPath, ".pdf"),
-                     Path.Combine(outputDir, $"informe_forense_{safeName}.docx"),
-                     Path.Combine(outputDir, $"informe_forense_{safeName}.pdf"),
-                 })
-            if (File.Exists(stale)) File.Delete(stale);
+        // 1. Restos de un intento anterior con los nombres de ESTE caso (con la base del ZIP y, si es
+        // distinta, con la de los datos del caso, DT11). Ningún evidencia_*.zip.
+        var stems = new List<string> { safeName };
+        var dataStem = Sanitize($"{cas.NroReferencia}_{cas.NombreDenunciante}");
+        if (!string.Equals(dataStem, safeName, StringComparison.Ordinal)) stems.Add(dataStem);
+        foreach (var stem in stems)
+            foreach (var stale in new[]
+                     {
+                         Path.Combine(outputDir, $"informe_pericial_{stem}.docx"),
+                         Path.Combine(outputDir, $"informe_pericial_{stem}.pdf"),
+                         Path.Combine(outputDir, $"informe_forense_{stem}.docx"),
+                         Path.Combine(outputDir, $"informe_forense_{stem}.pdf"),
+                     })
+                if (File.Exists(stale)) File.Delete(stale);
 
         // 2. Evidencia en orden ordinal (tabla y anexo).
         var ordered = evidence
@@ -1651,9 +1703,25 @@ public sealed class ReportService : IReportService
         });
     }
 
-    // Recorta sobre el string ya filtrado y sin '_' en los extremos (antes cortaba con el largo
-    // previo al Trim y explotaba con ArgumentOutOfRangeException). Vacío → "caso".
+    // wizard-pulido-ux DT12: NFC (las tildes quedan como un solo carácter), todo lo que no es letra
+    // ni dígito pasa a '_' (los surrogates también, así el corte nunca parte un par), sin '_' en los
+    // extremos y, si supera 60, se corta en el último '_' con índice <= 60 para no partir una
+    // palabra (sin separador, corte duro en 60). Los '_' repetidos NO se colapsan. Vacío → "caso".
     internal static string Sanitize(string s)
+    {
+        var nfc = (s ?? string.Empty).Normalize(NormalizationForm.FormC);
+        var filtered = new string(nfc.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray()).Trim('_');
+        if (filtered.Length > MaxSafeNameLength)
+        {
+            var cut = filtered.LastIndexOf('_', MaxSafeNameLength);
+            filtered = (cut > 0 ? filtered[..cut] : filtered[..MaxSafeNameLength]).TrimEnd('_');
+        }
+        return filtered.Length == 0 ? "caso" : filtered;
+    }
+
+    // Regla anterior a wizard-pulido-ux (copia textual), solo para reconocer nombres de intentos
+    // abiertos antes del deploy (ResolveZipFilename, DT10). No usar para nombres nuevos.
+    private static string LegacySanitize(string s)
     {
         var filtered = new string(s.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray()).Trim('_');
         filtered = filtered[..Math.Min(filtered.Length, 60)];

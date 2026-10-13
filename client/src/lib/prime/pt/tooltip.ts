@@ -29,7 +29,7 @@ export const tooltip: TooltipPassThroughOptions = {
   }),
   text: {
     className:
-      "px-2 py-1 text-xs font-medium bg-fx-surface-3 text-fx-text border border-fx-border-strong rounded-fx-sm shadow-fx-2 break-words",
+      "px-2 py-1 text-xs font-medium bg-fx-surface-3 text-fx-text border border-fx-border-strong rounded-fx-sm shadow-fx-2 break-words whitespace-pre-line",
   },
   arrow: { className: "hidden" },
 };

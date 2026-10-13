@@ -36,7 +36,9 @@ import { useFileManager, storageOf } from "@/hooks/useFileManager";
 import { useRecording, sameId, type RecordOutcome } from "@/hooks/useRecording";
 import { useEvidenceNotices } from "@/hooks/useEvidenceNotices";
 import { useAirplayShotSession } from "@/hooks/useAirplayShotSession";
-import { AgentChip } from "@/components/dashboard/AgentChip";
+import { AgentChip, AgentChipBelowNav } from "@/components/dashboard/AgentChip";
+import { useAgentRecordingActivity } from "@/hooks/useAgentRecordingActivity";
+import { scrollIntoContainer } from "@/lib/scroll";
 import { GreetingHeadline } from "@/components/dashboard/GreetingHeadline";
 import { ResumeDeviceModal } from "@/components/dashboard/ResumeDeviceModal";
 import { SoporteModal } from "@/components/dashboard/SoporteModal";
@@ -331,7 +333,15 @@ export default function Dashboard() {
     return shouldAcceptAgentEvent(type, data as AttributedEventData | null, ctx);
   }, []);
 
+  // Relectura de `/agent/state` para el REC del chip (wizard-pulido-ux DT5).
+  const agentActivityRefreshRef = useRef<() => void>(() => {});
+
   const handleWsEvent = useCallback((event: AgentEvent) => {
+    // Primero, antes de cualquier filtro de atribución: el chip quiere ver
+    // también la grabación de OTRA pestaña (DT5).
+    if (event.type === "recording_started" || event.type === "recording_stopped" || event.type === "devices_changed") {
+      agentActivityRefreshRef.current();
+    }
     if (event.type === "devices_changed") {
       const newDevices = (event.data as { devices: Device[] }).devices || [];
       const cur = selDeviceRef.current;
@@ -416,9 +426,14 @@ export default function Dashboard() {
     agent.resetCapabilities();
     void refreshVariantStatus();
     void refreshRecording();
+    agentActivityRefreshRef.current();
   }, [refreshVariantStatus, refreshRecording]);
   const { agentOnline, devices, loadingDev, refreshDevices } = useAgentConnection(handleWsEvent, handleAgentConnected);
   const deviceConnection = useDeviceConnection(agentOnline, devices, loadingDev, selDevice?.serial ?? null);
+  // Chip del header: REC de cualquier grabación en la PC (D2 A) y equipo de la inspección (DT2).
+  const { remoteRecording, refresh: refreshAgentActivity } = useAgentRecordingActivity(agentOnline);
+  useEffect(() => { agentActivityRefreshRef.current = refreshAgentActivity; }, [refreshAgentActivity]);
+  const chipDevice = mode === "wizard" && step >= 2 ? selDevice : null;
   // ios-herramientas-windows §9.4: servicio de Apple y AirPlay según `/health.ios`.
   const { appleService, airplayAvailable, airplayReason } = useAgentIosStatus(agentOnline);
   const airplayUnavailableReason = airplayAvailable ? null : airplayReason ?? "uxplay_not_found";
@@ -478,8 +493,7 @@ export default function Dashboard() {
     if (lastFocusedStep.current === step) return;
     lastFocusedStep.current = step;
     if (focusFieldId) return; // el paso enfoca su campo (checklist de "Generar")
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    wizardTopRef.current?.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+    if (wizardTopRef.current) scrollIntoContainer(wizardTopRef.current, { block: "start" });
     stepRegionRef.current?.focus({ preventScroll: true });
     // focusFieldId se lee a propósito sin dependencia: solo importa al cambiar de paso.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -493,7 +507,7 @@ export default function Dashboard() {
   function handleStepShown() {
     if (step !== 3 || !focusFieldId) return;
     const el = document.getElementById(focusFieldId);
-    if (el) { el.focus({ preventScroll: true }); el.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    if (el) { el.focus({ preventScroll: true }); scrollIntoContainer(el, { block: "center" }); }
     setFocusFieldId(null);
   }
 
@@ -878,7 +892,7 @@ export default function Dashboard() {
 
   // ── Render ───────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-fx-bg text-fx-text">
+    <div className="flex flex-col h-screen overflow-clip bg-fx-bg text-fx-text">
 
       <ResumeDeviceModal
         cas={resumePending}
@@ -957,7 +971,15 @@ export default function Dashboard() {
         }
         actions={
           <>
-            <AgentChip online={agentOnline} device={selDevice} recording={isRecording} />
+            <AgentChip
+              online={agentOnline}
+              devices={devices}
+              loading={loadingDev}
+              selected={chipDevice}
+              connection={deviceConnection}
+              recording={isRecording || remoteRecording}
+              compactInline={mode === "wizard"}
+            />
             {mode === "history" && (
               <FxTip label="Nueva inspección" side="bottom">
                 <button
@@ -1001,8 +1023,26 @@ export default function Dashboard() {
         }
       />
 
+      {/* < sm en el historial: las pestañas "Inspecciones | Métricas" ya no
+          entran a 360–390 px, así que el estado de Tatana va en su propia fila,
+          debajo de la barra (fuera del scroll: siempre visible). */}
+      {mode === "history" && (
+        <div className="sm:hidden flex shrink-0 justify-end px-4 pt-2">
+          <AgentChipBelowNav
+            online={agentOnline}
+            devices={devices}
+            loading={loadingDev}
+            selected={chipDevice}
+            connection={deviceConnection}
+            recording={isRecording || remoteRecording}
+          />
+        </div>
+      )}
+
       {/* pb-14: reserva la píldora fija de SystemStatusLine para que no tape las últimas tarjetas */}
-      <div className="flex-1 overflow-y-auto pb-14">
+      {/* `relative`: los `sr-only` (absolute) sin ancestro posicionado tomaban el
+          bloque inicial como contenedor y estiraban el documento (M4, F1). */}
+      <div className="relative flex-1 overflow-y-auto pb-14">
 
         {mode === "history" && (
           <div className="p-4 sm:p-6 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]">

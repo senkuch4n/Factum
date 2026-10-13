@@ -24,6 +24,7 @@ import { StepHeader } from "@/components/wizard/StepHeader";
 import { StepActions } from "@/components/wizard/StepActions";
 import { ReportImagesProvider, type ImagePickerRequest, type ReportImagesContextValue } from "@/components/editor/ReportImagesContext";
 import { CapturePickerDialog } from "@/components/editor/CapturePickerDialog";
+import { scrollIntoContainer } from "@/lib/scroll";
 
 type TextKey = keyof ReportTextsInput;
 
@@ -317,8 +318,8 @@ export function ReportStep({
     const attempt = () => {
       const el = document.getElementById(focusFieldId);
       if (el) {
-        el.focus();
-        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.focus({ preventScroll: true });
+        scrollIntoContainer(el, { block: "center" });
       } else if (++tries < 60) {
         timer = window.setTimeout(attempt, 50);
         return;
