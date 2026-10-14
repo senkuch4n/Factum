@@ -74,6 +74,13 @@ public sealed class AgentOptions
     /// </summary>
     public string? MockAndroidRecordingOutcome { get; set; }
 
+    /// <summary>
+    /// Solo con <see cref="Mock"/> = true: estado que devuelve el chequeo de pantalla antes de capturar
+    /// (pulido-post-qa-final D9): <c>"on"</c> (default) | <c>"off"</c> | <c>"locked"</c> | <c>"unknown"</c>.
+    /// No va en appsettings.json: variable de entorno, CLI o appsettings.Local.json.
+    /// </summary>
+    public string? MockAndroidScreenState { get; set; }
+
     /// <summary>Ruta absoluta de la carpeta base del ZIP (config o default por SO).</summary>
     public string ResolveEvidenceDirectory() =>
         ResolveEvidenceDirectory(EvidenceDirectory, DataDirectory, OperatingSystem.IsWindows(),

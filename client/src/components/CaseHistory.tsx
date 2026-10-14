@@ -182,7 +182,7 @@ export function CaseHistory({ cases, loading, onNewCase, onRefresh, onResume }: 
   const countText = loading
     ? "Cargando…"
     : hasAnyFilter
-      ? `${filtered.length} de ${cases.length} resultado${filtered.length !== 1 ? "s" : ""}`
+      ? `${filtered.length} de ${cases.length} resultado${cases.length !== 1 ? "s" : ""}`
       : cases.length === 0
         ? "Aún no hay inspecciones"
         : cases.length === 1

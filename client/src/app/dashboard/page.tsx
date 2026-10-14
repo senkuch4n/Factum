@@ -5,7 +5,7 @@ import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import { Loader2, Plus, Play, ChevronRight, ArrowLeft, Smartphone, HelpCircle, LifeBuoy } from "lucide-react";
 import { Button } from "primereact/button";
 import { api, ApiError, type DeviceInput, type ZipLocation } from "@/lib/api";
-import { agent, AgentError, type ZipProgress } from "@/lib/agent";
+import { agent, AgentError, screenBlockOf, type ScreenCheckOptions, type ZipProgress } from "@/lib/agent";
 import {
   agentErrorMessage, agentStatusMessage, GENERATION_BUSY_MESSAGE, RECORDING_ERROR_TEXT,
 } from "@/lib/agent-messages";
@@ -154,6 +154,14 @@ export default function Dashboard() {
   const generateInFlightRef = useRef(false);
   /** Guard sincrónico de doble clic de "Pantalla" (DT8). */
   const screenshotInFlightRef = useRef(false);
+  /**
+   * Captura o inicio de grabación frenado por pantalla apagada o bloqueada
+   * (pulido-post-qa-final §8.7). Guarda el serial: con otro celular o con el
+   * celular desconectado el aviso deja de valer (ver `activeScreenBlock`).
+   */
+  const [screenBlock, setScreenBlock] = useState<
+    { action: "screenshot" | "record"; state: "off" | "locked"; serial: string } | null
+  >(null);
   const [resumePending, setResumePending] = useState<Case | null>(null);
   const [resumeConnected, setResumeConnected] = useState(false);
 
@@ -265,7 +273,7 @@ export default function Dashboard() {
   // ── Avisos de evidencia (grabacion-android-robusta §7.4): incompletas y capturas negras ──
   const {
     notices: evidenceNotices, setRecordingValidation, keepBlack, forget: forgetNotice, summary: reviewNotices,
-  } = useEvidenceNotices(currentCaseId, files);
+  } = useEvidenceNotices(currentCaseId, files, { agentStorage: currentStorage === "agent" });
 
   // Caso y celular por ref: los lee `useRecording` (recuperación por `/agent/state`) sin recrear callbacks.
   const currentCaseIdRef = useRef<string | null>(currentCaseId);
@@ -444,6 +452,13 @@ export default function Dashboard() {
 
   // Paso 3 (al entrar, o al cambiar de caso o de celular): ¿hay una grabación en curso en Tatana?
   const selSerial = selDevice?.serial ?? null;
+  // Aviso de pantalla vigente: mismo celular, conectado y con Tatana arriba (si no, se descarta solo).
+  const activeScreenBlock = screenBlock && screenBlock.serial === selSerial && !deviceOffline && agentOnline
+    ? { action: screenBlock.action, state: screenBlock.state }
+    : null;
+  // Y se olvida: si el mismo celular vuelve, no reaparece un aviso viejo.
+  const screenBlockStale = !!screenBlock && !activeScreenBlock;
+  useEffect(() => { if (screenBlockStale) setScreenBlock(null); }, [screenBlockStale]);
   useEffect(() => {
     if (step === 3 && currentCaseId && agentOnline) void refreshRecording();
   }, [step, currentCaseId, selSerial, agentOnline, refreshRecording]);
@@ -468,6 +483,9 @@ export default function Dashboard() {
     setDir(n > step ? 1 : -1);
     setStep(n); setStatus(""); setGlobal(""); setGenerateNotice(null);
     if (n !== 3) setDeviceOffline(false);
+    // pulido-post-qa-final D-T13: el banner "Retomando" es solo de la retoma; al salir del paso 3 se apaga.
+    // El aviso de pantalla apagada (§8.7) tampoco sobrevive a la salida del paso.
+    if (step === 3 && n !== 3) { setIsResuming(false); setScreenBlock(null); }
     // Volver al paso 2 con el caso ya creado = modo edición con los datos guardados.
     if (n === 2 && currentCase) {
       setCaseErr({});
@@ -585,16 +603,24 @@ export default function Dashboard() {
     setCase(c => (c ? { ...c, capture_roles: roles } : c));
   }
 
-  async function handleScreenshot() {
+  async function handleScreenshot(opts?: ScreenCheckOptions) {
     if (!selDevice || screenshotInFlightRef.current) return;
     screenshotInFlightRef.current = true;
     setLoad("screenshot", true);
     const caseId = currentCase?.id ?? null;
     try {
-      const { filename } = await agent.takeScreenshot(selDevice.serial, selDevice.platform ?? "android", { caseId });
+      const { filename } = await agent.takeScreenshot(selDevice.serial, selDevice.platform ?? "android", { caseId }, opts);
+      setScreenBlock(null);
       addFile(filename);
       api.reportAgentEvent("screenshot", caseId);
     } catch (e) {
+      // Pantalla apagada o bloqueada (§8.7): aviso con "Reintentar" / "Capturar igual". No hubo
+      // captura, así que no va al banner de error ni se reporta como `capture_failed` (D-T6).
+      const screen = screenBlockOf(e);
+      if (screen) {
+        setScreenBlock({ action: "screenshot", state: screen, serial: selDevice.serial });
+        return;
+      }
       const msg = e instanceof Error && e.message ? e.message : "Error al capturar pantalla";
       setGlobal(msg);
       api.reportAgentEvent("capture_failed", caseId, { failed_action: "screenshot", reason: msg });
@@ -626,7 +652,26 @@ export default function Dashboard() {
 
   async function runRecordAction(action: () => Promise<RecordOutcome>) {
     const caseId = currentCase?.id ?? null;
-    reportRecordOutcome(await action(), caseId);
+    const out = await action();
+    if (out.kind === "screen_blocked") {
+      if (selDevice) setScreenBlock({ action: "record", state: out.state, serial: selDevice.serial });
+    }
+    else if (out.kind === "started") setScreenBlock(null);
+    reportRecordOutcome(out, caseId); // `screen_blocked` cae en `default`: no se reporta (D-T6)
+  }
+
+  /**
+   * Acciones del aviso de pantalla (§8.7): "Reintentar" vuelve a pedir con el
+   * chequeo; "Capturar igual" / "Grabar igual" lo saltea. Los dos pasan por los
+   * mismos guards de doble toque que los botones de captura.
+   */
+  function runScreenBlockAction(skipScreenCheck: boolean) {
+    if (!screenBlock || !selDevice) return;
+    const opts: ScreenCheckOptions | undefined = skipScreenCheck ? { skipScreenCheck: true } : undefined;
+    if (screenBlock.action === "screenshot") { void handleScreenshot(opts); return; }
+    // Solo inicia: si mientras tanto ya hay una grabación propia, no se toca.
+    if (isRecording) { setScreenBlock(null); return; }
+    void runRecordAction(() => handleToggleRecord(selDevice, setGlobal, opts));
   }
 
   async function handleStartAirplayShot() {
@@ -781,7 +826,7 @@ export default function Dashboard() {
     setStep(1); setDir(1);
     setSelDevice(null); setCase(null); setResult(null);
     setCaseForm(EMPTY_CASE_FORM); setCaseErr({}); setStatus(""); setGlobal("");
-    setIsResuming(false); setFocusFieldId(null); setGenerateMissing([]); setGenerateNotice(null);
+    setIsResuming(false); setFocusFieldId(null); setGenerateMissing([]); setGenerateNotice(null); setScreenBlock(null);
     setSyncWarningDismissed(false);
     setCasePrefill(null);
     setRecordingInfo("");
@@ -1253,7 +1298,11 @@ export default function Dashboard() {
                               platform={selDevice.platform ?? "android"}
                               deviceSerial={selDevice.serial}
                               files={files}
-                              onScreenshot={handleScreenshot}
+                              onScreenshot={() => { void handleScreenshot(); }}
+                              screenBlock={activeScreenBlock}
+                              onScreenRetry={() => runScreenBlockAction(false)}
+                              onScreenForce={() => runScreenBlockAction(true)}
+                              onDismissScreenBlock={() => setScreenBlock(null)}
                               onToggleRecord={() => { void runRecordAction(() => handleToggleRecord(selDevice, setGlobal)); }}
                               iosModePicker={iosModePicker}
                               iosRecordMode={iosRecordMode}

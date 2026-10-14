@@ -123,7 +123,7 @@ const CAUSA: FieldDef[] = [
   { key: "nro_referencia",       label: "Número de causa / expediente", icon: Hash,     required: true, placeholder: "Ej.: 1234/2026", mono: true },
   { key: "fecha_intervencion",   label: "Fecha de intervención",       icon: CalendarIcon, required: true, type: "date" },
   { key: "caratula",             label: "Carátula",                    icon: FileText,  required: true, placeholder: "Carátula completa de la causa…", maxLength: MAX_LEN_LONG, wide: true, multiline: true },
-  { key: "tipo_causa",           label: "Tipo de causa",               icon: Scale,     required: true, placeholder: "Ej.: disciplinaria, civil, penal…" },
+  { key: "tipo_causa",           label: "Tipo de causa",               icon: Scale,     required: true, placeholder: "Ej.: disciplinaria, civil, penal", hint: "Solo el tipo, sin la palabra «causa»: el informe ya dice «la causa … N° …»." },
   { key: "ambito_causa",         label: "Ámbito",                      icon: MapPin },
   { key: "objeto_causa",         label: "Objeto de la causa",          icon: FileText, wide: true },
 ];

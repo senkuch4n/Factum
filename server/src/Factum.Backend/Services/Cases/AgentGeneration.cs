@@ -376,6 +376,9 @@ public sealed partial class CaseService
                 var ok = CaseEventFor(saved, CaseEventTypes.ReportGenerated);
                 ok.Detail = new CaseEventDetail { ZipHash = meta.ZipHash!, ReportHash = report.ReportHash };
                 await RecordEventAsync(ok);
+                // pulido-post-qa-final D7: solo id y hashes cortos (nada de contraseña, expediente, nombres ni rutas).
+                _log.LogInformation("Informe generado para caso {CaseId} (ZIP {ZipHash}, DOCX {ReportHash})", id,
+                    ShortHash(meta.ZipHash), ShortHash(report.ReportHash));
                 return Result.Ok(new GenerateResponse(saved, meta.ZipHash!, pending.Password,
                     new FilesDto(pending.ZipFilename, report.PdfFilename), report.ReportHash, zipLocation));
             }

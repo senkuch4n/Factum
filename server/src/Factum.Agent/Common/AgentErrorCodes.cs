@@ -61,4 +61,10 @@ public static class AgentErrorCodes
     public const string RecordingUnreadable = "recording_unreadable";
     /// <summary>409 del stop: no hay una grabación en curso (mismo código que tatana-ws-y-hosts, T-14).</summary>
     public const string NotRecording = "not_recording";
+
+    // ── Pantalla del celular antes de capturar (pulido-post-qa-final D9) ──
+    /// <summary>409 de screenshot y record/start (pulido-post-qa-final D9): la pantalla del Android está apagada.</summary>
+    public const string ScreenOff = "screen_off";
+    /// <summary>409 de screenshot y record/start (pulido-post-qa-final D9): la pantalla del Android está bloqueada.</summary>
+    public const string ScreenLocked = "screen_locked";
 }

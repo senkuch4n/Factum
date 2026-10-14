@@ -365,7 +365,9 @@ export type AgentErrorCode =
   | "ios_tools_missing" | "ios_capture_failed" | "ios_recording_empty" | "airplay_unavailable"
   // Grabación (grabacion-android-robusta §6): start/stop y evidencia de 0 B.
   | "already_recording" | "recording_start_timeout" | "not_recording" | "recording_empty"
-  | "recording_unreadable" | "empty_evidence";
+  | "recording_unreadable" | "empty_evidence"
+  // Pantalla del celular apagada o bloqueada: 409 de screenshot y record/start (pulido-post-qa-final §6.2).
+  | "screen_off" | "screen_locked";
 
 /** Cuerpo de error de Tatana (claves literales en snake_case). */
 export interface AgentErrorBody {
@@ -379,6 +381,23 @@ export interface AgentErrorBody {
   files?: { filename: string; reason: "missing" | "size" | "hash" }[];
   /** 422 `recording_empty`/`recording_unreadable` del stop. */
   validation?: RecordingValidation;
+  /** 409 `screen_off`/`screen_locked` de screenshot y record/start (pulido-post-qa-final §6.2). */
+  screen_state?: "off" | "locked";
+}
+
+/** Opciones de captura: `skipScreenCheck` = "Capturar igual" / "Grabar igual" (pulido-post-qa-final §6.1). */
+export interface ScreenCheckOptions {
+  skipScreenCheck?: boolean;
+}
+
+/**
+ * Si `e` es el 409 de pantalla apagada o bloqueada, devuelve el estado
+ * (`screen_state`, o el que se deduce del `code`); si no, `null`.
+ */
+export function screenBlockOf(e: unknown): "off" | "locked" | null {
+  if (!(e instanceof AgentError) || (e.code !== "screen_off" && e.code !== "screen_locked")) return null;
+  const s = e.body?.screen_state;
+  return s === "off" || s === "locked" ? s : e.code === "screen_off" ? "off" : "locked";
 }
 
 /**
@@ -551,9 +570,12 @@ export const agent = {
     serial: string,
     platform: "android" | "ios" = "android",
     attribution?: AgentAttribution | null,
+    opts?: ScreenCheckOptions,
   ): Promise<{ filename: string; url: string }> {
     const q = attributionParams(attribution);
     if (platform === "ios") q.set("platform", "ios");
+    // "Capturar igual": un Tatana sin el chequeo ignora el parámetro.
+    if (opts?.skipScreenCheck) q.set("skip_screen_check", "true");
     const qs = q.toString();
     const url = `${AGENT_URL}/devices/${serial}/screenshot${qs ? `?${qs}` : ""}`;
     let res: Response;
@@ -563,7 +585,14 @@ export const agent = {
       throw new Error(AGENT_UNREACHABLE);
     }
     // D7: el motivo real que manda Tatana (`{ error, code }`); el fallback solo si no viene.
-    if (!res.ok) throw await readAgentError(res, "Error tomando screenshot");
+    // Pantalla apagada o bloqueada: `AgentError` con `code` y `screen_state` (el llamador
+    // muestra el aviso con "Capturar igual"). El cuerpo se lee una sola vez.
+    if (!res.ok) {
+      const body = parseAgentErrorBody(await res.text().catch(() => ""));
+      if (body?.code === "screen_off" || body?.code === "screen_locked") throw new AgentError("http", res.status, body);
+      const msg = typeof body?.error === "string" && body.error.trim() ? body.error.trim() : "Error tomando screenshot";
+      throw new Error(msg);
+    }
     return res.json();
   },
 
@@ -663,12 +692,15 @@ export const agent = {
     iosMode?: IosRecordMode,
     androidWithMic?: boolean,
     caseId?: string | null,
+    opts?: ScreenCheckOptions,
   ): Promise<{ filename?: string; state?: string; started_at?: string; case_id?: string }> {
     return agentJSON(`/devices/${encodeURIComponent(serial)}/record/start`, jsonInit("POST", {
       android_version: androidVersion, platform, ios_mode: iosMode,
       android_with_mic: androidWithMic,
       // `case_id` (grabacion-android-robusta) + `origin_id` de esta pestaña (wizard-concurrencia-pestanas).
       ...attributionBody({ caseId }),
+      // "Grabar igual" (pulido-post-qa-final §6.1): solo si viene; un Tatana sin el chequeo lo ignora.
+      ...(opts?.skipScreenCheck ? { skip_screen_check: true } : {}),
     }));
   },
 
