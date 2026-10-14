@@ -283,3 +283,22 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-14 — #79 reviewer: aprobada -> progress/review_metadatos-dispositivo.md (Agent 704, Backend 1340 OK). Backend y Tatana locales reiniciados con la rama; lanzado agente de QA para la prueba manual §15.2.
 - 2026-10-14 — QA manual #79: 11 OK / 0 FALLA / 4 no verificables (docs/qa/2026-10-14/metadatos-dispositivo-manual.md). Esperando OK del usuario para PR.
 - 2026-10-14 — #79 OK del usuario -> aprobada; commit, push y PR contra develop.
+- 2026-10-14 — PR #84 (#79) esperando CI para merge. Tomada #80, rama feat/grabacion-sesion-completa, afinando; lanzado afinador.
+- 2026-10-14 — PR #84 (#79) mergeado a develop. Rama de #80 adelantada a develop.
+- 2026-10-14 — #80 afinada -> docs/hu-grabacion-sesion-completa.md (13 dudas). Por validar.
+- 2026-10-14 — #80 validada (D1–D13 recomendadas). en_arquitectura; lanzado architect.
+- 2026-10-14 — #80 arquitectura_lista -> Refactorizaciones/grabacion-sesion-completa.md. ZIP64+AES OK (10 GiB ~3,5 min). Pendientes DU1–DU4 (fases, corte solapado, agent-ui, AirPlay fuera).
+- 2026-10-14 — #80 DU1–DU4 validadas (recomendadas). Fase 2 dada de alta como #85. #80 implementando fase 1; lanzados implementer-backend y -frontend.
+- 2026-10-14 — #80 implementer-frontend done -> progress/impl_frontend_grabacion-sesion-completa.md. Esperando backend.
+- 2026-10-14 — Alta #86 acciones-rapidas-dispositivo (pedido del usuario: botones que automaticen; empezar por Ajustes/IMEI para la captura de modelo e IMEI).
+- 2026-10-14 — #80 implementer-backend done -> progress/impl_backend_grabacion-sesion-completa.md. en_revision; lanzado reviewer.
+- 2026-10-14 — #80 reviewer: aprobada -> progress/review_grabacion-sesion-completa.md. Obs. 1 (2/9 cortes fallaron en el SM-M127F): relanzado implementer-backend para endurecer el corte solapado antes de la prueba manual.
+- 2026-10-14 — Los dos scrcpy sueltos (15:52 y 16:01) no los abrió el usuario: los dejaron pruebas de agentes y abrieron ventanas. Ya no corren; pedido al implementer cerrar siempre lo que lance y usar --no-window.
+- 2026-10-14 — #80 ajuste post-review del backend: arranque confirmado con reintentos, 821 tests Tatana OK, 6/6 cortes OK en el SM-M127F. Reviewer re-chequeando el delta.
+- 2026-10-14 — #80 re-chequeo del reviewer: aprobada. Backend y Tatana locales reiniciados con la rama; lanzado agente de QA para §16.2.
+- 2026-10-14 — QA manual #80: 20 OK / 3 FALLA / 3 no verificables. H-1 crítica (409 por precisión de horas µs vs ms; caso no generable), H-3 alta (Retomar apaga la sesión), H-2 media (detalle sin Registro audiovisual). rechazada_reintentando (1); relanzados implementer-backend y -frontend.
+- 2026-10-14 — #80 reintento 1 frontend done (H-3, H-2 UI, B-4, B-6); pedido al backend sumar recorded_seconds al detail de recording_session_segment_closed.
+- 2026-10-14 — #80 reintento 1 backend done (H-1, H-2, B-1..B-5; agent 821, backend 1443 OK). en_revision; relanzado reviewer.
+- 2026-10-14 — #80 revisión post-QA: aprobada. Servicios reiniciados; relanzado QA para verificar H-1/H-2/H-3 y bajos.
+- 2026-10-14 — QA re-prueba #80: 15 OK / 0 FALLA / 1 no verificable (desconexión por cable). Nuevo B-9 baja (panel web usa duración de video vs. informe lo grabado). Esperando OK del usuario.
+- 2026-10-14 — #80 (fase 1) OK del usuario -> aprobada; commit, push y PR contra develop. B-9 pasa a #85.
