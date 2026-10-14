@@ -25,6 +25,15 @@ public sealed class CaseZipController(ICaseZipService zips, IFolderReveal reveal
         catch (AgentHttpException ex) { return Error(ex); }
     }
 
+    // sellado-tiempo §7.3: copia los .tsr y el LEEME a <carpeta del caso>/sellos/. Pedido corto y síncrono.
+    [HttpPut("seals")]
+    [RequestSizeLimit(16 * 1024 * 1024)]
+    public async Task<IActionResult> Seals(string caseId, [FromBody] WriteSealsRequest request, CancellationToken ct)
+    {
+        try { return Ok(await zips.WriteSealsAsync(caseId, request, ct)); }
+        catch (AgentHttpException ex) { return Error(ex); }
+    }
+
     [HttpDelete("pending")]
     public IActionResult DiscardPending(string caseId, [FromQuery(Name = "case_ref")] string? caseRef,
         [FromQuery(Name = "zip_filename")] string? zipFilename)

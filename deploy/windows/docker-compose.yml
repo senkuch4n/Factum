@@ -50,6 +50,11 @@ services:
       Auth__AllowDevOutsideDevelopment: ${FACTUM_AUTH_ALLOW_DEV:-true}
       Storage__DataDirectory: /data
       Integrations__Support__Enabled: "false"
+      # Sellado de tiempo RFC 3161 (guía, "Sellado de tiempo"). Vacío = desactivado (D-T3).
+      Timestamping__Urls: ${FACTUM_SELLADO_URLS:-}
+      Timestamping__Enabled: ${FACTUM_SELLADO_HABILITADO:-true}
+      Timestamping__TimeoutSeconds: ${FACTUM_SELLADO_TIMEOUT_SEGUNDOS:-10}
+      Timestamping__MaxAttempts: ${FACTUM_SELLADO_MAX_INTENTOS:-12}
     volumes:
       # Sintaxis larga: evita el problema del "C:" en la corta y, con create_host_path: false,
       # que Docker cree una CARPETA appsettings.Local.json si falta el archivo.

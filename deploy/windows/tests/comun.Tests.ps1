@@ -281,6 +281,13 @@ Describe 'Guardas del repo (perfil de memoria)' {
         $valores['FACTUM_SESION_TOPE_HORAS'] | Should -Be '12'
     }
 
+    It '.env.example trae FACTUM_SELLADO_URLS vacío y FACTUM_SELLADO_HABILITADO=true (sellado-tiempo D-T3)' {
+        $valores = Read-EnvFile (Join-Path $script:raizW '.env.example')
+        $valores.ContainsKey('FACTUM_SELLADO_URLS') | Should -BeTrue
+        $valores['FACTUM_SELLADO_URLS'] | Should -Be ''
+        $valores['FACTUM_SELLADO_HABILITADO'] | Should -Be 'true'
+    }
+
     It 'el compose de poca RAM no tiene image: (Get-MongoImagen devuelve $null)' {
         Get-MongoImagen (Join-Path $script:raizW 'docker-compose.poca-ram.yml') | Should -BeNullOrEmpty
     }

@@ -117,4 +117,33 @@ public sealed class AgentFileNamesTests
     [InlineData(null, false)]
     public void IsZipPartFilename(string? name, bool expected) =>
         Assert.Equal(expected, AgentFileNames.IsZipPartFilename(name));
+
+    // sellado-tiempo §7.3: nombres de los .tsr de sellos/ (sin la regla de artefactos).
+    [Theory]
+    [InlineData("captura_1.png.tsr", true)]
+    [InlineData("evidencia_1234_2026_Perez.zip.tsr", true)]
+    [InlineData("informe_pericial_1234_2026_Perez.docx.tsr", true)]
+    [InlineData("grabación ñ.mkv.tsr", true)]
+    [InlineData("../x.tsr", false)]
+    [InlineData("a/b.tsr", false)]
+    [InlineData(@"a\b.tsr", false)]
+    [InlineData("x.txt", false)]
+    [InlineData("x.TSR", false)]
+    [InlineData(".tsr", false)]
+    [InlineData("CON.tsr", false)]
+    [InlineData("a:b.tsr", false)]
+    [InlineData("a\u0001.tsr", false)]
+    [InlineData("gpj.\u202Etsr", false)]
+    [InlineData("abc\u202Edef.tsr", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void IsSealFilename(string? name, bool expected) =>
+        Assert.Equal(expected, AgentFileNames.IsSealFilename(name));
+
+    [Fact]
+    public void IsSealFilename_MaxLength()
+    {
+        Assert.True(AgentFileNames.IsSealFilename(new string('a', 251) + ".tsr"));
+        Assert.False(AgentFileNames.IsSealFilename(new string('a', 252) + ".tsr"));
+    }
 }

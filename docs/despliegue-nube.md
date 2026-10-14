@@ -292,6 +292,8 @@ Formato: `CLAVE=valor`, sin espacios alrededor del `=`. Un valor con espacios va
 | `FACTUM_BACKUP_LOCALES` | `3` | — |
 | `FACTUM_BACKUP_PING_URL` | Vacío hasta la sección 12 | Sección 12 |
 | `FACTUM_AGENT_URL`, `FACTUM_TATANA_DESCARGA_URL` | Vacíos (solo los usa el plan B) | — |
+| `FACTUM_SELLADO_URLS` | Vacío (sellado de tiempo desactivado) hasta elegir la autoridad; ver abajo | — |
+| `FACTUM_SELLADO_HABILITADO`, `FACTUM_SELLADO_TIMEOUT_SEGUNDOS`, `FACTUM_SELLADO_MAX_INTENTOS` | Dejá los valores del ejemplo (`true`, `10`, `12`) | — |
 
 Los `openssl rand` los podés correr en el mismo servidor y copiar el resultado.
 
@@ -301,6 +303,28 @@ por inactividad. `FACTUM_SESION_TOPE_HORAS` es el máximo desde el login: llegad
 aunque se esté trabajando (la web avisa 30 minutos antes y no se pierde lo cargado en el asistente). Los dos tienen
 que ser mayores que 0 y hasta 168; si no, el backend no arranca. Si el tope es menor que la duración del token, el
 backend arranca con un aviso en el log y cada token se recorta al tope.
+
+**Sellado de tiempo (RFC 3161).** Opcional y **desactivado** mientras `FACTUM_SELLADO_URLS` esté vacío. Activado, el
+backend pide a una autoridad de sellado de tiempo externa un sello sobre el hash SHA-256 de cada archivo de
+evidencia, del ZIP y del informe (nunca manda el contenido); el informe lo menciona y la carpeta del caso en la PC
+del perito recibe los `.tsr` y un `LEEME-verificacion.txt` (README, "Sellado de tiempo").
+
+- **Elegir la autoridad:** Factum no afirma la validez legal de ninguna; elegila con asesoramiento jurídico. Las
+  dos probadas con `openssl ts -verify` son FreeTSA y DigiCert:
+  `FACTUM_SELLADO_URLS=https://freetsa.org/tsr,http://timestamp.digicert.com` (en orden de preferencia; si la primera
+  no responde se prueba la siguiente). Si la autoridad pide usuario y clave:
+  `https://usuario:clave@host/ruta` (no aparecen en logs, en la base ni en el LEEME).
+- **Aplicarlo:** `compose.sh up -d backend`. El servidor tiene que poder salir a internet hacia esa URL.
+- **Verificar que funciona:** en el log de arranque (`compose.sh logs --tail 80 backend`) tiene que aparecer
+  `Sellado de tiempo: habilitado (freetsa.org, timestamp.digicert.com), timeout 10 s, 12 intentos máx.`
+  (`deshabilitado` si está vacío). Después, con un **caso de prueba nuevo**: guardá una captura (la bandeja muestra
+  el reloj con check), generá y abrí el detalle: el bloque "Sello de tiempo" tiene que mostrar el ZIP y el informe
+  sellados. Si la autoridad no responde, nada se bloquea: el sello queda pendiente y se reintenta solo.
+- **Desactivarlo:** vaciá `FACTUM_SELLADO_URLS` (o `FACTUM_SELLADO_HABILITADO=false`) y `compose.sh up -d backend`.
+  Los sellos ya obtenidos siguen visibles y descargables.
+
+Para copiar los sellos a la carpeta del caso hace falta un Tatana con esta función (sección 19.5); con uno anterior,
+la web ofrece descargarlos.
 
 **La clave de los backups se genera ahora** (cada deploy hace antes un backup cifrado, así que hace falta desde el
 principio). En tu **Mac**, no en el servidor:

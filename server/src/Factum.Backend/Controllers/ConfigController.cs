@@ -3,6 +3,7 @@ using Factum.Backend.Services.Branding;
 using Factum.Backend.Services.Reports;
 using Factum.Backend.Services.Support;
 using Factum.Backend.Services.Tatana;
+using Factum.Backend.Services.Timestamping;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -20,7 +21,7 @@ namespace Factum.Backend.Controllers;
 [Route("api/config")]
 [AllowAnonymous]
 public sealed class ConfigController(IBrandingService branding, SupportSettings support,
-    IReportSettings report, IOptions<TatanaOptions> tatana) : ControllerBase
+    IReportSettings report, IOptions<TatanaOptions> tatana, ITimestampService timestamps) : ControllerBase
 {
     public const string LogoPath = "/api/config/branding/logo";
 
@@ -32,7 +33,7 @@ public sealed class ConfigController(IBrandingService branding, SupportSettings 
         var snap = branding.Current;
         var logoUrl = snap.Logo is { } logo ? $"{LogoPath}?v={logo.Version}" : null;
         return Ok(new PublicConfigResponse(snap.OrganizationName, logoUrl, support.Enabled,
-            report.EncryptZip, TatanaOptions.Normalize(tatana.Value.MinVersion)));
+            report.EncryptZip, TatanaOptions.Normalize(tatana.Value.MinVersion), timestamps.IsEnabled));
     }
 
     // El parámetro "v" de la query es solo cache-busting del lado del cliente; se ignora.

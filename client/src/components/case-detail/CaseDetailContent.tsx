@@ -17,6 +17,8 @@ import { CopyButton } from "@/components/feedback/CopyButton";
 import { useCaseAgentFlow } from "./useCaseAgentFlow";
 import { CaseTimeline } from "./CaseTimeline";
 import { CaseVersionHistoryButton } from "./CaseVersionHistoryButton";
+import { TimestampPanel } from "./TimestampPanel";
+import { syncCaseSeals } from "@/lib/timestamps";
 
 /** Id del aviso de compatibilidad (lo referencia el botón "ZIP cifrado" del pie). */
 const compatId = (cas: Case) => `zip-compat-${cas.id}`;
@@ -105,6 +107,8 @@ export function CaseDetailContent({ cas, onResume }: { cas: Case; onResume: (c: 
               <Info className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> Este ZIP se generó sin cifrar
             </p>
           )}
+          {/* sellado-tiempo §9.4: en el flujo server, la fila informativa (o nada si el sellado está apagado). */}
+          {!agentFlow && <TimestampPanel cas={cas} sameHost={false} embedded />}
         </section>
       )}
     </div>
@@ -181,6 +185,7 @@ function AgentZipBlock({ cas, sameHost, isEncrypted }: { cas: Case; sameHost: bo
         const st = await agent.zipStatus(cas.id, cas.nro_referencia, zipName);
         if (st.state === "pending" && st.pending_hash && st.pending_hash === cas.zip_hash) {
           await agent.commitZip(cas.id, { case_ref: cas.nro_referencia, zip_filename: zipName, zip_hash: cas.zip_hash, delete_files: [] });
+          void syncCaseSeals(cas);
           if (alive) setZipState("final");
         } else if (alive) {
           setZipState(st.state === "final" ? "final" : "none");
@@ -224,6 +229,7 @@ function AgentZipBlock({ cas, sameHost, isEncrypted }: { cas: Case; sameHost: bo
           <Info className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> Este ZIP se generó sin cifrar
         </p>
       )}
+      <TimestampPanel cas={cas} sameHost={sameHost} zipState={zipState === "final" ? "final" : "unknown"} embedded />
     </div>
   );
 }

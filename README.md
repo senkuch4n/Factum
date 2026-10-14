@@ -220,6 +220,10 @@ npm run package   # empaqueta la app instalable
 | `Storage:MinFreeBytes` | Env `Storage__MinFreeBytes`. Espacio libre que tiene que quedar en el disco de `DataDirectory` después de una subida; si no alcanza, la subida se rechaza con 507 antes de escribir. Default `1073741824` (1 GB). Tiene que ser mayor o igual que 0 o el backend no arranca |
 | `Audit:AdminDnis` | DNIs habilitados a leer `GET /api/agent-events` (auditoría de uso del agente). En `Auth:Mode=local` también puede leerla cualquier superadmin |
 | `Tatana:MinVersion` | Env `Tatana__MinVersion` (en la nube, `FACTUM_TATANA_VERSION_MINIMA`). Versión mínima de Tatana con la que la web inicia capturas: vacío = no bloquea; `X.Y.Z` = un Tatana menor (o anterior al instalador, sin `real_version_v1`) queda como desactualizado. Sale en `GET /api/config/public` como `tatana_min_version`. Otro formato impide arrancar |
+| `Timestamping:Urls` | Env `Timestamping__Urls` (en los despliegues, `FACTUM_SELLADO_URLS`). Autoridades de sellado de tiempo RFC 3161, en orden de preferencia, separadas por coma o espacio. Vacío (default del `appsettings.json` y de la nube/Windows) = sellado desactivado; en desarrollo (`appsettings.Development.json` y el `docker-compose.yml` raíz) vale `https://freetsa.org/tsr, http://timestamp.digicert.com`. Cada una tiene que ser `http`/`https` absoluta y sin fragmento o el backend no arranca. Si la autoridad pide usuario y clave: `https://usuario:clave@host/ruta` (se mandan como Basic y nunca se loguean ni se guardan) — ver [Sellado de tiempo](#sellado-de-tiempo-rfc-3161) |
+| `Timestamping:Enabled` | Env `FACTUM_SELLADO_HABILITADO`. Interruptor (default `true`): `false` desactiva el sellado aunque haya URLs |
+| `Timestamping:TimeoutSeconds` / `MaxAttempts` | Env `FACTUM_SELLADO_TIMEOUT_SEGUNDOS` (2–60, default `10`) y `FACTUM_SELLADO_MAX_INTENTOS` (1–50, default `12`): timeout por autoridad y tope de intentos de la cola antes de abandonar un sello. Fuera de rango, no arranca |
+| `Timestamping:InlineBudgetSeconds` / `GenerationBudgetSeconds` / `InlineCooldownSeconds` / `PollSeconds` | Solo config. Tiempo máximo que espera el registro de evidencia (1–60, default `10`), cada sello de la generación (1–120, default `15`), pausa del intento inline tras un fallo total (0–3600, default `120`) y vuelta de la cola de reintentos (5–3600, default `30`) |
 | `Branding:OrganizationName` / `OrganizationLogo` / `OrganizationIsotype` / `ContactLines` / `PrimaryColor` / `AccentColor` | Identidad de la organización que emite los informes (nombre, logo, isotipo, contacto y colores del informe) — ver [Branding](#identidad-de-la-organización-branding). Vacío en el repo |
 | `Report:TimeZone` / `DomicilioConstituido` / `DefaultTexts:*` | Zona horaria, domicilio constituido y textos por defecto del informe pericial — ver [Informe pericial](#informe-pericial-configuración). Domicilio vacío en el repo |
 | `Report:MaxGenerateUploadBytes` | Env `Report__MaxGenerateUploadBytes`. Tope del cuerpo de `POST /api/cases/{id}/generate/finish` (los datos del ZIP más las capturas que el informe embebe). Default `268435456` (256 MiB). Tiene que ser mayor que 0 o el backend no arranca. Si se supera: 413 `request_too_large` con `max_bytes` |
@@ -518,6 +522,8 @@ portada). Se completa en el cuerpo y en los encabezados/pies:
 | `{#MEMBRETE_CON_LOGO}` … `{/MEMBRETE_CON_LOGO}` | Dentro de `MEMBRETE`: queda solo si hay logo (en la v6, tabla logo \| nombre y contacto). |
 | `{#MEMBRETE_SIN_LOGO}` … `{/MEMBRETE_SIN_LOGO}` | Dentro de `MEMBRETE`: queda solo si **no** hay logo (nombre y contacto en texto, sin una celda vacía). |
 | `{#ISOTIPO}` … `{/ISOTIPO}` | Bloque que solo queda si hay `Branding:OrganizationIsotype` válido. |
+| `{descripcionSelloTiempo}` | Bloque explicativo del sellado de tiempo (párrafo completo, texto plano): qué autoridad selló, el sello del ZIP o la constancia de que no lo tenía al emitirse, y "N de M archivos" con sello. Ver [Sellado de tiempo](#sellado-de-tiempo-rfc-3161). |
+| `{#selloTiempo}` … `{/selloTiempo}` | Bloque debajo de la tabla de hashes que solo queda si el sellado estaba activo al generar (flujo agent). Con el sellado desactivado, o en el flujo anterior, desaparece y el informe queda como antes. Las líneas "Sello de tiempo: …" de cada fila de la tabla las agrega el backend, no la plantilla. |
 
 El verde de la plantilla v6 (`2F6F12`, el default del primario) funciona como
 centinela: al generar, el backend lo reemplaza por `Branding:PrimaryColor` en
@@ -606,6 +612,47 @@ ya subida al servidor siguen con el flujo anterior (`POST /files` +
 
 **Regenerar las plantillas v4 y v6** (por ejemplo, si cambia la plantilla de
 origen o el diseño): ver `ops/plantilla/README.md`.
+
+### Sellado de tiempo (RFC 3161)
+
+Opcional. Con `Timestamping:Urls` configurado, el backend pide a una
+**autoridad de sellado de tiempo** externa (TSA) un sello RFC 3161 sobre el
+**hash SHA-256** de cada objeto — nunca manda el contenido. El sello es una
+constancia firmada por un tercero de que ese hash existía en esa fecha y hora,
+según el reloj de la autoridad (no el de la PC del perito ni el del servidor), y
+se verifica con herramientas estándar (`openssl ts -verify`) sin Factum.
+
+- **Qué se sella** (solo en el flujo de evidencia en la PC del perito): cada
+  archivo de evidencia al registrarlo en el caso (`PUT …/evidence`), el ZIP al
+  generar (antes de armar el DOCX, así el informe lo cita) y el DOCX después de
+  generarlo (el informe no puede contener su propio sello). Cada sello se guarda
+  en la colección `case_timestamps` con la autoridad, la fecha certificada, el
+  número de serie y el `.tsr` completo.
+- **Si la autoridad no responde, nada se bloquea:** el sello queda pendiente y
+  una cola en segundo plano lo reintenta (1, 2, 5, 10, 30 min, … hasta 24 h
+  entre intentos; 12 intentos, unas 52 h). El guardado espera como máximo
+  `InlineBudgetSeconds` y, tras un fallo total, los siguientes no esperan
+  durante `InlineCooldownSeconds`. Si el ZIP no tenía sello al emitirse el
+  informe, el informe lo dice; un sello que llega después lleva su fecha real.
+- **Dónde se ve:** el informe (una línea por archivo en la tabla de hashes y un
+  bloque debajo), la web (la bandeja, el resultado, el detalle y la
+  trazabilidad, con los eventos `timestamp_granted`/`timestamp_failed`) y la
+  carpeta `sellos/` al lado del ZIP en la PC del perito (los `.tsr` y un
+  `LEEME-verificacion.txt` con los comandos de verificación; la copia la hace
+  Tatana con `case_seals_v1`). También se descargan desde la web
+  (`GET /api/cases/{id}/timestamps/bundle`).
+- **Autoridades por defecto en desarrollo:** FreeTSA y DigiCert, las dos
+  verificadas con `openssl ts -verify`. En la nube y en Windows arranca
+  **desactivado** (`FACTUM_SELLADO_URLS` vacío) hasta que el estudio elija la
+  autoridad. **Factum no afirma la validez legal de ninguna autoridad**: se elige
+  con asesoramiento jurídico.
+- **Desactivarlo:** vaciar `FACTUM_SELLADO_URLS` o poner
+  `FACTUM_SELLADO_HABILITADO=false`. Los sellos ya obtenidos siguen visibles y
+  descargables; los pendientes no se reintentan. El log de arranque dice
+  `Sellado de tiempo: habilitado (<hosts>)…` o `Sellado de tiempo: deshabilitado`.
+- **Casos anteriores y flujo viejo:** no se re-sella nada. Un caso generado
+  antes de activar el sellado, o del flujo anterior (evidencia en el servidor),
+  no tiene sellos y la web lo indica.
 
 ## Integración de soporte (Faro)
 

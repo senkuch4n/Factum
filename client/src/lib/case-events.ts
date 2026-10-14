@@ -8,10 +8,11 @@
  */
 
 import {
-  AlertCircle, AlertTriangle, Camera, FileCheck, FolderPlus, Image, Pencil, RefreshCw, Trash2, Upload, Video,
-  type LucideIcon,
+  AlertCircle, AlertTriangle, Camera, ClockAlert, ClockCheck, FileCheck, FolderPlus, Image, Pencil, RefreshCw, Trash2,
+  Upload, Video, type LucideIcon,
 } from "lucide-react";
 import type { Case, CaseEvent, CaseEventType } from "@/lib/api";
+import { TARGET_LABEL } from "@/lib/timestamps";
 
 /** Ícono lucide por tipo de evento (criterio de la SDD §"Cada ítem"). */
 const EVENT_ICON: Record<CaseEventType, LucideIcon> = {
@@ -27,6 +28,8 @@ const EVENT_ICON: Record<CaseEventType, LucideIcon> = {
   report_failed: AlertCircle,
   evidence_updated: RefreshCw,
   capture_failed: AlertTriangle,
+  timestamp_granted: ClockCheck,
+  timestamp_failed: ClockAlert,
 };
 
 /** Ícono del evento; `FolderPlus` para un tipo desconocido (backend más nuevo). */
@@ -44,7 +47,7 @@ export type EventTone = "danger" | "warning" | "neutral";
  */
 export function eventTone(type: string): EventTone {
   if (type === "report_failed") return "danger";
-  if (type === "capture_failed") return "warning";
+  if (type === "capture_failed" || type === "timestamp_failed") return "warning";
   return "neutral";
 }
 
@@ -66,6 +69,34 @@ export function eventHashChange(ev: CaseEvent): string | null {
   const next = ev.detail?.sha256;
   if (!prev || !next) return null;
   return `sha256: ${prev.slice(0, 12)}… → ${next.slice(0, 12)}…`;
+}
+
+/** Objeto sellado en palabras ("evidencia", "ZIP", "informe"); "objeto" si el backend no lo manda. */
+function targetLabel(ev: CaseEvent): string {
+  const t = ev.detail?.target;
+  return t ? TARGET_LABEL[t] ?? t : "objeto";
+}
+
+/**
+ * Línea secundaria de un evento de sellado de tiempo (sellado-tiempo §9.5):
+ * autoridad, fecha certificada (hora local) y hash abreviado; o el motivo del
+ * fallo. `null` para otros tipos o sin datos.
+ */
+export function eventTimestampDetail(ev: CaseEvent): string | null {
+  const d = ev.detail;
+  if (!d) return null;
+  if (ev.type === "timestamp_granted") {
+    const parts: string[] = [];
+    if (d.authority) parts.push(d.authority);
+    if (d.gen_time) {
+      const t = new Date(d.gen_time);
+      if (!Number.isNaN(t.getTime())) parts.push(`fecha certificada ${t.toLocaleString("es-AR")}`);
+    }
+    if (d.sha256) parts.push(`sha256: ${d.sha256.slice(0, 12)}…`);
+    return parts.length > 0 ? parts.join(" · ") : null;
+  }
+  if (ev.type === "timestamp_failed") return d.reason?.trim() || null;
+  return null;
 }
 
 /**
@@ -144,6 +175,12 @@ export function eventTitle(ev: CaseEvent): string {
       return "Se actualizó evidencia (contenido distinto)";
     case "capture_failed":
       return captureFailedTitle(ev.detail?.failed_action);
+    case "timestamp_granted":
+      return `Sello de tiempo obtenido (${targetLabel(ev)})`;
+    case "timestamp_failed":
+      return ev.detail?.final
+        ? `Se abandonó el sello de tiempo (${targetLabel(ev)}) tras ${ev.detail.attempt ?? "varios"} intentos`
+        : `No se pudo obtener el sello de tiempo (${targetLabel(ev)})`;
     default:
       return "Actividad del caso";
   }
@@ -151,7 +188,10 @@ export function eventTitle(ev: CaseEvent): string {
 
 /** Nombre del archivo a mostrar monoespaciado, si el evento lo trae. */
 export function eventFilename(ev: CaseEvent): string | null {
-  if (ev.type === "evidence_added" || ev.type === "evidence_removed" || ev.type === "evidence_updated") {
+  if (
+    ev.type === "evidence_added" || ev.type === "evidence_removed" || ev.type === "evidence_updated"
+    || ev.type === "timestamp_granted" || ev.type === "timestamp_failed"
+  ) {
     return ev.filename ?? null;
   }
   return null;

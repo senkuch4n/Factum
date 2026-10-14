@@ -1,0 +1,20 @@
+{
+  "data_utf8": "factum-fixture-sellado-tiempo",
+  "sha256": "0a328f717562eeba7d75540141395b9b2eb9e1121ed5c109ab03bef83219d3e8",
+  "nonces": {
+    "freetsa": "da0fe29e4d79e73f",
+    "digicert": "1d381b831eebe4bf"
+  },
+  "serials": {
+    "freetsa": "092E9E8B",
+    "digicert": "7E5921577D59B8F1994175E98A7FD60F"
+  },
+  "gen_times": {
+    "freetsa": "2026-10-14T13:32:24.0000000Z",
+    "digicert": "2026-10-14T13:32:25.0000000Z"
+  },
+  "policies": {
+    "freetsa": "1.2.3.4.1",
+    "digicert": "2.16.840.1.114412.7.1"
+  }
+}

@@ -91,6 +91,11 @@ services:
       Integrations__Support__Enabled: "false"
       # Versión mínima de Tatana (vacío = no bloquea; X.Y.Z = la web no captura con un Tatana menor).
       Tatana__MinVersion: ${FACTUM_TATANA_VERSION_MINIMA:-}
+      # Sellado de tiempo RFC 3161 (README, "Sellado de tiempo"). Vacío = desactivado (D-T3).
+      Timestamping__Urls: ${FACTUM_SELLADO_URLS:-}
+      Timestamping__Enabled: ${FACTUM_SELLADO_HABILITADO:-true}
+      Timestamping__TimeoutSeconds: ${FACTUM_SELLADO_TIMEOUT_SEGUNDOS:-10}
+      Timestamping__MaxAttempts: ${FACTUM_SELLADO_MAX_INTENTOS:-12}
       # Branding global del login (opcional). Vacío = el default de la app.
       Branding__OrganizationName: ${FACTUM_BRANDING_NOMBRE:-}
       Branding__OrganizationLogo: ${FACTUM_BRANDING_LOGO:-}

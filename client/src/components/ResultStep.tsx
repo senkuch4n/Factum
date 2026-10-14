@@ -14,6 +14,8 @@ import { ZipLocalActions } from "@/components/ZipLocalActions";
 import { ZipCompatNotice } from "@/components/ZipCompatNotice";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/feedback/CopyButton";
+import { TimestampPanel } from "@/components/case-detail/TimestampPanel";
+import { syncCaseSeals } from "@/lib/timestamps";
 import { FX_BUTTON_PRIMARY, FX_BUTTON_SECONDARY } from "@/lib/prime/pt/shared";
 
 const FADE_IN = "motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]";
@@ -202,7 +204,7 @@ function AgentResult({
     if (state !== "pending" || !sameHost || triedCommit.current) return;
     triedCommit.current = true;
     agent.commitZip(caseId, { case_ref: caseRef, zip_filename: zipFile, zip_hash: hash, delete_files: pendingDeleteFiles })
-      .then(() => setState("final"))
+      .then(() => { setState("final"); void syncCaseSeals({ id: caseId }); })
       .catch(() => { /* queda el aviso; se completa al abrir el caso en esta PC */ });
   }, [state, sameHost, caseId, caseRef, zipFile, hash, pendingDeleteFiles]);
 
@@ -301,6 +303,9 @@ function AgentResult({
             <ZipLocalActions caseId={caseId} caseRef={caseRef} zipFilename={zipFile} />
           )}
         </section>
+
+        {/* ── Sello de tiempo (sellado-tiempo §9.4): nada si el backend no lo conoce o está apagado ── */}
+        <TimestampPanel cas={{ id: caseId, status: "completed" }} sameHost={sameHost} zipState={state} />
       </div>
 
       <Button

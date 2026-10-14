@@ -8,6 +8,8 @@ export type {
   AuthMode, AuthModeInfo, UserRole, ChangePasswordRequest, ChangePasswordField, CatalogId, CatalogEntry, CatalogsResponse,
   EvidenceStorage, EvidenceItem, EvidenceHost, ZipLocation, ManifestFile,
   RegisterEvidenceRequest, EvidenceResponse, PrepareGenerationResponse, FinishGenerationMetadata, GenerateResult,
+  TimestampTarget, TimestampStatus, CaseTimestamp, EvidenceTimestampRow, CaseTimestampsResponse,
+  TimestampFilesResponse, TimestampFileItem,
   AdminUser, AdminUserStatus, AdminAction, AdminUserField, AdminErrorCode, AdminUserEvent, AdminUserChange,
   AdminCreateUserRequest, AdminUpdateUserRequest, AdminUserWithPassword,
   BrandingImageKind, BrandingImageAction, BrandingImage, AccountBranding, BrandingSaveMetadata,

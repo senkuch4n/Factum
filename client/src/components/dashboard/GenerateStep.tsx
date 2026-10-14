@@ -190,7 +190,7 @@ export function GenerateStep({
   }
 
   // Solo se promete cifrado si el backend lo tiene activo (`encrypt_zip`).
-  const { encryptZip } = usePublicConfig();
+  const { encryptZip, timestampingEnabled } = usePublicConfig();
   const agentMode = currentCase.evidence_storage === "agent";
   const identity = useAgentIdentity();
   const sameHost = !agentMode ? null : identity.status === "loading" ? null : identity.isSameHost(currentCase);
@@ -409,7 +409,7 @@ export function GenerateStep({
       />
 
       {/* ── Progreso en dos tramos (flujo agent) ── */}
-      {agentMode && loading && progress && <GenerateStages progress={progress} />}
+      {agentMode && loading && progress && <GenerateStages progress={progress} sealing={timestampingEnabled} />}
 
       {/* ── Acciones ── */}
       <StepActions>
@@ -436,7 +436,11 @@ export function GenerateStep({
       <span className="sr-only" role="status" aria-live="polite">
         {loading
           ? agentMode && progress
-            ? progress.stage === "zip" ? "Paso 1 de 2: armando y verificando el ZIP en esta PC…" : "Paso 2 de 2: generando el informe en el servidor…"
+            ? progress.stage === "zip"
+              ? "Paso 1 de 2: armando y verificando el ZIP en esta PC…"
+              : timestampingEnabled
+                ? "Paso 2 de 2: sellando el ZIP, generando el informe y sellándolo…"
+                : "Paso 2 de 2: generando el informe en el servidor…"
             : "Generando informe pericial, esperá…"
           : ""}
       </span>
@@ -449,15 +453,19 @@ export function GenerateStep({
   );
 }
 
+const REPORT_STAGE = "Generando el informe en el servidor…";
+/** sellado-tiempo D-T8: `finish` es un solo pedido, así que el sellado va en la misma etapa. */
+const REPORT_STAGE_SEALING = "Sellando el ZIP, generando el informe y sellándolo…";
+
 /* ── Tramos de la generación del flujo agent (SDD §7.7). Sin animación decorativa:
       solo el spinner del tramo en curso y la barra real del ZIP. ── */
-function GenerateStages({ progress }: { progress: GenerateProgress }) {
+function GenerateStages({ progress, sealing }: { progress: GenerateProgress; sealing: boolean }) {
   const zip = progress.zip;
   const known = !!zip && zip.total_bytes > 0;
   const ratio = known ? Math.min(1, zip!.done_bytes / zip!.total_bytes) : 0;
   const stages = [
     { id: "zip" as const, icon: HardDrive, label: "Armando y verificando el ZIP en esta PC…" },
-    { id: "report" as const, icon: Server, label: "Generando el informe en el servidor…" },
+    { id: "report" as const, icon: Server, label: sealing ? REPORT_STAGE_SEALING : REPORT_STAGE },
   ];
   const currentIdx = stages.findIndex(s => s.id === progress.stage);
   return (
@@ -484,6 +492,11 @@ function GenerateStages({ progress }: { progress: GenerateProgress }) {
                   {s.label}
                   {done && <span className="sr-only"> (listo)</span>}
                 </p>
+                {s.id === "report" && sealing && (
+                  <p className="m-0 mt-1 pl-5 text-xs text-fx-text-3">
+                    El sello de tiempo lo emite una autoridad externa; si no responde, el caso se genera igual.
+                  </p>
+                )}
                 {current && s.id === "zip" && zip && (
                   <div className="mt-2 space-y-1">
                     <div className="flex items-baseline justify-between gap-3 text-xs text-fx-text-2">
