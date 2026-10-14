@@ -46,6 +46,8 @@ public sealed class FactumEdgeTests
         });
         app.MapPost("/login", (HttpContext c) => Results.Json(new { ip = c.Connection.RemoteIpAddress?.ToString() }))
             .RequireRateLimiting(LoginRateLimit.PolicyName);
+        app.MapPost("/refresh", () => Results.Json(new { ok = true }))
+            .RequireRateLimiting(RefreshRateLimit.PolicyName);
         app.MapGet("/swagger/x", () => Results.Text("ui"));
         await app.StartAsync();
         return app;
@@ -250,5 +252,77 @@ public sealed class FactumEdgeTests
         var client = app.GetTestClient();
         for (var i = 0; i < 5; i++)
             Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(Get("/ok"))).StatusCode);
+    }
+
+    // ── sesion-larga §9.5: rate limit del refresh ────────────────────────────
+
+    private static HttpRequestMessage Refresh(string token)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, "/refresh");
+        req.Headers.Add("Authorization", "Bearer " + token);
+        return req;
+    }
+
+    [Fact]
+    public async Task Refresh_SeptimoConElMismoToken_429_RateLimited()
+    {
+        await using var app = await StartAsync(perIp: 100);
+        var client = app.GetTestClient();
+        for (var i = 0; i < 6; i++)
+            Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(Refresh("token-a"))).StatusCode);
+
+        var r = await client.SendAsync(Refresh("token-a"));
+        Assert.Equal(HttpStatusCode.TooManyRequests, r.StatusCode);
+        Assert.InRange(int.Parse(Header(r, "Retry-After")), 1, 60);
+        Assert.Equal("no-store", Header(r, "Cache-Control"));
+        AssertSecurityHeaders(r);
+        var body = await JsonOf(r);
+        Assert.Equal(["error", "code"], body.EnumerateObject().Select(p => p.Name));
+        Assert.Equal("rate_limited", body.GetProperty("code").GetString());
+        Assert.StartsWith("Demasiadas renovaciones de sesión. Probá de nuevo en ",
+            body.GetProperty("error").GetString());
+        Assert.DoesNotContain("token-a", await r.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Refresh_OtroToken_NoSeFrena()
+    {
+        await using var app = await StartAsync(perIp: 100);
+        var client = app.GetTestClient();
+        for (var i = 0; i < 7; i++) await client.SendAsync(Refresh("token-a"));
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(Refresh("token-b"))).StatusCode);
+    }
+
+    [Fact]
+    public async Task Refresh_NoConsumeElLimiteDelLogin_YElLoginSigueConAccountLocked()
+    {
+        await using var app = await StartAsync(perIp: 2);
+        var client = app.GetTestClient();
+        for (var i = 0; i < 7; i++) await client.SendAsync(Refresh("token-a"));
+
+        var statuses = new List<HttpStatusCode>();
+        HttpResponseMessage? last = null;
+        for (var i = 0; i < 3; i++)
+        {
+            last = await client.PostAsync("/login", new StringContent("{}"));
+            statuses.Add(last.StatusCode);
+        }
+        Assert.Equal([HttpStatusCode.OK, HttpStatusCode.OK, HttpStatusCode.TooManyRequests], statuses);
+        Assert.Equal("account_locked", (await JsonOf(last!)).GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public void Refresh_PartitionKey_EsHash_NuncaElToken()
+    {
+        var ctx = new DefaultHttpContext();
+        ctx.Request.Headers.Authorization = "Bearer eyJhbGciOi.secreto.firma";
+        var key = RefreshRateLimit.PartitionKey(ctx);
+        Assert.StartsWith("tok:", key);
+        Assert.Equal(4 + 32, key.Length);
+        Assert.DoesNotContain("secreto", key);
+
+        var anon = new DefaultHttpContext();
+        anon.Connection.RemoteIpAddress = Untrusted;
+        Assert.Equal("anon:203.0.113.5", RefreshRateLimit.PartitionKey(anon));
     }
 }

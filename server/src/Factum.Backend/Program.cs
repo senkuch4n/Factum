@@ -73,6 +73,9 @@ configErrors.AddRange(securityErrors);
 // tatana-instalador-autoupdate D-T19: versión mínima de Tatana (vacío o X.Y.Z).
 if (TatanaOptions.Validate(builder.Configuration["Tatana:MinVersion"]) is { } tatanaError)
     configErrors.Add(tatanaError);
+// sesion-larga §5.1 / D11: vida del token y tope de sesión (fuera de rango → no arranca; tope < token → warning).
+var (jwtErrors, jwtWarnings) = JwtSettings.Validate(builder.Configuration);
+configErrors.AddRange(jwtErrors);
 if (configErrors.Count > 0)
     throw new InvalidOperationException(
         "Configuración inválida, el backend no arranca:" + string.Concat(configErrors.Select(e => "\n  - " + e)));
@@ -224,8 +227,13 @@ if (supportSettings.Enabled)
     app.Logger.LogInformation("Soporte: habilitado ({Host})", new Uri(supportSettings.Options.BaseUrl).Authority);
 else
     app.Logger.LogInformation("Soporte: deshabilitado");
-foreach (var warning in authSettings.Warnings.Concat(supportSettings.Warnings))
+foreach (var warning in authSettings.Warnings.Concat(supportSettings.Warnings).Concat(jwtWarnings))
     app.Logger.LogWarning("{Warning}", warning);
+{
+    var jwt = app.Services.GetRequiredService<IOptions<JwtOptions>>().Value;
+    app.Logger.LogInformation("Sesión: token {Ttl} h, tope {Max} h desde el login",
+        JwtSettings.Format(jwt.ExpiryHours), JwtSettings.Format(jwt.SessionMaxHours));
+}
 
 // usuarios-locales §7.2: índices de users, superadmins iniciales, reset de emergencia y chequeo de
 // que haya al menos un superadmin activo. Si falla (Mongo caído, sin superadmins), no arranca.

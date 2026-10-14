@@ -284,6 +284,26 @@ combina con `-Reparar`, que conserva el perfil de `config\.env`).
 >
 > Una versión futura va a agregar usuarios con contraseña.
 
+### 6.1 Cuánto dura la sesión
+
+Dos valores de `C:\Factum\config\.env` controlan la sesión de la web:
+
+| Variable | Valor recomendado | Qué hace |
+|---|---|---|
+| `FACTUM_JWT_EXPIRY_HOURS` | `2` | Cuánto dura cada sesión sin actividad. Mientras el perito usa Factum (o hay una grabación, subida o informe en curso), la sesión se renueva sola; si nadie la usa durante ese tiempo, vence y hay que volver a ingresar. Acepta decimales con punto (`0.5` = 30 minutos). |
+| `FACTUM_SESION_TOPE_HORAS` | `12` | Máximo de horas desde que se inició sesión. Al llegar a ese tope hay que volver a ingresar aunque se esté trabajando (la web avisa 30 minutos antes; lo cargado en el asistente no se pierde). |
+
+Los dos tienen que ser mayores que 0 y hasta 168. Si alguno es inválido, el backend no arranca
+(ver "El backend no arrancó" en la sección 12). Si el tope es menor que la duración, arranca igual
+y cada sesión se corta al tope.
+
+**Instalaciones que vienen de una versión anterior.** La actualización (sección 11) agrega sola
+`FACTUM_SESION_TOPE_HORAS=12` a `config\.env`, pero **no cambia** un `FACTUM_JWT_EXPIRY_HOURS=8`
+que ya esté escrito. Con `8` todo funciona (la sesión se renueva y tiene tope), solo que no se
+corta por inactividad hasta pasadas 8 horas. Conviene cambiarlo a mano a `2`: abrí
+`C:\Factum\config\.env` con el Bloc de notas, cambiá el valor, guardá y abrí "Diagnostico de
+Factum" (responder S a reiniciar).
+
 ## 7. Identidad del estudio (nombre, logo, contacto, colores)
 
 Los informes salen con el membrete del estudio. Se configura en

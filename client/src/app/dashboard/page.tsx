@@ -39,6 +39,7 @@ import { useAirplayShotSession } from "@/hooks/useAirplayShotSession";
 import { AgentChip, AgentChipBelowNav } from "@/components/dashboard/AgentChip";
 import { useAgentRecordingActivity } from "@/hooks/useAgentRecordingActivity";
 import { scrollIntoContainer } from "@/lib/scroll";
+import { registerInPlace } from "@/lib/session";
 import { GreetingHeadline } from "@/components/dashboard/GreetingHeadline";
 import { ResumeDeviceModal } from "@/components/dashboard/ResumeDeviceModal";
 import { SoporteModal } from "@/components/dashboard/SoporteModal";
@@ -226,6 +227,7 @@ export default function Dashboard() {
     removeFile, setCaptureRole, handlePhotoBlob, handleUploadAndContinueLegacy, clearFiles,
     uploadProgress, uploadStates, uploadNotice, dismissUploadNotice, cancelUpload,
     storageMode, saveBusy, bindCase, handleSaveAndContinue, restoreCaseEvidence, cancelSave,
+    authPendingCount,
   } = useFileManager();
 
   // ── Evidencia en esta PC (zip-local-informe-servidor) ────────────
@@ -262,6 +264,11 @@ export default function Dashboard() {
     }
     return null;
   }, [currentCase, currentStorage, identity]);
+
+  /** Registros pendientes por sesión vencida: "Generar" espera a que se registren (sesion-larga §8.9). */
+  const authBlocker = authPendingCount > 0
+    ? `Hay ${authPendingCount} ${authPendingCount === 1 ? "archivo pendiente" : "archivos pendientes"} de registrar. Iniciá sesión para registrarlos antes de generar.`
+    : null;
 
   // Aviso de OneDrive/iCloud (DP4) en el paso 3: una vez por sesión.
   const [syncWarningDismissed, setSyncWarningDismissed] = useState(false);
@@ -441,6 +448,33 @@ export default function Dashboard() {
   // Chip del header: REC de cualquier grabación en la PC (D2 A) y equipo de la inspección (DT2).
   const { remoteRecording, refresh: refreshAgentActivity } = useAgentRecordingActivity(agentOnline);
   useEffect(() => { agentActivityRefreshRef.current = refreshAgentActivity; }, [refreshAgentActivity]);
+
+  // ── Sesión (sesion-larga §8.10): el asistente activo habilita el re-login en el lugar ──
+  // "Detener" del diálogo = el mismo "Detener" del paso 3. Por ref: `handleToggleRecord`
+  // lee `isRecording` de su render, así el diálogo siempre llama a la versión vigente.
+  const stopRecordingRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    stopRecordingRef.current = () => {
+      if (selDevice) void runRecordAction(() => handleToggleRecord(selDevice, setGlobal));
+    };
+  });
+  const stopFromSessionDialog = useCallback(() => stopRecordingRef.current(), []);
+  const wizardActive = mode === "wizard" && step >= 2 && step <= 5;
+  const sessionBusy = isRecording || remoteRecording || saveBusy || !!loading.generate;
+  // Solo la grabación de esta pestaña: una ajena (`remoteRecording`) no se detiene con este botón.
+  const sessionRecording = isRecording && !!selDevice && !!recordingStartedAt;
+  const sessionStopping = !!loading.stopRecord || recordingPhase === "stopping";
+  useEffect(() => {
+    registerInPlace({
+      active: wizardActive,
+      pendingCount: authPendingCount,
+      busy: sessionBusy,
+      recording: sessionRecording && recordingStartedAt
+        ? { startedAt: recordingStartedAt, stopping: sessionStopping, onStop: stopFromSessionDialog }
+        : null,
+    });
+  }, [wizardActive, authPendingCount, sessionBusy, sessionRecording, recordingStartedAt, sessionStopping, stopFromSessionDialog]);
+  useEffect(() => () => registerInPlace(null), []);
   const chipDevice = mode === "wizard" && step >= 2 ? selDevice : null;
   // ios-herramientas-windows §9.4: servicio de Apple y AirPlay según `/health.ios`.
   const { appleService, airplayAvailable, airplayReason } = useAgentIosStatus(agentOnline);
@@ -1404,7 +1438,7 @@ export default function Dashboard() {
                               onBack={() => go(4)}
                               onGenerate={handleGenerate}
                               onGoToField={goToField}
-                              agentBlocker={agentLock?.message ?? null}
+                              agentBlocker={agentLock?.message ?? authBlocker}
                               progress={generateProgress}
                               reviewNotices={reviewNotices}
                               onReviewOperaciones={() => goToField(4, reportFieldId("operaciones_realizadas"))}

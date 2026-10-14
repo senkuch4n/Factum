@@ -327,7 +327,10 @@ export function CaptureStep({
     if (agentMode) {
       if (f?.uploaded) return f.availability === "missing" ? "missing" : "stored";
       const s = uploadStates[item.name];
-      return s === "uploading" ? "saving" : s === "error" ? "save_error" : "pending";
+      return s === "uploading" ? "saving"
+        : s === "error" ? "save_error"
+        : s === "auth_pending" ? "auth_pending"
+        : "pending";
     }
     if (f?.uploaded) return "uploaded";
     return uploadStates[item.name] ?? "pending";

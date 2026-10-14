@@ -42,7 +42,8 @@ services:
       MongoDb__ConnectionString: mongodb://mongo:27017
       MongoDb__DatabaseName: factum
       Jwt__Secret: ${FACTUM_JWT_SECRET:?Falta FACTUM_JWT_SECRET en config/.env}
-      Jwt__ExpiryHours: ${FACTUM_JWT_EXPIRY_HOURS:-8}
+      Jwt__ExpiryHours: ${FACTUM_JWT_EXPIRY_HOURS:-2}
+      Jwt__SessionMaxHours: ${FACTUM_SESION_TOPE_HORAS:-12}
       Auth__Mode: ${FACTUM_AUTH_MODE:-dev}
       # dev fuera de Development exige el flag. Default true: las instalaciones ya hechas no
       # tienen la variable en config\.env y tienen que seguir arrancando (usuarios-locales D1).

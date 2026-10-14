@@ -9,6 +9,7 @@ import "@/lib/prime/locale-es";
 import { SystemStatusLine } from "./SystemStatusLine";
 import { FxToastProvider } from "./FxToastProvider";
 import { SessionWatcher } from "./SessionWatcher";
+import { SessionManager } from "./SessionManager";
 
 /**
  * Configuración de PrimeReact, con identidad estable (fuera del componente):
@@ -28,7 +29,8 @@ const PRIME_VALUE: Partial<APIOptions> = {
 /**
  * Árbol de providers del cliente. `layout.tsx` sigue siendo server component
  * y solo monta esto. Orden: tema → PrimeReact → toast global de Prime
- * (`useFxToast`) → contenido + `SessionWatcher` (corte de sesión, sin UI) +
+ * (`useFxToast`) → contenido dentro de `SessionManager` (renovación, avisos y
+ * re-login en el lugar) + `SessionWatcher` (corte de sesión, sin UI) +
  * línea de estado del sistema.
  */
 export function AppProviders({ children }: { children: React.ReactNode }) {
@@ -36,7 +38,8 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     <ThemeProvider>
       <PrimeReactProvider value={PRIME_VALUE}>
         <FxToastProvider>
-          {children}
+          {/* Renovación, avisos y re-login en el lugar (sesion-larga); provee el estado a la navbar. */}
+          <SessionManager>{children}</SessionManager>
           <SessionWatcher />
           <SystemStatusLine />
         </FxToastProvider>
