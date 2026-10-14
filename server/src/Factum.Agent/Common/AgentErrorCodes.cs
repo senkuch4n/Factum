@@ -25,6 +25,8 @@ public static class AgentErrorCodes
     /// <summary>400 del ZIP: contraseña vacía o de más de 99 bytes UTF-8 (tatana-ws-y-hosts T-08/T-09).</summary>
     public const string InvalidPassword = "invalid_password";
     public const string OriginNotAllowed = "origin_not_allowed";
+    /// <summary>400 de <c>PUT …/zip/seals</c> (sellado-tiempo §7.3): sello con nombre, contenido o tamaño inválido.</summary>
+    public const string InvalidRequest = "invalid_request";
 
     // ── iPhone (ios-herramientas-windows §4.1); los textos están en Services/Ios/IosErrors.cs ──
     public const string IosAppleServiceMissing = "ios_apple_service_missing";

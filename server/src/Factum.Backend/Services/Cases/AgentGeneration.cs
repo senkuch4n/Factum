@@ -6,6 +6,7 @@ using Factum.Backend.Common;
 using Factum.Backend.DTOs;
 using Factum.Backend.Models;
 using Factum.Backend.Services.Reports;
+using Factum.Backend.Services.Timestamping;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Net.Http.Headers;
 
@@ -77,7 +78,8 @@ public sealed partial class CaseService
             {
                 // Todo ya estaba registrado igual: no se escribe nada (ni el host) y no hay eventos.
                 _log.LogInformation("Caso {CaseId}: {N} archivo(s) ya registrados sin cambios", id, validation.Items.Count);
-                return Result.Ok(new EvidenceResponse(cas.Evidence, cas.EvidenceHost));
+                // sellado-tiempo §6.2: también trae timestamps (el estado real del sello en la bandeja).
+                return Result.Ok(await EvidenceResponseAsync(id, cas.Evidence, cas.EvidenceHost));
             }
 
             // El host se fija en el primer registro (o con el manifiesto vacío); después solo se
@@ -136,7 +138,12 @@ public sealed partial class CaseService
                 evt.Detail = new CaseEventDetail { Sha256 = item.Sha256, Size = item.Size, PreviousSha256 = previous };
                 await RecordEventAsync(evt);
             }
-            return Result.Ok(new EvidenceResponse(plan.Merged, evidenceHost));
+            // sellado-tiempo §6.2: sello de lo nuevo o actualizado, después de los eventos de evidencia. Sin el ct
+            // del request: si el navegador corta, el lease vence y la cola lo retoma. Nunca lanza.
+            var toSeal = plan.Added.Select(i => (i.Filename, i.Sha256))
+                .Concat(plan.Updated.Select(u => (u.Item.Filename, u.Item.Sha256))).ToList();
+            if (toSeal.Count > 0) await _timestamps.SealEvidenceAsync(cas, toSeal, CancellationToken.None);
+            return Result.Ok(await EvidenceResponseAsync(id, plan.Merged, evidenceHost));
         }
 
         _log.LogWarning("Caso {CaseId}: registro de evidencia abandonado tras {N} intentos en carrera", id,
@@ -171,7 +178,56 @@ public sealed partial class CaseService
         await RecordEventAsync(removed);
 
         var fresh = (await _repo.FindByIdAsync(id, ct))!;
-        return Result.Ok(new EvidenceResponse(fresh.Evidence, fresh.EvidenceHost));
+        return Result.Ok(await EvidenceResponseAsync(id, fresh.Evidence, fresh.EvidenceHost));
+    }
+
+    // sellado-tiempo §6.3: datos de sellos para el informe. Zip = el sello del ZIP si quedó granted; Evidence = los
+    // granted cuyo (Filename, Sha256) coincide con el manifiesto del caso releído. Si Mongo falla, sin sellos de
+    // evidencia (el informe lo dice archivo por archivo) en lugar de frenar la generación.
+    private async Task<ReportTimestampInfo> ReportTimestampInfoAsync(Case cas, CaseTimestamp? zipTs)
+    {
+        static TimestampView? View(CaseTimestamp? t) =>
+            t is { Status: TimestampStatuses.Granted, GenTime: { } g } ? new TimestampView(t.Authority ?? "", g, t.SerialNumber ?? "") : null;
+
+        var evidence = new Dictionary<string, TimestampView>(StringComparer.Ordinal);
+        try
+        {
+            var all = await _timestamps.ListAsync(cas.Id, CancellationToken.None);
+            foreach (var item in cas.Evidence)
+            {
+                var t = all.FirstOrDefault(x => x.Target == TimestampTargets.Evidence && x.Filename == item.Filename &&
+                                                x.Sha256 == item.Sha256 && x.Status == TimestampStatuses.Granted);
+                if (View(t) is { } v) evidence[item.Filename] = v;
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Caso {CaseId}: no se pudieron leer los sellos de la evidencia para el informe", cas.Id);
+        }
+        return new ReportTimestampInfo(View(zipTs), evidence);
+    }
+
+    // sellado-tiempo §7.2: EvidenceResponse con timestamping_enabled, timestamp_authority y un sello por ítem del
+    // manifiesto actual que lo tenga para su sha256 actual. Si Mongo falla al leer los sellos, timestamps = [].
+    private async Task<EvidenceResponse> EvidenceResponseAsync(string caseId, List<EvidenceItem> evidence,
+        EvidenceHost? host)
+    {
+        var dtos = new List<TimestampDto>();
+        try
+        {
+            var all = await _timestamps.ListAsync(caseId, CancellationToken.None);
+            foreach (var item in evidence)
+            {
+                var t = all.FirstOrDefault(x => x.Target == TimestampTargets.Evidence &&
+                                                x.Filename == item.Filename && x.Sha256 == item.Sha256);
+                if (t is not null) dtos.Add(TimestampDto.From(t, _reportSettings.Zone));
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Caso {CaseId}: no se pudieron leer los sellos de tiempo", caseId);
+        }
+        return new EvidenceResponse(evidence, host, _timestamps.IsEnabled, _timestamps.AuthorityHint, dtos);
     }
 
     // ── §5.5 POST /api/cases/{id}/generate/prepare ───────────────────────────
@@ -365,11 +421,28 @@ public sealed partial class CaseService
                     Directory = loc.Directory!.Trim(),
                     Path = loc.Path!.Trim(),
                 };
+                // sellado-tiempo §6.3: sello del ZIP (su hash ya se conoce) ANTES del DOCX, para que el informe
+                // pueda citarlo. Con presupuesto acotado: si la TSA no responde, queda pending y el informe deja
+                // constancia de que el ZIP no tenía sello al emitirse.
+                var sealing = _timestamps.IsEnabled;
+                var zipTs = sealing
+                    ? await _timestamps.SealNowAsync(fresh, TimestampTargets.Zip, pending.ZipFilename, meta.ZipHash!,
+                        _timestamps.GenerationBudget)
+                    : null;
+                var timestampInfo = sealing ? await ReportTimestampInfoAsync(fresh, zipTs) : null;
+
                 var report = await _reports.GenerateReportAsync(fresh, EvidenceManifest.ToFileInfos(fresh),
                     EvidenceManifest.Hashes(fresh), tmp, _storage.CaseDir(id), pending.ZipFilename, meta.ZipHash!,
-                    CancellationToken.None);
+                    CancellationToken.None, timestampInfo);
+                if (zipTs is { Status: TimestampStatuses.Granted })
+                    await _timestamps.MarkZipInReportAsync(zipTs.Id);
+                // El hash del DOCX recién se conoce ahora: el informe no puede contener su propio sello.
+                if (sealing)
+                    await _timestamps.SealNowAsync(fresh, TimestampTargets.Report, report.PdfFilename,
+                        report.ReportHash, _timestamps.GenerationBudget);
                 await _repo.CompleteAgentGenerationAsync(id, DateTime.UtcNow, pending.Password, meta.ZipHash!,
-                    pending.ZipFilename, report.PdfFilename, report.ReportHash, zipLocation, CancellationToken.None);
+                    pending.ZipFilename, report.PdfFilename, report.ReportHash, zipLocation,
+                    sealing ? "enabled" : "disabled", CancellationToken.None);
 
                 var saved = ResolveStorage((await _repo.FindByIdAsync(id, CancellationToken.None))!);
                 // trazabilidad-caso (DT10): hito de informe generado (flujo agent, best-effort).
@@ -387,6 +460,9 @@ public sealed partial class CaseService
                 _log.LogError(ex, "Error generando informe (flujo agent) para caso {CaseId}", id);
                 try { await _repo.MarkAgentGenerationFailedAsync(id, CancellationToken.None); }
                 catch (Exception markEx) { _log.LogError(markEx, "No se pudo marcar el caso {CaseId} en error", id); }
+                // sellado-tiempo §6.3: el ZIP de este intento se descarta; su sello pendiente pasa a failed (sin
+                // evento: ya está report_failed). Uno ya obtenido queda: es un sello válido de un hash que existió.
+                await _timestamps.AbortZipAsync(id, pending.ZipFilename, meta.ZipHash!);
                 // trazabilidad-caso (DT10): fallo real de generación (flujo agent, best-effort).
                 var failEvt = CaseEventFor(fresh, CaseEventTypes.ReportFailed);
                 failEvt.Detail = new CaseEventDetail { Reason = TruncateReason(ex.Message) };

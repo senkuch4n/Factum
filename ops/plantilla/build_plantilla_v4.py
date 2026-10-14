@@ -54,9 +54,12 @@ BODY_PLACEHOLDERS = {
     "{descripcionResultados}", "{descripcionValoracionTecnica}",
     "{descripcionConclusiones}", "{descripcionNotasTecnicas}", "{descripcionReserva}",
     "{nombreArchivo}", "{hashArchivo}",
+    # sellado-tiempo §8.2: bloque explicativo debajo de la tabla de hashes.
+    "{descripcionSelloTiempo}",
 }
 BODY_BLOCKS = {"organismoTribunal", "objetoInforme", "capturasNombreDispositivo",
-               "descripcionNotasTecnicas", "descripcionReserva", "anexoCapturas"}
+               "descripcionNotasTecnicas", "descripcionReserva", "anexoCapturas",
+               "selloTiempo"}
 HEADER_PLACEHOLDERS = {"{LOGO_ORGANIZACION:5x1.5}", "{ORGANIZACION}", "{CONTACTO}"}
 HEADER_BLOCKS = {"MEMBRETE"}
 
@@ -419,6 +422,19 @@ def build_document(doc, ids):
     if "3600" not in tbl or "4691" not in tbl:
         raise Falla("ancla tabla")
     out = out[:t0] + tbl + out[t1:]
+
+    # sellado-tiempo §8.2: bloque {#selloTiempo} inmediatamente despues de la tabla, antes del titulo
+    # "CADENA DE CUSTODIA DIGITAL". Mismo pPr normalizado y rPr del parrafo de aseguramiento. Con el
+    # sellado desactivado, ReportService borra el bloque entero (B-R2) y el informe queda como antes.
+    # Un parrafo vacio adentro del bloque separa el texto de la tabla (sin sellado desaparece con el).
+    sello = (marker("{#selloTiempo}", "sello-open")
+             + '<w:p w14:paraId="%s"><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/>'
+               '</w:pPr></w:p>' % ids.new("a5:sello-espacio")
+             + '<w:p w14:paraId="%s">%s%s</w:p>' % (ids.new("a5:sello"), norm_ppr,
+                 build_runs("{descripcionSelloTiempo}", base_rpr(paras["2D02EAD7"])))
+             + marker("{/selloTiempo}", "sello-close"))
+    t_end = t0 + len(tbl)
+    out = out[:t_end] + sello + out[t_end:]
 
     # sectPr: encabezado + pie a 1 cm del borde.
     if out.count("<w:sectPr>") != 1 or 'w:footer="0"' not in out:

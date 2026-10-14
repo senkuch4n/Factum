@@ -8,6 +8,7 @@
 - Configurar que se inicie agente tatana al prender la maquina del usuario factum
 - Visualizar dispositivos conectados disponibles
 - Permitir Minimizar la aplicacion y dejarla abierta en segundo plano
+- Copiar los sellos de tiempo a la carpeta del caso
 
 ### Caso de uso: Instalar Librerias
 > #### Actor principal: Usuario Factum
@@ -145,3 +146,48 @@
 ||4 - Cierra ventana|
 ||5 - Queda abierto en segundo plano|
 ||6 - Fin de caso de uso|
+
+
+### Caso de uso: Copiar los sellos de tiempo a la carpeta del caso
+> #### Actor principal: Usuario factum (a través de la web)
+> #### Actor secundario: Backend de Factum
+
+Sellado de tiempo RFC 3161 (`Refactorizaciones/sellado-tiempo.md` §7.3). El backend pide los sellos a una
+autoridad externa; Tatana solo **escribe** los `.tsr` y el `LEEME-verificacion.txt` que le pasa el navegador en
+`<carpeta del caso>/sellos/`, al lado del ZIP. Tatana no habla con la autoridad ni con el backend.
+
+#### Pre-condiciones:
+ - Agente tatana con la capability `case_seals_v1` en `GET /health` (si no la tiene, la web ofrece solo la
+   descarga de los sellos y pide actualizar Tatana)
+ - El ZIP final del caso ya está en esta PC (`/zip/commit` hecho)
+#### Post-condiciones:
+ - `<carpeta del caso>/sellos/` con un `.tsr` por sello obtenido y `LEEME-verificacion.txt`
+
+**Endpoint:** `PUT /cases/{caseId}/zip/seals` (JSON snake_case, tope 16 MiB):
+
+```json
+{
+  "case_ref": "123/2026",
+  "zip_filename": "evidencia_123_2026_Perez.zip",
+  "files": [ { "name": "captura_1.png.tsr", "content_base64": "MIIS…" } ],
+  "readme": "VERIFICACIÓN DE LOS SELLOS…"
+}
+```
+
+- Valida, en orden: el id del caso; `zip_filename` (`400 invalid_filename`); que el ZIP final exista
+  (`404 zip_not_found`); los sellos: de 0 a 1000, nombre `<archivo>.tsr` seguro (sin rutas, sin caracteres
+  reservados ni de control, sin nombres reservados de Windows), contenido base64 de 1 B a 64 KiB, sin repetidos
+  (`400 invalid_request` con `filename`); `readme` ≤ 256 KiB o ausente (no se escribe).
+- Usa el mismo lock por caso que el ZIP: si está tomado, `409 zip_in_progress`.
+- Cada archivo se escribe de forma atómica (`<nombre>.part` + rename). Si ya existe con los mismos bytes, no se
+  toca. El LEEME se escribe en UTF-8 sin BOM, tal cual llega.
+- Respuesta `200`: `{ "directory": "<ruta absoluta de sellos/>", "written": 3, "unchanged": 1 }`. Un error de disco
+  responde `500 storage_error`.
+
+|Actor principal|Sistema|
+|--|:--:|
+|1 - Genera el caso (o abre el detalle de un caso con sellos nuevos)||
+||2 - La web pide los sellos al backend (`GET /api/cases/{id}/timestamps/files`)|
+||3 - La web se los pasa a Tatana (`PUT /cases/{id}/zip/seals`)|
+||4 - Tatana los escribe en `sellos/` y responde cuántos escribió|
+||5 - Fin de caso de uso|

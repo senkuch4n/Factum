@@ -5,6 +5,7 @@ using Factum.Backend.Models;
 using Factum.Backend.Services.Catalogs;
 using Factum.Backend.Services.Profile;
 using Factum.Backend.Services.Reports;
+using Factum.Backend.Services.Timestamping;
 using Microsoft.Extensions.Options;
 
 namespace Factum.Backend.Services.Cases;
@@ -107,6 +108,7 @@ public sealed partial class CaseService : ICaseService
     private readonly ICatalogService _catalogs;
     private readonly ICaseEventRepository _caseEvents;
     private readonly IHttpContextAccessor _httpContext;
+    private readonly ITimestampService _timestamps;
     private readonly StorageOptions _storageOptions;
     private readonly ReportOptions _reportOptions;
     private readonly ILogger<CaseService> _log;
@@ -117,9 +119,10 @@ public sealed partial class CaseService : ICaseService
 
     public CaseService(ICaseRepository repo, IStorageService storage, IReportService reports,
         IExpertProfileService profiles, IReportSettings reportSettings, ICatalogService catalogs,
-        ICaseEventRepository caseEvents, IHttpContextAccessor httpContext,
+        ICaseEventRepository caseEvents, IHttpContextAccessor httpContext, ITimestampService timestamps,
         IOptions<StorageOptions> storageOptions, IOptions<ReportOptions> reportOptions, ILogger<CaseService> log)
     {
+        _timestamps = timestamps;
         _storageOptions = storageOptions.Value;
         _reportOptions = reportOptions.Value;
         _catalogs = catalogs;

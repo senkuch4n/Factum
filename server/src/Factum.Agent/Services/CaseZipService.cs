@@ -28,6 +28,18 @@ public sealed record CommitZipResponse(string ZipPath, int Deleted);
 public sealed record ZipStatusResponse(string State, string ZipPath, string Directory, string? PendingHash,
     string? CommittedHash);
 
+// ── sellado-tiempo §7.3: PUT /cases/{caseId}/zip/seals (copia de los .tsr y del LEEME a sellos/). ──
+
+/// <summary>Un sello: <c>{ "name": "captura_1.png.tsr", "content_base64": "MIIS…" }</c>.</summary>
+public sealed record SealFileItem(string? Name = null, string? ContentBase64 = null);
+
+/// <summary>Pedido de <c>PUT …/zip/seals</c>. <c>readme</c> null o ausente → no se escribe el LEEME.</summary>
+public sealed record WriteSealsRequest(string? CaseRef = null, string? ZipFilename = null,
+    List<SealFileItem>? Files = null, string? Readme = null);
+
+/// <summary><c>{ "directory": "&lt;ruta absoluta de sellos/&gt;", "written": 3, "unchanged": 1 }</c>.</summary>
+public sealed record WriteSealsResponse(string Directory, int Written, int Unchanged);
+
 /// <summary>Motivo de <c>evidence_changed</c>: <c>{ "filename", "reason": "missing" | "size" | "hash" }</c>.</summary>
 public sealed record EvidenceChange(string Filename, string Reason);
 
@@ -50,6 +62,11 @@ public interface ICaseZipService
     /// Devuelve cuántos borró.
     /// </summary>
     int CleanupOrphanParts();
+    /// <summary>
+    /// sellado-tiempo §7.3: escribe los <c>.tsr</c> y <c>LEEME-verificacion.txt</c> en <c>&lt;final&gt;/sellos/</c>,
+    /// de forma atómica e idempotente (mismos bytes → <c>unchanged</c>). Requiere el ZIP final en esta PC.
+    /// </summary>
+    Task<WriteSealsResponse> WriteSealsAsync(string caseId, WriteSealsRequest request, CancellationToken ct);
 }
 
 /// <summary>
@@ -62,6 +79,11 @@ public sealed class CaseZipService : ICaseZipService
     internal const string MetaDirName = ".factum";
     internal const string PendingDirName = "pendiente";
     internal const string StateFileName = "estado.json";
+    internal const string SealsDirName = "sellos";
+    internal const string SealsReadmeName = "LEEME-verificacion.txt";
+    internal const int MaxSealFiles = 1000;
+    internal const int MaxSealBytes = 64 * 1024;
+    internal const int MaxReadmeBytes = 256 * 1024;
     private static readonly TimeSpan ProgressInterval = TimeSpan.FromMilliseconds(500);
     /// <summary>Tope de la contraseña en bytes UTF-8: 7-Zip no abre un ZIP AES con una más larga (T-09).</summary>
     internal const int MaxPasswordBytes = 99;
@@ -116,7 +138,7 @@ public sealed class CaseZipService : ICaseZipService
             Path.Combine(pending, zipFilename + ".sha256"), Path.Combine(meta, StateFileName), zipFilename!);
     }
 
-    private SemaphoreSlim LockFor(string caseId) => _locks.GetOrAdd(caseId, _ => new SemaphoreSlim(1, 1));
+    internal SemaphoreSlim LockFor(string caseId) => _locks.GetOrAdd(caseId, _ => new SemaphoreSlim(1, 1));
 
     // ── POST /cases/{id}/zip ─────────────────────────────────────────────────
 
@@ -371,6 +393,97 @@ public sealed class CaseZipService : ICaseZipService
     internal static string ZipFailedMessage(Exception ex) => ex is EvidenceZipVerificationException
         ? "La evidencia está intacta, pero el ZIP armado no pasó el control de integridad. Si se repite, contactá a soporte."
         : "No se pudo armar o verificar el ZIP en esta PC; la evidencia quedó intacta";
+
+    // ── PUT /cases/{id}/zip/seals (sellado-tiempo §7.3) ─────────────────────
+
+    public async Task<WriteSealsResponse> WriteSealsAsync(string caseId, WriteSealsRequest request,
+        CancellationToken ct)
+    {
+        // 1-2. Id del caso y nombre del ZIP (PathsFor tira 400 invalid_case_id / invalid_filename).
+        var p = PathsFor(caseId, request.CaseRef, request.ZipFilename);
+        // 3. El ZIP final tiene que estar en esta PC.
+        if (!File.Exists(p.ZipPath))
+            throw new AgentHttpException(404, AgentErrorCodes.ZipNotFound, "El ZIP no está en esta PC");
+
+        // 4. Sellos: 0..1000, nombre seguro, 1 B–64 KiB, sin repetidos. Todo se valida antes de escribir nada.
+        var items = request.Files ?? [];
+        if (items.Count > MaxSealFiles)
+            throw InvalidSeals($"Demasiados sellos (máximo {MaxSealFiles})", null);
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var decoded = new List<(string Name, byte[] Data)>(items.Count);
+        foreach (var item in items)
+        {
+            if (!AgentFileNames.IsSealFilename(item.Name))
+                throw InvalidSeals("Nombre de sello inválido", item.Name);
+            if (!names.Add(item.Name!))
+                throw InvalidSeals("Nombre de sello repetido", item.Name);
+            byte[] data;
+            try { data = Convert.FromBase64String(item.ContentBase64 ?? ""); }
+            catch (FormatException) { throw InvalidSeals("El contenido del sello no es base64 válido", item.Name); }
+            if (data.Length is 0 or > MaxSealBytes)
+                throw InvalidSeals("El sello tiene que pesar entre 1 B y 64 KiB", item.Name);
+            decoded.Add((item.Name!, data));
+        }
+        // 5. LEEME: ≤ 256 KiB en UTF-8, tal cual llega (sin BOM).
+        byte[]? readme = null;
+        if (request.Readme is { } text)
+        {
+            readme = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(text);
+            if (readme.Length > MaxReadmeBytes)
+                throw InvalidSeals("El LEEME supera 256 KiB", SealsReadmeName);
+        }
+
+        var gate = LockFor(p.CaseId);
+        if (!await gate.WaitAsync(0, ct))
+            throw new AgentHttpException(409, AgentErrorCodes.ZipInProgress, "Ya se está armando el ZIP de este caso en esta PC");
+        try
+        {
+            var dir = Path.Combine(p.Final, SealsDirName);
+            Directory.CreateDirectory(dir);
+            int written = 0, unchanged = 0;
+            if (readme is not null) decoded.Add((SealsReadmeName, readme));
+            foreach (var (name, data) in decoded)
+            {
+                ct.ThrowIfCancellationRequested();
+                var target = AgentFileNames.SafeChild(dir, name)
+                    ?? throw InvalidSeals("Nombre de sello inválido", name);
+                if (File.Exists(target) && SameBytes(target, data))
+                {
+                    unchanged++;
+                    continue;
+                }
+                var part = target + ".part";
+                await File.WriteAllBytesAsync(part, data, ct);
+                File.Move(part, target, overwrite: true);
+                written++;
+            }
+            _log.LogInformation("Sellos del caso {CaseId} en {Dir}: {Written} escritos, {Unchanged} sin cambios",
+                p.CaseId, dir, written, unchanged);
+            return new WriteSealsResponse(dir, written, unchanged);
+        }
+        catch (AgentHttpException) { throw; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new AgentHttpException(500, AgentErrorCodes.StorageError,
+                "No se pudieron guardar los sellos en la carpeta del caso", inner: ex);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private static AgentHttpException InvalidSeals(string message, string? filename) =>
+        new(400, AgentErrorCodes.InvalidRequest, message,
+            filename is null ? null : new Dictionary<string, object?> { ["filename"] = filename });
+
+    private static bool SameBytes(string path, byte[] data)
+    {
+        var info = new FileInfo(path);
+        if (info.Length != data.Length) return false;
+        return File.ReadAllBytes(path).AsSpan().SequenceEqual(data);
+    }
 
     // ── POST /cases/{id}/zip/commit ──────────────────────────────────────────
 

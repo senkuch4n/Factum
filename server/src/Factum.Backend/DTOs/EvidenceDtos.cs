@@ -25,8 +25,17 @@ public sealed record RegisterEvidenceRequest(
     EvidenceHostDto? Host = null,
     List<EvidenceItemDto>? Items = null);
 
-/// <summary>Respuesta de registrar/borrar: <c>{ "evidence": [ … ], "evidence_host": {…} | null }</c>.</summary>
-public sealed record EvidenceResponse(List<EvidenceItem> Evidence, EvidenceHost? EvidenceHost);
+/// <summary>
+/// Respuesta de registrar/borrar: <c>{ "evidence": [ … ], "evidence_host": {…} | null, "timestamping_enabled",
+/// "timestamp_authority", "timestamps": [ … ] }</c>. sellado-tiempo §7.2: <c>timestamps</c> trae un sello por ítem
+/// del manifiesto actual que tenga sello para su sha256 actual; <c>timestamp_authority</c> = <c>authority_hint</c>.
+/// </summary>
+public sealed record EvidenceResponse(
+    List<EvidenceItem> Evidence,
+    EvidenceHost? EvidenceHost,
+    bool TimestampingEnabled,
+    string? TimestampAuthority,
+    List<TimestampDto> Timestamps);
 
 /// <summary><c>POST /api/cases/{id}/generate/prepare</c>: <c>{ "hostname": "…" }</c>.</summary>
 public sealed record PrepareGenerationRequest(string? Hostname = null);

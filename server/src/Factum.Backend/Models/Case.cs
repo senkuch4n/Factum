@@ -137,6 +137,14 @@ public sealed class Case
     /// </summary>
     [JsonIgnore]
     public int EvidenceRevision { get; set; }
+
+    /// <summary>
+    /// sellado-tiempo: si el sellado estaba activo cuando se generó el caso (flujo agent). null = caso generado
+    /// antes de esta HU, del flujo viejo, o borrador. "enabled" | "disabled". Lo escribe CompleteAgentGenerationAsync.
+    /// JSON: <c>timestamp_mode</c>.
+    /// </summary>
+    [BsonIgnoreIfNull]
+    public string? TimestampMode { get; set; }
 }
 
 [BsonIgnoreExtraElements]

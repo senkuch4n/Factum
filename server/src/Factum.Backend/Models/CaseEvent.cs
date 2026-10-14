@@ -58,6 +58,22 @@ public sealed class CaseEventDetail
     public string? PreviousSha256 { get; set; }        // evidence_updated (sha256 anterior)
     [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? FailedAction { get; set; }          // capture_failed: tipo de evento que se habría registrado
+
+    // ── sellado-tiempo §4.3 (timestamp_granted / timestamp_failed). Reutilizan Sha256 y Reason. ──
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Target { get; set; }                // evidence | zip | report
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Authority { get; set; }             // timestamp_granted
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTime? GenTime { get; set; }             // timestamp_granted (UTC, la fecha certificada)
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SerialNumber { get; set; }          // timestamp_granted
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TsaUrl { get; set; }                // timestamp_granted (sin userinfo)
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Attempt { get; set; }                  // timestamp_failed
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Final { get; set; }                   // timestamp_failed (true = se abandonó)
 }
 
 /// <summary>
@@ -82,4 +98,8 @@ public static class CaseEventTypes
     public const string ReportFailed = "report_failed";
     /// <summary>DT11: preparado pero no se emite en v1.</summary>
     public const string ReportTextsUpdated = "report_texts_updated";
+    /// <summary>sellado-tiempo: sello RFC 3161 obtenido (filename + detail.target/sha256/authority/gen_time/serial_number/tsa_url).</summary>
+    public const string TimestampGranted = "timestamp_granted";
+    /// <summary>sellado-tiempo: fallo al pedir el sello (detail.target/sha256/reason/attempt/final).</summary>
+    public const string TimestampFailed = "timestamp_failed";
 }

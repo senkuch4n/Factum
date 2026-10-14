@@ -136,7 +136,7 @@ public sealed class InMemoryCaseCounter : ICaseRepository
     public Task<bool> TryMarkGeneratingAsync(string id, string generationId, CancellationToken ct = default) => throw No();
     public Task CompleteAgentGenerationAsync(string id, DateTime generatedAt, string? zipPassword, string zipHash,
         string zipFilename, string pdfFilename, string reportHash, ZipLocation zipLocation,
-        CancellationToken ct = default) => throw No();
+        string timestampMode, CancellationToken ct = default) => throw No();
     public Task MarkAgentGenerationFailedAsync(string id, CancellationToken ct = default) => throw No();
 }
 

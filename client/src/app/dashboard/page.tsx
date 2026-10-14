@@ -4,7 +4,10 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import { Loader2, Plus, Play, ChevronRight, ArrowLeft, Smartphone, HelpCircle, LifeBuoy } from "lucide-react";
 import { Button } from "primereact/button";
-import { api, ApiError, type DeviceInput, type ZipLocation } from "@/lib/api";
+import {
+  api, ApiError, type CaseTimestamp, type CaseTimestampsResponse, type DeviceInput, type EvidenceResponse, type ZipLocation,
+} from "@/lib/api";
+import { syncCaseSeals } from "@/lib/timestamps";
 import { agent, AgentError, screenBlockOf, type ScreenCheckOptions, type ZipProgress } from "@/lib/agent";
 import {
   agentErrorMessage, agentStatusMessage, GENERATION_BUSY_MESSAGE, RECORDING_ERROR_TEXT,
@@ -235,18 +238,73 @@ export default function Dashboard() {
   // El guardado automático (DP1 A) queda atado al caso abierto y a su flujo.
   const currentCaseId = currentCase?.id ?? null;
   const currentStorage = storageOf(currentCase);
+
+  // ── Sello de tiempo de la evidencia (sellado-tiempo §9.3) ────────
+  /** Sello por archivo del manifiesto (el de su `sha256` actual). */
+  const [timestampsByName, setTimestampsByName] = useState<Record<string, CaseTimestamp>>({});
+  /** `null` = backend anterior a la función (no se muestra nada); `false` = apagado. */
+  const [timestampingEnabled, setTimestampingEnabled] = useState<boolean | null>(null);
+  const [timestampAuthority, setTimestampAuthority] = useState<string | null>(null);
+  const [timestampNotice, setTimestampNotice] = useState<string | null>(null);
+  const timestampsRef = useRef(timestampsByName);
+  useEffect(() => { timestampsRef.current = timestampsByName; }, [timestampsByName]);
+  const timestampAuthorityRef = useRef(timestampAuthority);
+  useEffect(() => { timestampAuthorityRef.current = timestampAuthority; }, [timestampAuthority]);
+  /** Caso para el que ya se mostró el aviso de sello no obtenido (una vez por sesión del caso). */
+  const timestampNoticeFor = useRef<string | null>(null);
+
+  // Otro caso (o ninguno): se olvida todo lo del anterior.
+  useEffect(() => {
+    setTimestampsByName({}); setTimestampingEnabled(null); setTimestampAuthority(null); setTimestampNotice(null);
+  }, [currentCaseId]);
+
+  /** Respuesta de registrar/borrar evidencia: estado de los sellos y, si corresponde, el aviso único. */
+  const applyEvidenceTimestamps = useCallback((caseId: string, res: EvidenceResponse) => {
+    if (res.timestamping_enabled === undefined) return; // backend anterior: nada que mostrar
+    const prev = timestampsRef.current;
+    const next: Record<string, CaseTimestamp> = {};
+    let newPending = false;
+    for (const ts of res.timestamps ?? []) {
+      next[ts.filename] = ts;
+      if (ts.status === "pending" && prev[ts.filename]?.id !== ts.id) newPending = true;
+    }
+    timestampsRef.current = next;
+    setTimestampsByName(next);
+    setTimestampingEnabled(res.timestamping_enabled);
+    setTimestampAuthority(res.timestamp_authority ?? null);
+    if (newPending && res.timestamping_enabled && timestampNoticeFor.current !== caseId) {
+      timestampNoticeFor.current = caseId;
+      setTimestampNotice(
+        `No se pudo obtener el sello de tiempo de ${res.timestamp_authority ?? timestampAuthorityRef.current ?? "la autoridad de sellado"}. La evidencia quedó guardada; el sello se reintenta solo.`,
+      );
+    }
+  }, []);
+
+  /** `GET …/timestamps`: el sello de cada archivo del manifiesto actual. */
+  const applyCaseTimestamps = useCallback((res: CaseTimestampsResponse) => {
+    const next: Record<string, CaseTimestamp> = {};
+    for (const row of res.evidence) if (row.timestamp) next[row.filename] = row.timestamp;
+    timestampsRef.current = next;
+    setTimestampsByName(next);
+    setTimestampingEnabled(res.enabled);
+    setTimestampAuthority(res.authority_hint);
+  }, []);
+
   useEffect(() => {
     if (!currentCaseId || !currentStorage) { bindCase(null); return; }
     bindCase({
       id: currentCaseId,
       storage: currentStorage,
       onError: msg => setGlobal(msg),
-      onEvidence: res => setCase(c => (c && c.id === currentCaseId
-        ? { ...c, evidence: res.evidence, evidence_host: res.evidence_host }
-        : c)),
+      onEvidence: res => {
+        setCase(c => (c && c.id === currentCaseId
+          ? { ...c, evidence: res.evidence, evidence_host: res.evidence_host }
+          : c));
+        applyEvidenceTimestamps(currentCaseId, res);
+      },
       onRolesSaved: roles => setCase(c => (c && c.id === currentCaseId ? { ...c, capture_roles: roles } : c)),
     });
-  }, [currentCaseId, currentStorage, bindCase]);
+  }, [currentCaseId, currentStorage, bindCase, applyEvidenceTimestamps]);
 
   /** Motivo por el que no se puede capturar/generar desde esta PC (flujo agent), o `null`. */
   const agentLock = useMemo<{ tone: "warn" | "error"; message: string } | null>(() => {
@@ -511,6 +569,33 @@ export default function Dashboard() {
     startupReportedFor.current = currentCase.id;
     api.reportAgentEvent("startup", currentCase.id);
   }, [step, currentCase]);
+
+  // ── Sello de tiempo: carga al entrar al paso 3/5 (o al reanudar) y polling con pendientes ──
+  const timestampsStep = step === 3 || step === 5;
+  const timestampsWatch = timestampsStep && !!currentCaseId && currentStorage === "agent";
+  useEffect(() => {
+    if (!timestampsWatch || !currentCaseId) return;
+    const ctrl = new AbortController();
+    api.getCaseTimestamps(currentCaseId, ctrl.signal)
+      .then(applyCaseTimestamps)
+      .catch(e => {
+        // 404 = backend anterior a la función: sin indicadores. Otro error: queda lo que había.
+        if (e instanceof ApiError && e.status === 404) setTimestampingEnabled(null);
+      });
+    return () => ctrl.abort();
+  }, [timestampsWatch, currentCaseId, applyCaseTimestamps]);
+
+  const timestampsPending = timestampingEnabled === true
+    && Object.values(timestampsByName).some(t => t.status === "pending");
+  useEffect(() => {
+    if (!timestampsWatch || !timestampsPending || !currentCaseId) return;
+    const ctrl = new AbortController();
+    const t = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      api.getCaseTimestamps(currentCaseId, ctrl.signal).then(applyCaseTimestamps).catch(() => { /* reintenta en 30 s */ });
+    }, 30_000);
+    return () => { window.clearInterval(t); ctrl.abort(); };
+  }, [timestampsWatch, timestampsPending, currentCaseId, applyCaseTimestamps]);
 
   // ── Navigation ───────────────────────────────────────────────────
   const go = useCallback((n: number) => {
@@ -815,6 +900,8 @@ export default function Dashboard() {
           case_ref: prep.case_ref, zip_filename: zip.zip_filename, zip_hash: zip.zip_hash,
           delete_files: prep.files.map(f => f.filename),
         });
+        // Sellos a `sellos/`, al lado del ZIP (sellado-tiempo §9.2). Sin bloquear el resultado; nunca lanza.
+        void syncCaseSeals(res.case);
       } catch {
         zipState = "pending";
       }
@@ -1381,12 +1468,15 @@ export default function Dashboard() {
                                 const ok = await removeFile(name, {
                                   caseId: currentCase?.id,
                                   onError: onRemoveError,
-                                  onEvidence: res => setCase(c => (c ? {
-                                    ...c,
-                                    evidence: res.evidence,
-                                    evidence_host: res.evidence_host,
-                                    capture_roles: c.capture_roles.filter(r => r.filename !== name),
-                                  } : c)),
+                                  onEvidence: res => {
+                                    setCase(c => (c ? {
+                                      ...c,
+                                      evidence: res.evidence,
+                                      evidence_host: res.evidence_host,
+                                      capture_roles: c.capture_roles.filter(r => r.filename !== name),
+                                    } : c));
+                                    if (currentCase) applyEvidenceTimestamps(currentCase.id, res);
+                                  },
                                 });
                                 if (ok) forgetNotice(name);
                                 return ok;
@@ -1413,6 +1503,10 @@ export default function Dashboard() {
                               uploadNotice={uploadNotice}
                               onCancelUpload={currentStorage === "agent" ? cancelSave : cancelUpload}
                               onDismissUploadNotice={dismissUploadNotice}
+                              timestamps={timestampsByName}
+                              timestampingEnabled={timestampingEnabled === true}
+                              timestampNotice={timestampNotice}
+                              onDismissTimestampNotice={() => setTimestampNotice(null)}
                             />
                           )}
 

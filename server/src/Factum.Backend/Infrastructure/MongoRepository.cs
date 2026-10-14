@@ -88,9 +88,10 @@ public interface ICaseRepository
     Task<bool> TryMarkGeneratingAsync(string id, string generationId, CancellationToken ct = default);
 
     /// <summary>Cierra una generación del flujo agent: <c>Completed</c> + metadatos del ZIP y del DOCX, $unset del intento.</summary>
+    /// <remarks>sellado-tiempo §4.2: <paramref name="timestampMode"/> ("enabled" | "disabled") → <c>Case.TimestampMode</c>.</remarks>
     Task CompleteAgentGenerationAsync(string id, DateTime generatedAt, string? zipPassword,
         string zipHash, string zipFilename, string pdfFilename, string reportHash, ZipLocation zipLocation,
-        CancellationToken ct = default);
+        string timestampMode, CancellationToken ct = default);
 
     /// <summary><c>Status = Error</c> y $unset del intento (hace falta un <c>prepare</c> nuevo).</summary>
     Task MarkAgentGenerationFailedAsync(string id, CancellationToken ct = default);
@@ -357,7 +358,7 @@ public sealed class CaseRepository : ICaseRepository
 
     public Task CompleteAgentGenerationAsync(string id, DateTime generatedAt, string? zipPassword,
         string zipHash, string zipFilename, string pdfFilename, string reportHash, ZipLocation zipLocation,
-        CancellationToken ct = default) =>
+        string timestampMode, CancellationToken ct = default) =>
         _col.UpdateOneAsync(
             Builders<Case>.Filter.Eq(c => c.Id, id) & Builders<Case>.Filter.Eq(c => c.Status, CaseStatus.Generating),
             Builders<Case>.Update
@@ -371,6 +372,7 @@ public sealed class CaseRepository : ICaseRepository
                 .Set(c => c.PdfFilename, pdfFilename)
                 .Set(c => c.ReportHash, reportHash)
                 .Set(c => c.ZipLocation, zipLocation)
+                .Set(c => c.TimestampMode, timestampMode)
                 .Unset(c => c.PendingGeneration),
             cancellationToken: ct);
 

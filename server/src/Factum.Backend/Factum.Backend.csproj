@@ -18,6 +18,8 @@
     <PackageReference Include="SharpZipLib" Version="1.4.2" />
     <!-- Markdown de los textos del informe (BSD-2-Clause). Versión fija: ver Refactorizaciones/editor-texto-enriquecido.md §6.1. -->
     <PackageReference Include="Markdig" Version="1.4.0" />
+    <!-- RFC 3161 (sellado-tiempo D-T1): los tipos no están en el reference pack de ASP.NET. Versión ≥ 10.0.13 (advisories en ≤ 10.0.9). -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
   </ItemGroup>
 
   <ItemGroup>

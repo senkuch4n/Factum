@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { formatDate, formatTime } from "@/lib/format";
 import { FX_BUTTON_SECONDARY } from "@/lib/prime/pt/shared";
 import {
-  derivedMilestones, derivedTitle, eventFilename, eventHashChange, eventIcon, eventTitle, eventTone,
+  derivedMilestones, derivedTitle, eventFilename, eventHashChange, eventIcon, eventTimestampDetail, eventTitle, eventTone,
   type DerivedMilestone, type EventTone,
 } from "@/lib/case-events";
 
@@ -168,6 +168,7 @@ function RealItemBody({ ev }: { ev: CaseEvent }) {
   const filename = eventFilename(ev);
   const reason = ev.type === "report_failed" || ev.type === "capture_failed" ? ev.detail?.reason : undefined;
   const hashChange = eventHashChange(ev);
+  const timestampDetail = eventTimestampDetail(ev);
 
   return (
     <>
@@ -186,6 +187,17 @@ function RealItemBody({ ev }: { ev: CaseEvent }) {
         <p translate="no" className="m-0 mt-0.5 font-mono text-xs text-fx-text-3 break-all">{hashChange}</p>
       )}
       {reason && <p className="m-0 mt-0.5 text-xs text-fx-text-2 break-words">{reason}</p>}
+      {timestampDetail && (
+        <p
+          translate={ev.type === "timestamp_granted" ? "no" : undefined}
+          className={cn(
+            "m-0 mt-0.5 text-xs break-words",
+            ev.type === "timestamp_granted" ? "font-mono text-fx-text-3" : "text-fx-text-2",
+          )}
+        >
+          {timestampDetail}
+        </p>
+      )}
       <Meta
         actorName={ev.actor_name}
         actorDni={ev.actor_dni}

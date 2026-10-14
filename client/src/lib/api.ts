@@ -552,7 +552,11 @@ export type CaseEventType =
   | "report_generated"
   | "report_failed"
   | "evidence_updated"
-  | "capture_failed";
+  | "capture_failed"
+  /** sellado-tiempo: sello RFC 3161 obtenido para la evidencia, el ZIP o el informe. */
+  | "timestamp_granted"
+  /** sellado-tiempo: fallo al pedir un sello (primer intento, respuesta inválida o abandono). */
+  | "timestamp_failed";
 
 /**
  * Detalle acotado de un `CaseEvent`: cada campo solo aplica a ciertos tipos y el
@@ -575,6 +579,20 @@ export interface CaseEventDetail {
   previous_sha256?: string;
   /** `capture_failed`: tipo de evento de captura que se habría registrado. */
   failed_action?: "capture_video_start" | "capture_video_stop" | "capture_screenshot" | "capture_photo";
+  /** `timestamp_granted` / `timestamp_failed`: qué objeto se selló (`sha256` = el hash sellado). */
+  target?: TimestampTarget;
+  /** `timestamp_granted`: nombre legible de la autoridad. */
+  authority?: string;
+  /** `timestamp_granted`: fecha y hora certificadas por la autoridad (ISO UTC). */
+  gen_time?: string;
+  /** `timestamp_granted`: número de serie del sello. */
+  serial_number?: string;
+  /** `timestamp_granted`: URL de la autoridad que respondió (sin credenciales). */
+  tsa_url?: string;
+  /** `timestamp_failed`: número de intento. */
+  attempt?: number;
+  /** `timestamp_failed`: `true` = se abandonó tras agotar los intentos. */
+  final?: boolean;
 }
 
 /** Un hito de la línea de tiempo del caso (`GET /api/cases/{id}/events`). */
@@ -754,6 +772,93 @@ export interface RegisterEvidenceRequest {
 export interface EvidenceResponse {
   evidence: EvidenceItem[];
   evidence_host: EvidenceHost | null;
+  /**
+   * sellado-tiempo: config actual del sellado en el backend. Falta en un
+   * backend anterior a esa HU (la web oculta todo lo del sellado).
+   */
+  timestamping_enabled?: boolean;
+  /** sellado-tiempo: autoridad de la primera URL configurada, o `null`. */
+  timestamp_authority?: string | null;
+  /** sellado-tiempo: un sello por ítem del manifiesto que lo tenga para su `sha256` actual. */
+  timestamps?: CaseTimestamp[];
+}
+
+/* ── Sellado de tiempo RFC 3161 (sellado-tiempo, SDD §7.2) ── */
+
+/** Qué objeto se selló. */
+export type TimestampTarget = "evidence" | "zip" | "report";
+/** Estado del sello: `failed` es terminal; `pending` lo reintenta la cola del backend. */
+export type TimestampStatus = "pending" | "granted" | "failed";
+
+/** Un sello de tiempo (`TimestampDto`). Nunca trae el `.tsr`. */
+export interface CaseTimestamp {
+  id: string;
+  target: TimestampTarget;
+  filename: string;
+  /** Hash sellado (64 hex en minúscula). */
+  sha256: string;
+  status: TimestampStatus;
+  attempts: number;
+  /** ISO UTC: cuándo se creó el pedido. */
+  requested_at: string;
+  /** Solo en `pending`. */
+  next_attempt_at: string | null;
+  last_error: string | null;
+  /** Solo en `granted`. */
+  authority: string | null;
+  /** Sin credenciales. */
+  tsa_url: string | null;
+  /** ISO UTC: la fecha y hora certificadas por la autoridad. */
+  gen_time: string | null;
+  /** `gen_time` formateada por el backend en `Report:TimeZone`, igual que el informe. */
+  gen_time_display: string | null;
+  serial_number: string | null;
+  policy_oid: string | null;
+  /** ISO UTC, reloj del servidor. */
+  granted_at: string | null;
+  /** Solo `zip`: `true` = figura en el DOCX; `false` = obtenido después de emitirlo. */
+  in_report: boolean | null;
+}
+
+/** Un archivo del manifiesto actual con su sello (o `null`). */
+export interface EvidenceTimestampRow {
+  filename: string;
+  sha256: string;
+  timestamp: CaseTimestamp | null;
+}
+
+/** `GET /api/cases/{id}/timestamps`. */
+export interface CaseTimestampsResponse {
+  /** Config **actual** del backend. */
+  enabled: boolean;
+  authority_hint: string | null;
+  /** `Case.timestamp_mode`: si el sellado estaba activo al generar. */
+  case_mode: "enabled" | "disabled" | null;
+  evidence_storage: EvidenceStorage;
+  /** Sello del `zip_hash` actual, o `null`. */
+  zip: CaseTimestamp | null;
+  /** Sello del `report_hash` actual, o `null`. */
+  report: CaseTimestamp | null;
+  /** Manifiesto actual en orden ordinal. */
+  evidence: EvidenceTimestampRow[];
+  evidence_sealed: number;
+  evidence_total: number;
+}
+
+/** Un `.tsr` en base64. */
+export interface TimestampFileItem {
+  name: string;
+  content_base64: string;
+}
+
+/** `GET /api/cases/{id}/timestamps/files`: lo que el navegador le pasa a Tatana. */
+export interface TimestampFilesResponse {
+  case_ref: string;
+  /** `null` si el caso es un borrador. */
+  zip_filename: string | null;
+  files: TimestampFileItem[];
+  /** Texto de `LEEME-verificacion.txt` (CRLF). */
+  readme: string;
 }
 
 /** Respuesta de `POST /api/cases/{id}/generate/prepare`. */
@@ -848,6 +953,11 @@ export interface Case {
   evidence?: EvidenceItem[];
   evidence_host?: EvidenceHost | null;
   zip_location?: ZipLocation | null;
+  /**
+   * sellado-tiempo: si el sellado estaba activo cuando se generó (flujo agent).
+   * `null`/ausente = caso anterior a esa HU, flujo viejo o borrador.
+   */
+  timestamp_mode?: "enabled" | "disabled" | null;
 }
 
 /** Config pública del backend (`GET /api/config/public`, sin auth). */
@@ -865,6 +975,8 @@ export interface PublicConfig {
    * un backend anterior a esa HU (= sin mínimo).
    */
   tatana_min_version?: string | null;
+  /** sellado-tiempo: `true` si el backend sella con una autoridad RFC 3161. Falta en un backend anterior. */
+  timestamping_enabled?: boolean;
 }
 
 /** Modo de autenticación del backend (`GET /api/auth/mode`). */
@@ -1336,6 +1448,25 @@ export const api = {
     if (from) params.set("from", from);
     if (to) params.set("to", to);
     return requestSafe<CaseBreakdown>(`/api/cases/breakdown?${params.toString()}`, { signal });
+  },
+
+  /* ── Sellado de tiempo (sellado-tiempo, SDD §7.4-§7.5) ── */
+
+  /** Estado de los sellos del caso. 404 en un backend anterior a la HU (el llamador oculta el bloque). */
+  async getCaseTimestamps(caseId: string, signal?: AbortSignal): Promise<CaseTimestampsResponse> {
+    return requestSafe<CaseTimestampsResponse>(`/api/cases/${caseId}/timestamps`, { signal, cache: "no-store" });
+  },
+
+  /** Los `.tsr` en base64 + el LEEME, para pasárselos a Tatana. No guardarlos fuera de la llamada. */
+  async getTimestampFiles(caseId: string): Promise<TimestampFilesResponse> {
+    return requestSafe<TimestampFilesResponse>(`/api/cases/${caseId}/timestamps/files`, { cache: "no-store" });
+  },
+
+  /** URL de descarga del ZIP sin cifrar con `sellos/*.tsr` + el LEEME. */
+  timestampBundleURL(caseId: string): string {
+    const token = getToken();
+    const params = token ? `?token=${encodeURIComponent(token)}` : "";
+    return `${BACKEND_URL}/api/cases/${caseId}/timestamps/bundle${params}`;
   },
 
   downloadURL(caseId: string, filename: string): string {

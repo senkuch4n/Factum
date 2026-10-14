@@ -269,7 +269,9 @@ export type IosDeveloperModeStatus = "enabled" | "restarting" | "manual_required
  * - `video_postprocess_v1`: variantes de video en segundo plano, `video_variant_status`
  *   y `GET /video-postprocess/status` (ios-grabacion-larga);
  * - `recording_state_v1`: `recordings`/`unclaimed_recordings` en `GET /agent/state`,
- *   `case_id` en el start y validación de la grabación (grabacion-android-robusta).
+ *   `case_id` en el start y validación de la grabación (grabacion-android-robusta);
+ * - `case_seals_v1`: `PUT /cases/{id}/zip/seals` copia los `.tsr` y el LEEME a
+ *   `sellos/`, al lado del ZIP (sellado-tiempo).
  */
 export interface AgentHealth {
   status: string;
@@ -333,6 +335,22 @@ export interface CommitZipRequest {
 export interface CommitZipResponse {
   zip_path: string;
   deleted: number;
+}
+
+/** `PUT /cases/{id}/zip/seals` (sellado-tiempo, SDD §7.3). */
+export interface WriteSealsRequest {
+  case_ref: string;
+  zip_filename: string;
+  files: { name: string; content_base64: string }[];
+  /** Texto de `LEEME-verificacion.txt`; `null` = no se escribe. */
+  readme: string | null;
+}
+
+export interface WriteSealsResponse {
+  /** Ruta absoluta de `sellos/`. */
+  directory: string;
+  written: number;
+  unchanged: number;
 }
 
 /** `GET /cases/{id}/zip/status`. */
@@ -762,11 +780,21 @@ export const agent = {
    * Un error de red no se cachea.
    */
   async supportsRecordingState(): Promise<boolean> {
-    if (capabilitiesCache) return capabilitiesCache.includes("recording_state_v1");
+    return this.hasCapability("recording_state_v1");
+  },
+
+  /** `true` si Tatana sabe copiar los sellos de tiempo a `sellos/` (`case_seals_v1`). Mismo caché. */
+  async supportsCaseSeals(): Promise<boolean> {
+    return this.hasCapability("case_seals_v1");
+  },
+
+  /** Capability de `/health`, cacheada por conexión. Un error de red da `false` y no se cachea. */
+  async hasCapability(name: string): Promise<boolean> {
+    if (capabilitiesCache) return capabilitiesCache.includes(name);
     try {
       const h = await this.health();
       capabilitiesCache = Array.isArray(h.capabilities) ? h.capabilities : [];
-      return capabilitiesCache.includes("recording_state_v1");
+      return capabilitiesCache.includes(name);
     } catch {
       return false;
     }
@@ -980,6 +1008,11 @@ export const agent = {
 
   async commitZip(caseId: string, body: CommitZipRequest): Promise<CommitZipResponse> {
     return agentJSON<CommitZipResponse>(`${caseBase(caseId)}/zip/commit`, jsonInit("POST", body));
+  },
+
+  /** Copia los `.tsr` y el LEEME a `<carpeta del caso>/sellos/` (idempotente). Requiere `case_seals_v1`. */
+  async writeCaseSeals(caseId: string, body: WriteSealsRequest): Promise<WriteSealsResponse> {
+    return agentJSON<WriteSealsResponse>(`${caseBase(caseId)}/zip/seals`, jsonInit("PUT", body));
   },
 
   async discardPendingZip(caseId: string, caseRef: string, zipFilename: string): Promise<void> {
