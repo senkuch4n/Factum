@@ -20,6 +20,10 @@ public static class AuthContextKeys
     public const string Session = "Session";
     /// <summary>Código de falla de autenticación para el challenge (§5.5).</summary>
     public const string FailureCode = "AuthFailureCode";
+    /// <summary><c>Services.Auth.TokenPayload</c> del token validado (sesion-larga §9.4).</summary>
+    public const string TokenPayload = "TokenPayload";
+    /// <summary><c>bool</c>: el token vino por <c>?token=</c> y no por el header (D9).</summary>
+    public const string TokenFromQuery = "TokenFromQuery";
 }
 
 public static class AuthHttpContextExtensions

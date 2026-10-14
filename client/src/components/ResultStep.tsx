@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { api, type EvidenceStorage, type ZipLocation } from "@/lib/api";
 import { agent } from "@/lib/agent";
+import { useTokenVersion } from "@/lib/session";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { FxBanner } from "@/components/feedback/FxBanner";
 import { ZipLocalActions } from "@/components/ZipLocalActions";
@@ -70,6 +71,8 @@ export function ResultStep(props: Props) {
 
 /** Flujo `server` (casos viejos): igual que antes de zip-local-informe-servidor. */
 function ServerResult({ caseNumber, zipFile, pdfFile, password, encrypted, hash, reportHash, caseId, onNewCase }: Props) {
+  // Re-render al cambiar el token: las URL con ?token= salen siempre con el vigente (sesion-larga §8.11).
+  useTokenVersion();
   const downloadURL = (file: string) => api.downloadURL(caseId, file);
   // Solo se muestra si el ZIP salió cifrado y vino la contraseña.
   const zipPassword = encrypted && password ? password : null;
@@ -187,6 +190,8 @@ function AgentResult({
   caseNumber, zipFile, pdfFile, password, encrypted, hash, reportHash, caseId, onNewCase,
   zipLocation, caseRef = caseNumber, zipState = "final", sameHost = false, pendingDeleteFiles = [],
 }: Props) {
+  // Re-render al cambiar el token: las URL con ?token= salen siempre con el vigente (sesion-larga §8.11).
+  useTokenVersion();
   const identity = useAgentIdentity();
   const zipPassword = encrypted && password ? password : null;
   const [state, setState] = useState(zipState);

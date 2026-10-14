@@ -152,7 +152,7 @@ try {
     if (Test-Path -LiteralPath $envBackup) {
         $valoresBackup = Read-EnvFile $envBackup
         $tomar = @{}
-        foreach ($k in @('FACTUM_JWT_SECRET', 'FACTUM_JWT_EXPIRY_HOURS', 'FACTUM_AUTH_MODE', 'FACTUM_BACKUP_DESTINO', 'FACTUM_BACKUP_CONSERVAR')) {
+        foreach ($k in @('FACTUM_JWT_SECRET', 'FACTUM_JWT_EXPIRY_HOURS', 'FACTUM_SESION_TOPE_HORAS', 'FACTUM_AUTH_MODE', 'FACTUM_BACKUP_DESTINO', 'FACTUM_BACKUP_CONSERVAR')) {
             if ($valoresBackup.ContainsKey($k)) { $tomar[$k] = $valoresBackup[$k] }
         }
         Write-EnvFile -Path $envPath -Valores $tomar

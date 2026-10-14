@@ -81,7 +81,8 @@ services:
       MongoDb__ConnectionString: mongodb://factum_app:${FACTUM_MONGO_APP_PASSWORD}@mongo:27017/factum?authSource=factum
       MongoDb__DatabaseName: factum
       Jwt__Secret: ${FACTUM_JWT_SECRET:?Falta FACTUM_JWT_SECRET}
-      Jwt__ExpiryHours: ${FACTUM_JWT_EXPIRY_HOURS:-8}
+      Jwt__ExpiryHours: ${FACTUM_JWT_EXPIRY_HOURS:-2}
+      Jwt__SessionMaxHours: ${FACTUM_SESION_TOPE_HORAS:-12}
       Auth__Mode: local
       Auth__AllowDevOutsideDevelopment: "false"
       # Un solo hostname (DT1): la web y la API comparten origen.

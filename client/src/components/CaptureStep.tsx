@@ -49,6 +49,7 @@ import type { FileUploadState, UploadProgress } from "@/types";
 import { CaptureRoleMenu } from "./capture/CaptureRoleMenu";
 import { AirplayConnectGuide, OnDeviceStopGuide } from "./capture/CaptureGuides";
 import { ElapsedTime, clockTime } from "./capture/ElapsedTime";
+import { ScreenBlockNotice, type ScreenBlock } from "./capture/ScreenBlockNotice";
 
 interface Props {
   isRecording: boolean;
@@ -73,6 +74,14 @@ interface Props {
   files: CapturedFile[];
   onScreenshot: () => void;
   onToggleRecord: () => void;
+  // ── Pantalla apagada o bloqueada (pulido-post-qa-final §8.7) ──
+  /** Captura o inicio de grabación frenado por Tatana; `null` = sin aviso. */
+  screenBlock?: ScreenBlock | null;
+  /** "Reintentar": la misma acción, con el chequeo. */
+  onScreenRetry?: () => void;
+  /** "Capturar igual" / "Grabar igual": la misma acción sin el chequeo. */
+  onScreenForce?: () => void;
+  onDismissScreenBlock?: () => void;
   iosModePicker?: boolean;
   iosRecordMode?: IOSRecordMode | null;
   onSelectIosMode?: (mode: IOSRecordMode) => void;
@@ -160,6 +169,7 @@ export function CaptureStep({
   foreignRecording = null, onStopForeign, notices = NO_NOTICES, onKeepBlack,
   androidVersion, platform = "android", deviceSerial, files,
   onScreenshot, onToggleRecord,
+  screenBlock = null, onScreenRetry, onScreenForce, onDismissScreenBlock,
   iosModePicker, iosRecordMode, onSelectIosMode, onCancelIosMode,
   onPhotoPerito, onPhotoTitular,
   titularNombre, titularDni,
@@ -189,6 +199,20 @@ export function CaptureStep({
   const foreignNoticeId = useId();
   const recordHelpId = useId();
   const agentMode = storageMode === "agent";
+  // Aviso de pantalla (§8.7): al irse (captura hecha, cierre, otro celular), si el foco quedó
+  // huérfano en <body> vuelve al botón de la acción que se había frenado.
+  const screenTileRef = useRef<HTMLButtonElement>(null);
+  const recordTileRef = useRef<HTMLButtonElement>(null);
+  const lastBlockActionRef = useRef<ScreenBlock["action"] | null>(null);
+  useEffect(() => {
+    if (screenBlock) { lastBlockActionRef.current = screenBlock.action; return; }
+    const last = lastBlockActionRef.current;
+    lastBlockActionRef.current = null;
+    if (!last) return;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    (last === "record" ? recordTileRef : screenTileRef).current?.focus();
+  }, [screenBlock]);
   // Captura deshabilitada durante el envío o con la evidencia en otra PC / Tatana caído.
   const captureBlocked = uploading || !!evidenceLock;
   // Quitar: además, nunca durante un guardado automático (el archivo podría estar moviéndose).
@@ -303,7 +327,10 @@ export function CaptureStep({
     if (agentMode) {
       if (f?.uploaded) return f.availability === "missing" ? "missing" : "stored";
       const s = uploadStates[item.name];
-      return s === "uploading" ? "saving" : s === "error" ? "save_error" : "pending";
+      return s === "uploading" ? "saving"
+        : s === "error" ? "save_error"
+        : s === "auth_pending" ? "auth_pending"
+        : "pending";
     }
     if (f?.uploaded) return "uploaded";
     return uploadStates[item.name] ?? "pending";
@@ -567,9 +594,22 @@ export function CaptureStep({
               <ImageIcon className="h-3.5 w-3.5" aria-hidden="true" /> Capturar del celular
             </h3>
 
+            {/* Pantalla apagada o bloqueada: junto a la botonera, con "Reintentar" y la salida (§8.7) */}
+            {screenBlock && (
+              <ScreenBlockNotice
+                key={screenBlock.action}
+                block={screenBlock}
+                busy={screenBlock.action === "record" ? recordStarting : !!loading.screenshot}
+                onRetry={() => onScreenRetry?.()}
+                onForce={() => onScreenForce?.()}
+                onDismiss={() => onDismissScreenBlock?.()}
+              />
+            )}
+
             {/* Acciones principales — par 2-up del mismo peso */}
             <div className="grid grid-cols-2 gap-2">
               <button
+                ref={screenTileRef}
                 type="button"
                 onClick={onScreenshot}
                 disabled={!!loading.screenshot || !!deviceOffline || captureBlocked}
@@ -583,6 +623,7 @@ export function CaptureStep({
               </button>
 
               <button
+                ref={recordTileRef}
                 type="button"
                 onClick={onToggleRecord}
                 disabled={recordBtnDisabled}

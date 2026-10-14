@@ -158,7 +158,18 @@ export function CatalogAutoComplete({
         "aria-required": required || undefined,
         "aria-invalid": invalid || undefined,
         "aria-describedby": ariaDescribedBy,
-        onBlur: (e: React.FocusEvent<HTMLInputElement>) => e.currentTarget.removeAttribute("aria-activedescendant"),
+        onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
+          e.currentTarget.removeAttribute("aria-activedescendant");
+          // Prime solo cierra el panel con clic afuera o Escape: pasar a otro
+          // campo (Tab o clic en otro input) dejaba dos listas abiertas. Se
+          // cierra si el foco va a algo enfocable fuera del componente y de su
+          // panel. Un clic en una opción (<li> no enfocable) da `relatedTarget`
+          // null y no cierra, así la selección sigue funcionando.
+          const next = e.relatedTarget as Node | null;
+          const root = acRef.current?.getElement();
+          const overlay = acRef.current?.getOverlay();
+          if (next && !root?.contains(next) && !overlay?.contains(next)) acRef.current?.hide();
+        },
         onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
           syncActiveDescendant(e.currentTarget, e.key);
           // Prime procesa antes sus teclas (con la lista abierta). Cerrada,

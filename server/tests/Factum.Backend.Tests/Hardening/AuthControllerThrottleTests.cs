@@ -21,11 +21,14 @@ public sealed class AuthControllerThrottleTests
         {
             LoginCalls++;
             return Task.FromResult(Result.Ok(new LoginResponse("tok",
-                new UserDto(request.Dni, "QA", "QA", UserRoles.Cliente, false))));
+                new UserDto(request.Dni, "QA", "QA", UserRoles.Cliente, false), 7200, 43200, 7200, 43200)));
         }
 
         public TokenPayload? ValidateToken(string token) => null;
-        public string IssueToken(User user, DateTime? passwordChangedAt) => "tok";
+        public IssuedToken IssueToken(User user, DateTime? passwordChangedAt, long? authTimeS = null) =>
+            new("tok", 7200, 43200, 7200, 43200);
+        public Result<LoginResponse> Refresh(TokenPayload payload, User user, AuthSession session) =>
+            throw new NotSupportedException();
     }
 
     [Fact]
@@ -36,7 +39,8 @@ public sealed class AuthControllerThrottleTests
         {
             LoginRateLimit = new LoginRateLimitOptions { PerDniPermitLimit = 1 },
         });
-        var controller = new AuthController(auth, new AuthSettings(AuthModes.Dev, null, null, [], []), null!, throttle)
+        var controller = new AuthController(auth, new AuthSettings(AuthModes.Dev, null, null, [], []), null!, throttle,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AuthController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };

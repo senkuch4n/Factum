@@ -14,7 +14,8 @@ public sealed class RecordingController(
     IIosService ios,
     IFileStorageService storage,
     AgentWebSocketHub hub,
-    RecordingRegistry registry) : ControllerBase
+    RecordingRegistry registry,
+    IAndroidScreenProbe screenProbe) : ControllerBase
 {
     // grabacion-android-robusta §5.8 / §6.1. El trabajo con el dispositivo no depende del RequestAborted (DA4):
     // si el navegador recarga en "Iniciando…", la grabación igual arranca y se recupera por /agent/state.
@@ -47,6 +48,13 @@ public sealed class RecordingController(
             else
             {
                 platform = "android";
+                // pulido-post-qa-final D9: antes de NewFilePath, StartRecordingAsync y SetOwner. Apagada o
+                // bloqueada → 409 (lo devuelve el catch de AgentHttpException) sin recording_started ni estado.
+                if (!request.SkipScreenCheck)
+                {
+                    var screen = await screenProbe.GetStateAsync(serial, ct);
+                    if (AndroidScreenProbe.ScreenBlock(screen.State, "grabar") is { } block) throw block;
+                }
                 path = storage.NewFilePath("grabacion", "mkv"); // scrcpy graba MKV
                 var r = await adb.StartRecordingAsync(serial, path, request.AndroidVersion, request.AndroidWithMic,
                     caseId, CancellationToken.None);
@@ -198,14 +206,18 @@ public sealed class RecordingController(
     }
 }
 
-/// <summary>Body del start. <c>case_id</c> (opcional) = caso que inició la grabación (Duda 5 A).</summary>
+/// <summary>
+/// Body del start. <c>case_id</c> (opcional) = caso que inició la grabación (Duda 5 A). <c>skip_screen_check</c>
+/// (opcional, default false) = "Grabar igual": no chequea la pantalla de Android (pulido-post-qa-final D9).
+/// </summary>
 public sealed record StartRecordingRequest(
     int AndroidVersion,
     string Platform = "android",
     string? IosMode = null,
     bool AndroidWithMic = false,
     string? CaseId = null,
-    string? OriginId = null);
+    string? OriginId = null,
+    bool SkipScreenCheck = false);
 
 /// <summary>200 del start (§6.1): <c>filename</c>, <c>state</c>, <c>started_at</c>, <c>case_id</c> (se omite si es null).</summary>
 public sealed record StartRecordingResponse(string Filename, string State, DateTimeOffset StartedAt, string? CaseId);

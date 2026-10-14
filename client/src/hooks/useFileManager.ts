@@ -9,6 +9,7 @@ import { agentErrorMessage, agentStatusMessage } from "@/lib/agent-messages";
 import { isRoleEligible } from "@/lib/pericial";
 import { uploadErrorMessage, type UploadMessage } from "@/lib/upload-messages";
 import { ensureAgentIdentity, isSameHostFor } from "@/hooks/useAgentIdentity";
+import { SessionExpiredError, isSessionExpiredError, onSessionRestored, sessionState } from "@/lib/session";
 import type {
   Case, CapturedFile, CaptureRole, CaptureRoleValue, VideoVariant, VideoVariantState, VideoVariantStatus,
   FileUploadState, UploadProgress,
@@ -104,6 +105,9 @@ export function useFileManager() {
   // PC del caso: `info` de Tatana + carpeta de trabajo, una vez por caso.
   const hostRef                             = useRef<{ caseId: string; info: AgentInfo; caseDirectory: string } | null>(null);
   const [agentHost, setAgentHost]           = useState<AgentInfo | null>(null);
+  // Registros pendientes por sesión vencida (sesion-larga §8.9, D4 = A): solo en memoria.
+  const authPendingRef                      = useRef<Set<string>>(new Set());
+  const [authPendingCount, setAuthPendingCount] = useState(0);
 
   // Mismo patrón que `setLocalBlobs`: se calcula sobre el ref (fuera del updater,
   // así StrictMode no lo duplica) y se publica el resultado.
@@ -512,6 +516,23 @@ export function useFileManager() {
     return hostRef.current;
   }
 
+  /** Un Blob ya guardado en la carpeta del caso deja de ocupar memoria: la vista sale de Tatana. */
+  function releaseBlob(caseId: string, name: string) {
+    pendingBlobs.current.delete(name);
+    const lb = localBlobsRef.current[name];
+    if (lb) {
+      URL.revokeObjectURL(lb.url);
+      setLocalBlobs(prev => ({ ...prev, [name]: { ...lb, url: agent.caseFileURL(caseId, name) } }));
+    }
+  }
+
+  /** Vacía la cola de registros pendientes por sesión (cambio de caso o bandeja limpia). */
+  const resetAuthPending = useCallback(() => {
+    if (authPendingRef.current.size === 0) return;
+    authPendingRef.current = new Set();
+    setAuthPendingCount(0);
+  }, []);
+
   /**
    * Guarda un archivo en la carpeta del caso y lo registra en el expediente.
    * `false` si se salteó (sigue pendiente). Lanza `AgentError`/`ApiError`.
@@ -556,32 +577,34 @@ export function useFileManager() {
       ? { ...f, storedInCase: true, sha256: moved.sha256, size: moved.size }
       : f));
 
-    // 2. Registro en el expediente.
+    // 2. Registro en el expediente. Con la sesión vencida no se intenta (D15): el
+    //    archivo ya está en la carpeta del caso y queda "Pendiente de registrar".
     progress({ phase: "registering", loaded: 0, totalBytes: null }, true);
     const host = await ensureHost(caseId);
-    const res = await api.registerEvidence(caseId, {
-      host: {
-        hostname: host.info.hostname,
-        os_user: host.info.os_user,
-        agent_version: host.info.version,
-        case_directory: host.caseDirectory,
-      },
-      items: [{ filename: info.filename, size: info.size, sha256: info.sha256, source_path: file.sourcePath ?? null }],
-    });
+    let res: EvidenceResponse;
+    try {
+      if (sessionState() === "expired") throw new SessionExpiredError();
+      res = await api.registerEvidence(caseId, {
+        host: {
+          hostname: host.info.hostname,
+          os_user: host.info.os_user,
+          agent_version: host.info.version,
+          case_directory: host.caseDirectory,
+        },
+        items: [{ filename: info.filename, size: info.size, sha256: info.sha256, source_path: file.sourcePath ?? null }],
+      });
+    } catch (e) {
+      // El Blob ya está en la carpeta del caso: se libera para que el reintento no lo vuelva a copiar.
+      if (blob && isSessionExpiredError(e)) releaseBlob(caseId, name);
+      throw e;
+    }
     boundRef.current?.onEvidence?.(res);
 
     // 3. Marcado. Un Blob ya guardado deja de ocupar memoria: la vista sale de Tatana.
     setFiles(prev => prev.map(f => f.name === name
       ? { ...f, uploaded: true, storedInCase: true, sha256: info.sha256, size: info.size, availability: "here" }
       : f));
-    if (blob) {
-      pendingBlobs.current.delete(name);
-      const lb = localBlobsRef.current[name];
-      if (lb) {
-        URL.revokeObjectURL(lb.url);
-        setLocalBlobs(prev => ({ ...prev, [name]: { ...lb, url: agent.caseFileURL(caseId, name) } }));
-      }
-    }
+    if (blob) releaseBlob(caseId, name);
     clearUploadState(name);
     busyRetriesRef.current.delete(name);
 
@@ -609,6 +632,14 @@ export function useFileManager() {
           await saveOne(bound.id, name, ac.signal);
         } catch (e) {
           const current = name;
+          // Sesión vencida: queda "Pendiente de registrar" (advertencia, no error) y la cola
+          // sigue con el resto, que también hace el paso 1 y queda pendiente (§8.9).
+          if (isSessionExpiredError(e)) {
+            setUploadStates(s => ({ ...s, [current]: "auth_pending" }));
+            authPendingRef.current.add(current);
+            setAuthPendingCount(authPendingRef.current.size);
+            continue;
+          }
           if (e instanceof AgentError && e.kind === "aborted") {
             clearUploadState(current);
             setUploadNotice({ tone: "info", text: "Guardado cancelado. Lo que ya estaba en esta PC quedó guardado; lo demás sigue en la lista." });
@@ -669,8 +700,22 @@ export function useFileManager() {
     if (!b || b.id !== prevId) {
       hostRef.current = null;
       setAgentHost(null);
+      resetAuthPending();
     }
-  }, []);
+  }, [resetAuthPending]);
+
+  // Al recuperar la sesión, cada pendiente se vuelve a encolar: el camino `storedInCase`
+  // no lo reimporta y el registro es idempotente por nombre + SHA-256 (#61).
+  useEffect(() => onSessionRestored(() => {
+    const names = [...authPendingRef.current];
+    if (names.length === 0) return;
+    authPendingRef.current = new Set();
+    setAuthPendingCount(0);
+    names.forEach(name => {
+      clearUploadState(name);
+      enqueueSaveRef.current(name);
+    });
+  }), []);
 
   /**
    * Botón "Guardar evidencia en esta PC y continuar": espera la cola, reintenta
@@ -704,6 +749,10 @@ export function useFileManager() {
       await drainQueue();
 
       if (filesRef.current.some(f => !f.uploaded)) {
+        if (authPendingRef.current.size > 0) {
+          onError("Hay archivos pendientes de registrar: iniciá sesión para registrarlos.");
+          return;
+        }
         // Los mensajes de cada archivo ya salieron por `onError` (o fue una cancelación).
         if (lastSaveErrorRef.current) onError(lastSaveErrorRef.current);
         return;
@@ -792,6 +841,7 @@ export function useFileManager() {
     setVariantStatus({});
     setUploadStates({});
     setUploadNotice(null);
+    resetAuthPending();
   }
 
   return {
@@ -803,5 +853,7 @@ export function useFileManager() {
     uploadProgress, uploadStates, uploadNotice, dismissUploadNotice, cancelUpload,
     // Flujo agent (zip-local-informe-servidor)
     storageMode, agentHost, saveBusy, bindCase, handleSaveAndContinue, restoreCaseEvidence, cancelSave,
+    // Registros pendientes por sesión vencida (sesion-larga)
+    authPendingCount,
   };
 }

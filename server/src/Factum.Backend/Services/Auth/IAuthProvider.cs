@@ -29,6 +29,8 @@ public static class AuthErrors
     public const string PasswordChangeRequired = "password_change_required";
     public const string NotAvailable = "not_available";
     public const string SuperadminRequired = "superadmin_required";
+    /// <summary>sesion-larga §6.1: el refresh no renueva (tope alcanzado o token sin <c>auth_time</c>).</summary>
+    public const string SessionMaxAge = "session_max_age";
 
     public const string MsgInvalidCredentials = "DNI o contraseña incorrectos.";
     public static string MsgAccountLocked(int lockoutMinutes) =>
@@ -40,6 +42,8 @@ public static class AuthErrors
     public const string MsgPasswordChangeRequired = "Tenés que cambiar tu contraseña antes de seguir.";
     public const string MsgNotAvailable = "El cambio de contraseña no está disponible en este modo.";
     public const string MsgSuperadminRequired = "Solo un superadmin puede hacer esto.";
+    public const string MsgSessionMaxAge =
+        "Por seguridad, tu sesión llegó al máximo de horas. Volvé a iniciar sesión.";
 
     /// <summary>Error con <c>code</c> en <see cref="Result{T}.Details"/>.</summary>
     public static Result<T> Fail<T>(string code, string message, string? field = null)

@@ -85,8 +85,9 @@ public sealed class UserAccountService(
             return AuthErrors.Fail<LoginResponse>(AuthErrors.SessionRevoked, AuthErrors.MsgSessionEnded);
 
         var user = new User { Dni = acc.Dni, Name = acc.Name, Sigla = acc.Sigla };
-        var token = auth.IssueToken(user, changedAt);
-        return Result.Ok(new LoginResponse(token,
+        // sesion-larga D4: sin authTimeS, auth_time se reinicia (pedir la actual equivale a re-autenticarse).
+        var issued = auth.IssueToken(user, changedAt);
+        return Result.Ok(issued.ToResponse(
             new UserDto(acc.Dni, acc.Name, acc.Sigla, acc.Role, MustChangePassword: false)));
     }
 

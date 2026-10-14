@@ -16,7 +16,8 @@ public sealed class AuthController(
     IAuthService authService,
     AuthSettings authSettings,
     IUserAccountService accounts,
-    ILoginThrottle throttle) : ControllerBase
+    ILoginThrottle throttle,
+    ILogger<AuthController> logger) : ControllerBase
 {
     /// <summary>usuarios-locales §5.1: modo + largos de contraseña (siempre; en dev/external, los defaults).</summary>
     [HttpGet("mode")]
@@ -111,6 +112,43 @@ public sealed class AuthController(
             _ => StatusCodes.Status400BadRequest,
         };
         return StatusCode(status, ErrorBody(result));
+    }
+
+    /// <summary>
+    /// sesion-larga §6.1 / §9.6: vuelve a emitir el token con el mismo <c>user</c>, <c>pca</c> y
+    /// <c>auth_time</c>, recortado al tope. Solo con el header (D9). Pasa por el handler (y en local por
+    /// SessionValidator) y por el gate de cambio de contraseña. Rate limit propio, no el del login.
+    /// </summary>
+    [HttpPost("refresh")]
+    [Authorize]
+    [EnableRateLimiting(RefreshRateLimit.PolicyName)]
+    [ProducesResponseType<LoginResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public IActionResult Refresh()
+    {
+        if (HttpContext.Items[AuthContextKeys.TokenFromQuery] is true ||
+            HttpContext.Items[AuthContextKeys.TokenPayload] is not TokenPayload payload)
+            return StatusCode(StatusCodes.Status401Unauthorized, new Dictionary<string, object?>
+            {
+                ["error"] = AuthErrors.MsgUnauthenticated,
+                ["code"] = AuthErrors.Unauthenticated,
+            });
+
+        var user = (User)HttpContext.Items[AuthContextKeys.User]!;
+        var result = authService.Refresh(payload, user, HttpContext.GetSession());
+        if (result.IsSuccess)
+        {
+            Response.Headers.CacheControl = "no-store";
+            logger.LogDebug("Sesión renovada");
+            return Ok(result.Value);
+        }
+
+        // S7: sin DNI ni token.
+        logger.LogInformation("Renovación de sesión rechazada ({Code}, motivo {Motivo})",
+            AuthErrors.CodeOf(result) ?? "-", payload.AuthTimeS is null ? "sin_auth_time" : "tope_alcanzado");
+        return StatusCode(StatusCodes.Status401Unauthorized, ErrorBody(result));
     }
 
     /// <summary>{ error, code[, field] }: las claves del diccionario no pasan por la naming policy.</summary>

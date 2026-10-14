@@ -8,6 +8,7 @@ import {
   AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, ClipboardList, FileText, HardDrive, History, Loader2, RefreshCw, Undo2,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { onSessionRestored } from "@/lib/session";
 import {
   EMPTY_REPORT_TEXTS, MAX_LEN_TEXT, REPORT_SECTION_LABELS, countsOutdated, countsSummary, reportFieldId,
 } from "@/lib/pericial";
@@ -295,6 +296,15 @@ export function ReportStep({
   }, [caseId, save]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Sesión recuperada tras un re-login en el lugar (sesion-larga §8.9, S4 = A): el
+  // texto que no se llegó a guardar se guarda solo; si la carga había fallado, se recarga.
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
+  useEffect(() => onSessionRestored(() => {
+    if (stateRef.current === "load-error") void load();
+    else void flush();
+  }), [flush, load]);
 
   // Al desmontar (Atrás, salto de paso) no se pierde lo último que se escribió.
   useEffect(() => () => {

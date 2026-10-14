@@ -4,7 +4,12 @@
 
 import { agent } from "./agent";
 import type { EvidenceErrorCode, UploadCheckResponse, UploadedFileInfo, UploadErrorBody, UploadErrorCode } from "@/types";
-import { writeSessionNotice } from "./session-notice";
+import type { AuthResponse } from "@/types";
+import {
+  AUTH_EVENT, SESSION_EXPIRED_CODES, beginLongOp, clearSession, dispatchAuthEvent, endLongOp, endSession,
+  expireSession, getStoredToken, hadSession, hasActiveLongOps, sessionState, setSessionUser, writeSession,
+  type AuthEventDetail,
+} from "./session";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
@@ -13,8 +18,7 @@ export type AgentAuditAction = "startup" | "capture_start" | "capture_stop" | "s
 export type AgentFailedAction = Exclude<AgentAuditAction, "startup" | "capture_failed">;
 
 function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("factum_token");
+  return getStoredToken();
 }
 
 /**
@@ -32,6 +36,8 @@ export class ApiError extends Error {
   code: string | null;
   /** Cuerpo de error tal cual vino (JSON), o `null`. */
   body: ApiErrorBody | null;
+  /** Header `Retry-After` en segundos (429 del refresh, sesion-larga §8.3), si vino. */
+  retryAfterSeconds?: number;
   constructor(
     message: string, status: number, missing?: string[], serverMessage: string | null = null,
     body: ApiErrorBody | null = null,
@@ -78,54 +84,70 @@ export interface ApiErrorBody {
 
 /* ── Corte de sesión (usuarios-locales §9.1) ── */
 
-/** Evento global que escucha `SessionWatcher`. */
-export const AUTH_EVENT = "factum:auth";
-export type AuthEventDetail = { type: "session_ended" } | { type: "password_change_required" };
+/** Evento global que escucha `SessionWatcher` (definido en `lib/session.ts`). */
+export { AUTH_EVENT };
+export type { AuthEventDetail };
 
-/** Rutas cuyo 401 es un resultado del formulario, no una sesión que se cortó. */
-const AUTH_FAILURE_EXCLUDED = ["/api/auth/login", "/api/auth/mode"];
+/**
+ * Rutas cuyo 401 no corta la sesión acá: login/mode son resultados del
+ * formulario, y el refresh lo maneja `SessionManager` (§8.3).
+ */
+const AUTH_FAILURE_EXCLUDED = ["/api/auth/login", "/api/auth/mode", "/api/auth/refresh"];
 
 /**
  * Operaciones largas en curso (subida, generación, registro de evidencia).
- * Si la sesión se corta mientras alguna corre, el aviso del login lo dice.
+ * Si la sesión se corta mientras alguna corre, el aviso del login lo dice; y
+ * mientras corren, cuentan como actividad para renovar la sesión (S1 = A).
  */
-let activeLongOps = 0;
-
 async function trackLongOp<T>(op: () => Promise<T>): Promise<T> {
-  activeLongOps++;
+  beginLongOp();
   try {
     return await op();
   } finally {
-    activeLongOps--;
+    endLongOp();
   }
 }
 
-function dispatchAuthEvent(detail: AuthEventDetail) {
-  window.dispatchEvent(new CustomEvent<AuthEventDetail>(AUTH_EVENT, { detail }));
-}
+/** Hay una subida, generación o registro de evidencia en curso. */
+export { hasActiveLongOps };
 
 /**
- * Interceptor de sesión: lo llaman `toApiError` y el XHR de `uploadFile`.
- * - 401 con token y fuera de login/mode: borra el token, deja el aviso para
- *   el login y avisa a `SessionWatcher` (que navega a `/`).
+ * Interceptor de sesión (sesion-larga §8.3): lo llaman `toApiError`, el XHR
+ * de `uploadFile` y el refresh (con `force`).
+ * - 401 de un pedido que salió con un token ya reemplazado: se ignora (D14).
+ * - 401 sin token: solo corta si esta pestaña tuvo sesión y no está ya vencida
+ *   (el "Salir" de otra pestaña, S2).
+ * - 401 `invalid_token`/`session_max_age`: sesión vencida → `expireSession`
+ *   (re-login en el lugar dentro del asistente, login fuera).
+ * - Otro 401 (`session_revoked`, `account_suspended`, …): corte "terminada", como antes.
  * - 403 `password_change_required`: avisa a `SessionWatcher` (→ `/cambiar-contrasena`).
  * Se evalúa antes del `finally` de la operación que falló, así
- * `activeLongOps > 0` incluye a esa misma operación.
+ * `hasActiveLongOps()` incluye a esa misma operación.
  */
-function notifyAuthFailure(status: number, body: ApiErrorBody | null, url: string) {
+function notifyAuthFailure(
+  status: number, body: ApiErrorBody | null, url: string, sentToken: string | null,
+  opts: { force?: boolean } = {},
+) {
   if (typeof window === "undefined") return;
   const code = typeof body?.code === "string" ? body.code : null;
   if (status === 401) {
-    if (!getToken()) return;
-    let path = url;
-    try { path = new URL(url, BACKEND_URL).pathname; } catch { /* url relativa o vacía */ }
-    if (AUTH_FAILURE_EXCLUDED.some(p => path.startsWith(p))) return;
-    localStorage.removeItem("factum_token");
-    writeSessionNotice({
-      reason: code === "account_suspended" ? "account_suspended" : "session_ended",
-      interrupted: activeLongOps > 0,
-    });
-    dispatchAuthEvent({ type: "session_ended" });
+    if (!opts.force) {
+      let path = url;
+      try { path = new URL(url, BACKEND_URL).pathname; } catch { /* url relativa o vacía */ }
+      if (AUTH_FAILURE_EXCLUDED.some(p => path.startsWith(p))) return;
+    }
+    const current = getToken();
+    if (sentToken && current && current !== sentToken) return;
+    if (!current && !sentToken) {
+      if (sessionState() === "expired" || !hadSession()) return;
+      endSession("session_ended");
+      return;
+    }
+    if (code && SESSION_EXPIRED_CODES.includes(code)) {
+      expireSession("http");
+      return;
+    }
+    endSession(code === "account_suspended" ? "account_suspended" : "session_ended");
     return;
   }
   if (status === 403 && code === "password_change_required") {
@@ -171,21 +193,44 @@ function parseUploadErrorBody(text: string): UploadErrorBody | null {
   return null;
 }
 
+/**
+ * `fetch` con el token vigente. Ante un 401, si mientras el pedido viajaba
+ * otra pestaña (o esta) dejó un token **distinto y no nulo**, reintenta una
+ * vez con ese (D14). Los cuerpos que se usan (string, `FormData`, `Blob`) se
+ * pueden reenviar.
+ */
+async function authFetch(url: string, init: RequestInit = {}): Promise<{ res: Response; sentToken: string | null }> {
+  const attempt = (token: string | null) => {
+    const headers = new Headers(init.headers);
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    else headers.delete("Authorization");
+    return fetch(url, { ...init, headers });
+  };
+  let sentToken = getToken();
+  let res = await attempt(sentToken);
+  if (res.status === 401 && sentToken) {
+    const current = getToken();
+    if (current && current !== sentToken) {
+      sentToken = current;
+      res = await attempt(current);
+    }
+  }
+  return { res, sentToken };
+}
+
+/** Respuesta del backend + el token con el que salió (para `toApiError`). */
+type Sent = { res: Response; sentToken: string | null };
+
 /** `fetch` al backend con el token y el `Content-Type` JSON. */
-function send(path: string, options: RequestInit): Promise<Response> {
-  const token = getToken();
-  return fetch(`${BACKEND_URL}${path}`, {
+function send(path: string, options: RequestInit): Promise<Sent> {
+  return authFetch(`${BACKEND_URL}${path}`, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
+    headers: { "Content-Type": "application/json", ...options.headers },
   });
 }
 
 /** `ApiError` a partir de una respuesta no-OK (`{ error, missing }` del backend). */
-async function toApiError(res: Response): Promise<ApiError> {
+async function toApiError(res: Response, sentToken: string | null): Promise<ApiError> {
   const body = await res.json().catch(() => null);
   const serverMessage = typeof body?.error === "string" && body.error.trim() ? (body.error as string) : null;
   const missing = Array.isArray(body?.missing) ? (body.missing as string[]) : undefined;
@@ -193,8 +238,11 @@ async function toApiError(res: Response): Promise<ApiError> {
   // no era JSON, o "HTTP <status>" como último recurso.
   const fallback = body === null ? res.statusText : body?.error;
   const errBody = body && typeof body === "object" ? (body as ApiErrorBody) : null;
-  notifyAuthFailure(res.status, errBody, res.url);
-  return new ApiError(serverMessage ?? (fallback || `HTTP ${res.status}`), res.status, missing, serverMessage, errBody);
+  notifyAuthFailure(res.status, errBody, res.url, sentToken);
+  const err = new ApiError(serverMessage ?? (fallback || `HTTP ${res.status}`), res.status, missing, serverMessage, errBody);
+  const retryAfter = Number(res.headers.get("Retry-After"));
+  if (res.headers.has("Retry-After") && Number.isFinite(retryAfter) && retryAfter >= 0) err.retryAfterSeconds = retryAfter;
+  return err;
 }
 
 /**
@@ -202,29 +250,29 @@ async function toApiError(res: Response): Promise<ApiError> {
  * `ApiError` con `status` 0 y `SERVER_UNREACHABLE`. Lo usan las rutas nuevas.
  */
 async function requestSafe<T>(path: string, options: RequestInit = {}): Promise<T> {
-  let res: Response;
+  let sent: Sent;
   try {
-    res = await send(path, options);
+    sent = await send(path, options);
   } catch (e) {
     // Un abort (el llamador canceló con `signal`) se propaga tal cual para que
     // el componente lo distinga de un corte real y lo ignore; no es un error de red.
     if (e instanceof DOMException && e.name === "AbortError") throw e;
     throw new ApiError(SERVER_UNREACHABLE, 0, undefined, null);
   }
-  if (!res.ok) throw await toApiError(res);
-  return res.json();
+  if (!sent.res.ok) throw await toApiError(sent.res, sent.sentToken);
+  return sent.res.json();
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await send(path, options);
-  if (!res.ok) throw await toApiError(res);
+  const { res, sentToken } = await send(path, options);
+  if (!res.ok) throw await toApiError(res, sentToken);
   return res.json();
 }
 
 /** Como `request`, para respuestas `204` sin body (no lee el body si salió bien). */
 async function requestNoContent(path: string, options: RequestInit = {}): Promise<void> {
-  const res = await send(path, options);
-  if (!res.ok) throw await toApiError(res);
+  const { res, sentToken } = await send(path, options);
+  if (!res.ok) throw await toApiError(res, sentToken);
 }
 
 /**
@@ -232,20 +280,14 @@ async function requestNoContent(path: string, options: RequestInit = {}): Promis
  * el navegador con el boundary). Red caída → `ApiError(SERVER_UNREACHABLE, 0)`.
  */
 async function sendMultipart<T>(path: string, method: "POST" | "PUT", form: FormData): Promise<T> {
-  const token = getToken();
-  let res: Response;
+  let sent: Sent;
   try {
-    res = await fetch(`${BACKEND_URL}${path}`, {
-      method,
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: form,
-      cache: "no-store",
-    });
+    sent = await authFetch(`${BACKEND_URL}${path}`, { method, body: form, cache: "no-store" });
   } catch {
     throw new ApiError(SERVER_UNREACHABLE, 0, undefined, null);
   }
-  if (!res.ok) throw await toApiError(res);
-  return res.json() as Promise<T>;
+  if (!sent.res.ok) throw await toApiError(sent.res, sent.sentToken);
+  return sent.res.json() as Promise<T>;
 }
 
 /* ── Catálogos de sugerencias del perito (formulario-caso-catalogos) ── */
@@ -881,34 +923,63 @@ export interface CaseBreakdown {
 }
 
 export const api = {
-  async login(dni: string, username: string, password: string): Promise<{ token: string; user: User }> {
-    const data = await request<{ token: string; user: User }>("/api/auth/login", {
+  async login(dni: string, username: string, password: string): Promise<AuthResponse> {
+    const data = await request<AuthResponse>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ dni, username, password }),
     });
-    localStorage.setItem("factum_token", data.token);
+    writeSession(data, "login");
+    setSessionUser(data.user.dni);
     return data;
   },
 
   logout() {
-    localStorage.removeItem("factum_token");
+    clearSession();
+    setSessionUser(null);
   },
 
   async me(): Promise<User> {
     const data = await request<{ user: User }>("/api/auth/me");
+    setSessionUser(data.user.dni);
     return data.user;
+  },
+
+  /**
+   * Renueva el token (`POST /api/auth/refresh`, sesion-larga §6.1). No guarda
+   * nada: lo hace `SessionManager` con `writeSession`. Un 401 que no sea
+   * `session_max_age` (o el 403 de cambio de contraseña) pasa por el
+   * interceptor como cualquier pedido; `session_max_age` y el 429
+   * (`retryAfterSeconds`) se los maneja quien llama.
+   */
+  async refreshSession(): Promise<AuthResponse> {
+    let sent: Sent;
+    try {
+      sent = await send("/api/auth/refresh", { method: "POST", cache: "no-store" });
+    } catch {
+      throw new ApiError(SERVER_UNREACHABLE, 0, undefined, null);
+    }
+    if (!sent.res.ok) {
+      const err = await toApiError(sent.res, sent.sentToken);
+      if ((err.status === 401 && err.code !== "session_max_age") || err.status === 403) {
+        notifyAuthFailure(err.status, err.body, sent.res.url, sent.sentToken, { force: true });
+      }
+      throw err;
+    }
+    return sent.res.json() as Promise<AuthResponse>;
   },
 
   /**
    * Cambio de contraseña propio (obligatorio o voluntario). Guarda el token
    * nuevo: el anterior (y las otras sesiones) deja de valer.
    */
-  async changePassword(body: ChangePasswordRequest): Promise<{ token: string; user: User }> {
-    const data = await requestSafe<{ token: string; user: User }>("/api/auth/change-password", {
+  async changePassword(body: ChangePasswordRequest): Promise<AuthResponse> {
+    const data = await requestSafe<AuthResponse>("/api/auth/change-password", {
       method: "POST",
       body: JSON.stringify(body),
     });
-    localStorage.setItem("factum_token", data.token);
+    // change-password reinicia la hora del login (D4 de la SDD): es un login más.
+    writeSession(data, "login");
+    setSessionUser(data.user.dni);
     return data;
   },
 
@@ -1009,16 +1080,15 @@ export const api = {
    * con `?token=` (DT4).
    */
   async getBrandingImage(url: string, signal?: AbortSignal): Promise<Blob> {
-    const token = getToken();
-    let res: Response;
+    let sent: Sent;
     try {
-      res = await fetch(`${BACKEND_URL}${url}`, { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal });
+      sent = await authFetch(`${BACKEND_URL}${url}`, { signal });
     } catch (e) {
       if (signal?.aborted) throw e;
       throw new ApiError(SERVER_UNREACHABLE, 0, undefined, null);
     }
-    if (!res.ok) throw await toApiError(res);
-    return res.blob();
+    if (!sent.res.ok) throw await toApiError(sent.res, sent.sentToken);
+    return sent.res.blob();
   },
 
   async createCase(data: CaseDataRequest & { device: DeviceInput }): Promise<Case> {
@@ -1100,7 +1170,7 @@ export const api = {
     const params = new URLSearchParams({ filename, size: String(size) });
     let res: Response;
     try {
-      res = await send(`/api/cases/${caseId}/files/upload-check?${params.toString()}`, { method: "GET", signal, cache: "no-store" });
+      ({ res } = await send(`/api/cases/${caseId}/files/upload-check?${params.toString()}`, { method: "GET", signal, cache: "no-store" }));
     } catch (e) {
       if (signal?.aborted || (e instanceof DOMException && e.name === "AbortError")) throw new UploadError("aborted");
       throw new UploadError("network");
@@ -1134,8 +1204,8 @@ export const api = {
       const done = () => signal?.removeEventListener("abort", onAbortSignal);
 
       xhr.open("POST", `${BACKEND_URL}/api/cases/${caseId}/files?${params.toString()}`);
-      const token = getToken();
-      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      const sentToken = getToken();
+      if (sentToken) xhr.setRequestHeader("Authorization", `Bearer ${sentToken}`);
       xhr.timeout = 0;
       if (onProgress) {
         xhr.upload.onprogress = e => onProgress(e.loaded, e.lengthComputable ? e.total : blob.size);
@@ -1148,7 +1218,7 @@ export const api = {
           return;
         }
         const errBody = parseUploadErrorBody(xhr.responseText);
-        notifyAuthFailure(xhr.status, errBody, xhr.responseURL);
+        notifyAuthFailure(xhr.status, errBody, xhr.responseURL, sentToken);
         reject(new UploadError("http", xhr.status, errBody));
       };
       xhr.onerror = () => { done(); reject(new UploadError("network")); };
@@ -1174,12 +1244,11 @@ export const api = {
    * `request<T>` (que lee JSON). 400/404 = imagen no disponible.
    */
   async getReportImagePreview(caseId: string, filename: string, signal?: AbortSignal): Promise<Blob> {
-    const token = getToken();
-    const res = await fetch(
+    const { res, sentToken } = await authFetch(
       `${BACKEND_URL}/api/cases/${caseId}/files/${encodeURIComponent(filename)}/preview`,
-      { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal },
+      { signal },
     );
-    if (!res.ok) throw await toApiError(res);
+    if (!res.ok) throw await toApiError(res, sentToken);
     return res.blob();
   },
 
@@ -1221,19 +1290,14 @@ export const api = {
    */
   async finishGeneration(caseId: string, form: FormData): Promise<GenerateResult> {
     return trackLongOp(async () => {
-      const token = getToken();
-      let res: Response;
+      let sent: Sent;
       try {
-        res = await fetch(`${BACKEND_URL}/api/cases/${caseId}/generate/finish`, {
-          method: "POST",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          body: form,
-        });
+        sent = await authFetch(`${BACKEND_URL}/api/cases/${caseId}/generate/finish`, { method: "POST", body: form });
       } catch {
         throw new ApiError(SERVER_UNREACHABLE, 0, undefined, null);
       }
-      if (!res.ok) throw await toApiError(res);
-      return res.json() as Promise<GenerateResult>;
+      if (!sent.res.ok) throw await toApiError(sent.res, sent.sentToken);
+      return sent.res.json() as Promise<GenerateResult>;
     });
   },
 

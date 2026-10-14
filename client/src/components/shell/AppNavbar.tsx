@@ -3,13 +3,16 @@
 import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ChartColumn, ClipboardList } from "lucide-react";
 import { UserMenu } from "@/components/UserMenu";
 import { ExpertProfileDialog } from "@/components/ExpertProfileDialog";
 import { ChangePasswordDialog } from "@/components/password/ChangePasswordDialog";
 import { BrandingDialog } from "@/components/branding/BrandingDialog";
 import { useAuthMode } from "@/hooks/useAuthMode";
 import type { UserRole } from "@/lib/api";
+import { FxTip } from "@/components/overlay/FxTip";
 import { ThemeSwitch } from "./ThemeSwitch";
+import { SessionBanners } from "./SessionBanners";
 
 interface AppNavbarProps {
   /** Contexto de navegación (breadcrumb); lo provee la página. */
@@ -54,32 +57,47 @@ function BrandMark() {
 }
 
 /* Secciones de primer nivel: dos <Link> tipo pestaña. La activa se distingue
-   por color Y peso (no solo color) + `aria-current="page"`. Labels cortos:
-   entran a 360px sin colapsar a ícono. */
+   por color Y peso (no solo color) + `aria-current="page"`.
+   Por debajo de `md` (pulido-post-qa-final M2) los textos no entran junto al
+   chip de Tatana, el tema y el usuario (a 360-390 px quedan ~120-150 px para el
+   centro, y a 640 px el chip "N equipos conectados" ya no deja lugar): cada
+   pestaña pasa a ser un botón de ícono de 36 px con `aria-label` y tooltip.
+   Desde `md`, la pestaña con texto de siempre. (La SDD proponía `sm` y pedía
+   subir a `md` si a 640 px se cortaban: se cortaban.) */
 const SECTIONS = [
-  { key: "inspecciones", label: "Inspecciones", href: "/dashboard" },
-  { key: "metricas", label: "Métricas", href: "/metricas" },
+  { key: "inspecciones", label: "Inspecciones", href: "/dashboard", Icon: ClipboardList },
+  { key: "metricas", label: "Métricas", href: "/metricas", Icon: ChartColumn },
 ] as const;
 
 const SECTION_BASE =
-  "inline-flex min-h-9 items-center rounded-fx-pill px-3 text-sm no-underline transition-colors duration-fx-fast ease-fx fx-focus-ring";
+  "items-center rounded-fx-pill text-sm no-underline transition-colors duration-fx-fast ease-fx fx-focus-ring";
+const SECTION_TEXT = "hidden min-h-9 px-3 md:inline-flex";
+const SECTION_ICON = "inline-flex h-9 w-9 shrink-0 justify-center md:hidden";
 const SECTION_ACTIVE = "bg-fx-surface-3 font-semibold text-fx-text";
 const SECTION_IDLE = "font-medium text-fx-text-3 hover:text-fx-text";
 
 function SectionTabs({ activeSection }: { activeSection: "inspecciones" | "metricas" }) {
+  // Centrado "seguro": `mx-auto` dentro de un contenedor sin `justify-center`.
+  // Si no entra, desborda hacia la derecha y nunca sobre la marca.
   return (
-    <nav aria-label="Secciones" className="flex min-w-0 items-center justify-center gap-1">
-      {SECTIONS.map(({ key, label, href }) => {
+    <nav aria-label="Secciones" className="mx-auto flex min-w-0 items-center gap-1">
+      {SECTIONS.map(({ key, label, href, Icon }) => {
         const active = key === activeSection;
+        const state = active ? SECTION_ACTIVE : SECTION_IDLE;
+        const current = active ? ("page" as const) : undefined;
         return (
-          <Link
-            key={key}
-            href={href}
-            aria-current={active ? "page" : undefined}
-            className={`${SECTION_BASE} ${active ? SECTION_ACTIVE : SECTION_IDLE}`}
-          >
-            <span className="truncate">{label}</span>
-          </Link>
+          <span key={key} className="contents">
+            {/* < md: solo ícono (el nombre accesible lo da `aria-label`; el tooltip lo muestra al tocar o con foco) */}
+            <FxTip label={label} side="bottom">
+              <Link href={href} aria-current={current} aria-label={label} className={`${SECTION_BASE} ${SECTION_ICON} ${state}`}>
+                <Icon className="h-4 w-4" strokeWidth={active ? 2.25 : 2} aria-hidden="true" />
+              </Link>
+            </FxTip>
+            {/* ≥ md: pestaña con texto (la de siempre) */}
+            <Link href={href} aria-current={current} className={`${SECTION_BASE} ${SECTION_TEXT} ${state}`}>
+              <span className="truncate">{label}</span>
+            </Link>
+          </span>
         );
       })}
     </nav>
@@ -136,7 +154,7 @@ export function AppNavbar({
         )}
 
         {/* Centro: selector de secciones (prioridad) o contexto de navegación (trunca) */}
-        <div className={`flex min-w-0 flex-1 items-center px-1 sm:px-2 ${sections ? "justify-center" : ""}`}>
+        <div className="flex min-w-0 flex-1 items-center px-1 sm:px-2">
           {sections ? <SectionTabs activeSection={sections.activeSection} /> : center}
         </div>
 
@@ -161,6 +179,8 @@ export function AppNavbar({
           )}
         </div>
       </div>
+      {/* Avisos de sesión (sesion-larga §8.7): debajo de la píldora, mismo ancho; empujan el contenido. */}
+      <SessionBanners maxWidthClass={maxWidthClass} />
       {showUserMenu && <ExpertProfileDialog visible={profileOpen} onHide={() => setProfileOpen(false)} />}
       {showUserMenu && (
         <BrandingDialog visible={brandingOpen} onHide={() => setBrandingOpen(false)} target={SELF_TARGET} />

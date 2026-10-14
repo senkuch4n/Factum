@@ -279,7 +279,8 @@ Formato: `CLAVE=valor`, sin espacios alrededor del `=`. Un valor con espacios va
 | `FACTUM_DOMINIO` | `<DOMINIO>`, sin `https://` ni barra | Sección 4 |
 | `FACTUM_ACME_EMAIL` | Tu mail para Let's Encrypt | — |
 | `FACTUM_JWT_SECRET` | Firma de las sesiones | `openssl rand -hex 64` |
-| `FACTUM_JWT_EXPIRY_HOURS` | `8` | — |
+| `FACTUM_JWT_EXPIRY_HOURS` | `2` (horas; acepta decimales con punto, `0.5` = 30 min) | — |
+| `FACTUM_SESION_TOPE_HORAS` | `12` (horas) | — |
 | `FACTUM_MONGO_ROOT_PASSWORD` | Contraseña de `root` de Mongo (backups) | `openssl rand -hex 24` |
 | `FACTUM_MONGO_APP_PASSWORD` | Contraseña de `factum_app` (la usa el backend). **Distinta** de la de root | `openssl rand -hex 24` |
 | `FACTUM_MONGO_CACHE_GB` | `0.5` (o `0.25` con 2 GB de RAM) | — |
@@ -293,6 +294,13 @@ Formato: `CLAVE=valor`, sin espacios alrededor del `=`. Un valor con espacios va
 | `FACTUM_AGENT_URL`, `FACTUM_TATANA_DESCARGA_URL` | Vacíos (solo los usa el plan B) | — |
 
 Los `openssl rand` los podés correr en el mismo servidor y copiar el resultado.
+
+**Sesión.** El token de cada perito dura `FACTUM_JWT_EXPIRY_HOURS` y la web lo renueva sola mientras hay actividad
+(clics, teclas o una grabación, subida o informe en curso). Si nadie usa la web durante ese plazo, la sesión vence
+por inactividad. `FACTUM_SESION_TOPE_HORAS` es el máximo desde el login: llegado ese punto hay que volver a ingresar
+aunque se esté trabajando (la web avisa 30 minutos antes y no se pierde lo cargado en el asistente). Los dos tienen
+que ser mayores que 0 y hasta 168; si no, el backend no arranca. Si el tope es menor que la duración del token, el
+backend arranca con un aviso en el log y cada token se recorta al tope.
 
 **La clave de los backups se genera ahora** (cada deploy hace antes un backup cifrado, así que hace falta desde el
 principio). En tu **Mac**, no en el servidor:
@@ -730,17 +738,79 @@ al volver.
 
 **Logs**
 
+Seguilos en orden. El camino normal es como `deploy`; la subsección "Solo mirar, como admin" es para cuando querés
+consultar algo rápido sin cambiar de usuario.
+
+**Como `deploy` (camino principal)**
+
 ```bash
+ssh admin@<IP>                          # entrar
+sudo -iu deploy                         # pasar al usuario deploy
 compose.sh logs --tail 200 backend
 compose.sh logs --tail 100 caddy
 compose.sh ps
 df -h /srv                              # espacio en disco
+compose.sh logs --tail 2000 backend | grep "Informe generado"   # informes que terminaron bien
 ```
+
+**Solo mirar, como admin**
+
+`compose.sh` no anda como `admin`: lee `factum.env`, que es `600` de `deploy` (sección 6). **No cambies ese
+permiso.** Para mirar sin pasar a `deploy`, usá `docker` con `sudo`:
+
+```bash
+sudo docker ps --format 'table {{.Names}}\t{{.Status}}'
+```
+
+Los nombres esperados son `factum-backend-1`, `factum-mongo-1`, `factum-caddy-1` y `factum-frontend-1` (el proyecto
+se llama `factum` en `deploy/cloud/docker-compose.yml`). Si difieren, usá los que muestra ese comando.
+
+```bash
+sudo docker logs --tail 200 factum-backend-1
+sudo docker logs --tail 100 factum-caddy-1
+sudo docker logs --tail 2000 factum-backend-1 2>&1 | grep "Informe generado"
+df -h /srv
+sudo docker system df
+```
+
+*Mongo en solo lectura.* Esta consola toma la contraseña de `factum_app` de la variable de entorno **dentro** del
+contenedor, así que no pasa por la línea de comandos del servidor ni queda en el historial:
+
+```bash
+sudo docker exec -it factum-mongo-1 mongosh --quiet --nodb --shell --eval '
+  db = connect("mongodb://factum_app:" + encodeURIComponent(process.env.FACTUM_MONGO_APP_PASSWORD) +
+    "@127.0.0.1:27017/factum?authSource=factum")'
+```
+
+Consultas de ejemplo, **siempre con proyección explícita**. Los campos van en PascalCase, y `Status` es un número: 0
+borrador, 1 generando, 2 completo, 3 error.
+
+```js
+db.cases.countDocuments()
+db.cases.find({}, { _id: 1, Status: 1, CreatedAt: 1, GeneratedAt: 1, ZipHash: 1, ReportHash: 1 })
+  .sort({ CreatedAt: -1 }).limit(10)
+db.cases.countDocuments({ Status: 3 })
+db.case_events.find({ CaseId: "<id>" }, { _id: 0, Type: 1, Timestamp: 1, Filename: 1 }).sort({ Timestamp: 1 })
+```
+
+Advertencias:
+
+- El usuario `factum_app` **puede escribir**: el "solo lectura" depende de vos. En esta consola usá solo `find` y
+  `countDocuments`. Nada de `update*`, `delete*`, `insert*`, `drop` ni `createIndex`.
+- Nunca `db.cases.find()` sin proyección: muestra `ZipPassword`, `PendingGeneration.Password` y datos personales de
+  la causa. Tampoco `db.users.find()` sin proyección (muestra `PasswordHash`).
+- No corras `sudo docker inspect`, `sudo docker exec … env` ni `printenv`: imprimen los secretos.
+- **Qué no se hace como `admin`:** editar `factum.env`, `up`, `down`, `restart`, `pull` ni deploys. Eso se hace como
+  `deploy`, con `compose.sh` o con los scripts.
+
+**Notas**
 
 - Cada contenedor guarda como mucho 5 archivos de 10 MB de log; no llenan el disco.
 - **Qué no queda en los logs**: Caddy no tiene log de accesos (a propósito: las descargas llevan el token de sesión en
   la URL), el backend no loguea pedidos ni contraseñas, y los scripts nunca imprimen secretos. **No actives el access
   log de Caddy.**
+- La línea "Informe generado para caso …" lleva solo el id del caso y los primeros 8 caracteres de los hashes del ZIP
+  y del DOCX: nada de contraseñas, expediente, nombres ni rutas.
 
 ---
 
@@ -793,6 +863,15 @@ falta (nunca el valor). Para verlo: `compose.sh logs --tail 80 backend`. Mensaje
 - `necesita al menos un superadmin activo`: base vacía sin `FACTUM_SUPERADMIN_*`.
 - `...:Dni="..." no es válido`: un DNI que no tiene 7 u 8 dígitos.
 - `...TemporaryPassword tiene N caracteres; el mínimo es 10`.
+- `Jwt:ExpiryHours (FACTUM_JWT_EXPIRY_HOURS) tiene que ser un número de horas...` (o `Jwt:SessionMaxHours
+  (FACTUM_SESION_TOPE_HORAS)`): valor `0`, negativo, mayor que 168 o con coma decimal (va con punto: `0.5`).
+
+**Al desplegar la versión con sesión renovable.** `factum.env` no se reescribe solo. Si tiene
+`FACTUM_JWT_EXPIRY_HOURS=8` (el valor de antes), conviene pasarlo a `2` y sumar `FACTUM_SESION_TOPE_HORAS=12`
+(si falta, el compose usa 12). Después, `compose.sh up -d backend`. En el log de arranque tiene que aparecer
+`Sesión: token 2 h, tope 12 h desde el login`. Con `8` todo funciona igual (renovación, tope y re-login en el
+lugar), solo que sin el corte por inactividad de 2 h. Las sesiones abiertas antes del despliegue siguen hasta su
+vencimiento y no se renuevan: al vencer, el perito vuelve a ingresar una vez.
 
 **El certificado no sale**: sección 7 ("Si el certificado no sale").
 

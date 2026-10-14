@@ -307,16 +307,19 @@ public sealed class LocalAuthFixture
     public AuthSettings Settings { get; }
     public CapturingLogger<LocalAuthProvider> ProviderLog { get; } = new();
     public LocalAuthProvider Provider { get; }
+    public JwtOptions Jwt { get; }
     public AuthService Auth { get; }
     public UserAccountService Accounts { get; }
     public SessionValidator Sessions { get; }
 
-    public LocalAuthFixture(LocalAuthOptions? options = null)
+    public LocalAuthFixture(LocalAuthOptions? options = null, JwtOptions? jwt = null)
     {
         Options = options ?? new LocalAuthOptions();
         Settings = new AuthSettings(AuthModes.Local, null, null, [], [], Options);
         Provider = new LocalAuthProvider(Repo, Hasher, Options, Time, ProviderLog);
-        Auth = new AuthService(Provider, Microsoft.Extensions.Options.Options.Create(new JwtOptions { Secret = Secret, ExpiryHours = 8 }));
+        // sesion-larga: el AuthService usa el mismo reloj que el resto (emisión y validación del JWT).
+        Jwt = jwt ?? new JwtOptions { Secret = Secret, ExpiryHours = 8, SessionMaxHours = 12 };
+        Auth = new AuthService(Provider, Microsoft.Extensions.Options.Options.Create(Jwt), Time);
         Accounts = new UserAccountService(Settings, Repo, Hasher, Auth, Time);
         Sessions = new SessionValidator(Settings, Repo);
     }

@@ -10,6 +10,7 @@ import { ZipLocalActions } from "@/components/ZipLocalActions";
 import { ZipCompatNotice } from "@/components/ZipCompatNotice";
 import type { Case } from "@/lib/api";
 import { api } from "@/lib/api";
+import { useTokenVersion } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import { FX_BUTTON_PRIMARY, FX_BUTTON_SECONDARY } from "@/lib/prime/pt/shared";
 import { CopyButton } from "@/components/feedback/CopyButton";
@@ -136,6 +137,8 @@ export function hasFooterDownloads(cas: Case) {
 export function CaseDetailFooter({ cas }: { cas: Case }) {
   const { zip, pdf } = serverDownloads(cas);
   const isEncrypted = cas.zip_encrypted === true;
+  // Re-render al cambiar el token: las URL con ?token= salen siempre con el vigente (sesion-larga §8.11).
+  useTokenVersion();
   const dlURL = (filename: string) => api.downloadURL(cas.id, filename);
 
   return (

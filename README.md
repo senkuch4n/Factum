@@ -202,7 +202,8 @@ npm run package   # empaqueta la app instalable
 | Clave | Qué es |
 |---|---|
 | `MongoDb:ConnectionString` / `DatabaseName` | Conexión a Mongo |
-| `Jwt:Secret` / `ExpiryHours` | Firma y expiración del token de sesión. Con `Auth:Mode=local` y fuera de `Development`, `Jwt:Secret` tiene que ser propio del despliegue (≥ 32 caracteres, no el valor del repo) o el backend no arranca |
+| `Jwt:Secret` / `ExpiryHours` | Firma y vida del token de sesión. `ExpiryHours` (env `FACTUM_JWT_EXPIRY_HOURS` en los despliegues) default `2`, en horas, acepta decimales con punto (`0.2` = 12 min); es también el corte por inactividad. Con `Auth:Mode=local` y fuera de `Development`, `Jwt:Secret` tiene que ser propio del despliegue (≥ 32 caracteres, no el valor del repo) o el backend no arranca |
+| `Jwt:SessionMaxHours` | Tope de la sesión desde el login, en horas (env `FACTUM_SESION_TOPE_HORAS`, default `12`). El refresh nunca emite un token que venza después de ese tope. Los dos valores tienen que ser > 0 y ≤ 168 o el backend no arranca; si el tope es menor que `ExpiryHours`, arranca con un warning y cada token se recorta al tope |
 | `Auth:Mode` | `dev` (identidad simulada, default), `external` (login real contra un proveedor HTTP externo) o `local` (cuentas propias de Factum en la colección `users`; el modo del SaaS). Sin distinguir mayúsculas; cualquier otro valor impide arrancar |
 | `Auth:AllowDevOutsideDevelopment` | Env `Auth__AllowDevOutsideDevelopment`. `true` permite `Auth:Mode=dev` fuera de `Development` (solo para una instalación local aislada); default `false`: `dev` fuera de `Development` impide arrancar. En `Development` se ignora |
 | `Auth:Local:*` | Solo si `Auth:Mode=local`: política de contraseñas, bloqueo por intentos, superadmins iniciales y reset de emergencia — ver [Autenticación](#autenticación) |
@@ -291,6 +292,17 @@ Si `Auth:Mode` (o la config del modo elegido) es inválida, **el backend no
 arranca** y dice por qué, en vez de caer en `dev` sin avisar. El log de
 arranque muestra el modo y, en `external`, la URL de login efectiva; en
 `local`, la cantidad de superadmins activos.
+
+**Duración de la sesión.** El JWT dura `Jwt:ExpiryHours` (2 h) y la web lo
+renueva con `POST /api/auth/refresh` mientras el perito está activo, hasta un
+tope de `Jwt:SessionMaxHours` (12 h) desde el login (claim `auth_time`, que el
+refresh copia sin cambios). El refresh solo acepta el token por el header
+`Authorization`, tiene su propio rate limit (6 por minuto por token, `429
+rate_limited`) y no cuenta como intento de login. Pasado el tope, o con un
+token anterior a esta versión, responde `401 session_max_age`. En `local` pasa
+igual por la validación de cuenta, así que una suspensión o un cambio de
+contraseña siguen cortando la sesión. Reemplaza la decisión anterior de "8 h
+sin renovación" (D6 de `usuarios-locales`).
 
 ### Modo `local` (cuentas propias)
 

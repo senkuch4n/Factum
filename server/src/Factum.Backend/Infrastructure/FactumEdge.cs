@@ -50,8 +50,24 @@ public static class FactumEdge
                         QueueLimit = 0,
                         AutoReplenishment = true,
                     }));
-            o.OnRejected = (ctx, ct) => new ValueTask(
-                LoginRateLimit.WriteRejectionAsync(ctx.HttpContext, ctx.Lease, LoginRateLimit.Scope.Ip, ct));
+            // sesion-larga §9.5: rate limit propio del refresh (por hash del token, ventana fija 6/60 s).
+            o.AddPolicy(RefreshRateLimit.PolicyName, ctx =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    RefreshRateLimit.PartitionKey(ctx),
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = RefreshRateLimit.PermitLimit,
+                        Window = TimeSpan.FromSeconds(RefreshRateLimit.WindowSeconds),
+                        QueueLimit = 0,
+                        AutoReplenishment = true,
+                    }));
+            // El cuerpo del 429 depende de la política del endpoint: el del login queda igual que antes.
+            o.OnRejected = (ctx, ct) =>
+                ctx.HttpContext.GetEndpoint()?.Metadata.GetMetadata<EnableRateLimitingAttribute>()?.PolicyName
+                    == RefreshRateLimit.PolicyName
+                    ? new ValueTask(RefreshRateLimit.WriteRejectionAsync(ctx.HttpContext, ctx.Lease, ct))
+                    : new ValueTask(LoginRateLimit.WriteRejectionAsync(
+                        ctx.HttpContext, ctx.Lease, LoginRateLimit.Scope.Ip, ct));
         });
 
         // Freno por DNI (§4.4.2), en AuthController antes de validar credenciales.
