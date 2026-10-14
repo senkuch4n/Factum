@@ -268,3 +268,5 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-14 — #78 implementer-backend done -> progress/impl_backend_sellado-tiempo.md. en_revision; lanzado reviewer.
 - 2026-10-14 — #78 reviewer: aprobada -> progress/review_sellado-tiempo.md (backend 1237, Tatana 601 OK). CRLF de restaurar.ps1 restaurado. Backend y Tatana locales reiniciados con la rama (sellado habilitado, FreeTSA+DigiCert). Esperando prueba manual.
 - 2026-10-14 — #78 OK del usuario -> aprobada; commit, push y PR contra develop.
+- 2026-10-14 — #78 rama pusheada; PR en espera. Lanzado agente de QA para los pasos 1–7 de §13.2 (Samsung real, openssl, instancias :8081/:8082).
+- 2026-10-14 — QA manual #78 pasos 1–7: 7 OK / 0 FALLA (docs/qa/2026-10-14/sellado-tiempo-manual.md). Datos QA borrados por _id. PR contra develop.
