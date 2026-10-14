@@ -2,7 +2,8 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  agent, AgentError,
+  agent, AgentError, screenBlockOf,
+  type ScreenCheckOptions,
   type AgentRecordingState, type RecordingPhase, type RecordingStateEntry,
   type RecordingValidation, type UnclaimedRecording,
 } from "@/lib/agent";
@@ -25,7 +26,10 @@ export type RecordOutcome =
   | { kind: "start_failed"; reason: string }
   | { kind: "stop_failed"; reason: string }
   | { kind: "picker" }
-  | { kind: "busy" };
+  | { kind: "busy" }
+  // Pantalla del celular apagada o bloqueada (pulido-post-qa-final §8.7): no hubo intento de
+  // grabación, así que no es `capture_failed` (D-T6). El llamador muestra el aviso.
+  | { kind: "screen_blocked"; state: "off" | "locked" };
 
 export const FOREIGN_STOPPED_MESSAGE = "La grabación se detuvo y quedó en Tatana. No se agregó a este caso.";
 
@@ -153,7 +157,7 @@ export function useRecording(
   }, [syncFromAgentState]);
 
   async function startRecording(
-    device: Device, onError: (msg: string) => void, iosMode?: IosRecordMode,
+    device: Device, onError: (msg: string) => void, iosMode?: IosRecordMode, startOpts?: ScreenCheckOptions,
   ): Promise<RecordOutcome> {
     const platform = device.platform ?? "android";
     inFlightRef.current.start = true;
@@ -163,6 +167,7 @@ export function useRecording(
         device.serial, device.android_version, platform, iosMode,
         platform === "android" ? androidWithMic : undefined,
         optsRef.current.getCaseId(),
+        startOpts,
       );
       setRecording(true);
       setStartedAt(res?.started_at ?? new Date().toISOString());
@@ -171,6 +176,11 @@ export function useRecording(
       setForeignRecording(null);
       return { kind: "started" };
     } catch (e) {
+      const screen = screenBlockOf(e);
+      if (screen) {
+        if (platform === "ios") setIosRecordMode(null);
+        return { kind: "screen_blocked", state: screen };
+      }
       const reason = recordErrorText(e, "Error al iniciar grabación");
       onError(reason);
       if (platform === "ios") setIosRecordMode(null);
@@ -184,7 +194,9 @@ export function useRecording(
     }
   }
 
-  async function handleToggleRecord(device: Device, onError: (msg: string) => void): Promise<RecordOutcome> {
+  async function handleToggleRecord(
+    device: Device, onError: (msg: string) => void, startOpts?: ScreenCheckOptions,
+  ): Promise<RecordOutcome> {
     if (opInFlightRef.current) return { kind: "busy" };
     const platform = device.platform ?? "android";
     if (isRecording) {
@@ -225,7 +237,7 @@ export function useRecording(
     } else {
       opInFlightRef.current = true;
       try {
-        return await startRecording(device, onError);
+        return await startRecording(device, onError, undefined, startOpts);
       } finally {
         opInFlightRef.current = false;
       }

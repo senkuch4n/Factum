@@ -69,6 +69,15 @@ export const RECORDING_ERROR_TEXT = {
   recording_unreadable: "La grabación no se guardó: el archivo no se puede leer como video. Volvé a grabar.",
 } as const;
 
+/**
+ * Aviso de pantalla del celular apagada o bloqueada antes de capturar o grabar
+ * (pulido-post-qa-final §8.7). Mismo texto para los dos estados: el perito
+ * resuelve igual (encender y desbloquear).
+ */
+export function screenBlockMessage(action: "screenshot" | "record"): string {
+  return `La pantalla del celular está apagada o bloqueada. Encendela y desbloqueala para ${action === "record" ? "grabar" : "capturar"}.`;
+}
+
 export function agentErrorMessage(err: unknown, ctx: { name?: string; action: AgentAction }): string {
   const name = ctx.name ?? "el archivo";
   if (!(err instanceof AgentError)) {
@@ -129,6 +138,10 @@ export function agentErrorMessage(err: unknown, ctx: { name?: string; action: Ag
       return "El ZIP no está en esta PC.";
     case "agent_updating":
       return "Tatana se está actualizando. Esperá unos segundos y reintentá.";
+    case "screen_off":
+    case "screen_locked":
+      // Normalmente lo muestra el aviso del paso 3 (con "Capturar igual"); esto es para un llamador genérico.
+      return screenBlockMessage(ctx.action === "record" ? "record" : "screenshot");
   }
   const detail = tatanaText;
   // Grabación: los errores de iPhone y de scrcpy ya vienen en castellano y se muestran tal cual.

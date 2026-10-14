@@ -111,6 +111,10 @@ public sealed partial class CaseService : ICaseService
     private readonly ReportOptions _reportOptions;
     private readonly ILogger<CaseService> _log;
 
+    /// <summary>pulido-post-qa-final D7: primeros 8 caracteres del hash en minúscula para el log, o "-".</summary>
+    private static string ShortHash(string? h) =>
+        string.IsNullOrEmpty(h) ? "-" : h[..Math.Min(8, h.Length)].ToLowerInvariant();
+
     public CaseService(ICaseRepository repo, IStorageService storage, IReportService reports,
         IExpertProfileService profiles, IReportSettings reportSettings, ICatalogService catalogs,
         ICaseEventRepository caseEvents, IHttpContextAccessor httpContext,
@@ -777,6 +781,9 @@ public sealed partial class CaseService : ICaseService
             var ok = CaseEventFor(cas, CaseEventTypes.ReportGenerated);
             ok.Detail = new CaseEventDetail { ZipHash = result.ZipHash, ReportHash = result.ReportHash };
             await RecordEventAsync(ok);
+            // pulido-post-qa-final D7: misma línea que el flujo agent (solo id y hashes cortos).
+            _log.LogInformation("Informe generado para caso {CaseId} (ZIP {ZipHash}, DOCX {ReportHash})", id,
+                ShortHash(result.ZipHash), ShortHash(result.ReportHash));
             return Result.Ok(new GenerateResponse(
                 cas, result.ZipHash, result.Password,
                 new FilesDto(result.ZipFilename, result.PdfFilename), result.ReportHash));

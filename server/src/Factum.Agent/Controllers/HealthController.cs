@@ -45,6 +45,8 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
             // event_attribution_v1: serial/case_id/origin_id en screenshot_taken, photo_taken, recording_started y
             // recording_stopped (wizard-concurrencia-pestanas §5.1). device_preview_v1: POST /devices/{serial}/preview
             // + GET /previews/{filename}, sin evento WS (DT5).
+            // screen_check_v1: screenshot y record/start de Android responden 409 screen_off/screen_locked con la
+            // pantalla apagada o bloqueada; skip_screen_check los saltea (pulido-post-qa-final D9). La web no lo lee.
             capabilities = Capabilities,
         });
     }
@@ -66,7 +68,7 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
 
     internal static readonly string[] Capabilities =
         ["case_evidence_v1", "ios_developer_mode_v1", "real_version_v1", "agent_state_v1", "video_postprocess_v1",
-         "recording_state_v1", "event_attribution_v1", "device_preview_v1"];
+         "recording_state_v1", "event_attribution_v1", "device_preview_v1", "screen_check_v1"];
 
     /// <summary><c>--mode</c> gana (D-T15); sin él, la heurística de <c>tools/</c> (portátil).</summary>
     internal static string ResolveMode(AgentOptions o) => o.InstallMode ?? (IsPortable() ? "portable" : "installed");

@@ -65,7 +65,18 @@ function withoutKey<T>(rec: Record<string, T>, key: string): Record<string, T> {
   return next;
 }
 
-export function useEvidenceNotices(caseId: string | null, files: CapturedFile[]) {
+export interface EvidenceNoticesOptions {
+  /**
+   * Flujo agent (pulido-post-qa-final §8.5): la captura recién agregada está en
+   * la raíz de Tatana y el guardado la *mueve* a la carpeta del caso. El chequeo
+   * espera a que esté en el caso (`storedInCase`) para no pedir a la raíz un
+   * archivo que ya no está (404).
+   */
+  agentStorage?: boolean;
+}
+
+export function useEvidenceNotices(caseId: string | null, files: CapturedFile[], opts?: EvidenceNoticesOptions) {
+  const agentStorage = opts?.agentStorage ?? false;
   const [persisted, setPersisted] = useState<Persisted>(() => readPersisted(caseId));
   const [black, setBlack] = useState<Record<string, boolean>>({});
 
@@ -85,8 +96,11 @@ export function useEvidenceNotices(caseId: string | null, files: CapturedFile[])
   // ── Detección de capturas negras: una vez por nombre, de a 2, cancelable por caso ──
   const ctrlRef = useRef<AbortController | null>(null);
   const seenRef = useRef<Set<string>>(new Set());
-  const queueRef = useRef<{ name: string; url: string }[]>([]);
+  // Solo el nombre: la URL se resuelve al correr el chequeo, no al encolar.
+  const queueRef = useRef<string[]>([]);
   const activeRef = useRef(0);
+  const filesRef = useRef(files);
+  useEffect(() => { filesRef.current = files; }, [files]);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -103,11 +117,15 @@ export function useEvidenceNotices(caseId: string | null, files: CapturedFile[])
 
     const pump = () => {
       while (activeRef.current < MAX_PARALLEL && queueRef.current.length > 0) {
-        const job = queueRef.current.shift()!;
+        const name = queueRef.current.shift()!;
+        // Se quitó de la bandeja mientras esperaba: nada que chequear.
+        const f = filesRef.current.find(x => x.name === name);
+        if (!f) continue;
+        const url = f.storedInCase ? agent.caseFileURL(caseId, name) : agentFileURL(name);
         activeRef.current++;
-        void isMostlyBlack(job.url, ctrl.signal)
+        void isMostlyBlack(url, ctrl.signal)
           .then(r => {
-            if (!ctrl.signal.aborted && r !== null) setBlack(b => ({ ...b, [job.name]: r }));
+            if (!ctrl.signal.aborted && r !== null) setBlack(b => ({ ...b, [name]: r }));
           })
           .finally(() => {
             if (ctrl.signal.aborted) return;
@@ -119,14 +137,14 @@ export function useEvidenceNotices(caseId: string | null, files: CapturedFile[])
 
     for (const f of files) {
       if (fileType(f.name) !== "screenshot" || f.availability === "missing" || seenRef.current.has(f.name)) continue;
+      // Todavía en la raíz (el guardado la está moviendo): sin marcarla como vista,
+      // se encola cuando pase a `storedInCase` (cambia `files` y el efecto vuelve a correr).
+      if (agentStorage && !f.storedInCase) continue;
       seenRef.current.add(f.name);
-      queueRef.current.push({
-        name: f.name,
-        url: f.storedInCase ? agent.caseFileURL(caseId, f.name) : agentFileURL(f.name),
-      });
+      queueRef.current.push(f.name);
     }
     pump();
-  }, [caseId, files]);
+  }, [caseId, files, agentStorage]);
 
   const setRecordingValidation = useCallback((filename: string, v: RecordingValidation) => {
     if (v.status !== "ok" && v.status !== "incomplete") return;

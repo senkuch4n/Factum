@@ -134,6 +134,7 @@ builder.Services.AddSingleton<IOperationSource>(sp => sp.GetRequiredService<IosS
 builder.Services.AddSingleton<IRecordingStateSource>(sp => sp.GetRequiredService<AdbService>());
 builder.Services.AddSingleton<IRecordingStateSource>(sp => sp.GetRequiredService<IosService>());
 builder.Services.AddSingleton<RecordingRegistry>();
+builder.Services.AddSingleton<IAndroidScreenProbe, AndroidScreenProbe>(); // pulido-post-qa-final D9
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<OperationTracker>();
 builder.Services.AddSingleton<IWebcamService, WebcamService>();
