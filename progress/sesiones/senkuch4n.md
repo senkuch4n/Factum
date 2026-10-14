@@ -218,3 +218,25 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-13 — #64 ajustes del orquestador hechos. en_revision; lanzado reviewer.
 - 2026-10-13 — #64 review APROBADA. Backend reiniciado en la rama para la prueba manual.
 - 2026-10-13 — #64 OK del usuario. Commit + PR + merge. Sigue QA final de develop antes de promover.
+- 2026-10-13 — #64 mergeada (PR #71). Todas las HU de la QA cerradas. QA final de develop antes de promover.
+- 2026-10-13 — QA final de develop NO concluyente: extensión Claude in Chrome desconectada (headers de API OK, servicios OK, nada creado). Pedido al usuario reconectar Chrome o decidir.
+- 2026-10-13 — Usuario OK a la prueba integrada manual. PR de promoción develop→main #72 abierto (37 commits). Confirmar momento del merge (perito inspeccionando).
+- 2026-10-13 — PR #72 develop→main mergeado (pedido del usuario). Siguiendo despliegue.
+- 2026-10-13 — Deploy a producción OK (run 38458312459, 4b4f81cd): /health/ready 200, headers de #63 activos en prod. Siguiente: release Tatana 1.5.0.
+- 2026-10-13 — Tag tatana-v1.5.0 sobre main (4b4f81cd) pusheado (pedido del usuario). Siguiendo tatana-release.
+- 2026-10-13 — Release Tatana 1.5.0 publicada (run 38459937578): firmada, probada en Windows, en el VPS y GitHub Release.
+- 2026-10-13 — QA final post-deploy: SIN REGRESIONES (0 críticos/altos; 2 medios: vista previa de video lenta, píldora pisa logo a 390 px; 4 bajos). Caso QA 8f37d42d pendiente de borrar con permiso. -> docs/qa/2026-10-13/qa-final-post-deploy.md
+- 2026-10-13 — Borrado por id el caso QA-FINAL-001 (8f37d42d): cases 1, case_events 12, agent_events 8, carpetas y preview. Alta HU de pulido post QA final.
+- 2026-10-13 — Usuario consultó en prod el caso a47cade1: Status 2 (Completado), ZIP y DOCX generados 21:10Z. Sumado a #73: log de éxito de generación y doc de compose.sh con admin.
+- 2026-10-13 — Sumado a #73: sesión que no se corte en inspecciones largas y reintento de registros tras 401 (visto en logs de prod).
+- 2026-10-13 — Tomada #73, rama feat/pulido-post-qa-final, afinando; lanzado afinador.
+- 2026-10-13 — Sumado a #73: prevenir capturas negras chequeando la pantalla antes de capturar (toca Tatana).
+- 2026-10-13 — #73 afinada -> docs/hu-pulido-post-qa-final.md (D1–D9). Por validar.
+- 2026-10-13 — #73 validada por el usuario (todas las recomendadas). D1 = A: la sesión larga sale a #74 `sesion-larga` (Backlog, con D2–D4 ya validadas en comentario). #73 en_arquitectura; lanzado architect.
+- 2026-10-13 — #73 arquitectura_lista -> Refactorizaciones/pulido-post-qa-final.md. Pendiente D-U1 (medir M1 con pestaña visible) antes de implementar.
+- 2026-10-13 — D-U1 = B (medición aproximada de M1 con Tatana mock, por el implementer-frontend). #73 implementando.
+- 2026-10-13 — #73 implementer-backend done -> progress/impl_backend_pulido-post-qa-final.md (sin §9.4). Esperando frontend.
+- 2026-10-13 — #73 implementer-frontend done -> progress/impl_frontend_pulido-post-qa-final.md. M1 no reproduce (≤0,52 s), sin §8.1/§9.4. en_revision; lanzado reviewer.
+- 2026-10-13 — #73 reviewer: aprobada -> progress/review_pulido-post-qa-final.md (564 tests OK). Esperando prueba manual del usuario.
+- 2026-10-13 — #73: fixture real de pantalla apagada (SM-M127F, Dozing/OFF) sumado a AndroidScreenProbeTests; 565/565. Esperando prueba manual del usuario.
+- 2026-10-13 — #73 prueba manual OK del usuario -> aprobada; commit, push y PR contra develop.
