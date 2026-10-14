@@ -5,6 +5,7 @@ import { Button } from "primereact/button";
 import { Smartphone, Calendar, Clock, UserCheck, Archive, FileText, Play, HardDrive } from "lucide-react";
 import type { Case } from "@/lib/api";
 import { api } from "@/lib/api";
+import { useTokenVersion } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import { formatDate, formatTime } from "@/lib/format";
 import { caseStatusOf } from "@/lib/case-status";
@@ -44,6 +45,8 @@ export function CaseGridCard({
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dlURL = (filename: string) => api.downloadURL(cas.id, filename);
+  // Re-render al cambiar el token: las URL con ?token= salen siempre con el vigente (sesion-larga §8.11).
+  useTokenVersion();
   const isDone = cas.status === "completed";
   const isDraft = cas.status === "draft";
   const hasDownloads = isDone && (cas.zip_filename || cas.pdf_filename);

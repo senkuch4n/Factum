@@ -22,7 +22,7 @@ public sealed class FactumBearerHandler(
 {
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        var token = ReadToken();
+        var (token, fromQuery) = ReadToken();
         if (string.IsNullOrEmpty(token))
             return AuthenticateResult.NoResult();
 
@@ -44,6 +44,9 @@ public sealed class FactumBearerHandler(
         var session = check.Session!;
         Context.Items[AuthContextKeys.User] = user;
         Context.Items[AuthContextKeys.Session] = session;
+        // sesion-larga §9.4: el refresh copia auth_time/pca del payload y rechaza el token por query (D9).
+        Context.Items[AuthContextKeys.TokenPayload] = payload;
+        Context.Items[AuthContextKeys.TokenFromQuery] = fromQuery;
 
         var identity = new ClaimsIdentity("Bearer");
         identity.AddClaim(new Claim("dni", user.Dni));
@@ -55,7 +58,7 @@ public sealed class FactumBearerHandler(
     protected override async Task HandleChallengeAsync(AuthenticationProperties properties)
     {
         var code = Context.Items[AuthContextKeys.FailureCode] as string
-                   ?? (string.IsNullOrEmpty(ReadToken()) ? AuthErrors.Unauthenticated : AuthErrors.InvalidToken);
+                   ?? (string.IsNullOrEmpty(ReadToken().Token) ? AuthErrors.Unauthenticated : AuthErrors.InvalidToken);
         var (status, body) = ChallengeBody(code);
 
         Response.Headers.WWWAuthenticate = "Bearer";
@@ -74,13 +77,13 @@ public sealed class FactumBearerHandler(
         return (StatusCodes.Status401Unauthorized, new Dictionary<string, string> { ["error"] = error, ["code"] = code });
     }
 
-    private string? ReadToken()
+    private (string? Token, bool FromQuery) ReadToken()
     {
         if (Request.Headers.TryGetValue("Authorization", out var header) &&
             header.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-            return header.ToString()["Bearer ".Length..].Trim();
+            return (header.ToString()["Bearer ".Length..].Trim(), false);
         if (Request.Query.TryGetValue("token", out var q))
-            return q.ToString();
-        return null;
+            return (q.ToString(), true);
+        return (null, false);
     }
 }

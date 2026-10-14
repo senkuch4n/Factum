@@ -240,3 +240,16 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-13 — #73 reviewer: aprobada -> progress/review_pulido-post-qa-final.md (564 tests OK). Esperando prueba manual del usuario.
 - 2026-10-13 — #73: fixture real de pantalla apagada (SM-M127F, Dozing/OFF) sumado a AndroidScreenProbeTests; 565/565. Esperando prueba manual del usuario.
 - 2026-10-13 — #73 prueba manual OK del usuario -> aprobada; commit, push y PR contra develop.
+- 2026-10-13 — Tomada #74, rama feat/sesion-larga desde origin/develop, afinando; lanzado afinador (D2–D4 de #73 ya validadas).
+- 2026-10-13 — #74 afinada -> docs/hu-sesion-larga.md (S1–S8). Por validar.
+- 2026-10-13 — #74 validada (S1–S8 recomendadas). en_arquitectura; lanzado architect.
+- 2026-10-13 — #74 arquitectura_lista -> Refactorizaciones/sesion-larga.md. Pendiente D5 (botón Detener dentro del diálogo de re-login).
+- 2026-10-14 — #74 D5 validada (botón Detener grabación dentro del diálogo de re-login). implementando; lanzados implementer-backend y -frontend.
+- 2026-10-14 — #74 implementer-backend done -> progress/impl_backend_sesion-larga.md (1134 tests OK; Pester pendiente, sin pwsh). Backend local reiniciado con /api/auth/refresh.
+- 2026-10-14 — #74 implementer-frontend done -> progress/impl_frontend_sesion-larga.md. en_revision; lanzado reviewer.
+- 2026-10-14 — #74 reviewer: rechazada (frontend: bucle de refresh sin backoff en SessionManager) -> progress/review_sesion-larga.md. Reintento 1; relanzado implementer-frontend.
+- 2026-10-14 — #74 reintento 1 del frontend done; en_revision; relanzado reviewer.
+- 2026-10-14 — #74 reviewer (2ª revisión): aprobada -> progress/review_sesion-larga.md. Esperando prueba manual del usuario.
+- 2026-10-14 — Backend local relanzado con Jwt__ExpiryHours=0.2 y Jwt__SessionMaxHours=0.5 para la prueba manual de #74.
+- 2026-10-14 — #74 OK del usuario -> aprobada; commit, push y PR contra develop.
+- 2026-10-14 — PR #75 (#73) mergeado a develop. #76 rebasado sobre develop (conflicto solo en bitácora); merge al pasar CI.

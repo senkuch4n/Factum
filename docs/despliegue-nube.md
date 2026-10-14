@@ -279,7 +279,8 @@ Formato: `CLAVE=valor`, sin espacios alrededor del `=`. Un valor con espacios va
 | `FACTUM_DOMINIO` | `<DOMINIO>`, sin `https://` ni barra | Sección 4 |
 | `FACTUM_ACME_EMAIL` | Tu mail para Let's Encrypt | — |
 | `FACTUM_JWT_SECRET` | Firma de las sesiones | `openssl rand -hex 64` |
-| `FACTUM_JWT_EXPIRY_HOURS` | `8` | — |
+| `FACTUM_JWT_EXPIRY_HOURS` | `2` (horas; acepta decimales con punto, `0.5` = 30 min) | — |
+| `FACTUM_SESION_TOPE_HORAS` | `12` (horas) | — |
 | `FACTUM_MONGO_ROOT_PASSWORD` | Contraseña de `root` de Mongo (backups) | `openssl rand -hex 24` |
 | `FACTUM_MONGO_APP_PASSWORD` | Contraseña de `factum_app` (la usa el backend). **Distinta** de la de root | `openssl rand -hex 24` |
 | `FACTUM_MONGO_CACHE_GB` | `0.5` (o `0.25` con 2 GB de RAM) | — |
@@ -293,6 +294,13 @@ Formato: `CLAVE=valor`, sin espacios alrededor del `=`. Un valor con espacios va
 | `FACTUM_AGENT_URL`, `FACTUM_TATANA_DESCARGA_URL` | Vacíos (solo los usa el plan B) | — |
 
 Los `openssl rand` los podés correr en el mismo servidor y copiar el resultado.
+
+**Sesión.** El token de cada perito dura `FACTUM_JWT_EXPIRY_HOURS` y la web lo renueva sola mientras hay actividad
+(clics, teclas o una grabación, subida o informe en curso). Si nadie usa la web durante ese plazo, la sesión vence
+por inactividad. `FACTUM_SESION_TOPE_HORAS` es el máximo desde el login: llegado ese punto hay que volver a ingresar
+aunque se esté trabajando (la web avisa 30 minutos antes y no se pierde lo cargado en el asistente). Los dos tienen
+que ser mayores que 0 y hasta 168; si no, el backend no arranca. Si el tope es menor que la duración del token, el
+backend arranca con un aviso en el log y cada token se recorta al tope.
 
 **La clave de los backups se genera ahora** (cada deploy hace antes un backup cifrado, así que hace falta desde el
 principio). En tu **Mac**, no en el servidor:
@@ -855,6 +863,15 @@ falta (nunca el valor). Para verlo: `compose.sh logs --tail 80 backend`. Mensaje
 - `necesita al menos un superadmin activo`: base vacía sin `FACTUM_SUPERADMIN_*`.
 - `...:Dni="..." no es válido`: un DNI que no tiene 7 u 8 dígitos.
 - `...TemporaryPassword tiene N caracteres; el mínimo es 10`.
+- `Jwt:ExpiryHours (FACTUM_JWT_EXPIRY_HOURS) tiene que ser un número de horas...` (o `Jwt:SessionMaxHours
+  (FACTUM_SESION_TOPE_HORAS)`): valor `0`, negativo, mayor que 168 o con coma decimal (va con punto: `0.5`).
+
+**Al desplegar la versión con sesión renovable.** `factum.env` no se reescribe solo. Si tiene
+`FACTUM_JWT_EXPIRY_HOURS=8` (el valor de antes), conviene pasarlo a `2` y sumar `FACTUM_SESION_TOPE_HORAS=12`
+(si falta, el compose usa 12). Después, `compose.sh up -d backend`. En el log de arranque tiene que aparecer
+`Sesión: token 2 h, tope 12 h desde el login`. Con `8` todo funciona igual (renovación, tope y re-login en el
+lugar), solo que sin el corte por inactividad de 2 h. Las sesiones abiertas antes del despliegue siguen hasta su
+vencimiento y no se renuevan: al vencer, el perito vuelve a ingresar una vez.
 
 **El certificado no sale**: sección 7 ("Si el certificado no sale").
 

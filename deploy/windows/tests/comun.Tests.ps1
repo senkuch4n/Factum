@@ -275,6 +275,12 @@ Describe 'Guardas del repo (perfil de memoria)' {
         (Read-EnvFile (Join-Path $script:raizW '.env.example'))['FACTUM_PERFIL_MEMORIA'] | Should -Be 'normal'
     }
 
+    It '.env.example trae FACTUM_JWT_EXPIRY_HOURS=2 y FACTUM_SESION_TOPE_HORAS=12 (sesion-larga)' {
+        $valores = Read-EnvFile (Join-Path $script:raizW '.env.example')
+        $valores['FACTUM_JWT_EXPIRY_HOURS'] | Should -Be '2'
+        $valores['FACTUM_SESION_TOPE_HORAS'] | Should -Be '12'
+    }
+
     It 'el compose de poca RAM no tiene image: (Get-MongoImagen devuelve $null)' {
         Get-MongoImagen (Join-Path $script:raizW 'docker-compose.poca-ram.yml') | Should -BeNullOrEmpty
     }

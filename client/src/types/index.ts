@@ -1,3 +1,5 @@
+import type { User as AuthUser } from "@/lib/api";
+
 export type {
   User, Case, DeviceInput, PublicConfig,
   PeritoSnapshot, ReportTexts, ReportTextsInput, ReportTextFormat, ReportTextsRequest, ReportTextDefaults, ReportCounts, AgentFailedAction,
@@ -14,6 +16,20 @@ export type {
   CaseEvent, CaseEventType, CaseEventDetail,
   ReportVersionTrigger, ReportTextVersion, ReportTextVersionTexts,
 } from "@/lib/api";
+/**
+ * Respuesta de login, change-password y refresh (sesion-larga §6.3 / §7.1).
+ * Duraciones en segundos, relativas a la respuesta. Opcionales: un backend
+ * anterior no las manda y el cliente no programa nada.
+ */
+export interface AuthResponse {
+  token: string;
+  user: AuthUser;
+  expires_in?: number;
+  session_max_in?: number;
+  token_ttl?: number;
+  session_max_age?: number;
+}
+
 export type { Device, AgentEvent, AgentFile, VideoVariant, AgentInfo } from "@/lib/agent";
 export type {
   VideoVariantStatus, VideoVariantState, VideoVariantReason, RecordingStoppedData,
@@ -130,7 +146,8 @@ export interface UploadErrorBody {
 
 /** `copying`/`hashing`/`registering`: guardado en la PC (flujo agent). */
 export type UploadPhase = "checking" | "preparing" | "uploading" | "finishing" | "copying" | "hashing" | "registering";
-export type FileUploadState = "uploading" | "error";
+/** `auth_pending`: guardado en la PC, registro pendiente por sesión vencida (sesion-larga §8.9). */
+export type FileUploadState = "uploading" | "error" | "auth_pending";
 
 export interface UploadProgress {
   /** 1-based, archivo actual. */

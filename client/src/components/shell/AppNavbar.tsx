@@ -12,6 +12,7 @@ import { useAuthMode } from "@/hooks/useAuthMode";
 import type { UserRole } from "@/lib/api";
 import { FxTip } from "@/components/overlay/FxTip";
 import { ThemeSwitch } from "./ThemeSwitch";
+import { SessionBanners } from "./SessionBanners";
 
 interface AppNavbarProps {
   /** Contexto de navegación (breadcrumb); lo provee la página. */
@@ -178,6 +179,8 @@ export function AppNavbar({
           )}
         </div>
       </div>
+      {/* Avisos de sesión (sesion-larga §8.7): debajo de la píldora, mismo ancho; empujan el contenido. */}
+      <SessionBanners maxWidthClass={maxWidthClass} />
       {showUserMenu && <ExpertProfileDialog visible={profileOpen} onHide={() => setProfileOpen(false)} />}
       {showUserMenu && (
         <BrandingDialog visible={brandingOpen} onHide={() => setBrandingOpen(false)} target={SELF_TARGET} />

@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, AlertTriangle, Check, CheckCircle2, HardDrive, Loader2, Trash2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, Check, CheckCircle2, Clock, HardDrive, Loader2, Trash2 } from "lucide-react";
 import type { CaptureRoleValue } from "@/lib/api";
 import { CAPTURE_ROLE_LABELS } from "@/lib/pericial";
 import { FOCUS_RING } from "@/lib/prime/pt/shared";
@@ -11,11 +11,12 @@ import { SafeImg } from "./StageScreen";
 
 /**
  * Estado de envío de un ítem de la bandeja (derivado en CaptureStep).
- * `saving`/`stored`/`missing`/`save_error`: flujo agent (evidencia en esta PC).
+ * `saving`/`stored`/`missing`/`save_error`/`auth_pending`: flujo agent (evidencia en esta PC).
+ * `auth_pending`: ya está en la PC, el registro espera a que se vuelva a iniciar sesión (sesion-larga §8.9).
  */
 export type TrayUploadState =
   | "pending" | "uploading" | "uploaded" | "error"
-  | "saving" | "stored" | "missing" | "save_error";
+  | "saving" | "stored" | "missing" | "save_error" | "auth_pending";
 
 const UPLOAD_STATE_TEXT: Record<TrayUploadState, string> = {
   pending: "pendiente de envío",
@@ -26,12 +27,14 @@ const UPLOAD_STATE_TEXT: Record<TrayUploadState, string> = {
   stored: "en esta PC",
   missing: "no está en esta PC",
   save_error: "error al guardar en esta PC",
+  auth_pending: "pendiente de registrar: iniciá sesión",
 };
 
 /** Texto corto visible del estado (chips): solo los estados del flujo agent que importan. */
 const VISIBLE_STATE_TEXT: Partial<Record<TrayUploadState, string>> = {
   stored: "En esta PC",
   missing: "No está en esta PC",
+  auth_pending: "Pendiente de registrar",
 };
 
 /** Sufijo del `aria-label` con el estado de envío (vacío si no hay estado). */
@@ -49,6 +52,7 @@ function UploadStateIcon({ state, hash, className }: { state?: TrayUploadState; 
   const busy = state === "uploading" || state === "saving";
   const Icon = state === "uploaded" ? CheckCircle2
     : state === "stored" ? HardDrive
+    : state === "auth_pending" ? Clock
     : busy ? Loader2
     : AlertCircle;
   // El hash abreviado va solo en el `title` (SDD §7.7): ayuda a cotejar sin ocupar lugar.
@@ -62,7 +66,7 @@ function UploadStateIcon({ state, hash, className }: { state?: TrayUploadState; 
         (state === "uploaded" || state === "stored") && "text-fx-success",
         busy && "text-fx-accent-text",
         (state === "error" || state === "save_error") && "text-fx-danger",
-        state === "missing" && "text-fx-warning",
+        (state === "missing" || state === "auth_pending") && "text-fx-warning",
         className,
       )}
     >

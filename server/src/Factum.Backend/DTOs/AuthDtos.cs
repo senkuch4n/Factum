@@ -12,7 +12,12 @@ public sealed record LoginRequest(
     string? Username = null
 );
 
-public sealed record LoginResponse(string Token, UserDto User);
+/// <summary>
+/// JSON: <c>token, user, expires_in, session_max_in, token_ttl, session_max_age</c> (sesion-larga §6.3).
+/// Duraciones en segundos, relativas a "ahora" (D2: inmunes al desfase de reloj de la PC).
+/// </summary>
+public sealed record LoginResponse(
+    string Token, UserDto User, int ExpiresIn, int SessionMaxIn, int TokenTtl, int SessionMaxAge);
 
 /// <summary>JSON: <c>dni, name, sigla, role, must_change_password</c> (contrato §8.1).</summary>
 public sealed record UserDto(string Dni, string Name, string Sigla, string Role, bool MustChangePassword);
