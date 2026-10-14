@@ -13,6 +13,8 @@ export interface PublicClientConfig {
   encryptZip: boolean;
   /** Versión mínima de Tatana para capturar (D6); `null` = sin mínimo. */
   tatanaMinVersion: string | null;
+  /** `true` si el backend sella con una autoridad RFC 3161 (sellado-tiempo); `false` si falta. */
+  timestampingEnabled: boolean;
 }
 
 const EMPTY: PublicClientConfig = {
@@ -21,6 +23,7 @@ const EMPTY: PublicClientConfig = {
   supportEnabled: false,
   encryptZip: false,
   tatanaMinVersion: null,
+  timestampingEnabled: false,
 };
 
 /* Caché a nivel de módulo: un solo fetch por carga de la app, compartido por
@@ -50,6 +53,8 @@ export function loadPublicConfig(): Promise<PublicClientConfig> {
           typeof cfg.tatana_min_version === "string" && cfg.tatana_min_version.trim()
             ? cfg.tatana_min_version.trim()
             : null,
+        // Sin el campo (backend anterior a sellado-tiempo) = la UI no menciona el sellado.
+        timestampingEnabled: cfg.timestamping_enabled === true,
       };
     })
     .catch(() => EMPTY)

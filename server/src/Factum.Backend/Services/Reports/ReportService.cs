@@ -43,9 +43,13 @@ public interface IReportService
     /// manifiesto) y las capturas leídas de <paramref name="imagesDir"/>. No escribe ni toca ningún
     /// ZIP. Ante una excepción borra el DOCX de este intento y relanza.
     /// </summary>
+    /// <remarks>
+    /// sellado-tiempo §8.3: <paramref name="timestamps"/> null = sellado desactivado (el informe queda como
+    /// antes, sin el bloque ni las líneas de sello).
+    /// </remarks>
     Task<ReportOnlyResult> GenerateReportAsync(Case cas, List<FileInfoDto> evidence,
         IReadOnlyDictionary<string, string> hashes, string imagesDir, string outputDir,
-        string zipFilename, string zipHash, CancellationToken ct = default);
+        string zipFilename, string zipHash, CancellationToken ct = default, ReportTimestampInfo? timestamps = null);
 }
 
 /// <summary>
@@ -248,7 +252,7 @@ public sealed class ReportService : IReportService
 
     public async Task<ReportOnlyResult> GenerateReportAsync(Case cas, List<FileInfoDto> evidence,
         IReadOnlyDictionary<string, string> hashes, string imagesDir, string outputDir,
-        string zipFilename, string zipHash, CancellationToken ct = default)
+        string zipFilename, string zipHash, CancellationToken ct = default, ReportTimestampInfo? timestamps = null)
     {
         var safeName = StemFromZip(zipFilename, cas);
         var docxPath = Path.Combine(outputDir, $"informe_pericial_{safeName}.docx");
@@ -281,7 +285,7 @@ public sealed class ReportService : IReportService
         {
             // 3. DOCX con las capturas de imagesDir y los hashes del manifiesto. 4. Hash del DOCX.
             await GenerateDocxAsync(cas, ordered, hashes, docxPath, imagesDir, zipFilename, zipHash,
-                brand, ct);
+                brand, ct, timestamps);
             var reportHash = await Sha256Async(docxPath);
             return new ReportOnlyResult(docxPath, Path.GetFileName(docxPath), reportHash);
         }
@@ -317,6 +321,8 @@ public sealed class ReportService : IReportService
         "{descripcionResultados}", "{descripcionValoracionTecnica}",
         "{descripcionConclusiones}", "{descripcionNotasTecnicas}", "{descripcionReserva}",
         "{nombreArchivo}", "{hashArchivo}",
+        // sellado-tiempo §8.3: bloque {#selloTiempo} debajo de la tabla de hashes.
+        "{descripcionSelloTiempo}",
         "{ORGANIZACION}", "{CONTACTO}", "{CONTACTO_EN_LINEA}",
         AttributionSlot,
     };
@@ -326,6 +332,7 @@ public sealed class ReportService : IReportService
         "MEMBRETE", "organismoTribunal", "objetoInforme", "capturasNombreDispositivo",
         "descripcionNotasTecnicas", "descripcionReserva", "anexoCapturas",
         "ISOTIPO", "MEMBRETE_CON_LOGO", "MEMBRETE_SIN_LOGO",
+        "selloTiempo",
     };
 
     private static readonly Regex AnyPlaceholderRegex = new(
@@ -349,7 +356,8 @@ public sealed class ReportService : IReportService
     // temporal .generate-tmp/<id>/ en el flujo agent). outputPath puede estar en otra carpeta.
     private Task GenerateDocxAsync(Case cas, List<FileInfoDto> files,
         IReadOnlyDictionary<string, string> hashes, string outputPath, string imagesDir,
-        string zipFilename, string zipHash, BrandingSnapshot brand, CancellationToken ct)
+        string zipFilename, string zipHash, BrandingSnapshot brand, CancellationToken ct,
+        ReportTimestampInfo? timestamps = null)
     {
         return Task.Run(() =>
         {
@@ -413,6 +421,8 @@ public sealed class ReportService : IReportService
                 ["descripcionNotasTecnicas"] = ReportTextRules.HasBlockContent(texts, texts.NotasTecnicas),
                 ["descripcionReserva"] = ReportTextRules.HasBlockContent(texts, texts.Reserva),
                 ["anexoCapturas"] = annexShots.Count > 0,
+                // sellado-tiempo §8.3: con el sellado desactivado el bloque desaparece (informe idéntico al de antes).
+                ["selloTiempo"] = timestamps is not null,
             };
 
             // B-R1: placeholders desconocidos fuera, ANTES de insertar valores.
@@ -500,10 +510,14 @@ public sealed class ReportService : IReportService
                 else
                     ReplaceParagraphPerLine(body, placeholder, value, resolved);
             }
+            // sellado-tiempo §8.4: bloque explicativo, siempre texto plano.
+            if (timestamps is not null)
+                ReplaceParagraphPerLine(body, "{descripcionSelloTiempo}",
+                    ReportTimestampTexts.Block(timestamps, files, settings.Zone), resolved);
 
             // B-R5: tabla de hashes. Corre después de B-R2b: el tinte de la fila del ZIP es el
             // acento ya resuelto, no un centinela.
-            FillHashTable(body, files, hashes, zipFilename, zipHash, brand.AccentColor, resolved);
+            FillHashTable(body, files, hashes, zipFilename, zipHash, brand.AccentColor, resolved, timestamps);
 
             // B-R6: texto, por run y en una sola pasada. Los headers usan valores recortados
             // (informe-formato-fixes §6.5: encabezado interior de 2 líneas como máximo); el cuerpo y
@@ -664,7 +678,8 @@ public sealed class ReportService : IReportService
     // ── B-R5: tabla de hashes (§7.5) ─────────────────────────────────────────
 
     private void FillHashTable(Body body, List<FileInfoDto> files, IReadOnlyDictionary<string, string> hashes,
-        string zipFilename, string zipHash, string tint, HashSet<Paragraph> resolved)
+        string zipFilename, string zipHash, string tint, HashSet<Paragraph> resolved,
+        ReportTimestampInfo? timestamps = null)
     {
         var model = body.Descendants<TableRow>()
             .FirstOrDefault(r => r.Descendants<Paragraph>().Any(p => ParagraphText(p).Contains("{nombreArchivo}")));
@@ -674,20 +689,27 @@ public sealed class ReportService : IReportService
             return;
         }
 
+        // sellado-tiempo §8.4: con timestamps, una línea más por fila (después de "Origen: …" si la hay). Sin
+        // timestamps, las líneas son exactamente las de antes.
         foreach (var f in files)
         {
-            var origin = string.IsNullOrWhiteSpace(f.SourcePath) ? null : $"Origen: {f.SourcePath}";
-            model.InsertBeforeSelf(BuildHashRow(model, f.Name, origin,
+            var lines = new List<string>();
+            if (!string.IsNullOrWhiteSpace(f.SourcePath)) lines.Add($"Origen: {f.SourcePath}");
+            if (timestamps is not null)
+                lines.Add(ReportTimestampTexts.FileLine(timestamps.Evidence.GetValueOrDefault(f.Name), settings.Zone));
+            model.InsertBeforeSelf(BuildHashRow(model, f.Name, lines,
                 hashes.GetValueOrDefault(f.Name, "-"), resolved));
         }
-        model.InsertBeforeSelf(BuildHashRow(model, zipFilename, "Contenedor de la evidencia", zipHash, resolved,
+        var zipLines = new List<string> { "Contenedor de la evidencia" };
+        if (timestamps is not null) zipLines.Add(ReportTimestampTexts.ZipLine(timestamps.Zip, settings.Zone));
+        model.InsertBeforeSelf(BuildHashRow(model, zipFilename, zipLines, zipHash, resolved,
             isContainer: true, tint: tint));
         model.Remove();
     }
 
     // isContainer: la fila del ZIP lleva el tinte (acento) de fondo, el nombre en negrita y la
     // leyenda recta en gris; así se distingue también impresa en blanco y negro.
-    private static TableRow BuildHashRow(TableRow model, string name, string? secondLine, string hash,
+    private static TableRow BuildHashRow(TableRow model, string name, IReadOnlyList<string> extraLines, string hash,
         HashSet<Paragraph> resolved, bool isContainer = false, string? tint = null)
     {
         var row = (TableRow)model.CloneNode(true);
@@ -701,10 +723,12 @@ public sealed class ReportService : IReportService
         if (hashPara is not null)
             RewriteParagraph(hashPara, TextPlaceholderRegex, m => m.Value == "{hashArchivo}" ? hash : null);
 
-        if (secondLine is not null)
+        // Párrafos extra en la misma celda, en orden (el "Origen:"/"Contenedor…" y, con sellado, la línea del
+        // sello). Archivos: cursiva, 7 pt, gris (el estilo del "Origen:" de la v3). Contenedor ZIP: recto,
+        // 8 pt, gris secundario.
+        OpenXmlElement after = namePara;
+        foreach (var line in extraLines)
         {
-            // Segundo párrafo en la misma celda. Archivos: cursiva, 7 pt, gris (el estilo del
-            // "Origen:" de la v3). Contenedor ZIP: recto, 8 pt, gris secundario.
             var rPr = namePara.Descendants<Run>().FirstOrDefault()?.RunProperties?.CloneNode(true) as RunProperties
                       ?? new RunProperties();
             rPr.Bold = null;
@@ -725,8 +749,9 @@ public sealed class ReportService : IReportService
             }
             var p = new Paragraph();
             if (namePara.ParagraphProperties is { } pPr) p.AppendChild((ParagraphProperties)pPr.CloneNode(true));
-            p.AppendChild(new Run(rPr, new Text(ReportValues.Clean(secondLine)) { Space = SpaceProcessingModeValues.Preserve }));
-            namePara.InsertAfterSelf(p);
+            p.AppendChild(new Run(rPr, new Text(ReportValues.Clean(line)) { Space = SpaceProcessingModeValues.Preserve }));
+            after.InsertAfterSelf(p);
+            after = p;
         }
 
         if (isContainer)

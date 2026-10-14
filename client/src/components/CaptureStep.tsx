@@ -9,9 +9,9 @@ import {
   RotateCcw, Mic, MicOff, FolderOpen,
   AlertTriangle, Paperclip, Trash2, Smartphone, WifiOff, Loader2, Wifi,
   Shield, User, Check, ChevronRight, Tag as TagIcon, Info, Minus, ArrowRight,
-  HardDrive, AlertCircle, CloudAlert,
+  HardDrive, AlertCircle, CloudAlert, ClockAlert,
 } from "lucide-react";
-import type { CaptureRole, CaptureRoleValue } from "@/lib/api";
+import type { CaptureRole, CaptureRoleValue, CaseTimestamp } from "@/lib/api";
 import { CAPTURE_ROLES_FIELD_ID, isRoleEligible } from "@/lib/pericial";
 import {
   agent, type AirplayUnavailableReason, type RecordingPhase, type RecordingStateEntry,
@@ -162,6 +162,14 @@ interface Props {
   onDismissSyncWarning?: () => void;
   /** Con la captura bloqueada: pasar al paso 4 sin guardar nada. */
   onContinueWithoutSaving?: () => void;
+  // ── Sellado de tiempo (sellado-tiempo §9.3) ──
+  /** Sello por nombre de archivo registrado (el del `sha256` actual). */
+  timestamps?: Record<string, CaseTimestamp>;
+  /** `true` = el backend sella; `false`/ausente = sin indicadores (apagado o backend anterior). */
+  timestampingEnabled?: boolean;
+  /** Aviso único y no bloqueante de "no se pudo obtener el sello". */
+  timestampNotice?: string | null;
+  onDismissTimestampNotice?: () => void;
 }
 
 export function CaptureStep({
@@ -193,6 +201,7 @@ export function CaptureStep({
   onCancelUpload, onDismissUploadNotice,
   caseId, storageMode = null, saveBusy = false, evidenceLock = null,
   syncWarning = null, onDismissSyncWarning, onContinueWithoutSaving,
+  timestamps = NO_TIMESTAMPS, timestampingEnabled = false, timestampNotice = null, onDismissTimestampNotice,
 }: Props) {
   const isIOS = platform === "ios";
   const airplayShotHintId = useId();
@@ -334,6 +343,14 @@ export function CaptureStep({
     }
     if (f?.uploaded) return "uploaded";
     return uploadStates[item.name] ?? "pending";
+  }
+
+  /** Sello del ítem: solo registrado (en el caso) y con el sellado activo; sin documento, nada. */
+  function sealOf(item: GItem): CaseTimestamp | null {
+    if (!timestampingEnabled) return null;
+    const state = uploadStateOf(item);
+    if (state !== "stored" && state !== "uploaded" && state !== "missing") return null;
+    return timestamps[item.name] ?? null;
   }
 
   function handleWebcamCapture(blob: Blob, _raw: string) {
@@ -823,6 +840,7 @@ export function CaptureStep({
                         role={roleByName.get(item.name)}
                         notice={noticeOf(item)}
                         uploadState={uploadStateOf(item)}
+                        seal={sealOf(item)}
                         removeDisabled={removeBlocked}
                         onSelect={() => setSelectedKey(item.key)}
                         onRemove={() => removeItem(item)}
@@ -849,6 +867,7 @@ export function CaptureStep({
                           active={item.key === selected?.key}
                           sizeMB={sizeMB}
                           uploadState={uploadStateOf(item)}
+                          seal={sealOf(item)}
                           removeDisabled={removeBlocked}
                           onSelect={() => setSelectedKey(item.key)}
                           onRemove={() => removeItem(item)}
@@ -1060,6 +1079,17 @@ export function CaptureStep({
       {/* Flujo agent: el guardado automático también muestra el panel (copias de
           archivos del navegador); el flujo viejo, solo durante el envío. */}
       <UploadLiveRegion progress={uploading || agentMode ? uploadProgress : null} target={agentMode ? "agent" : "server"} />
+      {/* Sello de tiempo no obtenido (sellado-tiempo §9.3): aviso único, no bloqueante. */}
+      {timestampNotice && (
+        <FxBanner
+          tone="info"
+          className="mt-6"
+          icon={<ClockAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+          onClose={onDismissTimestampNotice}
+        >
+          {timestampNotice}
+        </FxBanner>
+      )}
       {(uploadNotice || ((uploading || agentMode) && uploadProgress)) && (
         <div className="mt-6 space-y-3">
           {uploadNotice && (
@@ -1116,6 +1146,7 @@ export function CaptureStep({
 /* Default estable de `localBlobs` (un `{}` literal en el destructuring sería nuevo en cada render). */
 const NO_LOCAL_BLOBS: Record<string, LocalBlobInfo> = {};
 const NO_UPLOAD_STATES: Record<string, FileUploadState> = {};
+const NO_TIMESTAMPS: Record<string, CaseTimestamp> = {};
 const NO_VARIANT_STATUS: Record<string, Record<string, VideoVariantStatus>> = {};
 const NO_NOTICES: EvidenceNotices = { recordings: {}, black: {}, keptBlack: [] };
 

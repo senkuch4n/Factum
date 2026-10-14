@@ -12,6 +12,8 @@ namespace Factum.Backend.DTOs;
 /// <c>tatana_min_version</c> (siempre presente) es <c>Tatana:MinVersion</c> normalizado: <c>"X.Y.Z"</c> o
 /// <c>null</c> (sin mínimo). Con un valor, la web no inicia capturas con un Tatana menor o sin
 /// <c>real_version_v1</c> (SDD tatana-instalador-autoupdate D6, §13.B).
+/// <c>timestamping_enabled</c> (siempre presente, sellado-tiempo §6.6): si el sellado de tiempo RFC 3161 está
+/// activo (<c>Timestamping:Enabled</c> y al menos una URL). La web lo usa para la etiqueta de la generación.
 /// </summary>
 public sealed record PublicConfigResponse(string? OrganizationName, string? OrganizationLogoUrl,
-    bool SupportEnabled, bool EncryptZip, string? TatanaMinVersion);
+    bool SupportEnabled, bool EncryptZip, string? TatanaMinVersion, bool TimestampingEnabled);

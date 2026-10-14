@@ -4,6 +4,7 @@ using Factum.Backend.DTOs;
 using Factum.Backend.Services.Branding;
 using Factum.Backend.Services.Support;
 using Factum.Backend.Services.Tatana;
+using Factum.Backend.Tests.Timestamping;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -48,7 +49,8 @@ public sealed class TatanaMinVersionTests
             new ReportTestSupport.FakeBranding(new BrandingSnapshot(null, [], null)),
             new SupportSettings(false, new SupportIntegrationOptions(), [], []),
             new ReportTestSupport.FakeSettings(),
-            Options.Create(new TatanaOptions { MinVersion = minVersion }));
+            Options.Create(new TatanaOptions { MinVersion = minVersion }),
+            new TimestampHarness(enabled: false).Service);
         var ok = Assert.IsType<OkObjectResult>(controller.Public());
         Assert.IsType<PublicConfigResponse>(ok.Value);
         return JsonDocument.Parse(JsonSerializer.Serialize(ok.Value, Snake)).RootElement;
@@ -61,7 +63,8 @@ public sealed class TatanaMinVersionTests
         Assert.True(root.TryGetProperty("tatana_min_version", out var v));
         Assert.Equal(JsonValueKind.Null, v.ValueKind);
         Assert.Equal(
-            ["organization_name", "organization_logo_url", "support_enabled", "encrypt_zip", "tatana_min_version"],
+            ["organization_name", "organization_logo_url", "support_enabled", "encrypt_zip", "tatana_min_version",
+                "timestamping_enabled"],
             root.EnumerateObject().Select(p => p.Name).ToArray());
     }
 

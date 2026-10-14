@@ -48,6 +48,9 @@ services:
       # - Integrations__Support__ServiceKey=<clave>
       # - Integrations__Support__FrontendUrl=https://<frontend-de-faro>
       - Storage__DataDirectory=/data
+      # Sellado de tiempo RFC 3161 (README, "Sellado de tiempo"): en desarrollo, FreeTSA + DigiCert.
+      # Vacío = desactivado. Ninguna prueba automática le pega a una autoridad real.
+      - Timestamping__Urls=https://freetsa.org/tsr,http://timestamp.digicert.com
     volumes:
       - backend-data:/data
     depends_on:

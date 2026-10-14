@@ -150,6 +150,25 @@ FACTUM_RENDER_DIR=/tmp/render FACTUM_SOFFICE=1 dotnet test server/tests/Factum.B
   --filter "FullyQualifiedName~ReportQaRegression|FullyQualifiedName~Muestras"
 ```
 
+### sellado-tiempo (bloque `selloTiempo`)
+
+Ver `Refactorizaciones/sellado-tiempo.md` §8. En `build_plantilla_v4.py` (se
+hereda en la v6, que no cambia):
+
+- **Dónde:** inmediatamente después de `</w:tbl>` de la tabla de hashes, antes
+  del título "CADENA DE CUSTODIA DIGITAL": `{#selloTiempo}`, un párrafo vacío
+  que separa el texto de la tabla, `{descripcionSelloTiempo}` y
+  `{/selloTiempo}`. El párrafo del placeholder usa el pPr normalizado y el rPr
+  del de aseguramiento (`2D02EAD7`); los `paraId` son deterministas
+  (`a5:sello-espacio`, `a5:sello`, `marker:sello-open`, `marker:sello-close`).
+- **Qué lo llena:** `ReportService` (B-R2 con `conditions["selloTiempo"]` y
+  B-R4 con `ReportTimestampTexts.Block`, siempre texto plano). Con el sellado
+  desactivado (o en el flujo viejo) el bloque se borra entero y el informe
+  queda idéntico al de antes. Las líneas "Sello de tiempo: …" de la tabla no
+  van en la plantilla: las agrega B-R5 (`FillHashTable`) por código.
+- `BODY_PLACEHOLDERS` suma `{descripcionSelloTiempo}` y `BODY_BLOCKS` suma
+  `selloTiempo`; el `--check` de la v6 los hereda.
+
 ## v5 (reproducible, sin uso)
 
 Especificación: `Refactorizaciones/informe-diseno-modelo.md`. Para

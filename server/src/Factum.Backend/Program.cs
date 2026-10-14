@@ -10,6 +10,7 @@ using Factum.Backend.Services.Profile;
 using Factum.Backend.Services.Reports;
 using Factum.Backend.Services.Support;
 using Factum.Backend.Services.Tatana;
+using Factum.Backend.Services.Timestamping;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Configuration.Json;
@@ -76,6 +77,9 @@ if (TatanaOptions.Validate(builder.Configuration["Tatana:MinVersion"]) is { } ta
 // sesion-larga §5.1 / D11: vida del token y tope de sesión (fuera de rango → no arranca; tope < token → warning).
 var (jwtErrors, jwtWarnings) = JwtSettings.Validate(builder.Configuration);
 configErrors.AddRange(jwtErrors);
+// sellado-tiempo §5.6: URLs de la TSA y tiempos (una URL inválida o un valor fuera de rango → no arranca).
+var (timestampingSettings, timestampingErrors) = TimestampingOptions.Resolve(builder.Configuration);
+configErrors.AddRange(timestampingErrors);
 if (configErrors.Count > 0)
     throw new InvalidOperationException(
         "Configuración inválida, el backend no arranca:" + string.Concat(configErrors.Select(e => "\n  - " + e)));
@@ -175,6 +179,15 @@ builder.Services.AddSingleton<IReportService, ReportService>();
 builder.Services.AddScoped<IExpertProfileService, ExpertProfileService>();
 builder.Services.AddScoped<Factum.Backend.Services.Catalogs.ICatalogService, Factum.Backend.Services.Catalogs.CatalogService>();
 builder.Services.AddScoped<ICaseService, CaseService>();
+// sellado-tiempo §6: colección case_timestamps (índices en segundo plano), cliente RFC 3161, servicio y cola.
+// Con el sellado desactivado todo se registra igual (no-op) y la cola termina al arrancar.
+builder.Services.AddSingleton(timestampingSettings);
+builder.Services.AddSingleton<ICaseTimestampRepository, CaseTimestampRepository>();
+builder.Services.AddHttpClient<ITimestampAuthorityClient, Rfc3161TimestampClient>(c =>
+    c.Timeout = Timeout.InfiniteTimeSpan); // el timeout por URL lo maneja el cliente con su propio CTS
+builder.Services.AddSingleton<ITimestampQueueSignal, TimestampQueueSignal>();
+builder.Services.AddSingleton<ITimestampService, TimestampService>();
+builder.Services.AddHostedService<TimestampRetryService>();
 // Soporte (Faro) opcional: apagado no se instancia ningún HttpClient hacia Faro.
 if (supportSettings.Enabled)
 {
@@ -223,6 +236,13 @@ app.Logger.LogInformation(
 if (authSettings.ExternalLoginUri is { } loginUri)
     app.Logger.LogInformation("Auth: login externo en {Url}",
         loginUri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped));
+// sellado-tiempo §12.1: solo hosts (nunca la URL entera, que puede traer usuario y clave).
+if (timestampingSettings.IsActive)
+    app.Logger.LogInformation("Sellado de tiempo: habilitado ({Hosts}), timeout {Timeout} s, {Max} intentos máx.",
+        string.Join(", ", timestampingSettings.Hosts), timestampingSettings.TimeoutSeconds,
+        timestampingSettings.MaxAttempts);
+else
+    app.Logger.LogInformation("Sellado de tiempo: deshabilitado");
 if (supportSettings.Enabled)
     app.Logger.LogInformation("Soporte: habilitado ({Host})", new Uri(supportSettings.Options.BaseUrl).Authority);
 else

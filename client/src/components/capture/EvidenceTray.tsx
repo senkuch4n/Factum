@@ -1,7 +1,9 @@
 "use client";
 
-import { AlertCircle, AlertTriangle, Check, CheckCircle2, Clock, HardDrive, Loader2, Trash2 } from "lucide-react";
-import type { CaptureRoleValue } from "@/lib/api";
+import {
+  AlertCircle, AlertTriangle, Check, CheckCircle2, Clock, ClockAlert, ClockCheck, HardDrive, Loader2, Trash2,
+} from "lucide-react";
+import type { CaptureRoleValue, CaseTimestamp } from "@/lib/api";
 import { CAPTURE_ROLE_LABELS } from "@/lib/pericial";
 import { FOCUS_RING } from "@/lib/prime/pt/shared";
 import { cn } from "@/lib/utils";
@@ -75,6 +77,48 @@ function UploadStateIcon({ state, hash, className }: { state?: TrayUploadState; 
   );
 }
 
+/** Texto del sello de tiempo de un archivo (tooltip y `aria-label`, sellado-tiempo §9.3). */
+export function sealText(seal: CaseTimestamp): string {
+  switch (seal.status) {
+    case "granted": {
+      const parts = [seal.gen_time_display, seal.authority].filter(Boolean);
+      return parts.length > 0 ? `Sello de tiempo: ${parts.join(" · ")}` : "Sello de tiempo obtenido";
+    }
+    case "pending":
+      return "Sello de tiempo pendiente; se reintenta solo";
+    case "failed":
+      return "No se pudo obtener el sello de tiempo";
+  }
+}
+
+/**
+ * Indicador chico del sello de tiempo: reloj con check (sellado), reloj gris
+ * (pendiente) o reloj con advertencia (falló). Ícono + forma distinta por
+ * estado, nunca solo color. El texto va en el `title` (tooltip) y en el
+ * `aria-label` del ítem; el indicador en sí es decorativo para el lector.
+ */
+function SealBadge({ seal, className }: { seal: CaseTimestamp; className?: string }) {
+  const Icon = seal.status === "granted" ? ClockCheck : seal.status === "failed" ? ClockAlert : Clock;
+  return (
+    <span
+      aria-hidden="true"
+      title={sealText(seal)}
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-full",
+        seal.status === "granted" ? "text-fx-success" : seal.status === "failed" ? "text-fx-warning" : "text-fx-text-3",
+        className,
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden="true" />
+    </span>
+  );
+}
+
+/** Sufijo del `aria-label` con el sello (vacío sin sello). */
+function sealSuffix(seal?: CaseTimestamp | null) {
+  return seal ? ` — ${sealText(seal)}` : "";
+}
+
 /**
  * Miniatura de la bandeja de capturas (un `<li>`). `<button>` real para el
  * orden de tabulación; el borrar es un botón hermano (HTML no permite
@@ -90,11 +134,14 @@ const NOTICE_TEXT: Record<TrayNotice, string> = {
 };
 
 export function EvidenceTrayTile({
-  item, active, index, total, role, notice, uploadState, removeDisabled, onSelect, onRemove,
+  item, active, index, total, role, notice, uploadState, seal, removeDisabled, onSelect, onRemove,
 }: {
   item: GItem; active: boolean; index: number; total: number; role?: CaptureRoleValue;
   notice?: TrayNotice;
-  uploadState?: TrayUploadState; removeDisabled?: boolean;
+  uploadState?: TrayUploadState;
+  /** Sello de tiempo del archivo registrado (solo con el sellado activo). */
+  seal?: CaseTimestamp | null;
+  removeDisabled?: boolean;
   onSelect: () => void; onRemove: () => void;
 }) {
   const meta = kindMeta(item.kind);
@@ -106,7 +153,7 @@ export function EvidenceTrayTile({
         type="button"
         onClick={onSelect}
         aria-pressed={active}
-        aria-label={`Ver ${meta.label.toLowerCase()} ${index + 1} de ${total} — ${item.name}${role ? ` — marcada como ${CAPTURE_ROLE_LABELS[role]}` : ""}${notice ? ` — ${NOTICE_TEXT[notice]}` : ""}${uploadSuffix(uploadState)}`}
+        aria-label={`Ver ${meta.label.toLowerCase()} ${index + 1} de ${total} — ${item.name}${role ? ` — marcada como ${CAPTURE_ROLE_LABELS[role]}` : ""}${notice ? ` — ${NOTICE_TEXT[notice]}` : ""}${uploadSuffix(uploadState)}${sealSuffix(seal)}`}
         className={cn(
           "block h-[76px] w-[76px] overflow-hidden rounded-fx-lg border-2 bg-fx-surface-2 transition-colors duration-fx-fast ease-fx",
           FOCUS_RING,
@@ -140,6 +187,14 @@ export function EvidenceTrayTile({
           state={uploadState}
           hash={item.remoteFile?.sha256}
           className="pointer-events-none absolute left-1 top-1 h-5 w-5 bg-fx-surface-1 ring-1 ring-fx-border"
+        />
+      )}
+
+      {/* Sello de tiempo: al lado del estado de envío. Con `title` propio (tooltip al pasar el mouse). */}
+      {seal && (
+        <SealBadge
+          seal={seal}
+          className="absolute left-[26px] top-1 h-5 w-5 cursor-default bg-fx-surface-1 ring-1 ring-fx-border"
         />
       )}
 
@@ -193,10 +248,13 @@ export function EvidenceTrayTile({
  * sube y figura en el informe).
  */
 export function AttachmentChip({
-  item, active, sizeMB, uploadState, removeDisabled, onSelect, onRemove,
+  item, active, sizeMB, uploadState, seal, removeDisabled, onSelect, onRemove,
 }: {
   item: GItem; active: boolean; sizeMB: string | null;
-  uploadState?: TrayUploadState; removeDisabled?: boolean;
+  uploadState?: TrayUploadState;
+  /** Sello de tiempo del archivo registrado (solo con el sellado activo). */
+  seal?: CaseTimestamp | null;
+  removeDisabled?: boolean;
   onSelect: () => void; onRemove: () => void;
 }) {
   const meta = kindMeta(item.kind);
@@ -213,7 +271,7 @@ export function AttachmentChip({
         type="button"
         onClick={onSelect}
         aria-pressed={active}
-        aria-label={`${item.originalName ? `Ver ${item.originalName}, se sube como ${item.name}` : `Ver ${item.name}`}${uploadSuffix(uploadState)}`}
+        aria-label={`${item.originalName ? `Ver ${item.originalName}, se sube como ${item.name}` : `Ver ${item.name}`}${uploadSuffix(uploadState)}${sealSuffix(seal)}`}
         title={item.originalName ? `${item.originalName} (se sube como ${item.name})` : item.name}
         className={cn("flex min-w-0 items-center gap-2 rounded-fx-sm text-left", FOCUS_RING)}
       >
@@ -226,6 +284,7 @@ export function AttachmentChip({
         </span>
         {sizeMB != null && <span className="shrink-0 tabular-nums text-fx-text-3">{sizeMB}&nbsp;MB</span>}
         <UploadStateIcon state={uploadState} hash={item.remoteFile?.sha256} />
+        {seal && <SealBadge seal={seal} />}
         {uploadState && VISIBLE_STATE_TEXT[uploadState] && (
           <span aria-hidden="true" className="shrink-0 whitespace-nowrap text-[11px] font-medium text-fx-text-2">
             {VISIBLE_STATE_TEXT[uploadState]}

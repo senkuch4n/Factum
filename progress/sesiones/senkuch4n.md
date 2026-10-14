@@ -253,3 +253,20 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-14 — Backend local relanzado con Jwt__ExpiryHours=0.2 y Jwt__SessionMaxHours=0.5 para la prueba manual de #74.
 - 2026-10-14 — #74 OK del usuario -> aprobada; commit, push y PR contra develop.
 - 2026-10-14 — PR #75 (#73) mergeado a develop. #76 rebasado sobre develop (conflicto solo en bitácora); merge al pasar CI.
+- 2026-10-14 — PR #76 (#74) mergeado a develop (f198a94). Sin HU abiertas; pendientes: promoción a main a pedido, Tatana 1.6.0, FACTUM_JWT_EXPIRY_HOURS=2 en la nube, Pester y prueba manual §12.2.
+- 2026-10-14 — Usuario pidió promover develop→main y sacar Tatana 1.6.0. PR de promoción abierto.
+- 2026-10-14 — PR #77 develop→main mergeado (992d7603). Deploy run 38559237437 en curso.
+- 2026-10-14 — Deploy prod OK (run 38559237437). Tag tatana-v1.6.0 sobre main pusheado; release run 38559749090 en curso.
+- 2026-10-14 — Release Tatana 1.6.0 publicada (run 38559749090): firmada, probada en Windows, en el VPS y GitHub Release.
+- 2026-10-14 — Alta de HU a partir de las ideas de Fredi Aprile: #78 sellado-tiempo, #79 metadatos-dispositivo, #80 grabacion-sesion-completa, #81 exportacion-estructurada (Backlog, con comentario de origen).
+- 2026-10-14 — Tomada #78, rama feat/sellado-tiempo desde origin/develop, afinando; lanzado afinador.
+- 2026-10-14 — #78 afinada -> docs/hu-sellado-tiempo.md (9 dudas). Por validar.
+- 2026-10-14 — #78 validada (todas recomendadas; entregan la carpeta entera). en_arquitectura; lanzado architect.
+- 2026-10-14 — #78 arquitectura_lista -> Refactorizaciones/sellado-tiempo.md. Pendientes D-T3 (sellado apagado en nube/Windows) y D-T8 (etapa combinada).
+- 2026-10-14 — #78 D-T3 (apagado en nube/Windows hasta elegir TSA) y D-T8 (etapa combinada) validadas. implementando; lanzados implementer-backend y -frontend.
+- 2026-10-14 — #78 implementer-frontend done -> progress/impl_frontend_sellado-tiempo.md (sin prueba visual: sin Chrome). Esperando backend.
+- 2026-10-14 — #78 implementer-backend done -> progress/impl_backend_sellado-tiempo.md. en_revision; lanzado reviewer.
+- 2026-10-14 — #78 reviewer: aprobada -> progress/review_sellado-tiempo.md (backend 1237, Tatana 601 OK). CRLF de restaurar.ps1 restaurado. Backend y Tatana locales reiniciados con la rama (sellado habilitado, FreeTSA+DigiCert). Esperando prueba manual.
+- 2026-10-14 — #78 OK del usuario -> aprobada; commit, push y PR contra develop.
+- 2026-10-14 — #78 rama pusheada; PR en espera. Lanzado agente de QA para los pasos 1–7 de §13.2 (Samsung real, openssl, instancias :8081/:8082).
+- 2026-10-14 — QA manual #78 pasos 1–7: 7 OK / 0 FALLA (docs/qa/2026-10-14/sellado-tiempo-manual.md). Datos QA borrados por _id. PR contra develop.

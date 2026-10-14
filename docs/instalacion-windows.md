@@ -304,6 +304,45 @@ corta por inactividad hasta pasadas 8 horas. Conviene cambiarlo a mano a `2`: ab
 `C:\Factum\config\.env` con el Bloc de notas, cambiá el valor, guardá y abrí "Diagnostico de
 Factum" (responder S a reiniciar).
 
+### 6.2 Sellado de tiempo (opcional)
+
+Factum puede pedir a una **autoridad de sellado de tiempo** externa (RFC 3161) un sello sobre el hash
+SHA-256 de cada archivo de evidencia, del ZIP y del informe. Nunca se manda el contenido, solo el hash.
+El sello prueba, con el reloj de un tercero, que el archivo existía así en esa fecha y hora; el informe
+lo menciona y la carpeta del caso recibe una carpeta `sellos` con los archivos `.tsr` y un
+`LEEME-verificacion.txt` que explica cómo verificarlos con `openssl`.
+
+Viene **desactivado**. Se controla con cuatro valores de `C:\Factum\config\.env`:
+
+| Variable | Valor | Qué hace |
+|---|---|---|
+| `FACTUM_SELLADO_URLS` | vacío (desactivado) | Las autoridades, en orden de preferencia y separadas por comas. Ejemplo probado con `openssl ts -verify`: `https://freetsa.org/tsr,http://timestamp.digicert.com`. Si la autoridad pide usuario y clave: `https://usuario:clave@host/ruta` (no aparecen en los logs). |
+| `FACTUM_SELLADO_HABILITADO` | `true` | `false` lo apaga aunque haya URLs. |
+| `FACTUM_SELLADO_TIMEOUT_SEGUNDOS` | `10` | Cuánto se espera a cada autoridad (2 a 60). |
+| `FACTUM_SELLADO_MAX_INTENTOS` | `12` | Cuántas veces se reintenta un sello pendiente antes de abandonarlo (1 a 50; con 12, unas 52 horas). |
+
+**Cómo elegir la autoridad.** Factum no afirma la validez legal de ninguna: elegila con asesoramiento
+jurídico. La PC tiene que tener internet para pedir los sellos; sin internet nada se bloquea, el sello
+queda pendiente y se pide solo cuando vuelve la conexión.
+
+**Activarlo:** abrí `C:\Factum\config\.env` con el Bloc de notas, completá `FACTUM_SELLADO_URLS`,
+guardá y abrí "Diagnostico de Factum" (responder S a reiniciar).
+
+**Verificar que funciona:**
+
+1. En el registro del backend (Docker Desktop → Containers → `factum` → `backend` → Logs) tiene que aparecer
+   `Sellado de tiempo: habilitado (freetsa.org, timestamp.digicert.com), timeout 10 s, 12 intentos máx.`
+   Si dice `deshabilitado`, la variable quedó vacía.
+2. Con un **caso de prueba nuevo**: guardá una captura (en la bandeja aparece un reloj con check), generá
+   el caso y abrí el detalle: el bloque "Sello de tiempo" muestra el ZIP y el informe sellados, y al lado
+   del ZIP aparece la carpeta `sellos`.
+
+**Desactivarlo:** vaciá `FACTUM_SELLADO_URLS` (o poné `FACTUM_SELLADO_HABILITADO=false`) y reiniciá. Los
+sellos ya obtenidos siguen visibles y se pueden descargar.
+
+Las instalaciones que vienen de una versión anterior reciben estas cuatro claves solas al actualizar
+(sección 11), con `FACTUM_SELLADO_URLS` vacío: no empiezan a sellar hasta que lo decidas.
+
 ## 7. Identidad del estudio (nombre, logo, contacto, colores)
 
 Los informes salen con el membrete del estudio. Se configura en
