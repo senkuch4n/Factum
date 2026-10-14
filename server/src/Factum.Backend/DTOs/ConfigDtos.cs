@@ -14,6 +14,9 @@ namespace Factum.Backend.DTOs;
 /// <c>real_version_v1</c> (SDD tatana-instalador-autoupdate D6, §13.B).
 /// <c>timestamping_enabled</c> (siempre presente, sellado-tiempo §6.6): si el sellado de tiempo RFC 3161 está
 /// activo (<c>Timestamping:Enabled</c> y al menos una URL). La web lo usa para la etiqueta de la generación.
+/// <c>clock_skew_warning_seconds</c> (siempre presente, último; metadatos-dispositivo D6): <c>Report:ClockSkewWarningSeconds</c>
+/// ya validado (1…86400, default 60). La web avisa si la diferencia de reloj celular/PC lo supera.
 /// </summary>
 public sealed record PublicConfigResponse(string? OrganizationName, string? OrganizationLogoUrl,
-    bool SupportEnabled, bool EncryptZip, string? TatanaMinVersion, bool TimestampingEnabled);
+    bool SupportEnabled, bool EncryptZip, string? TatanaMinVersion, bool TimestampingEnabled,
+    int ClockSkewWarningSeconds);

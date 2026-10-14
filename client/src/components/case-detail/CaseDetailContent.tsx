@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "primereact/button";
 import {
-  FileText, Archive, Key, Hash, Shield, Play, Eye, Loader2, AlertCircle, Info, HardDrive,
+  FileText, Archive, Key, Hash, Shield, Play, Eye, Loader2, AlertCircle, Info, HardDrive, Cpu,
 } from "lucide-react";
+import { DeviceDetailsPanel } from "@/components/device-details/DeviceDetailsPanel";
+import { detailsViewFromCase } from "@/lib/device-details";
+import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { agent } from "@/lib/agent";
 import { ZipLocalActions } from "@/components/ZipLocalActions";
 import { ZipCompatNotice } from "@/components/ZipCompatNotice";
@@ -67,6 +70,9 @@ export function CaseDetailContent({ cas, onResume }: { cas: Case; onResume: (c: 
         ))}
       </dl>
 
+      {/* metadatos-dispositivo §10.6: ficha técnica de solo lectura (sin "Volver a leer", D-T20). */}
+      <DeviceDetailsSection cas={cas} />
+
       {/* versionado-informe (HU6, D7-B): historial de las secciones del informe,
           accesible desde el detalle; solo lectura en casos completados. */}
       <CaseVersionHistoryButton cas={cas} />
@@ -112,6 +118,28 @@ export function CaseDetailContent({ cas, onResume }: { cas: Case; onResume: (c: 
         </section>
       )}
     </div>
+  );
+}
+
+/** "Datos técnicos del dispositivo": la ficha registrada o la nota de caso anterior. */
+function DeviceDetailsSection({ cas }: { cas: Case }) {
+  const { clockSkewWarningSeconds } = usePublicConfig();
+  const details = cas.device_details ?? null;
+  const view = useMemo(() => (details ? detailsViewFromCase(details) : null), [details]);
+  const headingId = `case-${cas.id}-device-details`;
+  return (
+    <section aria-labelledby={headingId} className="space-y-3.5">
+      <h3 id={headingId} className="flex items-center gap-1.5 text-fx-label uppercase text-fx-text-2">
+        <Cpu className="w-3.5 h-3.5" aria-hidden="true" /> Datos técnicos del dispositivo
+      </h3>
+      {view ? (
+        <DeviceDetailsPanel view={view} thresholdSeconds={clockSkewWarningSeconds} readOnly />
+      ) : (
+        <p className="m-0 flex items-center gap-1.5 text-xs text-fx-text-3">
+          <Info className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> Sin ficha técnica (caso anterior a esta función).
+        </p>
+      )}
+    </section>
   );
 }
 

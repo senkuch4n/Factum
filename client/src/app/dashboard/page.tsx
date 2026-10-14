@@ -8,6 +8,11 @@ import {
   api, ApiError, type CaseTimestamp, type CaseTimestampsResponse, type DeviceInput, type EvidenceResponse, type ZipLocation,
 } from "@/lib/api";
 import { syncCaseSeals } from "@/lib/timestamps";
+import {
+  clockForRequest, detailsViewFromAgent, detailsViewFromCase, formatDateTime, probeServerClock, toSaveRequest,
+  type DeviceDetailsUi,
+} from "@/lib/device-details";
+import { useDeviceDetails } from "@/hooks/useDeviceDetails";
 import { agent, AgentError, screenBlockOf, type ScreenCheckOptions, type ZipProgress } from "@/lib/agent";
 import {
   agentErrorMessage, agentStatusMessage, GENERATION_BUSY_MESSAGE, RECORDING_ERROR_TEXT,
@@ -122,7 +127,7 @@ function useGreetingClock() {
 
 export default function Dashboard() {
   // Soporte opcional: sin la integración habilitada no hay botón en la navbar, en la guía ni modal.
-  const { supportEnabled } = usePublicConfig();
+  const { supportEnabled, clockSkewWarningSeconds } = usePublicConfig();
 
   // ── Navigation ──────────────────────────────────────────────────
   const [mode, setMode] = useState<"history" | "wizard">("history");
@@ -168,6 +173,21 @@ export default function Dashboard() {
   >(null);
   const [resumePending, setResumePending] = useState<Case | null>(null);
   const [resumeConnected, setResumeConnected] = useState(false);
+
+  // ── Ficha técnica del dispositivo (metadatos-dispositivo §10.2-§10.4) ──
+  /** Alta: incluir el SSID en el informe (D7, desmarcado por defecto). En edición vive en el caso. */
+  const [includeSsid, setIncludeSsid] = useState(false);
+  /** Error de guardado de la ficha o de la opción del SSID (edición). */
+  const [detailsSaveError, setDetailsSaveError] = useState<string | null>(null);
+  const [ssidSaving, setSsidSaving] = useState(false);
+  const [detailsRereading, setDetailsRereading] = useState(false);
+  /** Aviso del paso 3 (§10.3) o de la retoma (§10.4). */
+  const [deviceDetailsNotice, setDeviceDetailsNotice] = useState<
+    { kind: "failed" } | { kind: "registered"; readAt: string | null } | null
+  >(null);
+  const [noticeRetrying, setNoticeRetrying] = useState(false);
+  /** Casos para los que ya se intentó registrar la ficha en esta sesión (D-T16). */
+  const detailsAttemptedRef = useRef<Set<string>>(new Set());
 
   // ── UI ───────────────────────────────────────────────────────────
   const [statusMsg, setStatus] = useState("");
@@ -544,6 +564,20 @@ export default function Dashboard() {
 
   // Paso 3 (al entrar, o al cambiar de caso o de celular): ¿hay una grabación en curso en Tatana?
   const selSerial = selDevice?.serial ?? null;
+
+  // ── Ficha técnica: lectura bajo demanda en Tatana (metadatos-dispositivo §10.1-§10.4) ──
+  const deviceDetails = useDeviceDetails(selDevice);
+  const readDeviceDetails = deviceDetails.read;
+  // Otro celular (o ninguno): la opción del SSID y los errores de la ficha no valen.
+  useEffect(() => { setIncludeSsid(false); setDetailsSaveError(null); }, [selSerial]);
+
+  // Paso 2 de un caso nuevo con el celular conectado: se lee la ficha una vez (en edición se muestra la guardada).
+  const detailsStatus = deviceDetails.status;
+  useEffect(() => {
+    if (mode !== "wizard" || step !== 2 || currentCase || !selSerial) return;
+    if (deviceConnection !== "connected" || detailsStatus !== "idle") return;
+    void readDeviceDetails();
+  }, [mode, step, currentCase, selSerial, deviceConnection, detailsStatus, readDeviceDetails]);
   // Aviso de pantalla vigente: mismo celular, conectado y con Tatana arriba (si no, se descarta solo).
   const activeScreenBlock = screenBlock && screenBlock.serial === selSerial && !deviceOffline && agentOnline
     ? { action: screenBlock.action, state: screenBlock.state }
@@ -605,6 +639,8 @@ export default function Dashboard() {
     // pulido-post-qa-final D-T13: el banner "Retomando" es solo de la retoma; al salir del paso 3 se apaga.
     // El aviso de pantalla apagada (§8.7) tampoco sobrevive a la salida del paso.
     if (step === 3 && n !== 3) { setIsResuming(false); setScreenBlock(null); }
+    // El aviso de la ficha técnica es del paso 3 (o de la retoma): no sobrevive a otro paso (§10.3).
+    if (n !== 3) setDeviceDetailsNotice(null);
     // Volver al paso 2 con el caso ya creado = modo edición con los datos guardados.
     if (n === 2 && currentCase) {
       setCaseErr({});
@@ -675,6 +711,7 @@ export default function Dashboard() {
     if (Object.keys(localErr).length > 0) { setFocusErrorsTick(t => t + 1); return; }
 
     setLoad("case", true); setGlobal("");
+    const creating = !currentCase;
     try {
       if (!profile?.is_complete || !sameProfile(profileForm, profileToForm(profile))) {
         await saveProfile(profileForm);
@@ -695,6 +732,8 @@ export default function Dashboard() {
               name: selDevice.name ?? "",
             } as DeviceInput,
           });
+      // La ficha del alta la registra este mismo flujo: la retoma (§10.4) no la repite.
+      if (creating) detailsAttemptedRef.current.add(cas.id);
       setCase(cas);
       // El aviso de expediente repetido necesita el historial con este caso (acá y en las otras pestañas).
       reloadHistorySilently();
@@ -702,6 +741,15 @@ export default function Dashboard() {
       // Con el IMEI ya guardado en el caso, el equipo deja de pedirlo a mano.
       if (imeiManual && cas.device?.imei && cas.device.imei !== "INGRESAR_MANUALMENTE") {
         setSelDevice(d => (d ? { ...d, imei: cas.device.imei } : d));
+      }
+      // Ficha técnica (§10.3): después del alta y sin bloquearla; si falla, el caso sigue y avisa el paso 3.
+      if (creating) {
+        try {
+          const r = await registerDeviceDetails(cas, { includeSsid });
+          if (r.status === "read_failed") setDeviceDetailsNotice({ kind: "failed" });
+        } catch {
+          setDeviceDetailsNotice({ kind: "failed" });
+        }
       }
       go(3);
     } catch (e) {
@@ -715,6 +763,49 @@ export default function Dashboard() {
       }
     }
     finally { setLoad("case", false); }
+  }
+
+  /**
+   * Registra la ficha técnica del caso (§10.3-§10.4): reusa la lectura del paso 2
+   * si es del mismo celular y tiene ≤ 60 s (D-T5); si no, lee. Después, sondeo
+   * PC↔servidor y `PUT …/device-details`. Lanza solo si falla el `PUT`.
+   * `includeSsid` `undefined` = conservar lo guardado.
+   */
+  async function registerDeviceDetails(
+    cas: Case, opts: { forceRead?: boolean; includeSsid?: boolean } = {},
+  ): Promise<{ status: "ok"; cas: Case } | { status: "unsupported" } | { status: "read_failed" }> {
+    if (!(await agent.supportsDeviceDetails())) return { status: "unsupported" };
+    const serial = cas.device.serial;
+    const s = deviceDetails.latest();
+    let reading = !opts.forceRead && s.reading?.serial === serial && s.readAt !== null && Date.now() - s.readAt <= 60_000
+      ? s.reading
+      : null;
+    if (!reading) {
+      // El hook lee el celular seleccionado: tiene que ser el del caso.
+      if (selDeviceRef.current?.serial !== serial) return { status: "read_failed" };
+      reading = await deviceDetails.read();
+    }
+    if (!reading) return { status: "read_failed" };
+    const probe = await probeServerClock();
+    const updated = await api.saveDeviceDetails(cas.id, toSaveRequest(reading, probe, opts.includeSsid));
+    setCase(c => (c && c.id === updated.id ? updated : c));
+    return { status: "ok", cas: updated };
+  }
+  const registerDeviceDetailsRef = useRef(registerDeviceDetails);
+  useEffect(() => { registerDeviceDetailsRef.current = registerDeviceDetails; });
+
+  /** "Volver a leer" del aviso del paso 3 / de la retoma: lectura forzada. */
+  async function retryDeviceDetailsNotice() {
+    if (!currentCase || noticeRetrying) return;
+    setNoticeRetrying(true);
+    try {
+      const r = await registerDeviceDetails(currentCase, { forceRead: true, includeSsid: currentCase.device_details ? undefined : includeSsid });
+      if (r.status !== "read_failed") setDeviceDetailsNotice(null);
+    } catch {
+      /* el aviso queda: se puede reintentar */
+    } finally {
+      setNoticeRetrying(false);
+    }
   }
 
   /** Respuesta de `PUT capture-roles`: estado completo de las marcas del caso. */
@@ -864,9 +955,27 @@ export default function Dashboard() {
     setGenerateProgress({ stage: "zip", zip: null });
     let prep: Awaited<ReturnType<typeof api.prepareGeneration>> | null = null;
     let zipBuilt = false;
+    let withClock = false;
     try {
       // 2. Etapa 1: validación + intento (no cambia el status).
       prep = await api.prepareGeneration(cas.id, { hostname: id.info.hostname });
+
+      // 2b. Medición de reloj de cierre (metadatos-dispositivo §10.5): solo con ficha, Tatana que la
+      //     soporta y el mismo celular conectado. Cualquier error se traga sin mensaje: la generación sigue.
+      if (cas.device_details && devices.some(d => d.serial === cas.device.serial) && await agent.supportsDeviceDetails()) {
+        withClock = true;
+        setGenerateProgress({ stage: "clock", withClock });
+        try {
+          const platform = (cas.device.platform as "android" | "ios" | undefined) ?? "android";
+          const c = await agent.getDeviceClock(cas.device.serial, platform);
+          const probe = await probeServerClock();
+          await api.saveDeviceClock(cas.id, {
+            connection_id: cas.device.serial, agent_version: c.agent_version, clock: clockForRequest(c.clock),
+            ...(probe ? { pc_server_probe: probe } : {}),
+          });
+        } catch { /* sin mensaje (§10.5) */ }
+        setGenerateProgress({ stage: "zip", zip: null, withClock });
+      }
 
       // 3. Tramo 1: ZIP en esta PC.
       const zip = await agent.buildZip(cas.id, {
@@ -875,7 +984,7 @@ export default function Dashboard() {
       zipBuilt = true;
 
       // 4. Tramo 2: capturas que embebe el informe + metadata, en una sola request.
-      setGenerateProgress({ stage: "report" });
+      setGenerateProgress({ stage: "report", withClock });
       const form = new FormData();
       const metadata = {
         generation_id: prep.generation_id,
@@ -951,6 +1060,7 @@ export default function Dashboard() {
     setSyncWarningDismissed(false);
     setCasePrefill(null);
     setRecordingInfo("");
+    setIncludeSsid(false); setDetailsSaveError(null); setDeviceDetailsNotice(null);
     if (!opts.keepMode) { refreshHistory(); setMode("history"); }
   }
 
@@ -987,6 +1097,7 @@ export default function Dashboard() {
   function proceedResume(cas: Case) {
     clearFiles(); resetRecording(); resetShotSession();
     setCase(cas); setResult(null); setCaseErr({}); setFocusFieldId(null); setGenerateMissing([]);
+    setDeviceDetailsNotice(null); setDetailsSaveError(null);
     setCasePrefill(null);
     setSelDevice({
       serial: cas.device.serial, state: "device",
@@ -1040,6 +1151,73 @@ export default function Dashboard() {
   // Banner "Retomando": el celular del caso (o el seleccionado) ya está conectado.
   const resumeSerial = currentCase?.device.serial ?? selDevice?.serial ?? null;
   const resumeDeviceConnected = !!resumeSerial && devices.some(d => d.serial === resumeSerial);
+
+  // ── Retomar un borrador sin ficha (metadatos-dispositivo §10.4, D10): una lectura por caso y sesión ──
+  const caseDeviceConnected = !!currentCase && devices.some(d => d.serial === currentCase.device.serial);
+  useEffect(() => {
+    const cas = currentCase;
+    if (mode !== "wizard" || !cas || cas.device_details != null || !agentOnline || !caseDeviceConnected) return;
+    if (cas.status !== "draft" && cas.status !== "error") return;
+    if (detailsAttemptedRef.current.has(cas.id)) return;
+    detailsAttemptedRef.current.add(cas.id);
+    void registerDeviceDetailsRef.current(cas)
+      .then(r => {
+        if (r.status === "ok") setDeviceDetailsNotice({ kind: "registered", readAt: r.cas.device_details?.read_at ?? null });
+        else if (r.status === "read_failed") setDeviceDetailsNotice({ kind: "failed" });
+      })
+      .catch(() => setDeviceDetailsNotice({ kind: "failed" }));
+  }, [mode, currentCase, agentOnline, caseDeviceConnected]);
+
+  // ── Estado de la ficha para el paso 2 (§10.2) ──
+  const savedDetails = currentCase?.device_details ?? null;
+  const agentReading = deviceDetails.reading;
+  const agentReadAt = deviceDetails.readAt;
+  const detailsView = useMemo(() => {
+    if (savedDetails) return detailsViewFromCase(savedDetails);
+    if (agentReading) return detailsViewFromAgent(agentReading, agentReadAt, includeSsid);
+    return null;
+  }, [savedDetails, agentReading, agentReadAt, includeSsid]);
+  const caseEditable = !currentCase || currentCase.status === "draft" || currentCase.status === "error";
+  const sameCaseDevice = !currentCase || selSerial === currentCase.device.serial;
+
+  function handleDetailsReread() {
+    setDetailsSaveError(null);
+    if (!currentCase) { void readDeviceDetails(); return; }
+    if (detailsRereading) return;
+    const cas = currentCase;
+    setDetailsRereading(true);
+    registerDeviceDetails(cas, { forceRead: true })
+      .then(r => { if (r.status === "ok") setDeviceDetailsNotice(null); })
+      .catch(e => setDetailsSaveError(e instanceof ApiError && e.status > 0
+        ? e.message
+        : "No se pudieron guardar los datos técnicos. Revisá la conexión con el servidor y reintentá."))
+      .finally(() => setDetailsRereading(false));
+  }
+
+  function handleIncludeSsidChange(include: boolean) {
+    setDetailsSaveError(null);
+    // Alta (o ficha todavía sin registrar): estado local, viaja en el `PUT` de la ficha.
+    if (!currentCase?.device_details) { setIncludeSsid(include); return; }
+    const caseId = currentCase.id;
+    setSsidSaving(true);
+    api.setDeviceDetailsOptions(caseId, { include_ssid_in_report: include })
+      .then(updated => setCase(c => (c && c.id === updated.id ? updated : c)))
+      .catch(e => setDetailsSaveError(e instanceof ApiError && e.status > 0
+        ? e.message
+        : "No se pudo guardar la opción del nombre de la red. Reintentá."))
+      .finally(() => setSsidSaving(false));
+  }
+
+  const deviceDetailsUi: DeviceDetailsUi = {
+    status: detailsRereading ? "loading" : detailsSaveError ? "error" : deviceDetails.status,
+    view: detailsView,
+    error: detailsSaveError ?? deviceDetails.error,
+    thresholdSeconds: clockSkewWarningSeconds,
+    canReread: caseEditable && sameCaseDevice && deviceConnection === "connected" && deviceDetails.status !== "unsupported",
+    onReread: handleDetailsReread,
+    ssidSaving,
+    onIncludeSsidChange: handleIncludeSsidChange,
+  };
 
   // ── Mismo celular en otra pestaña del wizard (DT16): aviso informativo en los pasos 2–3. ──
   const presenceLabel = currentCase?.nro_referencia || caseForm.nro_referencia.trim() || null;
@@ -1317,6 +1495,31 @@ export default function Dashboard() {
                     {presenceNotice}
                   </FxBanner>
                 )}
+                {deviceDetailsNotice?.kind === "failed" && (step === 2 || step === 3) && (
+                  <FxBanner tone="info" onClose={() => setDeviceDetailsNotice(null)}>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                      <p className="m-0 min-w-0 flex-1">No se pudieron registrar los datos técnicos del dispositivo.</p>
+                      {caseDeviceConnected && (
+                        <Button
+                          type="button"
+                          size="small"
+                          outlined
+                          severity="secondary"
+                          label={noticeRetrying ? "Leyendo…" : "Volver a leer"}
+                          loading={noticeRetrying}
+                          onClick={() => { void retryDeviceDetailsNotice(); }}
+                          className="shrink-0 [@media(pointer:coarse)]:min-h-11"
+                        />
+                      )}
+                    </div>
+                  </FxBanner>
+                )}
+                {deviceDetailsNotice?.kind === "registered" && (step === 2 || step === 3) && (
+                  <FxBanner tone="success" onClose={() => setDeviceDetailsNotice(null)}>
+                    Se registraron los datos técnicos del dispositivo
+                    {formatDateTime(deviceDetailsNotice.readAt) ? ` (lectura del ${formatDateTime(deviceDetailsNotice.readAt)})` : ""}.
+                  </FxBanner>
+                )}
                 {recordingInfo && step === 3 && (
                   <FxBanner tone="info" onClose={() => setRecordingInfo("")}>{recordingInfo}</FxBanner>
                 )}
@@ -1402,6 +1605,7 @@ export default function Dashboard() {
                               caseId={currentCase?.id ?? null}
                               prefill={currentCase ? null : casePrefill}
                               onPrefillChange={setCasePrefill}
+                              deviceDetails={deviceDetailsUi}
                             />
                           )}
 

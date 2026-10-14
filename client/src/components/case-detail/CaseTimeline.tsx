@@ -8,9 +8,10 @@ import { cn } from "@/lib/utils";
 import { formatDate, formatTime } from "@/lib/format";
 import { FX_BUTTON_SECONDARY } from "@/lib/prime/pt/shared";
 import {
-  derivedMilestones, derivedTitle, eventFilename, eventHashChange, eventIcon, eventTimestampDetail, eventTitle, eventTone,
-  type DerivedMilestone, type EventTone,
+  derivedMilestones, derivedTitle, eventDeviceDetail, eventFilename, eventHashChange, eventIcon, eventTimestampDetail,
+  eventTitle, eventTone, type DerivedMilestone, type EventTone,
 } from "@/lib/case-events";
+import { usePublicConfig } from "@/hooks/usePublicConfig";
 
 type LoadState =
   | { kind: "loading" }
@@ -82,6 +83,8 @@ export function CaseTimeline({ cas }: { cas: Case }) {
  * acumuló capturas) — heurística de la SDD.
  */
 function Timeline({ cas, events }: { cas: Case; events: CaseEvent[] }) {
+  // Umbral del aviso de reloj (metadatos-dispositivo §10.7).
+  const { clockSkewWarningSeconds } = usePublicConfig();
   const hasCreated = events.some(e => e.type === "case_created");
   const showDerived = events.length === 0;
   const showLegacyNotice = showDerived || !hasCreated;
@@ -114,10 +117,10 @@ function Timeline({ cas, events }: { cas: Case; events: CaseEvent[] }) {
                 key={ev.id}
                 first={i === 0}
                 last={i === events.length - 1}
-                tone={eventTone(ev.type)}
+                tone={eventTone(ev.type, ev.detail, clockSkewWarningSeconds)}
                 type={ev.type}
               >
-                <RealItemBody ev={ev} />
+                <RealItemBody ev={ev} clockSkewWarningSeconds={clockSkewWarningSeconds} />
               </TimelineItem>
             ))}
       </ol>
@@ -163,8 +166,9 @@ function TimelineItem({
   );
 }
 
-function RealItemBody({ ev }: { ev: CaseEvent }) {
-  const tone = eventTone(ev.type);
+function RealItemBody({ ev, clockSkewWarningSeconds }: { ev: CaseEvent; clockSkewWarningSeconds: number }) {
+  const tone = eventTone(ev.type, ev.detail, clockSkewWarningSeconds);
+  const deviceDetail = eventDeviceDetail(ev);
   const filename = eventFilename(ev);
   const reason = ev.type === "report_failed" || ev.type === "capture_failed" ? ev.detail?.reason : undefined;
   const hashChange = eventHashChange(ev);
@@ -198,6 +202,7 @@ function RealItemBody({ ev }: { ev: CaseEvent }) {
           {timestampDetail}
         </p>
       )}
+      {deviceDetail && <p className="m-0 mt-0.5 text-xs text-fx-text-2 break-words">{deviceDetail}</p>}
       <Meta
         actorName={ev.actor_name}
         actorDni={ev.actor_dni}

@@ -33,7 +33,8 @@ public sealed class ConfigController(IBrandingService branding, SupportSettings 
         var snap = branding.Current;
         var logoUrl = snap.Logo is { } logo ? $"{LogoPath}?v={logo.Version}" : null;
         return Ok(new PublicConfigResponse(snap.OrganizationName, logoUrl, support.Enabled,
-            report.EncryptZip, TatanaOptions.Normalize(tatana.Value.MinVersion), timestamps.IsEnabled));
+            report.EncryptZip, TatanaOptions.Normalize(tatana.Value.MinVersion), timestamps.IsEnabled,
+            report.ClockSkewWarningSeconds));
     }
 
     // El parámetro "v" de la query es solo cache-busting del lado del cliente; se ignora.

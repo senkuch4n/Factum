@@ -120,6 +120,46 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
         return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
     }
 
+    // ── metadatos-dispositivo (§7.1): ficha técnica del dispositivo y mediciones de reloj ──
+    // 200 con el caso completo; errores { error, code }: 409 case_not_editable / device_mismatch / no_device_details,
+    // 400 invalid_device_details.
+
+    [HttpPut("{id}/device-details")]
+    [ProducesResponseType<Case>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SaveDeviceDetails(string id, [FromBody] SaveDeviceDetailsRequest request,
+        CancellationToken ct)
+    {
+        var result = await caseService.SaveDeviceDetailsAsync(id, request, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    [HttpPut("{id}/device-details/clock")]
+    [ProducesResponseType<Case>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SaveDeviceClock(string id, [FromBody] SaveDeviceClockRequest request,
+        CancellationToken ct)
+    {
+        var result = await caseService.SaveDeviceClockAsync(id, request, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    [HttpPut("{id}/device-details/options")]
+    [ProducesResponseType<Case>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SetDeviceDetailsOptions(string id, [FromBody] DeviceDetailsOptionsRequest request,
+        CancellationToken ct)
+    {
+        var result = await caseService.SetDeviceDetailsOptionsAsync(id, request, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
     [HttpGet("{id}/report-texts/defaults")]
     [ProducesResponseType<ReportTextsDto>(StatusCodes.Status200OK)]
     public async Task<IActionResult> ReportTextDefaults(string id, CancellationToken ct)

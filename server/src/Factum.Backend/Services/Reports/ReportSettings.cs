@@ -12,6 +12,8 @@ public interface IReportSettings
     string DomicilioConstituido { get; }
     /// <summary><c>Report:EncryptZip</c>: si el ZIP de evidencia se cifra con AES-256.</summary>
     bool EncryptZip { get; }
+    /// <summary><c>Report:ClockSkewWarningSeconds</c> ya validado (1…86400; si no, 60). metadatos-dispositivo D6.</summary>
+    int ClockSkewWarningSeconds { get; }
     string DefaultOperacionesRealizadas { get; }
     string DefaultAseguramientoEvidencia { get; }
     string DefaultNotasTecnicas { get; }
@@ -26,12 +28,15 @@ public interface IReportSettings
 public sealed class ReportSettings : IReportSettings
 {
     public const int MaxDomicilioLength = 300;
+    public const int DefaultClockSkewWarningSeconds = 60;
+    public const int MaxClockSkewWarningSeconds = 86400;
     private static readonly TimeSpan FallbackOffset = TimeSpan.FromHours(-3);
 
     public TimeZoneInfo Zone { get; }
     public string ZoneLabel { get; }
     public string DomicilioConstituido { get; }
     public bool EncryptZip { get; }
+    public int ClockSkewWarningSeconds { get; }
     public string DefaultOperacionesRealizadas { get; }
     public string DefaultAseguramientoEvidencia { get; }
     public string DefaultNotasTecnicas { get; }
@@ -78,6 +83,14 @@ public sealed class ReportSettings : IReportSettings
         EncryptZip = o.EncryptZip;
         if (!EncryptZip)
             logger.LogWarning("Report: EncryptZip=false; los ZIP de evidencia se generan SIN cifrar");
+
+        ClockSkewWarningSeconds = o.ClockSkewWarningSeconds;
+        if (ClockSkewWarningSeconds is < 1 or > MaxClockSkewWarningSeconds)
+        {
+            logger.LogWarning("Report: ClockSkewWarningSeconds fuera de rango; se usa {Default}",
+                DefaultClockSkewWarningSeconds);
+            ClockSkewWarningSeconds = DefaultClockSkewWarningSeconds;
+        }
 
         // El override de AseguramientoEvidencia gana en los dos modos (DT5): si el estudio lo
         // define, es responsable de que hable (o no) del cifrado.

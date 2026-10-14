@@ -69,4 +69,8 @@ public static class AgentErrorCodes
     public const string ScreenOff = "screen_off";
     /// <summary>409 de screenshot y record/start (pulido-post-qa-final D9): la pantalla del Android está bloqueada.</summary>
     public const string ScreenLocked = "screen_locked";
+
+    // ── Ficha técnica del dispositivo (metadatos-dispositivo §7.2) ──
+    /// <summary>404 de <c>GET /devices/{serial}/details</c> y <c>/clock</c>: <c>adb get-state</c> no dio <c>device</c>.</summary>
+    public const string DeviceNotFound = "device_not_found";
 }

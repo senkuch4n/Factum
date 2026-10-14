@@ -56,10 +56,32 @@ BODY_PLACEHOLDERS = {
     "{nombreArchivo}", "{hashArchivo}",
     # sellado-tiempo §8.2: bloque explicativo debajo de la tabla de hashes.
     "{descripcionSelloTiempo}",
+    # metadatos-dispositivo §9.1: ficha tecnica del dispositivo (bloque {#fichaTecnica} despues de "Titular").
+    "{fechaFichaTecnica}", "{horaFichaTecnica}",
+    "{fichaSistemaOperativo}", "{fichaCompilacion}", "{fichaParcheSeguridad}", "{fichaNumeroSerie}",
+    "{fichaIdentificadorConexion}", "{fichaKernel}", "{fichaOperadorSim}", "{fichaEstadoArranque}",
+    "{fichaZonaHoraria}", "{fichaWifi}", "{descripcionRelojDispositivo}",
 }
 BODY_BLOCKS = {"organismoTribunal", "objetoInforme", "capturasNombreDispositivo",
                "descripcionNotasTecnicas", "descripcionReserva", "anexoCapturas",
-               "selloTiempo"}
+               "selloTiempo", "fichaTecnica"}
+
+# metadatos-dispositivo §9.1: filas de la ficha tecnica, en orden ("**Etiqueta:** {placeholder}"). La v6 las ubica
+# por el placeholder (FICHA_ROWS) y las convierte en una segunda ficha etiqueta/valor.
+FICHA_ROWS = [
+    ("sistema-operativo", "Sistema operativo:", "{fichaSistemaOperativo}"),
+    ("compilacion", "Compilación:", "{fichaCompilacion}"),
+    ("parche", "Parche de seguridad:", "{fichaParcheSeguridad}"),
+    ("serie", "Número de serie:", "{fichaNumeroSerie}"),
+    ("conexion", "Identificador de conexión:", "{fichaIdentificadorConexion}"),
+    ("kernel", "Kernel:", "{fichaKernel}"),
+    ("operador-sim", "Operador / SIM:", "{fichaOperadorSim}"),
+    ("arranque", "Estado de arranque:", "{fichaEstadoArranque}"),
+    ("zona-horaria", "Zona horaria:", "{fichaZonaHoraria}"),
+    ("wifi", "Wifi:", "{fichaWifi}"),
+]
+FICHA_INTRO = ("Datos técnicos obtenidos automáticamente por Factum mediante consultas de solo lectura al "
+               "dispositivo el {fechaFichaTecnica} a las {horaFichaTecnica} horas:")
 HEADER_PLACEHOLDERS = {"{LOGO_ORGANIZACION:5x1.5}", "{ORGANIZACION}", "{CONTACTO}"}
 HEADER_BLOCKS = {"MEMBRETE"}
 
@@ -319,7 +341,21 @@ def build_document(doc, ids):
     new["15EF193E"] = rebuild("15EF193E", "**Marca y modelo:** {marcaModeloDispositivo}")
     new["490B4C01"] = rebuild("490B4C01", "**IMEI:** {imeiDispositivo}")
     new["28E6822B"] = rebuild("28E6822B", "**Línea:** {lineaDispositivo}")
-    new["2E1C810A"] = rebuild("2E1C810A", "**Titular:** {titularDispositivo}")
+    # metadatos-dispositivo §9.1: bloque {#fichaTecnica} DESPUES de "Titular" (queda entre esa fila y
+    # {capturasImeiModelo}). Sin ficha, ReportService borra el bloque entero (B-R2) y el informe queda como antes.
+    titular = paras["2E1C810A"]
+    titular_ppr, titular_rpr = get_ppr(titular), base_rpr(titular)
+
+    def ficha_para(seed, markup, ppr):
+        return '<w:p w14:paraId="%s">%s%s</w:p>' % (ids.new("a6:ficha-" + seed), ppr,
+                                                     build_runs(markup, titular_rpr))
+
+    ficha = (marker("{#fichaTecnica}", "ficha-open")
+             + ficha_para("intro", FICHA_INTRO, norm_ppr)
+             + "".join(ficha_para(seed, "**%s** %s" % (label, ph), titular_ppr) for seed, label, ph in FICHA_ROWS)
+             + ficha_para("reloj", "{descripcionRelojDispositivo}", norm_ppr)
+             + marker("{/fichaTecnica}", "ficha-close"))
+    new["2E1C810A"] = rebuild("2E1C810A", "**Titular:** {titularDispositivo}") + ficha
     new["07342EEC"] = rebuild("07342EEC", "{capturasImeiModelo}",
                               ppr=set_jc(get_ppr(paras["07342EEC"]), "center"))
     new["1FD00BD3"] = (

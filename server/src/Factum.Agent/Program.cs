@@ -135,6 +135,9 @@ builder.Services.AddSingleton<IRecordingStateSource>(sp => sp.GetRequiredService
 builder.Services.AddSingleton<IRecordingStateSource>(sp => sp.GetRequiredService<IosService>());
 builder.Services.AddSingleton<RecordingRegistry>();
 builder.Services.AddSingleton<IAndroidScreenProbe, AndroidScreenProbe>(); // pulido-post-qa-final D9
+// metadatos-dispositivo §7.2: ficha técnica y reloj del dispositivo (solo lectura, bajo demanda).
+builder.Services.AddSingleton<Factum.Agent.Services.DeviceDetails.IDeviceDetailsService,
+    Factum.Agent.Services.DeviceDetails.DeviceDetailsService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<OperationTracker>();
 builder.Services.AddSingleton<IWebcamService, WebcamService>();

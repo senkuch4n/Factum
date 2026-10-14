@@ -43,12 +43,12 @@ public sealed class TatanaMinVersionTests
     public void Validate_Rechaza(string raw) =>
         Assert.Equal("Tatana:MinVersion tiene que ser X.Y.Z o vacío", TatanaOptions.Validate(raw));
 
-    private static JsonElement PublicConfig(string? minVersion)
+    private static JsonElement PublicConfig(string? minVersion, int clockSkewWarningSeconds = 60)
     {
         var controller = new ConfigController(
             new ReportTestSupport.FakeBranding(new BrandingSnapshot(null, [], null)),
             new SupportSettings(false, new SupportIntegrationOptions(), [], []),
-            new ReportTestSupport.FakeSettings(),
+            new ReportTestSupport.FakeSettings { ClockSkewWarningSeconds = clockSkewWarningSeconds },
             Options.Create(new TatanaOptions { MinVersion = minVersion }),
             new TimestampHarness(enabled: false).Service);
         var ok = Assert.IsType<OkObjectResult>(controller.Public());
@@ -64,8 +64,16 @@ public sealed class TatanaMinVersionTests
         Assert.Equal(JsonValueKind.Null, v.ValueKind);
         Assert.Equal(
             ["organization_name", "organization_logo_url", "support_enabled", "encrypt_zip", "tatana_min_version",
-                "timestamping_enabled"],
+                "timestamping_enabled", "clock_skew_warning_seconds"],
             root.EnumerateObject().Select(p => p.Name).ToArray());
+    }
+
+    // metadatos-dispositivo §8.4: el umbral ya validado (ReportSettings) sale último en la config pública.
+    [Fact]
+    public void PublicConfig_UmbralDeReloj()
+    {
+        Assert.Equal(60, PublicConfig("").GetProperty("clock_skew_warning_seconds").GetInt32());
+        Assert.Equal(120, PublicConfig("", 120).GetProperty("clock_skew_warning_seconds").GetInt32());
     }
 
     [Fact]

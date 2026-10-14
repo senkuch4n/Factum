@@ -3,7 +3,7 @@
 import { useCallback, useId, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "primereact/button";
 import { Tag } from "primereact/tag";
-import { AlertTriangle, CheckCircle2, ChevronDown, FileText, Hash, Maximize2, User } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Cable, Fingerprint, Hash, Maximize2, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isImeiMissing } from "@/lib/pericial";
 import {
@@ -17,6 +17,8 @@ import { CaptureControls } from "@/components/PhoneFrame";
 import { ConnectionIndicator, DisconnectedBanner } from "./ConnectionIndicator";
 import { ImeiMissingNotice } from "./ImeiMissingNotice";
 import { DeviceStage } from "./DeviceStage";
+import { ClockSkewWarning, DeviceClockLine } from "@/components/device-details/DeviceClockLine";
+import { viewExceedsThreshold, type DeviceDetailsUi } from "@/lib/device-details";
 
 export interface ShotState {
   src: string | null;
@@ -48,6 +50,9 @@ interface Props {
   shot: ShotState;
   onRefreshShot: () => void;
   onZoomShot: () => void;
+  /** Ficha técnica y reloj del dispositivo (metadatos-dispositivo §10.2). */
+  deviceDetails: DeviceDetailsUi;
+  onOpenDeviceDetails: () => void;
 }
 
 const CARATULA_CLAMP = 140;
@@ -97,6 +102,7 @@ const SHORT_COMPACT = "[@media(max-height:799px)]:py-2 [@media(max-height:799px)
 export function CaseSummaryCard({
   variant, form, sections, showPerfil, onGoToSection, activeSection, flashKey,
   device, osLabel, isIOS, imeiDisplay, imeiManual, connection, shot, onRefreshShot, onZoomShot,
+  deviceDetails, onOpenDeviceDetails,
 }: Props) {
   const aside = variant === "aside";
   const [caratulaOpen, setCaratulaOpen] = useState(false);
@@ -171,6 +177,9 @@ export function CaseSummaryCard({
   const missing = index.reduce((n, s) => n + s.missing, 0);
   const model = `${device.manufacturer} ${device.model}`.trim();
   const imeiOk = !isImeiMissing(imeiDisplay);
+  const skewWarning = viewExceedsThreshold(deviceDetails.view, deviceDetails.thresholdSeconds);
+  const serialRow = deviceDetails.view?.rows.find(r => r.key === "serial_number");
+  const serialNumber = serialRow?.value ?? null;
 
   // Partes: solo las cargadas (las vacías son ruido; el índice ya dice qué falta).
   const partes = ([
@@ -264,6 +273,10 @@ export function CaseSummaryCard({
           )}
         </div>
 
+        {/* Reloj del celular + "Ver datos técnicos" (siempre visible; la ficha completa va en un diálogo, D-T11). */}
+        <DeviceClockLine ui={deviceDetails} onOpenDetails={onOpenDeviceDetails} className="mt-1 shrink-0" />
+        {!aside && skewWarning && <ClockSkewWarning thresholdSeconds={deviceDetails.thresholdSeconds} className="mt-2" />}
+
         {aside && (
           // < 720 px de alto los avisos quedan solo para el lector: el indicador "Desconectado", el motivo
           // de "Actualizar captura" y "IMEI no detectado" ya lo dicen a la vista (la ficha no desborda).
@@ -271,6 +284,7 @@ export function CaseSummaryCard({
             {/* 720–799 px de alto: solo el título de cada aviso (el detalle queda para el lector). */}
             <DisconnectedBanner connection={connection} className={SHORT_COMPACT} />
             {imeiManual && <ImeiMissingNotice className={SHORT_COMPACT} />}
+            {skewWarning && <ClockSkewWarning thresholdSeconds={deviceDetails.thresholdSeconds} className={SHORT_COMPACT} />}
           </div>
         )}
         </div>
@@ -428,7 +442,9 @@ export function CaseSummaryCard({
           </button>
           <dl id={specsId} hidden={!specsOpen} className="m-0">
             <SpecRow icon={Hash} label="IMEI" value={imeiOk ? imeiDisplay : "—"} mono accent={!imeiManual} />
-            <SpecRow icon={FileText} label="Serial" value={device.serial.slice(0, 24)} mono />
+            {/* El serial ADB / UDID es el identificador de conexión, no necesariamente el número de serie. */}
+            <SpecRow icon={Cable} label="Id. de conexión" value={device.serial.slice(0, 24)} mono />
+            {serialNumber && <SpecRow icon={Fingerprint} label="N.° de serie" value={serialNumber} mono />}
             {device.name && device.name !== device.model && (
               <SpecRow icon={User} label="Nombre" value={device.name} />
             )}

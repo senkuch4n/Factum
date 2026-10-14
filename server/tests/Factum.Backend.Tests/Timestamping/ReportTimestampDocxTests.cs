@@ -32,6 +32,7 @@ public sealed class ReportTimestampDocxTests : IDisposable
         public string ZoneLabel => "AR (UTC-03:00)";
         public string DomicilioConstituido => "";
         public bool EncryptZip => false;
+        public int ClockSkewWarningSeconds => 60;
         public string DefaultOperacionesRealizadas => "";
         public string DefaultAseguramientoEvidencia => "";
         public string DefaultNotasTecnicas => "";

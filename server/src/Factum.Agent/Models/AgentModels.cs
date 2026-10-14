@@ -81,6 +81,13 @@ public sealed class AgentOptions
     /// </summary>
     public string? MockAndroidScreenState { get; set; }
 
+    /// <summary>
+    /// Solo con <see cref="Mock"/> = true: diferencia (segundos, dispositivo − PC) que informa el reloj de la ficha
+    /// técnica simulada (metadatos-dispositivo §4.7), para probar el aviso de umbral sin celular. Default 0. No va en
+    /// appsettings.json: variable de entorno (<c>Agent__MockDeviceClockSkewSeconds</c>), CLI o appsettings.Local.json.
+    /// </summary>
+    public int MockDeviceClockSkewSeconds { get; set; }
+
     /// <summary>Ruta absoluta de la carpeta base del ZIP (config o default por SO).</summary>
     public string ResolveEvidenceDirectory() =>
         ResolveEvidenceDirectory(EvidenceDirectory, DataDirectory, OperatingSystem.IsWindows(),

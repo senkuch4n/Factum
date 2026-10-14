@@ -38,6 +38,12 @@ public interface IIosService
     string? AirplayUnavailableReason { get; }
     // §4.3: "enabled" | "restarting" | "manual_required".
     Task<string> EnableDeveloperModeAsync(string udid, CancellationToken ct = default);
+
+    /// <summary>
+    /// metadatos-dispositivo §4.3: stdout de <c>ios_helper.py details --udid U</c> (lista blanca de lockdown + 3
+    /// muestras de hora). Solo lectura: no necesita Modo Desarrollador ni DDI. Error → <see cref="IosException"/>.
+    /// </summary>
+    Task<string> RunDetailsHelperAsync(string udid, CancellationToken ct = default);
 }
 
 /// <summary>Resultado del stop de una grabación iOS (ios-grabacion-larga §5.4; grabacion-android-robusta §5.9).</summary>
@@ -66,6 +72,7 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
     private static readonly TimeSpan PrepareTimeout    = TimeSpan.FromSeconds(120);
     private static readonly TimeSpan ScreenshotTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan DevModeTimeout    = TimeSpan.FromSeconds(60);
+    internal static readonly TimeSpan DetailsTimeout   = TimeSpan.FromSeconds(30);
     private const double DvtFps = 2.0;
 
     private readonly bool _mock;
@@ -324,6 +331,16 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
         if (status == "restarting") _prepared.TryRemove(udid, out _);
         _log.LogInformation("iPhone {Udid}: Modo Desarrollador → {Status}", udid, status);
         return status;
+    }
+
+    // ── Ficha técnica (metadatos-dispositivo §4.3) ────────────────────────────
+
+    public async Task<string> RunDetailsHelperAsync(string udid, CancellationToken ct = default)
+    {
+        RequirePython();
+        await EnsureAppleServiceAsync(ct);
+        // Sin EnsurePreparedAsync: GetValue de lockdown no necesita Modo Desarrollador ni DDI.
+        return await RunHelperAsync("details", ["--udid", udid], DetailsTimeout, ct);
     }
 
     // ── Screenshot (§6.3) ─────────────────────────────────────────────────────

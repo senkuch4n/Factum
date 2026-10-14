@@ -138,6 +138,9 @@ public sealed class InMemoryCaseCounter : ICaseRepository
         string zipFilename, string pdfFilename, string reportHash, ZipLocation zipLocation,
         string timestampMode, CancellationToken ct = default) => throw No();
     public Task MarkAgentGenerationFailedAsync(string id, CancellationToken ct = default) => throw No();
+    public Task<bool> SetDeviceDetailsAsync(string id, DeviceDetails details, CancellationToken ct = default) => throw No();
+    public Task<bool> SetClockCloseAsync(string id, ClockMeasurement measurement, CancellationToken ct = default) => throw No();
+    public Task<bool> SetIncludeSsidAsync(string id, bool include, CancellationToken ct = default) => throw No();
 }
 
 /// <summary>Temporal predecible y distinta en cada llamada (14 caracteres, cumple el mínimo de 10).</summary>

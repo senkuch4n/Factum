@@ -49,6 +49,8 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
             // pantalla apagada o bloqueada; skip_screen_check los saltea (pulido-post-qa-final D9). La web no lo lee.
             // case_seals_v1: PUT /cases/{id}/zip/seals copia los .tsr y el LEEME a <carpeta del caso>/sellos/
             // (sellado-tiempo §7.3); sin esto la web ofrece solo la descarga.
+            // device_details_v1: GET /devices/{serial}/details (ficha técnica de solo lectura + reloj) y GET
+            // /devices/{serial}/clock (metadatos-dispositivo §7.2); sin esto la web crea el caso sin ficha.
             capabilities = Capabilities,
         });
     }
@@ -70,7 +72,8 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
 
     internal static readonly string[] Capabilities =
         ["case_evidence_v1", "ios_developer_mode_v1", "real_version_v1", "agent_state_v1", "video_postprocess_v1",
-         "recording_state_v1", "event_attribution_v1", "device_preview_v1", "screen_check_v1", "case_seals_v1"];
+         "recording_state_v1", "event_attribution_v1", "device_preview_v1", "screen_check_v1", "case_seals_v1",
+         "device_details_v1"];
 
     /// <summary><c>--mode</c> gana (D-T15); sin él, la heurística de <c>tools/</c> (portátil).</summary>
     internal static string ResolveMode(AgentOptions o) => o.InstallMode ?? (IsPortable() ? "portable" : "installed");

@@ -142,6 +142,9 @@ STYLE_ORDER = ["w:name", "w:aliases", "w:basedOn", "w:next", "w:link", "w:autoRe
                "w:hidden", "w:uiPriority", "w:semiHidden", "w:unhideWhenUsed", "w:qFormat",
                "w:locked", "w:personal", "w:personalCompose", "w:personalReply", "w:rsid",
                "w:pPr", "w:rPr", "w:tblPr", "w:trPr", "w:tcPr", "w:tblStylePr"]
+# metadatos-dispositivo §9.2: filas de la ficha tecnica, ubicadas por el placeholder que contienen (no por paraId).
+FICHA_ROWS = [ph for _, _, ph in v4.FICHA_ROWS]
+FICHA_OPEN, FICHA_CLOSE = "{#fichaTecnica}", "{/fichaTecnica}"
 # Anclas de portada que usa ReportService (B-R2c, SDD #62 §6.4).
 COVER_SUBTITLE = "Inspección técnica de dispositivo móvil"
 
@@ -541,6 +544,38 @@ def build_title_doc(p):
     return p
 
 
+def ficha_rows(paras, order):
+    """paraIds de las filas de la ficha tecnica: una por placeholder, en orden, consecutivas y entre los marcadores."""
+    def find(text):
+        hits = [pid for pid in order if text in para_text(paras[pid])]
+        if len(hits) != 1:
+            raise Falla("ancla ficha")
+        return hits[0]
+    rows = [find(ph) for ph in FICHA_ROWS]
+    i = order.index(rows[0])
+    if order[i:i + len(rows)] != rows:
+        raise Falla("ancla ficha")
+    o, c = order.index(find(FICHA_OPEN)), order.index(find(FICHA_CLOSE))
+    if not (o < i and i + len(rows) <= c):
+        raise Falla("ancla ficha")
+    return rows
+
+
+def check_ficha(doc, fails):
+    """Una sola tabla entre {#fichaTecnica} y {/fichaTecnica}, con las 10 filas."""
+    o, c = doc.find(FICHA_OPEN), doc.find(FICHA_CLOSE)
+    if not (0 <= o < c):
+        fails.add("FALLA:ficha")
+        return
+    seg = doc[o:c]
+    tbls = re.findall(r"<w:tbl>.*?</w:tbl>", seg, re.S)
+    if len(tbls) != 1 or len(re.findall(r"<w:tr\b", tbls[0])) != len(FICHA_ROWS):
+        fails.add("FALLA:ficha")
+        return
+    if any(ph not in "".join(re.findall(r'<w:t(?:\s[^>]*)?>([^<]*)</w:t>', tbls[0])) for ph in FICHA_ROWS):
+        fails.add("FALLA:ficha")
+
+
 def build_document(doc, ids):
     doc = v5.tnr_to_arial(doc)
     paras, order = {}, []
@@ -565,6 +600,12 @@ def build_document(doc, ids):
     for title, intro, rows, _ in BLOCKS:
         new[title] = new[title] + (paras[intro] if intro else "") + data_card(ids, paras, rows)
         drop.update(([intro] if intro else []) + rows)
+
+    # metadatos-dispositivo §9.2: las 10 filas de la ficha tecnica como segunda ficha etiqueta/valor (mismo
+    # data_card). La intro y el parrafo del reloj quedan como cuerpo; los marcadores, como parrafos hermanos.
+    ficha = ficha_rows(paras, order)
+    new[ficha[0]] = data_card(ids, paras, ficha)
+    drop.update(ficha[1:])
 
     # Anexo: mismo aspecto que un titulo, centrado, sin numero ni filete.
     new[ANEXO_TITLE] = restyle_runs(paras[ANEXO_TITLE], TITLE_RPR)
@@ -896,6 +937,8 @@ def check(src, dst):
 
     # 9. #62 (informe-formato-fixes).
     check_v62(doc, sty, f2, xml_parts, fails)
+    # 10. metadatos-dispositivo §9.2: segunda ficha (10 filas) entre los marcadores de la ficha tecnica.
+    check_ficha(doc, fails)
     return sorted(fails)
 
 

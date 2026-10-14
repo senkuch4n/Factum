@@ -24,6 +24,7 @@ internal static class ReportTestSupport
         public string ZoneLabel => "UTC";
         public string DomicilioConstituido => "";
         public bool EncryptZip => false;
+        public int ClockSkewWarningSeconds { get; init; } = 60;
         public string DefaultOperacionesRealizadas => "";
         public string DefaultAseguramientoEvidencia => "";
         public string DefaultNotasTecnicas => "";

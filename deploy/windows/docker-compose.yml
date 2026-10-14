@@ -55,6 +55,8 @@ services:
       Timestamping__Enabled: ${FACTUM_SELLADO_HABILITADO:-true}
       Timestamping__TimeoutSeconds: ${FACTUM_SELLADO_TIMEOUT_SEGUNDOS:-10}
       Timestamping__MaxAttempts: ${FACTUM_SELLADO_MAX_INTENTOS:-12}
+      # Umbral del aviso por diferencia de reloj celular/PC (metadatos-dispositivo, D6). Segundos.
+      Report__ClockSkewWarningSeconds: ${FACTUM_RELOJ_UMBRAL_SEGUNDOS:-60}
     volumes:
       # Sintaxis larga: evita el problema del "C:" en la corta y, con create_host_path: false,
       # que Docker cree una CARPETA appsettings.Local.json si falta el archivo.

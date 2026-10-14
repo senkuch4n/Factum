@@ -270,3 +270,16 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-14 — #78 OK del usuario -> aprobada; commit, push y PR contra develop.
 - 2026-10-14 — #78 rama pusheada; PR en espera. Lanzado agente de QA para los pasos 1–7 de §13.2 (Samsung real, openssl, instancias :8081/:8082).
 - 2026-10-14 — QA manual #78 pasos 1–7: 7 OK / 0 FALLA (docs/qa/2026-10-14/sellado-tiempo-manual.md). Datos QA borrados por _id. PR contra develop.
+- 2026-10-14 — PR #82 (#78) mergeado a develop.
+- 2026-10-14 — Usuario pidió promover develop→main (#78). PR de promoción abierto.
+- 2026-10-14 — PR #83 develop→main mergeado (7a11e90d). Deploy run 38582343573 en curso.
+- 2026-10-14 — Deploy prod OK (run 38582343573) con #78; sellado apagado en prod. #78 cerrada.
+- 2026-10-14 — Tomada #79, rama feat/metadatos-dispositivo desde origin/develop, afinando; lanzado afinador.
+- 2026-10-14 — #79 afinada -> docs/hu-metadatos-dispositivo.md (12 dudas). Por validar.
+- 2026-10-14 — #79 validada (D1–D12 recomendadas). en_arquitectura; lanzado architect.
+- 2026-10-14 — #79 arquitectura_lista -> Refactorizaciones/metadatos-dispositivo.md (sin decisiones pendientes). implementando; lanzados implementer-backend y -frontend.
+- 2026-10-14 — #79 implementer-frontend done -> progress/impl_frontend_metadatos-dispositivo.md (sin prueba visual). Esperando backend.
+- 2026-10-14 — #79 implementer-backend done -> progress/impl_backend_metadatos-dispositivo.md. en_revision; lanzado reviewer.
+- 2026-10-14 — #79 reviewer: aprobada -> progress/review_metadatos-dispositivo.md (Agent 704, Backend 1340 OK). Backend y Tatana locales reiniciados con la rama; lanzado agente de QA para la prueba manual §15.2.
+- 2026-10-14 — QA manual #79: 11 OK / 0 FALLA / 4 no verificables (docs/qa/2026-10-14/metadatos-dispositivo-manual.md). Esperando OK del usuario para PR.
+- 2026-10-14 — #79 OK del usuario -> aprobada; commit, push y PR contra develop.
