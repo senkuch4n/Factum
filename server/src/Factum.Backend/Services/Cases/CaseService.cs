@@ -89,6 +89,19 @@ public interface ICaseService
     /// </summary>
     Task<Result<GenerateResponse>> FinishGenerationAsync(string id, string officerDni, string? contentType,
         Stream body, CancellationToken ct = default);
+
+    // ── metadatos-dispositivo (§7.1) ─────────────────────────────────────────
+    // Ninguno lanza: los rechazos traen Details con code (DeviceDetailsErrorCodes). Devuelven el caso recargado.
+
+    /// <summary>Guarda la ficha técnica (PUT …/device-details): sanea, recalcula el reloj y deja el evento.</summary>
+    Task<Result<Case>> SaveDeviceDetailsAsync(string id, SaveDeviceDetailsRequest request, string officerDni,
+        CancellationToken ct = default);
+    /// <summary>Medición de reloj de cierre (PUT …/device-details/clock).</summary>
+    Task<Result<Case>> SaveDeviceClockAsync(string id, SaveDeviceClockRequest request, string officerDni,
+        CancellationToken ct = default);
+    /// <summary>Flag del SSID en el informe (PUT …/device-details/options). Sin evento (D7).</summary>
+    Task<Result<Case>> SetDeviceDetailsOptionsAsync(string id, DeviceDetailsOptionsRequest request, string officerDni,
+        CancellationToken ct = default);
 }
 
 public sealed partial class CaseService : ICaseService
@@ -772,6 +785,9 @@ public sealed partial class CaseService : ICaseService
 
         try
         {
+            // metadatos-dispositivo D-T7: el flujo viejo no mide el reloj al cerrar; una medición de cierre que
+            // hubiera quedado no entra al informe (solo en memoria).
+            if (cas.DeviceDetails is not null) cas.DeviceDetails.ClockClose = null;
             var result = await _reports.GenerateAsync(cas, files, caseDir, ct);
             var now = DateTime.UtcNow;
 

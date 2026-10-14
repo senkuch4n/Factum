@@ -17,7 +17,9 @@ export type {
   CaseStats, BreakdownDimension, BreakdownBucket, CaseBreakdown,
   CaseEvent, CaseEventType, CaseEventDetail,
   ReportVersionTrigger, ReportTextVersion, ReportTextVersionTexts,
+  DeviceDetails, DeviceDetailField, ClockMeasurement, PcServerProbe, SaveDeviceDetailsRequest, SaveDeviceClockRequest,
 } from "@/lib/api";
+export type { DeviceDetailKey, DeviceDetailReason, ClockReason, PcServerReason } from "@/lib/device-details";
 /**
  * Respuesta de login, change-password y refresh (sesion-larga §6.3 / §7.1).
  * Duraciones en segundos, relativas a la respuesta. Opcionales: un backend
@@ -37,6 +39,7 @@ export type {
   VideoVariantStatus, VideoVariantState, VideoVariantReason, RecordingStoppedData,
   RecordingValidation, RecordingValidationStatus, RecordingStateEntry, UnclaimedRecording, RecordingPhase,
   RecordingStartedData, AgentRecordingState, ScreenshotTakenData, PhotoTakenData, AgentAttribution,
+  AgentDetailField, AgentDeviceClock, AgentDeviceDetails, AgentDeviceClockResponse,
 } from "@/lib/agent";
 
 /**

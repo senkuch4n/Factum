@@ -10,6 +10,7 @@ import {
   expireSession, getStoredToken, hadSession, hasActiveLongOps, sessionState, setSessionUser, writeSession,
   type AuthEventDetail,
 } from "./session";
+import type { ClockReason, DeviceDetailKey, DeviceDetailReason, PcServerReason } from "./device-details";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
@@ -556,7 +557,11 @@ export type CaseEventType =
   /** sellado-tiempo: sello RFC 3161 obtenido para la evidencia, el ZIP o el informe. */
   | "timestamp_granted"
   /** sellado-tiempo: fallo al pedir un sello (primer intento, respuesta inválida o abandono). */
-  | "timestamp_failed";
+  | "timestamp_failed"
+  /** metadatos-dispositivo: ficha técnica registrada (alta, retoma o "Volver a leer"). Sin SSID ni valores. */
+  | "device_details_recorded"
+  /** metadatos-dispositivo: medición de reloj al generar (`clock_kind = "close"`). */
+  | "device_clock_measured";
 
 /**
  * Detalle acotado de un `CaseEvent`: cada campo solo aplica a ciertos tipos y el
@@ -593,6 +598,17 @@ export interface CaseEventDetail {
   attempt?: number;
   /** `timestamp_failed`: `true` = se abandonó tras agotar los intentos. */
   final?: boolean;
+  /** `device_details_recorded`: datos no disponibles (sin `not_applicable` ni `not_connected`). */
+  unavailable_count?: number;
+  /** `device_details_recorded`: `true` si ya había ficha ("Volver a leer"). */
+  reread?: boolean;
+  /** `device_details_recorded` / `device_clock_measured`. */
+  clock_kind?: "start" | "close";
+  /** Reloj del dispositivo − reloj de la PC (ms); ausente si no hubo hora (el motivo va en `reason`). */
+  device_minus_pc_ms?: number;
+  clock_margin_ms?: number;
+  /** PC − servidor (ms); ausente si no se midió. */
+  pc_minus_server_ms?: number;
 }
 
 /** Un hito de la línea de tiempo del caso (`GET /api/cases/{id}/events`). */
@@ -958,6 +974,60 @@ export interface Case {
    * `null`/ausente = caso anterior a esa HU, flujo viejo o borrador.
    */
   timestamp_mode?: "enabled" | "disabled" | null;
+  /**
+   * metadatos-dispositivo: ficha técnica leída por Tatana. `null`/ausente = caso
+   * anterior a la HU, alta con un Tatana sin `device_details_v1` o lectura sin registrar.
+   */
+  device_details?: DeviceDetails | null;
+}
+
+/* ── Ficha técnica del dispositivo (metadatos-dispositivo, SDD §8.2-§8.3) ── */
+
+export interface DeviceDetailField { value?: string | null; reason?: DeviceDetailReason | null }
+
+/** Una medición de reloj registrada (`clock_start` / `clock_close`). */
+export interface ClockMeasurement {
+  kind: "start" | "close"; recorded_at: string; reason?: ClockReason | null;
+  pc_before?: string | null; pc_after?: string | null; device_time?: string | null; resolution_ms?: number | null;
+  device_minus_pc_ms?: number | null; margin_ms?: number | null;
+  pc_minus_server_ms?: number | null; pc_server_margin_ms?: number | null; pc_server_reason?: PcServerReason | null;
+}
+
+export interface DeviceDetails {
+  read_at: string; platform: "android" | "ios"; connection_id: string; agent_version: string;
+  fields: Partial<Record<DeviceDetailKey, DeviceDetailField>>;
+  clock_start?: ClockMeasurement | null; clock_close?: ClockMeasurement | null;
+  include_ssid_in_report: boolean;
+}
+
+/** Sondeo NTP PC↔servidor (§5.2): ISO con ms; `server_time` tal como lo devolvió la API. */
+export interface PcServerProbe { pc_before: string; server_time: string; pc_after: string }
+
+/** `clock` del `PUT`: los valores crudos de Tatana, sin parsear. La API recalcula todo. */
+export interface DeviceClockRequest {
+  pc_before?: string | null; pc_after?: string | null; device_time?: string | null;
+  resolution_ms?: number | null; reason?: string | null;
+}
+
+/** `PUT /api/cases/{id}/device-details`. */
+export interface SaveDeviceDetailsRequest {
+  platform: "android" | "ios";
+  connection_id: string;
+  agent_version: string;
+  fields: Partial<Record<DeviceDetailKey, { value?: string | null; reason?: string | null }>>;
+  clock: DeviceClockRequest;
+  /** Opcional: sin él, la API registra `not_measured`. */
+  pc_server_probe?: PcServerProbe;
+  /** Opcional: sin él, se conserva lo guardado (o `false`). */
+  include_ssid_in_report?: boolean;
+}
+
+/** `PUT /api/cases/{id}/device-details/clock` (medición de cierre). */
+export interface SaveDeviceClockRequest {
+  connection_id: string;
+  agent_version: string;
+  clock: DeviceClockRequest;
+  pc_server_probe?: PcServerProbe;
 }
 
 /** Config pública del backend (`GET /api/config/public`, sin auth). */
@@ -977,6 +1047,8 @@ export interface PublicConfig {
   tatana_min_version?: string | null;
   /** sellado-tiempo: `true` si el backend sella con una autoridad RFC 3161. Falta en un backend anterior. */
   timestamping_enabled?: boolean;
+  /** metadatos-dispositivo: umbral (s) del aviso de diferencia de reloj. Falta en un backend anterior (= 60). */
+  clock_skew_warning_seconds?: number;
 }
 
 /** Modo de autenticación del backend (`GET /api/auth/mode`). */
@@ -1467,6 +1539,28 @@ export const api = {
     const token = getToken();
     const params = token ? `?token=${encodeURIComponent(token)}` : "";
     return `${BACKEND_URL}/api/cases/${caseId}/timestamps/bundle${params}`;
+  },
+
+  /* ── Ficha técnica del dispositivo (metadatos-dispositivo, SDD §7.1) ── */
+
+  /** Hora del servidor para el sondeo NTP (§5.2). */
+  async getServerTime(): Promise<{ server_time: string }> {
+    return requestSafe<{ server_time: string }>("/api/time", { cache: "no-store" });
+  },
+
+  /** Registra (o vuelve a registrar) la ficha. Devuelve el caso completo. */
+  async saveDeviceDetails(caseId: string, body: SaveDeviceDetailsRequest): Promise<Case> {
+    return requestSafe<Case>(`/api/cases/${caseId}/device-details`, { method: "PUT", body: JSON.stringify(body) });
+  },
+
+  /** Medición de reloj de cierre (al generar). 409 `no_device_details` si el caso no tiene ficha. */
+  async saveDeviceClock(caseId: string, body: SaveDeviceClockRequest): Promise<Case> {
+    return requestSafe<Case>(`/api/cases/${caseId}/device-details/clock`, { method: "PUT", body: JSON.stringify(body) });
+  },
+
+  /** Incluir o no el SSID en el informe (D7). Sin evento de trazabilidad. */
+  async setDeviceDetailsOptions(caseId: string, body: { include_ssid_in_report: boolean }): Promise<Case> {
+    return requestSafe<Case>(`/api/cases/${caseId}/device-details/options`, { method: "PUT", body: JSON.stringify(body) });
   },
 
   downloadURL(caseId: string, filename: string): string {

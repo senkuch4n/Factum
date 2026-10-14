@@ -33,6 +33,16 @@ public sealed partial class CaseService
     private static Result<T> EvidenceFail<T>(ErrorKind kind, string error, string code,
         params (string Key, object? Value)[] extra) => UploadFail<T>(kind, error, code, extra);
 
+    /// <summary>
+    /// metadatos-dispositivo D-T7: si la medición de cierre se registró antes de abrir este intento, se descarta EN
+    /// MEMORIA para el informe (nunca se persiste). Puro.
+    /// </summary>
+    internal static void DropStaleClockClose(Case cas, DateTime pendingCreatedAt)
+    {
+        if (cas.DeviceDetails?.ClockClose is { } c && c.RecordedAt < pendingCreatedAt)
+            cas.DeviceDetails.ClockClose = null;
+    }
+
     private static Result<T> OtherPc<T>(Case cas) =>
         EvidenceFail<T>(ErrorKind.Conflict, EvidenceManifest.EvidenceOnOtherPcMessage(cas.EvidenceHost?.Hostname ?? ""),
             EvidenceErrorCodes.EvidenceOnOtherPc, ("evidence_hostname", cas.EvidenceHost?.Hostname));
@@ -431,6 +441,9 @@ public sealed partial class CaseService
                     : null;
                 var timestampInfo = sealing ? await ReportTimestampInfoAsync(fresh, zipTs) : null;
 
+                // metadatos-dispositivo D-T7: una medición de cierre de un intento anterior no entra al informe
+                // (solo en memoria; lo guardado no cambia).
+                DropStaleClockClose(fresh, pending.CreatedAt);
                 var report = await _reports.GenerateReportAsync(fresh, EvidenceManifest.ToFileInfos(fresh),
                     EvidenceManifest.Hashes(fresh), tmp, _storage.CaseDir(id), pending.ZipFilename, meta.ZipHash!,
                     CancellationToken.None, timestampInfo);

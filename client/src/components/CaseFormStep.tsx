@@ -51,6 +51,9 @@ import { CaseSummaryBar } from "@/components/case-form/CaseSummaryBar";
 import { PrefillNotice, PREFILL_BLANK_ID, PREFILL_CHANGE_ID, PREFILL_UNDO_ID } from "@/components/case-form/PrefillNotice";
 import { PrefillSourceDialog } from "@/components/case-form/PrefillSourceDialog";
 import { DuplicateExpedienteNotice } from "@/components/case-form/DuplicateExpedienteNotice";
+import { ClockSkewWarning, DeviceClockLine } from "@/components/device-details/DeviceClockLine";
+import { DeviceDetailsDialog } from "@/components/device-details/DeviceDetailsDialog";
+import { viewExceedsThreshold, type DeviceDetailsUi } from "@/lib/device-details";
 
 const FADE_IN = "motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]";
 
@@ -247,6 +250,8 @@ interface Props {
   /** Precarga visible de un caso nuevo; null en edición / legacy / sin historial. */
   prefill: CasePrefill | null;
   onPrefillChange: (p: CasePrefill | null) => void;
+  /** Ficha técnica y reloj del dispositivo (metadatos-dispositivo §10.2), resuelta por la página. */
+  deviceDetails: DeviceDetailsUi;
 }
 
 /* ── Acordeón guiado: una sección abierta a la vez (reintento 2, Feedback 2) ── */
@@ -402,8 +407,9 @@ export function CaseFormStep({
   device, connection, form, errors, loading, mode, isLegacy,
   profile, profileLoading, profileForm, focusErrorsTick, focusFieldId, onFocusConsumed,
   onChange, onProfileChange, onClearError, onSectionErrors, onBack, onCancel, onSubmit,
-  historyCases, caseId, prefill, onPrefillChange,
+  historyCases, caseId, prefill, onPrefillChange, deviceDetails,
 }: Props) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [screenshotSrc, setScreenshotSrc] = useState<string | null>(null);
   const [loadingShot,   setLoadingShot]   = useState(false);
   const [shotError,     setShotError]     = useState<string | null>(null);
@@ -1034,7 +1040,11 @@ export function CaseFormStep({
   const summaryProps = {
     form, sections, showPerfil, onGoToSection, flashKey, activeSection: active,
     device, osLabel, isIOS, imeiDisplay, imeiManual, connection, shot, onRefreshShot, onZoomShot,
+    deviceDetails,
+    // Desde el resumen < lg (drawer) se cierra el drawer: un diálogo a la vez.
+    onOpenDeviceDetails: () => { setDrawerOpen(false); setDetailsOpen(true); },
   };
+  const skewWarning = viewExceedsThreshold(deviceDetails.view, deviceDetails.thresholdSeconds);
 
   const dupNotice = dups.length > 0 && (
     // Expediente repetido: fila propia a todo el ancho, debajo de expediente + fecha.
@@ -1067,8 +1077,11 @@ export function CaseFormStep({
             </p>
             <ConnectionIndicator connection={connection} className="ml-auto" />
           </div>
+          {/* Reloj del celular a la vista también < lg (el resumen completo vive en el drawer). */}
+          <DeviceClockLine ui={deviceDetails} onOpenDetails={() => setDetailsOpen(true)} />
           <DisconnectedBanner connection={connection} />
           {imeiManual && <ImeiMissingNotice />}
+          {skewWarning && <ClockSkewWarning thresholdSeconds={deviceDetails.thresholdSeconds} />}
         </div>
       )}
 
@@ -1322,6 +1335,8 @@ export function CaseFormStep({
           onHide={() => setSourceDialogOpen(false)}
         />
       )}
+
+      <DeviceDetailsDialog visible={detailsOpen} onHide={() => setDetailsOpen(false)} ui={deviceDetails} />
 
       <Lightbox src={zoomSrc} onClose={() => setZoomSrc(null)} alt="Captura de pantalla del dispositivo, ampliada" />
     </div>

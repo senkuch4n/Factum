@@ -95,6 +95,22 @@ public interface ICaseRepository
 
     /// <summary><c>Status = Error</c> y $unset del intento (hace falta un <c>prepare</c> nuevo).</summary>
     Task MarkAgentGenerationFailedAsync(string id, CancellationToken ct = default);
+
+    // ── metadatos-dispositivo (§7.1) ─────────────────────────────────────────
+
+    /// <summary>$set de <c>DeviceDetails</c> completo, solo si el caso sigue editable. false si no matcheó.</summary>
+    Task<bool> SetDeviceDetailsAsync(string id, DeviceDetails details, CancellationToken ct = default);
+
+    /// <summary>
+    /// $set de <c>DeviceDetails.ClockClose</c>, solo si el caso sigue editable y ya tiene ficha. false si no matcheó.
+    /// </summary>
+    Task<bool> SetClockCloseAsync(string id, ClockMeasurement measurement, CancellationToken ct = default);
+
+    /// <summary>
+    /// $set de <c>DeviceDetails.IncludeSsidInReport</c>, solo si el caso sigue editable y ya tiene ficha. false si no
+    /// matcheó.
+    /// </summary>
+    Task<bool> SetIncludeSsidAsync(string id, bool include, CancellationToken ct = default);
 }
 
 /// <summary>Valores ya normalizados (trim) de un PUT /api/cases/{id}.</summary>
@@ -383,6 +399,33 @@ public sealed class CaseRepository : ICaseRepository
                 .Set(c => c.Status, CaseStatus.Error)
                 .Unset(c => c.PendingGeneration),
             cancellationToken: ct);
+
+    // ── metadatos-dispositivo (§7.1): $set campo por campo, bajo Editable(id) ─────
+
+    private static FilterDefinition<Case> EditableWithDetails(string id) =>
+        Editable(id) & Builders<Case>.Filter.Exists(c => c.DeviceDetails) &
+        Builders<Case>.Filter.Ne(c => c.DeviceDetails, null);
+
+    public async Task<bool> SetDeviceDetailsAsync(string id, DeviceDetails details, CancellationToken ct = default)
+    {
+        var res = await _col.UpdateOneAsync(Editable(id),
+            Builders<Case>.Update.Set(c => c.DeviceDetails, details), cancellationToken: ct);
+        return res.MatchedCount > 0;
+    }
+
+    public async Task<bool> SetClockCloseAsync(string id, ClockMeasurement measurement, CancellationToken ct = default)
+    {
+        var res = await _col.UpdateOneAsync(EditableWithDetails(id),
+            Builders<Case>.Update.Set(c => c.DeviceDetails!.ClockClose, measurement), cancellationToken: ct);
+        return res.MatchedCount > 0;
+    }
+
+    public async Task<bool> SetIncludeSsidAsync(string id, bool include, CancellationToken ct = default)
+    {
+        var res = await _col.UpdateOneAsync(EditableWithDetails(id),
+            Builders<Case>.Update.Set(c => c.DeviceDetails!.IncludeSsidInReport, include), cancellationToken: ct);
+        return res.MatchedCount > 0;
+    }
 
     public async Task<List<CaptureRole>?> UpsertCaptureRolesAsync(string id,
         IReadOnlyList<(string Filename, string? Role)> roles, CancellationToken ct = default)

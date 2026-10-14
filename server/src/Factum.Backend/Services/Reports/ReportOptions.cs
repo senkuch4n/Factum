@@ -27,6 +27,13 @@ public sealed class ReportOptions
     /// </summary>
     public long MaxGenerateUploadBytes { get; set; } = 256L * 1024 * 1024;
 
+    /// <summary>
+    /// metadatos-dispositivo D6: umbral (segundos) a partir del cual la diferencia de reloj celular/PC (o PC/servidor)
+    /// genera el aviso en la web y la frase de constancia en el informe. Se supera estrictamente. Default 60; fuera
+    /// de 1…86400 se usa 60 con un warning. Variable de entorno: <c>Report__ClockSkewWarningSeconds</c>.
+    /// </summary>
+    public int ClockSkewWarningSeconds { get; set; } = 60;
+
     /// <summary>Reemplazo por estudio de los textos por defecto. Vacío = default versionado.</summary>
     public ReportDefaultTextsOptions DefaultTexts { get; set; } = new();
 }

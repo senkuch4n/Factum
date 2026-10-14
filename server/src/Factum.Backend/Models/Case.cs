@@ -145,6 +145,13 @@ public sealed class Case
     /// </summary>
     [BsonIgnoreIfNull]
     public string? TimestampMode { get; set; }
+
+    /// <summary>
+    /// metadatos-dispositivo: ficha técnica leída por Tatana (D1). null = caso anterior a esta HU, alta con un Tatana sin
+    /// device_details_v1, o lectura todavía no registrada. JSON: <c>device_details</c>.
+    /// </summary>
+    [BsonIgnoreIfNull]
+    public DeviceDetails? DeviceDetails { get; set; }
 }
 
 [BsonIgnoreExtraElements]

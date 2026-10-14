@@ -8,11 +8,12 @@
  */
 
 import {
-  AlertCircle, AlertTriangle, Camera, ClockAlert, ClockCheck, FileCheck, FolderPlus, Image, Pencil, RefreshCw, Trash2,
-  Upload, Video, type LucideIcon,
+  AlertCircle, AlertTriangle, Camera, Clock, ClockAlert, ClockCheck, Cpu, FileCheck, FolderPlus, Image, Pencil, RefreshCw,
+  Trash2, Upload, Video, type LucideIcon,
 } from "lucide-react";
-import type { Case, CaseEvent, CaseEventType } from "@/lib/api";
+import type { Case, CaseEvent, CaseEventDetail, CaseEventType } from "@/lib/api";
 import { TARGET_LABEL } from "@/lib/timestamps";
+import { clockReasonLabel, describeEventSkew, exceedsThreshold } from "@/lib/device-details";
 
 /** Ícono lucide por tipo de evento (criterio de la SDD §"Cada ítem"). */
 const EVENT_ICON: Record<CaseEventType, LucideIcon> = {
@@ -30,6 +31,8 @@ const EVENT_ICON: Record<CaseEventType, LucideIcon> = {
   capture_failed: AlertTriangle,
   timestamp_granted: ClockCheck,
   timestamp_failed: ClockAlert,
+  device_details_recorded: Cpu,
+  device_clock_measured: Clock,
 };
 
 /** Ícono del evento; `FolderPlus` para un tipo desconocido (backend más nuevo). */
@@ -45,10 +48,35 @@ export type EventTone = "danger" | "warning" | "neutral";
  * advertencia; el resto es neutro. No se transmite nada solo por color
  * (siempre hay ícono + texto).
  */
-export function eventTone(type: string): EventTone {
+export function eventTone(
+  type: string, detail?: CaseEventDetail | null, clockSkewWarningSeconds?: number,
+): EventTone {
   if (type === "report_failed") return "danger";
   if (type === "capture_failed" || type === "timestamp_failed") return "warning";
+  // metadatos-dispositivo §10.7: diferencia de reloj por encima del umbral (sin umbral, neutro).
+  if ((type === "device_details_recorded" || type === "device_clock_measured") && clockSkewWarningSeconds !== undefined
+    && exceedsThreshold(detail?.device_minus_pc_ms, clockSkewWarningSeconds)) {
+    return "warning";
+  }
   return "neutral";
+}
+
+/**
+ * Línea secundaria de los eventos de la ficha técnica (§10.7): "El dispositivo
+ * adelanta 10 s respecto de la PC (± 1 s) · 3 datos no disponibles", o
+ * "Reloj no disponible (motivo)". Nunca lleva SSID ni valores de la ficha.
+ */
+export function eventDeviceDetail(ev: CaseEvent): string | null {
+  if (ev.type !== "device_details_recorded" && ev.type !== "device_clock_measured") return null;
+  const d = ev.detail;
+  const parts: string[] = [];
+  if (typeof d?.device_minus_pc_ms === "number") parts.push(describeEventSkew(d.device_minus_pc_ms, d.clock_margin_ms));
+  else parts.push(`Reloj no disponible (${clockReasonLabel(d?.reason)})`);
+  const n = d?.unavailable_count;
+  if (ev.type === "device_details_recorded" && typeof n === "number" && n > 0) {
+    parts.push(n === 1 ? "1 dato no disponible" : `${n} datos no disponibles`);
+  }
+  return parts.join(" · ");
 }
 
 /** Título de un `capture_failed` según la acción que falló (`detail.failed_action`). */
@@ -181,6 +209,12 @@ export function eventTitle(ev: CaseEvent): string {
       return ev.detail?.final
         ? `Se abandonó el sello de tiempo (${targetLabel(ev)}) tras ${ev.detail.attempt ?? "varios"} intentos`
         : `No se pudo obtener el sello de tiempo (${targetLabel(ev)})`;
+    case "device_details_recorded":
+      return ev.detail?.reread
+        ? "Se volvieron a leer los datos técnicos del dispositivo"
+        : "Se registraron los datos técnicos del dispositivo";
+    case "device_clock_measured":
+      return "Se midió el reloj del dispositivo al generar";
     default:
       return "Actividad del caso";
   }

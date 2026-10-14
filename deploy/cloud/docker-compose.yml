@@ -96,6 +96,8 @@ services:
       Timestamping__Enabled: ${FACTUM_SELLADO_HABILITADO:-true}
       Timestamping__TimeoutSeconds: ${FACTUM_SELLADO_TIMEOUT_SEGUNDOS:-10}
       Timestamping__MaxAttempts: ${FACTUM_SELLADO_MAX_INTENTOS:-12}
+      # Umbral del aviso por diferencia de reloj celular/PC (metadatos-dispositivo, D6). Segundos.
+      Report__ClockSkewWarningSeconds: ${FACTUM_RELOJ_UMBRAL_SEGUNDOS:-60}
       # Branding global del login (opcional). Vacío = el default de la app.
       Branding__OrganizationName: ${FACTUM_BRANDING_NOMBRE:-}
       Branding__OrganizationLogo: ${FACTUM_BRANDING_LOGO:-}

@@ -169,6 +169,40 @@ hereda en la v6, que no cambia):
 - `BODY_PLACEHOLDERS` suma `{descripcionSelloTiempo}` y `BODY_BLOCKS` suma
   `selloTiempo`; el `--check` de la v6 los hereda.
 
+### metadatos-dispositivo (bloque `fichaTecnica`)
+
+Ver `Refactorizaciones/metadatos-dispositivo.md` §9.
+
+- **v4, dónde:** inmediatamente después de la fila "Titular" (`2E1C810A`) y antes
+  de `{capturasImeiModelo}` (`07342EEC`), dentro de "Elementos ofrecidos":
+  `{#fichaTecnica}`, la aclaración de origen ("Datos técnicos obtenidos
+  automáticamente por Factum mediante consultas de solo lectura al dispositivo
+  el {fechaFichaTecnica} a las {horaFichaTecnica} horas:", pPr normalizado), las
+  10 filas `**Etiqueta:** {fichaX}` (`FICHA_ROWS`, mismo pPr/rPr que "Titular"),
+  `{descripcionRelojDispositivo}` (pPr normalizado) y `{/fichaTecnica}`. Los
+  `paraId` son deterministas (`a6:ficha-intro`, `a6:ficha-<clave>`,
+  `a6:ficha-reloj`, `marker:ficha-open`, `marker:ficha-close`).
+- `BODY_PLACEHOLDERS` suma los 13 placeholders (`{fechaFichaTecnica}`,
+  `{horaFichaTecnica}`, `{fichaSistemaOperativo}`, `{fichaCompilacion}`,
+  `{fichaParcheSeguridad}`, `{fichaNumeroSerie}`, `{fichaIdentificadorConexion}`,
+  `{fichaKernel}`, `{fichaOperadorSim}`, `{fichaEstadoArranque}`,
+  `{fichaZonaHoraria}`, `{fichaWifi}`, `{descripcionRelojDispositivo}`) y
+  `BODY_BLOCKS` suma `fichaTecnica`. La huella de v5 (`BLOCK_ELEMENTOS`
+  consecutivo) no cambia: el bloque va después de la última fila.
+- **v6:** las 10 filas se convierten en una **segunda ficha** etiqueta/valor con
+  el mismo `data_card` (grilla 2490/6157, `CARD_BORDERS`, `split_row`). Se ubican
+  por el placeholder que contienen (`FICHA_ROWS`), no por `paraId`; tienen que
+  ser consecutivas y estar entre los marcadores (si no, `FALLA: ancla ficha`).
+  La aclaración y el párrafo del reloj quedan como cuerpo. `--check` suma
+  `FALLA:ficha`: una sola tabla entre los marcadores, con las 10 filas. La
+  etiqueta "Identificador de conexión:" puede partirse en dos renglones en la
+  columna de 2490 dxa (aceptado).
+- **Qué lo llena:** `ReportService` (B-R2 con `conditions["fichaTecnica"] =
+  cas.DeviceDetails is not null`, B-R4 con `ReportDeviceTexts.ClockBlock` en
+  texto plano y B-R6 con los 12 de una línea). Sin ficha (casos anteriores o
+  Tatana viejo) el bloque se borra entero, tabla incluida, y el informe queda
+  idéntico al de antes.
+
 ## v5 (reproducible, sin uso)
 
 Especificación: `Refactorizaciones/informe-diseno-modelo.md`. Para

@@ -524,6 +524,10 @@ portada). Se completa en el cuerpo y en los encabezados/pies:
 | `{#ISOTIPO}` … `{/ISOTIPO}` | Bloque que solo queda si hay `Branding:OrganizationIsotype` válido. |
 | `{descripcionSelloTiempo}` | Bloque explicativo del sellado de tiempo (párrafo completo, texto plano): qué autoridad selló, el sello del ZIP o la constancia de que no lo tenía al emitirse, y "N de M archivos" con sello. Ver [Sellado de tiempo](#sellado-de-tiempo-rfc-3161). |
 | `{#selloTiempo}` … `{/selloTiempo}` | Bloque debajo de la tabla de hashes que solo queda si el sellado estaba activo al generar (flujo agent). Con el sellado desactivado, o en el flujo anterior, desaparece y el informe queda como antes. Las líneas "Sello de tiempo: …" de cada fila de la tabla las agrega el backend, no la plantilla. |
+| `{fechaFichaTecnica}`, `{horaFichaTecnica}` | Fecha y hora (zona `Report:TimeZone`) en que el **servidor** recibió la ficha técnica del dispositivo. Ver [Ficha técnica del dispositivo y diferencia de reloj](#ficha-técnica-del-dispositivo-y-diferencia-de-reloj). |
+| `{fichaSistemaOperativo}`, `{fichaCompilacion}`, `{fichaParcheSeguridad}`, `{fichaNumeroSerie}`, `{fichaIdentificadorConexion}`, `{fichaKernel}`, `{fichaOperadorSim}`, `{fichaEstadoArranque}`, `{fichaZonaHoraria}`, `{fichaWifi}` | Filas de la ficha técnica leída por Tatana (una línea cada una). Lo que el dispositivo no informa sale "No disponible (motivo)". El estado de arranque va con los valores crudos, sin calificar. El nombre de la red wifi solo sale si el perito marcó "Incluir el nombre de la red en el informe". En la v6, las 10 filas forman una segunda ficha etiqueta/valor. |
+| `{descripcionRelojDispositivo}` | Párrafo "Reloj del dispositivo" (texto plano, un párrafo por línea): la diferencia celular/estación de trabajo al inicio y, si se midió al generar, al cierre; la diferencia estación de trabajo/servidor solo si supera el umbral; la frase de constancia si alguna diferencia supera `Report:ClockSkewWarningSeconds`; y la zona horaria configurada en el dispositivo. |
+| `{#fichaTecnica}` … `{/fichaTecnica}` | Bloque de la sección del dispositivo, después de "Titular". Solo queda si el caso tiene ficha técnica; los casos anteriores (o creados con un Tatana sin `device_details_v1`) generan el informe de siempre. |
 
 El verde de la plantilla v6 (`2F6F12`, el default del primario) funciona como
 centinela: al generar, el backend lo reemplaza por `Branding:PrimaryColor` en
@@ -545,8 +549,9 @@ es propio del estudio va en la sección `Report` del backend:
 |---|---|
 | `Report:TimeZone` | Zona IANA de la fecha y hora de la inspección (default `America/Argentina/Buenos_Aires`). Si no existe en el sistema, se loguea un warning y se usa UTC-03:00 fijo. |
 | `Report:DomicilioConstituido` | Domicilio constituido del perito, para la presentación ("…, con domicilio constituido en …"). Máx. 300 caracteres. Vacío = la frase se omite. |
-| `Report:DefaultTexts:OperacionesRealizadas` / `AseguramientoEvidencia` / `NotasTecnicas` / `Reserva` | Textos por defecto propios del estudio para el paso Informe. Vacío = el texto neutro versionado en `Services/Reports/ReportDefaultTexts.cs`. Admiten los tokens `{fechaInspeccion}`, `{horaInspeccion}`, `{tipoDispositivo}`, `{marcaModeloDispositivo}`, `{imeiDispositivo}`, `{sistemaOperativo}`, `{zonaHoraria}`, `{elSuscripto}` y `{cantidadCapturas}`/`{cantidadGrabaciones}`/`{cantidadArchivosExtraidos}`/`{cantidadOtros}`. El texto se interpreta como **Markdown línea por línea**: cada línea es un párrafo (una línea vacía en el medio deja un párrafo vacío); `- ` al principio es viñeta y `1. ` numerada; adentro de la línea valen `**negrita**`, `*cursiva*` y `<u>subrayado</u>`. Sin HTML (salvo `<u>`), sin imágenes y solo enlaces `http`, `https` o `mailto`: un texto configurado con algo de eso se descarta con un warning al arrancar y se usa el texto versionado. Los valores de los tokens se escapan (un `_` del dato no se vuelve cursiva). |
+| `Report:DefaultTexts:OperacionesRealizadas` / `AseguramientoEvidencia` / `NotasTecnicas` / `Reserva` | Textos por defecto propios del estudio para el paso Informe. Vacío = el texto neutro versionado en `Services/Reports/ReportDefaultTexts.cs`. Admiten los tokens `{fechaInspeccion}`, `{horaInspeccion}`, `{tipoDispositivo}`, `{marcaModeloDispositivo}`, `{imeiDispositivo}`, `{sistemaOperativo}`, `{zonaHoraria}`, `{elSuscripto}` y `{cantidadCapturas}`/`{cantidadGrabaciones}`/`{cantidadArchivosExtraidos}`/`{cantidadOtros}`, más los de la ficha técnica del dispositivo: `{diferenciaReloj}` ("el dispositivo adelantaba 10 s respecto de la estación de trabajo (± 1 s)"), `{numeroSerieDispositivo}`, `{compilacionDispositivo}` y `{zonaHorariaDispositivo}` (el valor, o "No disponible" si el caso no tiene ficha o el dato no se pudo leer). Con ficha, `{sistemaOperativo}` usa la versión textual leída del dispositivo ("Android 8.1.0"). El texto se interpreta como **Markdown línea por línea**: cada línea es un párrafo (una línea vacía en el medio deja un párrafo vacío); `- ` al principio es viñeta y `1. ` numerada; adentro de la línea valen `**negrita**`, `*cursiva*` y `<u>subrayado</u>`. Sin HTML (salvo `<u>`), sin imágenes y solo enlaces `http`, `https` o `mailto`: un texto configurado con algo de eso se descarta con un warning al arrancar y se usa el texto versionado. Los valores de los tokens se escapan (un `_` del dato no se vuelve cursiva). |
 | `Report:EncryptZip` | Cifra el ZIP de evidencia con AES-256 (formato WinZip AE-2) y una contraseña aleatoria por caso (default `true`; variable de entorno `Report__EncryptZip`). Con `false` el ZIP sale sin cifrar y sin contraseña, el backend loguea un warning al arrancar y `GET /api/config/public` devuelve `encrypt_zip: false` para que el wizard no prometa cifrado. El texto por defecto de aseguramiento de la evidencia cambia según este valor; si se define `Report:DefaultTexts:AseguramientoEvidencia`, ese texto **gana en los dos modos** y el estudio es responsable de que hable (o no) del cifrado. |
+| `Report:ClockSkewWarningSeconds` | Umbral, en segundos, de la diferencia de reloj celular/PC (y PC/servidor) a partir del cual la web muestra un aviso y el informe deja constancia (se supera estrictamente). Default `60`; fuera de 1…86400 se loguea un warning y se usa 60. Variable de entorno `Report__ClockSkewWarningSeconds`; en la nube y en Windows, `FACTUM_RELOJ_UMBRAL_SEGUNDOS`. La web lo lee de `clock_skew_warning_seconds` en `GET /api/config/public`. |
 
 Como con `Branding`, **el domicilio real no va al repo**: va en
 `appsettings.Local.json` (ignorado por git) o en `Report__DomicilioConstituido`.
@@ -653,6 +658,49 @@ se verifica con herramientas estándar (`openssl ts -verify`) sin Factum.
 - **Casos anteriores y flujo viejo:** no se re-sella nada. Un caso generado
   antes de activar el sellado, o del flujo anterior (evidencia en el servidor),
   no tiene sellos y la web lo indica.
+
+### Ficha técnica del dispositivo y diferencia de reloj
+
+Al pasar al paso 2 del wizard, la web le pide a Tatana (`GET /devices/{serial}/details`, capability
+`device_details_v1`) una lectura **de solo lectura** del celular conectado: número de serie, versión y
+compilación, parche, kernel, operador y SIM, estado de arranque (valores crudos), zona horaria, hora automática y
+wifi. En Android son `getprop`, `uname`, `settings get`, `cmd wifi status` (o `dumpsys wifi` filtrado en el
+celular, para que BSSID, MAC e IP nunca salgan del dispositivo) y `date`; en iPhone, una lista blanca de valores
+de lockdown (nunca ICCID, IMSI, número de línea ni direcciones MAC). Nada escribe en el dispositivo. Al crear el
+caso, la ficha se guarda en `Case.DeviceDetails` (`PUT /api/cases/{id}/device-details`) con la hora de recepción
+del **servidor**; la API vuelve a validar cada valor (un dato con formato inesperado queda "No disponible (el
+valor devuelto no tiene un formato válido y se descartó)") y deja el evento `device_details_recorded` en la
+trazabilidad, sin valores ni nombre de red. Un Tatana sin `device_details_v1` no impide crear el caso: queda sin
+ficha y el informe sale como siempre.
+
+**Diferencia de reloj.** Tatana toma 3 muestras: hora de la PC antes (`b`), hora del celular (`d`, `date +%s.%N`
+o `TimeIntervalSince1970` de lockdown) y hora de la PC después (`a`). Se elige la muestra válida de menor ida y
+vuelta (RTT = `a − b`, como mucho 5 s) y se calcula:
+
+- `device_minus_pc_ms = round(d − (b + RTT/2))` (positivo = el celular adelanta);
+- `margin_ms = ceil(RTT/2 + resolución)`, con resolución 1 ms (o 1000 ms si el `date` del celular no informa
+  fracciones).
+
+La hora del celular se leyó en algún instante entre `b` y `a`, así que el error del punto medio está acotado por
+RTT/2 más la resolución: es una **cota estricta**, no estadística. La API **recalcula** las cifras desde las horas
+crudas (no confía en las que manda el navegador). Además, el navegador hace un sondeo de una vuelta contra
+`GET /api/time` y la API calcula de la misma forma la diferencia **PC/servidor** (`pc_minus_server_ms`, margen
+`ceil(RTT/2) + 1`), solo si Tatana corre en la misma PC (`AGENT_URL` en loopback); si no, queda `not_measured`.
+Al generar (flujo agent), si el mismo celular sigue conectado, se hace una **medición de cierre**; una medición
+de un intento anterior no entra al informe.
+
+Si alguna diferencia supera `Report:ClockSkewWarningSeconds`, la web muestra un aviso no bloqueante y el informe
+agrega "Se deja constancia de que el reloj del dispositivo presentaba una diferencia de … respecto de la estación
+de trabajo; las horas visibles en las capturas corresponden al reloj del dispositivo." Nunca se sugiere corregir
+la hora del celular.
+
+**Riesgo aceptado:** la hora del servidor del sondeo PC/servidor vuelve desde el navegador y el propio perito
+podría manipularla. No obtiene nada que no pueda lograr cambiando la hora de su PC; la API acota el valor a los
+últimos 300 s del reloj del servidor.
+
+**El nombre de la red wifi** se guarda en el caso (lo ve el perito en la web) pero va al informe solo si marca
+"Incluir el nombre de la red en el informe" (`include_ssid_in_report`, por defecto desmarcado); nunca va a los
+logs ni a la trazabilidad.
 
 ## Integración de soporte (Faro)
 

@@ -288,6 +288,11 @@ Describe 'Guardas del repo (perfil de memoria)' {
         $valores['FACTUM_SELLADO_HABILITADO'] | Should -Be 'true'
     }
 
+    It '.env.example trae FACTUM_RELOJ_UMBRAL_SEGUNDOS=60 (metadatos-dispositivo D6)' {
+        $valores = Read-EnvFile (Join-Path $script:raizW '.env.example')
+        $valores['FACTUM_RELOJ_UMBRAL_SEGUNDOS'] | Should -Be '60'
+    }
+
     It 'el compose de poca RAM no tiene image: (Get-MongoImagen devuelve $null)' {
         Get-MongoImagen (Join-Path $script:raizW 'docker-compose.poca-ram.yml') | Should -BeNullOrEmpty
     }

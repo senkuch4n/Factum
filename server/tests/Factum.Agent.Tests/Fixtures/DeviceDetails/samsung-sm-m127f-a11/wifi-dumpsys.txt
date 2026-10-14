@@ -1,0 +1,3 @@
+__FX_DUMPSYS__
+Wi-Fi is enabled
+state=DISCONNECTED ssid=<unknown ssid>

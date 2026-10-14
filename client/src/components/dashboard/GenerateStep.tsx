@@ -6,7 +6,7 @@ import { Tag } from "primereact/tag";
 import {
   ArrowLeft, FileCheck2, ShieldCheck, Shield, User,
   FileText, Video, ImageIcon, Paperclip, Check, Lock, Fingerprint, FolderClosed,
-  AlertTriangle, ArrowRight, Archive, HardDrive, CheckCircle2, Circle, Loader2, Server,
+  AlertTriangle, ArrowRight, Archive, HardDrive, CheckCircle2, Circle, Loader2, Server, Clock,
 } from "lucide-react";
 import type { Case, CapturedFile } from "@/types";
 import { agent, agentFileURL, type ZipProgress } from "@/lib/agent";
@@ -55,8 +55,11 @@ interface Props {
 
 /** Tramo actual de la generación del flujo agent y, en el primero, el avance del ZIP (WS). */
 export interface GenerateProgress {
-  stage: "zip" | "report";
+  /** `clock`: medición de reloj de cierre (metadatos-dispositivo §10.5), antes del ZIP. */
+  stage: "clock" | "zip" | "report";
   zip?: ZipProgress | null;
+  /** La generación pasó por la etapa `clock`: solo entonces se lista (si no, se omite sin mensaje). */
+  withClock?: boolean;
 }
 
 const ZIP_PHASE_LABEL: Record<ZipProgress["phase"], string> = {
@@ -436,11 +439,13 @@ export function GenerateStep({
       <span className="sr-only" role="status" aria-live="polite">
         {loading
           ? agentMode && progress
-            ? progress.stage === "zip"
-              ? "Paso 1 de 2: armando y verificando el ZIP en esta PC…"
+            ? progress.stage === "clock"
+              ? "Midiendo el reloj del dispositivo…"
+              : progress.stage === "zip"
+              ? "Armando y verificando el ZIP en esta PC…"
               : timestampingEnabled
-                ? "Paso 2 de 2: sellando el ZIP, generando el informe y sellándolo…"
-                : "Paso 2 de 2: generando el informe en el servidor…"
+                ? "Sellando el ZIP, generando el informe y sellándolo…"
+                : "Generando el informe en el servidor…"
             : "Generando informe pericial, esperá…"
           : ""}
       </span>
@@ -463,7 +468,11 @@ function GenerateStages({ progress, sealing }: { progress: GenerateProgress; sea
   const zip = progress.zip;
   const known = !!zip && zip.total_bytes > 0;
   const ratio = known ? Math.min(1, zip!.done_bytes / zip!.total_bytes) : 0;
-  const stages = [
+  const stages: { id: GenerateProgress["stage"]; icon: typeof HardDrive; label: string }[] = [
+    // La etapa del reloj aparece solo si la generación pasó por ella (metadatos-dispositivo §10.5).
+    ...(progress.withClock || progress.stage === "clock"
+      ? [{ id: "clock" as const, icon: Clock, label: "Midiendo el reloj del dispositivo…" }]
+      : []),
     { id: "zip" as const, icon: HardDrive, label: "Armando y verificando el ZIP en esta PC…" },
     { id: "report" as const, icon: Server, label: sealing ? REPORT_STAGE_SEALING : REPORT_STAGE },
   ];
@@ -474,7 +483,7 @@ function GenerateStages({ progress, sealing }: { progress: GenerateProgress; sea
       aria-busy="true"
       className="rounded-fx-lg border border-fx-border bg-fx-surface-2 p-4 sm:p-5"
     >
-      <h3 id="generate-progress-title" className={BLOCK_TITLE}>Generando · paso {currentIdx + 1} de 2</h3>
+      <h3 id="generate-progress-title" className={BLOCK_TITLE}>Generando · paso {currentIdx + 1} de {stages.length}</h3>
       <ol className="m-0 mt-3 list-none space-y-3 p-0">
         {stages.map((s, i) => {
           const done = i < currentIdx;

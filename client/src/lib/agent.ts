@@ -4,6 +4,7 @@
  */
 
 import type { ManifestFile } from "./api";
+import type { ClockReason, DeviceDetailKey, DeviceDetailReason } from "./device-details";
 import { getTabOriginId } from "./tab-origin";
 
 export const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:8765";
@@ -271,7 +272,9 @@ export type IosDeveloperModeStatus = "enabled" | "restarting" | "manual_required
  * - `recording_state_v1`: `recordings`/`unclaimed_recordings` en `GET /agent/state`,
  *   `case_id` en el start y validación de la grabación (grabacion-android-robusta);
  * - `case_seals_v1`: `PUT /cases/{id}/zip/seals` copia los `.tsr` y el LEEME a
- *   `sellos/`, al lado del ZIP (sellado-tiempo).
+ *   `sellos/`, al lado del ZIP (sellado-tiempo);
+ * - `device_details_v1`: `GET /devices/{serial}/details` (ficha técnica de solo
+ *   lectura + reloj) y `GET /devices/{serial}/clock` (metadatos-dispositivo).
  */
 export interface AgentHealth {
   status: string;
@@ -370,6 +373,32 @@ export interface ZipProgress {
   total_bytes: number;
 }
 
+/* ── Ficha técnica del dispositivo (metadatos-dispositivo, SDD §8.1) ── */
+
+/** Un dato de la ficha: exactamente uno de `value` o `reason` (Tatana omite los `null`). */
+export interface AgentDetailField { value?: string; reason?: DeviceDetailReason }
+
+/**
+ * Medición de reloj dispositivo↔PC. `pc_before`/`pc_after`/`device_time` son ISO
+ * con 7 decimales: la web **no los parsea**, los reenvía tal cual a la API.
+ */
+export interface AgentDeviceClock {
+  pc_before?: string; pc_after?: string; device_time?: string;
+  resolution_ms?: number; device_minus_pc_ms?: number; margin_ms?: number;
+  samples: number; reason?: ClockReason;
+}
+
+/** `GET /devices/{serial}/details`. */
+export interface AgentDeviceDetails {
+  serial: string; platform: "android" | "ios"; agent_version: string;
+  read_started_at: string; read_finished_at: string;
+  fields: Record<DeviceDetailKey, AgentDetailField>;
+  clock: AgentDeviceClock;
+}
+
+/** `GET /devices/{serial}/clock`. */
+export interface AgentDeviceClockResponse { serial: string; platform: "android" | "ios"; agent_version: string; clock: AgentDeviceClock }
+
 export type AgentErrorCode =
   | "invalid_case_id" | "invalid_filename" | "file_not_found" | "file_exists" | "file_busy"
   | "length_required" | "file_too_large" | "insufficient_storage" | "incomplete_upload" | "storage_error"
@@ -385,7 +414,9 @@ export type AgentErrorCode =
   | "already_recording" | "recording_start_timeout" | "not_recording" | "recording_empty"
   | "recording_unreadable" | "empty_evidence"
   // Pantalla del celular apagada o bloqueada: 409 de screenshot y record/start (pulido-post-qa-final §6.2).
-  | "screen_off" | "screen_locked";
+  | "screen_off" | "screen_locked"
+  // Ficha técnica: el dispositivo no está conectado o no autorizó la conexión (metadatos-dispositivo §7.2).
+  | "device_not_found";
 
 /** Cuerpo de error de Tatana (claves literales en snake_case). */
 export interface AgentErrorBody {
@@ -786,6 +817,29 @@ export const agent = {
   /** `true` si Tatana sabe copiar los sellos de tiempo a `sellos/` (`case_seals_v1`). Mismo caché. */
   async supportsCaseSeals(): Promise<boolean> {
     return this.hasCapability("case_seals_v1");
+  },
+
+  /** `true` si Tatana lee la ficha técnica y el reloj del dispositivo (`device_details_v1`). Mismo caché. */
+  async supportsDeviceDetails(): Promise<boolean> {
+    return this.hasCapability("device_details_v1");
+  },
+
+  /**
+   * Ficha técnica de solo lectura + reloj (`GET /devices/{serial}/details`).
+   * El timeout (45 s) lo pone el llamador con `signal`. Errores: `AgentError`
+   * (`device_not_found` 404, códigos de iPhone…).
+   */
+  async getDeviceDetails(serial: string, platform: "android" | "ios", signal?: AbortSignal): Promise<AgentDeviceDetails> {
+    const q = new URLSearchParams({ platform }).toString();
+    return agentJSON<AgentDeviceDetails>(`/devices/${encodeURIComponent(serial)}/details?${q}`, { signal });
+  },
+
+  /** Solo el reloj (medición de cierre al generar). Timeout 15 s si no viene `signal`. */
+  async getDeviceClock(serial: string, platform: "android" | "ios", signal?: AbortSignal): Promise<AgentDeviceClockResponse> {
+    const q = new URLSearchParams({ platform }).toString();
+    return agentJSON<AgentDeviceClockResponse>(`/devices/${encodeURIComponent(serial)}/clock?${q}`, {
+      signal: signal ?? AbortSignal.timeout(15_000),
+    });
   },
 
   /** Capability de `/health`, cacheada por conexión. Un error de red da `false` y no se cachea. */

@@ -35,8 +35,36 @@ public sealed class IosHelperTests : IDisposable
         Assert.DoesNotContain("split(':')", text);
         Assert.DoesNotContain("split(\":\")", text);
         Assert.DoesNotContain("import establish_userspace_rsd", text);
-        foreach (var sub in new[] { "\"devices\"", "\"prepare\"", "\"screenshot\"", "\"record\"", "\"devmode\"" })
+        foreach (var sub in new[] { "\"devices\"", "\"prepare\"", "\"screenshot\"", "\"record\"", "\"devmode\"",
+                     "\"details\"" })
             Assert.Contains(sub, text);
+    }
+
+    // metadatos-dispositivo §4.3/§13.2: cmd_details es una lista blanca; nunca reenvía ICCID, IMSI, número de
+    // línea ni direcciones MAC aunque lockdown los exponga.
+    [Fact]
+    public void Details_no_reenvia_claves_sensibles_de_lockdown()
+    {
+        var text = Encoding.UTF8.GetString(IosHelper.Script);
+        var start = text.IndexOf("async def cmd_details", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var end = text.IndexOf("\ndef ", start + 1, StringComparison.Ordinal);
+        var endAsync = text.IndexOf("\nasync def ", start + 1, StringComparison.Ordinal);
+        if (end < 0 || (endAsync >= 0 && endAsync < end)) end = endAsync;
+        var body = end < 0 ? text[start..] : text[start..end];
+        Assert.Contains("DETAIL_KEYS", body);
+        foreach (var key in new[]
+                 {
+                     "IntegratedCircuitCardIdentity", "InternationalMobileSubscriberIdentity", "PhoneNumber",
+                     "WiFiAddress", "BluetoothAddress", "EthernetAddress",
+                 })
+            Assert.DoesNotContain(key, body);
+        // La lista blanca tampoco las trae.
+        var keysLine = text[text.IndexOf("DETAIL_KEYS =", StringComparison.Ordinal)..];
+        keysLine = keysLine[..keysLine.IndexOf('\n')];
+        Assert.Equal(
+            "DETAIL_KEYS = (\"SerialNumber\", \"ProductVersion\", \"BuildVersion\", \"TimeZone\", \"SIMStatus\")",
+            keysLine);
     }
 
     [Fact]

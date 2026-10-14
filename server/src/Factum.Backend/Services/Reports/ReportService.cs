@@ -323,6 +323,11 @@ public sealed class ReportService : IReportService
         "{nombreArchivo}", "{hashArchivo}",
         // sellado-tiempo §8.3: bloque {#selloTiempo} debajo de la tabla de hashes.
         "{descripcionSelloTiempo}",
+        // metadatos-dispositivo §9.1: bloque {#fichaTecnica} después de "Titular".
+        "{fechaFichaTecnica}", "{horaFichaTecnica}",
+        "{fichaSistemaOperativo}", "{fichaCompilacion}", "{fichaParcheSeguridad}", "{fichaNumeroSerie}",
+        "{fichaIdentificadorConexion}", "{fichaKernel}", "{fichaOperadorSim}", "{fichaEstadoArranque}",
+        "{fichaZonaHoraria}", "{fichaWifi}", "{descripcionRelojDispositivo}",
         "{ORGANIZACION}", "{CONTACTO}", "{CONTACTO_EN_LINEA}",
         AttributionSlot,
     };
@@ -333,6 +338,7 @@ public sealed class ReportService : IReportService
         "descripcionNotasTecnicas", "descripcionReserva", "anexoCapturas",
         "ISOTIPO", "MEMBRETE_CON_LOGO", "MEMBRETE_SIN_LOGO",
         "selloTiempo",
+        "fichaTecnica",
     };
 
     private static readonly Regex AnyPlaceholderRegex = new(
@@ -423,6 +429,8 @@ public sealed class ReportService : IReportService
                 ["anexoCapturas"] = annexShots.Count > 0,
                 // sellado-tiempo §8.3: con el sellado desactivado el bloque desaparece (informe idéntico al de antes).
                 ["selloTiempo"] = timestamps is not null,
+                // metadatos-dispositivo §9.3: sin ficha (casos anteriores o Tatana viejo) el bloque desaparece.
+                ["fichaTecnica"] = cas.DeviceDetails is not null,
             };
 
             // B-R1: placeholders desconocidos fuera, ANTES de insertar valores.
@@ -514,6 +522,10 @@ public sealed class ReportService : IReportService
             if (timestamps is not null)
                 ReplaceParagraphPerLine(body, "{descripcionSelloTiempo}",
                     ReportTimestampTexts.Block(timestamps, files, settings.Zone), resolved);
+            // metadatos-dispositivo §9.3: párrafo "Reloj del dispositivo", texto plano (un párrafo por línea).
+            if (cas.DeviceDetails is not null)
+                ReplaceParagraphPerLine(body, "{descripcionRelojDispositivo}",
+                    ReportDeviceTexts.ClockBlock(cas.DeviceDetails, settings), resolved);
 
             // B-R5: tabla de hashes. Corre después de B-R2b: el tinte de la fila del ZIP es el
             // acento ya resuelto, no un centinela.

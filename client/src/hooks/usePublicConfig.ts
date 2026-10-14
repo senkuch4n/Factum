@@ -15,6 +15,16 @@ export interface PublicClientConfig {
   tatanaMinVersion: string | null;
   /** `true` si el backend sella con una autoridad RFC 3161 (sellado-tiempo); `false` si falta. */
   timestampingEnabled: boolean;
+  /** Umbral (s) del aviso de diferencia de reloj (metadatos-dispositivo D6); 60 si falta o es inválido. */
+  clockSkewWarningSeconds: number;
+}
+
+/** Default del umbral de reloj: el mismo que `Report:ClockSkewWarningSeconds`. */
+export const DEFAULT_CLOCK_SKEW_WARNING_SECONDS = 60;
+
+/** Entero entre 1 y 86400; cualquier otra cosa (o un backend sin el campo) = 60. */
+function clockSkewSeconds(v: unknown): number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 86_400 ? v : DEFAULT_CLOCK_SKEW_WARNING_SECONDS;
 }
 
 const EMPTY: PublicClientConfig = {
@@ -24,6 +34,7 @@ const EMPTY: PublicClientConfig = {
   encryptZip: false,
   tatanaMinVersion: null,
   timestampingEnabled: false,
+  clockSkewWarningSeconds: DEFAULT_CLOCK_SKEW_WARNING_SECONDS,
 };
 
 /* Caché a nivel de módulo: un solo fetch por carga de la app, compartido por
@@ -55,6 +66,7 @@ export function loadPublicConfig(): Promise<PublicClientConfig> {
             : null,
         // Sin el campo (backend anterior a sellado-tiempo) = la UI no menciona el sellado.
         timestampingEnabled: cfg.timestamping_enabled === true,
+        clockSkewWarningSeconds: clockSkewSeconds(cfg.clock_skew_warning_seconds),
       };
     })
     .catch(() => EMPTY)

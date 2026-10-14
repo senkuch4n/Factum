@@ -74,6 +74,21 @@ public sealed class CaseEventDetail
     public int? Attempt { get; set; }                  // timestamp_failed
     [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Final { get; set; }                   // timestamp_failed (true = se abandonó)
+
+    // ── metadatos-dispositivo §6.3 (device_details_recorded / device_clock_measured). Reutilizan Reason para el
+    //    motivo del reloj sin hora. Nunca llevan SSID, valores de la ficha ni números de línea. ──
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? UnavailableCount { get; set; }         // device_details_recorded (§4.4)
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Reread { get; set; }                  // device_details_recorded: true si ya había ficha
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ClockKind { get; set; }             // start | close
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? DeviceMinusPcMs { get; set; }         // null si no hubo hora
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? ClockMarginMs { get; set; }
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? PcMinusServerMs { get; set; }         // null si no se midió
 }
 
 /// <summary>
@@ -102,4 +117,8 @@ public static class CaseEventTypes
     public const string TimestampGranted = "timestamp_granted";
     /// <summary>sellado-tiempo: fallo al pedir el sello (detail.target/sha256/reason/attempt/final).</summary>
     public const string TimestampFailed = "timestamp_failed";
+    /// <summary>metadatos-dispositivo: ficha técnica registrada (alta, retoma o "Volver a leer"). Sin SSID ni valores.</summary>
+    public const string DeviceDetailsRecorded = "device_details_recorded";
+    /// <summary>metadatos-dispositivo: medición de reloj al generar (clock_kind = "close").</summary>
+    public const string DeviceClockMeasured = "device_clock_measured";
 }

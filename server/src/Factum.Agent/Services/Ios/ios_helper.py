@@ -11,6 +11,10 @@ pymobiledevice3, solo para --synthetic).
     python ios_helper.py screenshot  --udid U --output P
     python ios_helper.py record      --udid U --output P --ffmpeg F [--fps 2] [--synthetic]
     python ios_helper.py devmode     --udid U
+    python ios_helper.py details     --udid U
+
+`details` (metadatos-dispositivo §4.3) es de solo lectura: lee una lista blanca de valores de lockdown
+(nunca ICCID, IMSI, número de línea ni direcciones MAC) y 3 muestras de la hora del iPhone.
 
 Contrato con Tatana (IosHelper.cs / DvtRecorder.cs; lo fijan los tests):
   * Éxito: una línea JSON en stdout (ensure_ascii=True), código de salida 0.
@@ -392,6 +396,38 @@ async def cmd_devmode(args):
         await _close_quietly(lockdown)
 
 
+# metadatos-dispositivo §4.3: lista blanca. Las demás claves de lockdown no salen del helper.
+DETAIL_KEYS = ("SerialNumber", "ProductVersion", "BuildVersion", "TimeZone", "SIMStatus")
+
+
+async def cmd_details(args):
+    lockdown = await _open_lockdown(args.udid)
+    try:
+        values = lockdown.all_values or {}
+        out = {k: str(values[k]) for k in DETAIL_KEYS if values.get(k) is not None}
+        carriers = []
+        for c in (values.get("CarrierBundleInfoArray") or [])[:4]:
+            if isinstance(c, dict):
+                # SOLO estas tres claves: nunca ICCID, IMSI, GID1/GID2 ni el número de línea.
+                carriers.append({"bundle": str(c.get("CFBundleIdentifier") or ""),
+                                 "mcc": str(c.get("MCC") or ""), "mnc": str(c.get("MNC") or "")})
+        samples, clock_error = [], None
+        try:
+            for _ in range(3):
+                before = time.time_ns()
+                device = await lockdown.get_value(key="TimeIntervalSince1970")
+                after = time.time_ns()
+                if isinstance(device, (int, float)) and not isinstance(device, bool):
+                    samples.append({"pc_before_ns": before, "device": device, "pc_after_ns": after})
+        except Exception as exc:  # noqa: BLE001
+            clock_error = _detail(exc)
+        _stdout_json({"udid": args.udid, "values": out, "carriers": carriers,
+                      "clock": samples, "clock_error": clock_error})
+    finally:
+        await _close_quietly(lockdown)
+    return EXIT_OK
+
+
 def _watch_stdin(loop, stop_event):
     """Hilo daemon: "stop" o EOF por stdin → detener. Sin señales (no existen en Windows)."""
     try:
@@ -550,6 +586,9 @@ def _parser():
 
     p = sub.add_parser("devmode")
     p.add_argument("--udid", required=True)
+
+    p = sub.add_parser("details")
+    p.add_argument("--udid", required=True)
     return parser
 
 
@@ -559,6 +598,7 @@ HANDLERS = {
     "screenshot": cmd_screenshot,
     "record": cmd_record,
     "devmode": cmd_devmode,
+    "details": cmd_details,
 }
 
 

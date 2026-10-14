@@ -131,6 +131,10 @@ public static class ReportValues
             ["{ORGANIZACION}"] = brand.OrganizationName ?? string.Empty,
             ["{CONTACTO_EN_LINEA}"] = string.Join(" · ", brand.ContactLines),
         };
+        // metadatos-dispositivo §9.3: las 12 filas de una línea de la ficha técnica ("" sin ficha: el bloque
+        // {#fichaTecnica} desaparece igual).
+        foreach (var (k, v) in ReportDeviceTexts.Placeholders(cas.DeviceDetails, settings.Zone))
+            values[k] = v;
 
         foreach (var key in values.Keys.ToList())
             values[key] = Clean(values[key]);
@@ -164,7 +168,7 @@ public static class ReportValues
         var (fecha, hora) = Inspeccion(cas.CreatedAt, settings.Zone);
         var (cap, rec, pull, other) = Counts(files, cas);
         var inv = CultureInfo.InvariantCulture;
-        return new Dictionary<string, string>(StringComparer.Ordinal)
+        var tokens = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["fechaInspeccion"] = fecha,
             ["horaInspeccion"] = hora,
@@ -172,13 +176,19 @@ public static class ReportValues
             ["marcaModeloDispositivo"] = Clean(MarcaModelo(cas.Device)),
             ["imeiDispositivo"] = Clean(cas.Device.Imei.Trim()),
             ["elSuscripto"] = ElSuscripto(cas.Perito),
-            ["sistemaOperativo"] = Clean(cas.Device.OsLabel),
+            // metadatos-dispositivo D-T19: la versión textual de la ficha ("Android 8.1.0") cuando la hay.
+            ["sistemaOperativo"] = Clean(ReportDeviceTexts.OsLabelFromDetails(cas.DeviceDetails) ?? cas.Device.OsLabel),
             ["zonaHoraria"] = settings.ZoneLabel,
             ["cantidadCapturas"] = cap.ToString(inv),
             ["cantidadGrabaciones"] = rec.ToString(inv),
             ["cantidadArchivosExtraidos"] = pull.ToString(inv),
             ["cantidadOtros"] = other.ToString(inv),
         };
+        // metadatos-dispositivo §9.4: diferenciaReloj, numeroSerieDispositivo, compilacionDispositivo y
+        // zonaHorariaDispositivo (valor o "No disponible").
+        foreach (var (k, v) in ReportDeviceTexts.DefaultTextTokens(cas.DeviceDetails))
+            tokens[k] = Clean(v);
+        return tokens;
     }
 
     /// <summary>

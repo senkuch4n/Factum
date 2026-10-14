@@ -51,6 +51,7 @@ public sealed class ReportDesignTests : IDisposable
         public string ZoneLabel => "UTC";
         public string DomicilioConstituido => "";
         public bool EncryptZip => false;
+        public int ClockSkewWarningSeconds => 60;
         public string DefaultOperacionesRealizadas => "";
         public string DefaultAseguramientoEvidencia => "";
         public string DefaultNotasTecnicas => "";

@@ -1,0 +1,17 @@
+ro.serialno=R58RA3R5AGA
+ro.build.version.release=11
+ro.build.version.sdk=30
+ro.build.id=RP1A.200720.012
+ro.build.fingerprint=samsung/a12sub/a12s:11/RP1A.200720.012/A127MUBU3AUJ5:user/release-keys
+ro.build.version.security_patch=2021-10-01
+gsm.operator.alpha=Personal,
+gsm.operator.numeric=722310
+gsm.sim.operator.alpha=
+gsm.sim.operator.numeric=
+gsm.sim.state=READY,ABSENT
+ro.boot.verifiedbootstate=orange
+ro.boot.flash.locked=0
+ro.boot.vbmeta.device_state=unlocked
+persist.sys.timezone=America/Argentina/Buenos_Aires
+__FX_SEP__
+Linux localhost 4.19.111-22565658 #1 SMP PREEMPT Thu Nov 11 01:08:09 KST 2021 aarch64
