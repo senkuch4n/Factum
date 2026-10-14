@@ -452,7 +452,9 @@ def data_card(ids, paras, rows):
     return tbl(grid, CARD_BORDERS, cell_mar(105, 0, 105, 108), "".join(trs))
 
 
-def hash_table(tbl_xml):
+def hash_table(tbl_xml, hash_ph="{hashArchivo}"):
+    """Tabla de hashes (5.4.3). grabacion-sesion-completa §8.2: la columna Courier se decide por hash_ph, asi la
+    misma funcion reestila la tabla de la sesion ({hashArchivoSesion})."""
     if tbl_xml.count("<w:tr ") != 2:
         raise Falla("ancla tabla")
     grid = (3090, 5557)
@@ -499,7 +501,7 @@ def hash_table(tbl_xml):
 
     def model_para(m):
         p = m.group(0)
-        rp = hash_rp if "{hashArchivo}" in para_text(p) else name_rp
+        rp = hash_rp if hash_ph in para_text(p) else name_rp
         ppr = set_children(get_ppr(p), "w:pPr", PPR_ORDER, {"w:rPr": rp})
         return restyle_runs(with_ppr(p, ppr), rp)
 
@@ -638,11 +640,27 @@ def build_document(doc, ids):
 
     out = PARA_RE.sub(sub, doc)
 
-    # Tabla de hashes (5.4.3): la unica tabla de la v4 con tblStyle.
-    m = re.search(r'<w:tbl><w:tblPr><w:tblStyle w:val="17"/>.*?</w:tbl>', out, re.S)
-    if not m:
+    # Tablas con tblStyle 17 (5.4.3): exactamente dos, la de hashes y, desde grabacion-sesion-completa §8.2, la de
+    # la sesion. Se reestilan las dos (de atras para adelante, asi no se corren los indices).
+    ms = list(re.finditer(r'<w:tbl><w:tblPr><w:tblStyle w:val="17"/>.*?</w:tbl>', out, re.S))
+    if len(ms) != 2:
         raise Falla("ancla tabla")
-    out = out[:m.start()] + hash_table(m.group(0)) + out[m.end():]
+    for m, ph in reversed(list(zip(ms, ("{hashArchivo}", "{hashArchivoSesion}")))):
+        if ph not in para_text(m.group(0)):
+            raise Falla("ancla tabla")
+        out = out[:m.start()] + hash_table(m.group(0), ph) + out[m.end():]
+
+    # Subtitulo del bloque de la sesion: Arial negrita 10 pt tinta, 12 pt antes y 6 pt despues.
+    titles = [p for p in PARA_RE.findall(out) if para_text(p).strip() == v4.SESION_TITLE]
+    if len(titles) != 1:
+        raise Falla("ancla sesion")
+    title_rp = rpr(ARIAL, BOLD, color(INK), sz(20))
+    # Sin la sangria de primera linea del cuerpo y alineado a la izquierda (es un subtitulo, no un parrafo).
+    tppr = set_children(get_ppr(titles[0]), "w:pPr", PPR_ORDER,
+                        {"w:spacing": '<w:spacing w:before="240" w:after="120"/>',
+                         "w:ind": '<w:ind w:left="0" w:firstLine="0"/>', "w:jc": '<w:jc w:val="left"/>',
+                         "w:rPr": title_rp})
+    out = out.replace(titles[0], restyle_runs(with_ppr(titles[0], tppr), title_rp), 1)
 
     # sectPr final (seccion 2): top 1418 y header 680.
     finals = re.findall(r'<w:sectPr>(?:(?!<w:sectPr>).)*?</w:sectPr>\s*</w:body>', out, re.S)
@@ -885,7 +903,8 @@ def check(src, dst):
                        r'w:color="%s"/></w:pBdr>' % PRIMARY, doc)
     if len(rules) != 15:
         fails.add("FALLA:centinela-filetes")
-    if doc.count('<w:bottom w:val="single" w:sz="8" w:space="0" w:color="%s"/>' % PRIMARY) != 2:
+    # Encabezado con linea verde: 2 celdas en la tabla de hashes y 2 en la de la sesion (grabacion-sesion-completa).
+    if doc.count('<w:bottom w:val="single" w:sz="8" w:space="0" w:color="%s"/>' % PRIMARY) != 4:
         fails.add("FALLA:centinela-tabla")
     if '<w:color w:val="%s"/>' % PRIMARY not in num:
         fails.add("FALLA:centinela-numbering")
@@ -939,7 +958,24 @@ def check(src, dst):
     check_v62(doc, sty, f2, xml_parts, fails)
     # 10. metadatos-dispositivo §9.2: segunda ficha (10 filas) entre los marcadores de la ficha tecnica.
     check_ficha(doc, fails)
+    # 11. grabacion-sesion-completa §8.2: bloque de la sesion (una tabla, dos filas) y las dos tablas reestiladas.
+    v4.check_sesion(doc, fails)
+    check_sesion_v6(doc, fails)
     return sorted(fails)
+
+
+def check_sesion_v6(doc, fails):
+    tbls = re.findall(r'<w:tbl><w:tblPr><w:tblStyle w:val="17"/>.*?</w:tbl>', doc, re.S)
+    if len(tbls) != 2:
+        fails.add("FALLA:sesion")
+        return
+    for t, ph in zip(tbls, ("{hashArchivo}", "{hashArchivoSesion}")):
+        cell = [p for p in PARA_RE.findall(t) if ph in para_text(p)]
+        if len(cell) != 1 or "Courier New" not in cell[0] or "HASH SHA-256" not in para_text(t):
+            fails.add("FALLA:sesion")
+    titles = [p for p in PARA_RE.findall(doc) if para_text(p).strip() == v4.SESION_TITLE]
+    if len(titles) != 1 or '<w:b/>' not in titles[0] or 'w:before="240"' not in titles[0]:
+        fails.add("FALLA:sesion")
 
 
 def check_v62(doc, sty, f2, xml_parts, fails):

@@ -203,6 +203,49 @@ Ver `Refactorizaciones/metadatos-dispositivo.md` §9.
   Tatana viejo) el bloque se borra entero, tabla incluida, y el informe queda
   idéntico al de antes.
 
+### grabacion-sesion-completa (bloque `registroAudiovisual`)
+
+Ver `Refactorizaciones/grabacion-sesion-completa.md` §8.1–§8.2.
+
+- **v4, dónde:** inmediatamente después de `{/selloTiempo}` (y por lo tanto antes
+  de "CADENA DE CUSTODIA DIGITAL"): `{#registroAudiovisual}`, un párrafo vacío de
+  separación, el subtítulo **Registro audiovisual de la recolección**,
+  `{descripcionRegistroAudiovisual}`, la **segunda tabla** y
+  `{detalleRegistroAudiovisual}`, y `{/registroAudiovisual}`. Los párrafos usan el
+  pPr normalizado y el rPr de `2D02EAD7`. La tabla es un clon de la de hashes ya
+  reescrita (grilla 3600/4691, encabezado repetido, `cantSplit`, mismos
+  encabezados) con `{nombreArchivoSesion}` / `{hashArchivoSesion}` y `paraId`
+  nuevos y deterministas (`a7:ses-<paraId original>`, `a7:ses-titulo`,
+  `a7:ses-descripcion`, `a7:ses-detalle`, `a7:ses-espacio`, `marker:ses-open`,
+  `marker:ses-close`).
+- `BODY_PLACEHOLDERS` suma los 4 placeholders y `BODY_BLOCKS` suma
+  `registroAudiovisual`. `--check` suma `FALLA:sesion`: una sola tabla entre los
+  marcadores, con dos filas y los dos placeholders, y la tabla de hashes sigue
+  siendo la **primera** con `tblStyle 17`.
+- **v6:** `hash_table(tbl, hash_ph)` reestila **las dos** tablas con
+  `tblStyle 17` (tienen que ser exactamente dos; si no, `FALLA: ancla tabla`): la
+  primera con `{hashArchivo}` y la segunda con `{hashArchivoSesion}` en Courier.
+  El subtítulo va en Arial negrita 10 pt tinta, sin sangría, con 12 pt antes y
+  6 pt después. El chequeo de centinelas cuenta ahora 4 celdas de encabezado con
+  la línea verde (2 por tabla) y `--check` suma `FALLA:sesion` (dos tablas con
+  su hash en Courier y el subtítulo).
+- **Qué lo llena:** `ReportService` (B-R2 con `conditions["registroAudiovisual"]
+  = cas.RecordingSession is not null && hay tramos guardados`, B-R4 con
+  `ReportSessionTexts.Description` / `Detail` en texto plano y B-R5b
+  `FillSessionTable`, que clona la fila con `BuildHashRow(..., namePh:
+  "{nombreArchivoSesion}", hashPh: "{hashArchivoSesion}")`, sin fila del ZIP).
+  Sin sesión el bloque se borra entero, tabla incluida, y el informe queda
+  idéntico al de antes. Los tramos no van en la tabla general ni en los conteos.
+
+Regenerar las dos, siempre con los scripts:
+
+```bash
+python3 ops/plantilla/build_plantilla_v4.py "docs/INFORME PERICIAL TÉCNICO INFORMÁTICO - FACTUM.docx" \
+  server/src/Factum.Backend/Templates/plantilla_informe_v4.docx
+python3 ops/plantilla/build_plantilla_v6.py server/src/Factum.Backend/Templates/plantilla_informe_v4.docx \
+  server/src/Factum.Backend/Templates/plantilla_informe_v6.docx
+```
+
 ## v5 (reproducible, sin uso)
 
 Especificación: `Refactorizaciones/informe-diseno-modelo.md`. Para

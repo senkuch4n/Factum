@@ -4,6 +4,7 @@ using System.Text.Json;
 using Factum.Agent.Common;
 using Factum.Agent.Models;
 using Factum.Agent.Services.Evidence;
+using Factum.Agent.Services.Session;
 using Factum.Agent.WebSockets;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -12,7 +13,12 @@ namespace Factum.Agent.Services;
 
 // ── Contrato (zip-local-informe-servidor §6.3 y §8.2). JSON snake_case, null omitido. ──
 
-public sealed record ZipFileItem(string? Filename = null, long? Size = null, string? Sha256 = null);
+/// <summary>
+/// Un archivo del ZIP. <c>zip_folder</c> (grabacion-sesion-completa §5.13): null = entrada plana; <c>"sesion"</c> = la
+/// entrada va como <c>sesion/&lt;filename&gt;</c> (solo tramos de la grabación de la sesión).
+/// </summary>
+public sealed record ZipFileItem(string? Filename = null, long? Size = null, string? Sha256 = null,
+    string? ZipFolder = null);
 
 public sealed record BuildZipRequest(string? CaseRef = null, string? ZipFilename = null, string? Password = null,
     List<ZipFileItem>? Files = null);
@@ -99,17 +105,19 @@ public sealed class CaseZipService : ICaseZipService
     private readonly IAgentDiskProbe _probe;
     private readonly ILogger _log;
     private readonly long _minFreeBytes;
+    private readonly SessionJournal? _sessions;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.Ordinal);
 
     public CaseZipService(IOptions<AgentOptions> opts, ICaseEvidenceStore store, AgentWebSocketHub hub,
-        IAgentDiskProbe probe, ILogger<CaseZipService> log)
-        : this(opts.Value, store, hub, probe, log)
+        IAgentDiskProbe probe, ILogger<CaseZipService> log, SessionJournal sessions)
+        : this(opts.Value, store, hub, probe, log, sessions)
     {
     }
 
     internal CaseZipService(AgentOptions opts, ICaseEvidenceStore store, AgentWebSocketHub? hub = null,
-        IAgentDiskProbe? probe = null, ILogger? log = null)
+        IAgentDiskProbe? probe = null, ILogger? log = null, SessionJournal? sessions = null)
     {
+        _sessions = sessions ?? new SessionJournal(opts.DataDirectory);
         EvidenceDirectory = opts.ResolveEvidenceDirectory();
         _store = store;
         _hub = hub;
@@ -158,8 +166,10 @@ public sealed class CaseZipService : ICaseZipService
         if (files.Count == 0)
             throw new AgentHttpException(400, AgentErrorCodes.InvalidFilename, "No hay archivos para el ZIP");
         var names = new HashSet<string>(StringComparer.Ordinal);
+        var entryNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var f in files)
-            if (!AgentFileNames.IsValidName(f.Filename) || !names.Add(f.Filename!))
+            if (!AgentFileNames.IsValidName(f.Filename) || !names.Add(f.Filename!) || !IsValidZipFolder(f) ||
+                !entryNames.Add(EntryName(f)))
                 throw new AgentHttpException(400, AgentErrorCodes.InvalidFilename,
                     $"Nombre de archivo inválido o repetido: {f.Filename}",
                     new Dictionary<string, object?> { ["filename"] = f.Filename });
@@ -191,6 +201,7 @@ public sealed class CaseZipService : ICaseZipService
             await progress.PhaseAsync("hashing");
             var changes = new List<EvidenceChange>();
             var paths = new List<string>(files.Count);
+            var entries = new List<EvidenceZipEntry>(files.Count);
             var expected = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var f in files)
             {
@@ -210,7 +221,8 @@ public sealed class CaseZipService : ICaseZipService
                     continue;
                 }
                 paths.Add(path);
-                expected[f.Filename!] = hash;
+                entries.Add(new EvidenceZipEntry(path, EntryName(f)));
+                expected[EntryName(f)] = hash;
             }
             if (changes.Count > 0)
                 throw new AgentHttpException(409, AgentErrorCodes.EvidenceChanged,
@@ -234,7 +246,7 @@ public sealed class CaseZipService : ICaseZipService
                 }
                 DeleteQuietly(p.PendingPart);
                 await progress.PhaseAsync("zipping");
-                await EvidenceZip.WriteAsync(p.PendingPart, paths, request.Password, ct, progress.Add);
+                await EvidenceZip.WriteAsync(p.PendingPart, entries, request.Password, ct, progress.Add);
                 File.Move(p.PendingPart, p.PendingZip, overwrite: true);
                 DeleteQuietly(p.PendingSha);
 
@@ -251,7 +263,7 @@ public sealed class CaseZipService : ICaseZipService
                 var encrypted = request.Password is not null;
                 return new BuildZipResponse(p.ZipFilename, zipHash, zipSize, encrypted,
                     encrypted ? EvidenceZip.EncryptionAes256Ae2 : null, p.Final, p.ZipPath, Environment.MachineName,
-                    files.Select(f => new ZipFileItem(f.Filename, f.Size, f.Sha256)).ToList());
+                    files.Select(f => new ZipFileItem(f.Filename, f.Size, f.Sha256, f.ZipFolder)).ToList());
             }
             catch (Exception ex)
             {
@@ -279,6 +291,17 @@ public sealed class CaseZipService : ICaseZipService
             gate.Release();
         }
     }
+
+    /// <summary>
+    /// <c>zip_folder</c> válido (§5.13): null, o <c>"sesion"</c> con un nombre de tramo
+    /// (<see cref="SessionNames.IsSegmentName(string?)"/>).
+    /// </summary>
+    internal static bool IsValidZipFolder(ZipFileItem f) =>
+        f.ZipFolder is null || (f.ZipFolder == SessionNames.ZipFolder && SessionNames.IsSegmentName(f.Filename));
+
+    /// <summary>Nombre de la entrada en el ZIP: plano, o <c>sesion/&lt;filename&gt;</c>.</summary>
+    internal static string EntryName(ZipFileItem f) =>
+        f.ZipFolder is null ? f.Filename! : f.ZipFolder + "/" + f.Filename;
 
     /// <summary>
     /// Falla de los pasos 5-7 → error HTTP (tatana-ws-y-hosts T-07, D-A7): un archivo de la evidencia que
@@ -501,7 +524,9 @@ public sealed class CaseZipService : ICaseZipService
             if (ReadState(p) is { } state && state.ZipFilename == p.ZipFilename && state.ZipHash == zipHash)
             {
                 DeleteQuietly(p.PendingSha);
-                return new CommitZipResponse(p.ZipPath, DeleteLoose(p.CaseId, request.DeleteFiles));
+                var again = DeleteLoose(p.CaseId, request.DeleteFiles);
+                _sessions?.TryDeleteIfClosed(p.CaseId);
+                return new CommitZipResponse(p.ZipPath, again);
             }
 
             if (!File.Exists(p.PendingZip))
@@ -529,6 +554,8 @@ public sealed class CaseZipService : ICaseZipService
             await File.WriteAllTextAsync(p.StateFile, json, ct);
             DeleteQuietly(p.PendingSha);
             var deleted = DeleteLoose(p.CaseId, request.DeleteFiles);
+            // grabacion-sesion-completa §5.10: el diario de la sesión se borra recién acá, y solo si quedó vacío.
+            _sessions?.TryDeleteIfClosed(p.CaseId);
             _log.LogInformation("ZIP del caso {CaseId} confirmado en {Path} ({N} sueltos borrados)",
                 p.CaseId, p.ZipPath, deleted);
             return new CommitZipResponse(p.ZipPath, deleted);
@@ -556,7 +583,8 @@ public sealed class CaseZipService : ICaseZipService
             if (!AgentFileNames.IsValidName(name)) continue;
             try
             {
-                if (_store.Delete(caseId, name)) deleted++;
+                // Los tramos de la sesión también: ya están dentro del ZIP confirmado.
+                if (_store.Delete(caseId, name, allowSessionFiles: true)) deleted++;
             }
             catch (Exception ex)
             {

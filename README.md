@@ -702,6 +702,55 @@ podría manipularla. No obtiene nada que no pueda lograr cambiando la hora de su
 "Incluir el nombre de la red en el informe" (`include_ssid_in_report`, por defecto desmarcado); nunca va a los
 logs ni a la trazabilidad.
 
+### Grabación de la recolección (video de la sesión completa)
+
+En el paso 3 del asistente, Factum puede grabar en video la pantalla del celular **durante toda la recolección**
+(Android; el iPhone y la cámara del procedimiento llegan en una versión siguiente). La grabación arranca al entrar
+al paso y termina al salir; Tatana la guarda en **tramos** (`sesion_pantalla_NNN_<fecha>_<hora>.mkv`) y cada
+tramo, apenas se cierra, se mueve a la carpeta del caso, se le calcula el SHA-256, se registra en el expediente y
+se sella (si el sellado está activo). Los cortes quedan registrados como **huecos** con hora y motivo (salir del
+paso, retomar otro día, desconexión del USB con reanudación automática al reconectar el mismo celular, cierre de
+Tatana con recuperación del tramo al reabrir, falta de espacio y detención por el perito). "Grabar" pasa a ser
+"Marcar momento", y cada captura de pantalla deja una marca automática con el tramo y el segundo del video.
+
+- **Configuración de la instalación (backend):** `Recording:SessionMode` (`FACTUM_GRABACION_SESION_MODO`):
+  `disabled` (no se ofrece), `optional_off` (default: el perito la activa), `optional_on` (viene activada) o
+  `required` (obligatoria; con un Tatana viejo se avisa pero no bloquea: para exigirla de verdad, fijar
+  `FACTUM_TATANA_VERSION_MINIMA` a la versión con la capability `recording_session_v1`).
+  `Recording:SegmentMinutes` (`FACTUM_GRABACION_SESION_TRAMO_MINUTOS`), de 5 a 120 (default 30). Un valor inválido
+  no impide arrancar: queda el default y un aviso en el log. Las dos salen en `GET /api/config/public`
+  (`recording_session_mode`, `recording_session_segment_minutes`).
+- **Parámetros por PC (Tatana):** `Agent:Session:*` en `appsettings.json` / `appsettings.Local.json` (tasas para
+  estimar el espacio, umbrales de aviso y de corte, reintentos). `Agent:Session:MockSegmentSeconds` acorta los
+  tramos a segundos para probar (en mock o en desarrollo).
+- **Espacio en disco:** para empezar hacen falta `Agent:MinFreeBytes` + dos tramos libres (a 30 MiB/min por
+  defecto, o a la tasa real del último tramo). La web muestra las horas estimadas (contando la copia del ZIP si va
+  al mismo disco). Por debajo de una hora aparece un aviso y, cuando quedan dos minutos, la grabación se corta sola,
+  limpia, con el hueco "sin espacio".
+- **Entrega:** al generar, los tramos van **dentro del ZIP cifrado**, en la carpeta `sesion/` (ZIP64 + AES-256,
+  verificado con 5 y 10 GiB). Armar un ZIP de 10 GiB tarda unos minutos (más en un disco mecánico). Sus sellos van
+  planos en `sellos/` y el `LEEME-verificacion.txt` indica `Dentro del ZIP: "sesion/<archivo>"`. El informe suma
+  la sección condicional **"Registro audiovisual de la recolección"** (tabla de tramos con hash y sello, huecos,
+  marcas y la correlación con el reloj del celular); los tramos no se repiten en la tabla general ni cuentan como
+  grabaciones.
+- **Los tramos no se pueden quitar del caso** (Tatana responde `session_file_protected` y el backend
+  `recording_session_file`): son el registro de la recolección.
+- **Audio:** la pista de pantalla graba el audio interno del celular en Android 11+ (como los clips) y nunca el
+  micrófono de la PC. Mientras graba, el celular puede no reproducir sonido (Android 11–12).
+- **"Pantalla siempre encendida":** para no perder imagen entre tramos, el tramo nuevo arranca antes de cerrar el
+  anterior (~0,7 s de solapamiento). Como cada scrcpy restaura el ajuste al cerrarse, Tatana vuelve a poner el mismo
+  valor que pone scrcpy (`stay_on_while_plugged_in = 7`) después de cada corte y restaura el original al terminar.
+  Si Tatana se cae y el celular no vuelve a esa PC, el ajuste queda en 7 hasta reconectarlo (se restaura solo) o
+  cambiarlo a mano.
+- **Riesgo ante un corte de luz o un cuelgue de la PC:** scrcpy escribe el video a disco por bloques de 256 KiB. Si
+  **scrcpy** muere de golpe, se pierde lo que no llegó a disco: menos de un segundo con movimiento, pero pueden ser
+  minutos con la pantalla quieta (o el tramo entero si empezó quieto). Lo legible se recupera al reabrir Tatana; si
+  no hay nada recuperable, el hueco dice "el tramo en curso no se pudo recuperar". Si se cierra solo **Tatana**
+  (lo más común), scrcpy sigue vivo y la recuperación lo cierra limpio: el tramo queda completo. Los tramos ya
+  cerrados no se ven afectados.
+- **Diario en la PC:** `<Agent:DataDirectory>/sessions/<caseId>/sesion.json` (y el tramo en curso, que nunca
+  aparece como evidencia hasta cerrarse). Se borra solo al confirmar el ZIP del caso y si no quedó nada abierto.
+
 ## Integración de soporte (Faro)
 
 Es **opcional y está apagada por defecto**. Apagada, el backend no llama a Faro,

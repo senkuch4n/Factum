@@ -1,6 +1,7 @@
 using Factum.Agent.Common;
 using Factum.Agent.Services;
 using Factum.Agent.Services.Ios;
+using Factum.Agent.Services.Session;
 using Factum.Agent.WebSockets;
 using Factum.Agent.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -15,7 +16,8 @@ public sealed class RecordingController(
     IFileStorageService storage,
     AgentWebSocketHub hub,
     RecordingRegistry registry,
-    IAndroidScreenProbe screenProbe) : ControllerBase
+    IAndroidScreenProbe screenProbe,
+    SessionRecorder sessions) : ControllerBase
 {
     // grabacion-android-robusta §5.8 / §6.1. El trabajo con el dispositivo no depende del RequestAborted (DA4):
     // si el navegador recarga en "Iniciando…", la grabación igual arranca y se recupera por /agent/state.
@@ -48,6 +50,10 @@ public sealed class RecordingController(
             else
             {
                 platform = "android";
+                // grabacion-sesion-completa §5.12: con la sesión grabando este celular, se usa «Marcar momento».
+                if (sessions.IsActiveOn(serial))
+                    throw new AgentHttpException(409, AgentErrorCodes.SessionActive,
+                        "Hay una grabación de la sesión en curso en este celular. Usá «Marcar momento».");
                 // pulido-post-qa-final D9: antes de NewFilePath, StartRecordingAsync y SetOwner. Apagada o
                 // bloqueada → 409 (lo devuelve el catch de AgentHttpException) sin recording_started ni estado.
                 if (!request.SkipScreenCheck)

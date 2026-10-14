@@ -178,6 +178,13 @@ public sealed partial class CaseService
             return Result.Invalid<EvidenceResponse>(InvalidFilenameMessage);
         if (cas.Evidence.All(e => e.Filename != filename))
             return Result.NotFound<EvidenceResponse>(FileNotFoundMessage);
+        // grabacion-sesion-completa §6.5 (D-T6): los tramos de la sesión son el registro de custodia.
+        // QA #80 H-1: también un tramo que todavía no llegó a la copia del diario (sync pendiente o sesión en curso): con
+        // la grabación de la sesión en el caso, un nombre de tramo (prefijo reservado en Tatana) no se quita.
+        if (RecordingSessionRules.SessionFilenames(cas).Contains(filename) ||
+            (cas.RecordingSession is not null && RecordingSessionRules.IsSegmentName(filename)))
+            return EvidenceFail<EvidenceResponse>(ErrorKind.Conflict, RecordingSessionErrorCodes.RecordingSessionFileMessage,
+                RecordingSessionErrorCodes.RecordingSessionFile, ("filename", filename));
 
         if (!await _repo.RemoveEvidenceAsync(id, filename, ct))
             return EvidenceFail<EvidenceResponse>(ErrorKind.Conflict, NotEditableMessage, EvidenceErrorCodes.CaseNotEditable);
@@ -262,6 +269,12 @@ public sealed partial class CaseService
                 EvidenceErrorCodes.NoEvidence);
         if (!EvidenceManifest.SameHost(request.Hostname, cas.EvidenceHost?.Hostname))
             return OtherPc<PrepareGenerationResponse>(cas);
+        // grabacion-sesion-completa §6.5 (D-T19): con la sesión abierta o tramos sin registrar, no se genera.
+        var pendingSession = RecordingSessionRules.PendingForGeneration(cas);
+        if (pendingSession.Count > 0)
+            return EvidenceFail<PrepareGenerationResponse>(ErrorKind.Conflict,
+                RecordingSessionErrorCodes.RecordingSessionOpenMessage, RecordingSessionErrorCodes.RecordingSessionOpen,
+                ("pending_files", pendingSession));
 
         // Validación con el manifiesto (los bytes reales se revalidan en finish, paso 6).
         var hasImeiCapture = cas.CaptureRoles.Any(r =>

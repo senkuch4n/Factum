@@ -9,6 +9,7 @@ import { setUpdaterLogSink } from './updater/logger'
 import { readDistConfig } from './updater/dist-config'
 import { backgroundOperationsNotice, busyOperationsText, type UpdateState } from './updater/state'
 import './ipc'
+import { confirmSessionShutdown } from './session-shutdown'
 
 // D-T4: la config vive en %APPDATA%\Tatana\ (tatana.json, appsettings.Local.json,
 // update-state.json, logs\). Se fija ANTES de `ready` para que no dependa de
@@ -81,6 +82,8 @@ function sendToWindow(channel: string, payload: unknown): void {
  * como siempre, sin instalar.
  */
 async function requestQuit(): Promise<void> {
+  // Grabación de la sesión en curso (grabacion-sesion-completa §10): diálogo y cierre ordenado del tramo.
+  if (!(await confirmSessionShutdown())) return
   if (updateManager.getState().phase === 'ready') {
     const r = await updateManager.installNow({ relaunch: false })
     if (r.ok) return
@@ -136,7 +139,11 @@ function buildTrayMenu(): void {
       {
         label: 'Reiniciar agente .NET',
         enabled: s.phase !== 'installing',
-        click: () => { agentProcess.stop(); setTimeout(() => agentProcess.start(), 600) },
+        click: async () => {
+          if (!(await confirmSessionShutdown())) return
+          agentProcess.stop()
+          setTimeout(() => agentProcess.start(), 600)
+        },
       },
       { type: 'separator' },
       { label: 'Salir', click: () => { void requestQuit() } },

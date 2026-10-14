@@ -141,15 +141,17 @@ public static class ReportValues
         return values;
     }
 
-    /// <summary>Conteos de evidencia por clase (§7.6), sin artefactos generados.</summary>
+    /// <summary>Conteos de evidencia por clase (§7.6), sin artefactos generados ni tramos de la grabación de la sesión.</summary>
     public static (int Capturas, int Grabaciones, int Extraidos, int Otros) Counts(
         IEnumerable<FileInfoDto> files, Case cas)
     {
         var sources = cas.FileSources.Select(s => s.Filename).ToHashSet(StringComparer.Ordinal);
+        // grabacion-sesion-completa §8.3: los tramos de la sesión no cuentan como grabaciones (DT13 de #61).
+        var session = Cases.RecordingSessionRules.SessionFilenames(cas);
         int cap = 0, rec = 0, pull = 0, other = 0;
         foreach (var f in files)
         {
-            if (ReportService.IsGeneratedArtifact(f.Name)) continue;
+            if (ReportService.IsGeneratedArtifact(f.Name) || session.Contains(f.Name)) continue;
             switch (EvidenceClassifier.Classify(f.Name, sources.Contains(f.Name)))
             {
                 case EvidenceClass.Screenshot: cap++; break;

@@ -10,6 +10,10 @@
 - Permitir Minimizar la aplicacion y dejarla abierta en segundo plano
 - Copiar los sellos de tiempo a la carpeta del caso
 - Leer la ficha técnica y el reloj del dispositivo
+- Grabar la sesión completa de la recolección (Android)
+- Marcar un momento de la sesión
+- Recuperar la grabación de la sesión al reabrir Tatana
+- Cerrar Tatana con una grabación de la sesión en curso
 
 ### Caso de uso: Instalar Librerias
 > #### Actor principal: Usuario Factum
@@ -255,3 +259,123 @@ sintética con `platform=ios`), wifi conectada a "Red de prueba" y un reloj que 
 |7 - Genera el informe con el dispositivo conectado||
 ||8 - La web pide una medición de cierre (`GET /devices/{serial}/clock`) y la manda al backend|
 ||9 - Fin de caso de uso|
+
+
+### Caso de uso: Grabar la sesión completa de la recolección (Android)
+> #### Actor principal: Usuario factum (a través de la web)
+> #### Actor secundario: Dispositivo Android conectado por USB
+
+Grabación de la sesión (`Refactorizaciones/grabacion-sesion-completa.md` §5 y §7.2). Una sola sesión activa por
+Tatana. Tatana es la fuente de verdad mientras se graba: lleva un **diario** por caso en
+`<DataDirectory>/sessions/<caseId>/sesion.json` (escritura atómica), que sobrevive a recargas y reinicios.
+
+#### Pre-condiciones:
+ - Agente tatana con la capability `recording_session_v1` en `GET /health` (sin ella, la web no ofrece la función y
+   pide actualizar Tatana)
+ - Caso del flujo "evidencia en la PC del perito" con la grabación de la sesión activada en el backend
+ - Celular Android autorizado (scrcpy y ffmpeg disponibles)
+#### Post-condiciones:
+ - Un tramo `sesion_pantalla_NNN_<yyyyMMdd>_<HHmmss>.mkv` por cada corte, en la carpeta del caso, con tamaño,
+   SHA-256, duración y validación en el diario; los huecos con hora y motivo; la web registra cada tramo en el
+   expediente (y se sella)
+
+**Endpoints** (JSON snake_case; errores `{ error, code, … }`):
+
+- `GET /session/capacity?camera=false` → `{ available_bytes, min_free_bytes, bytes_per_minute, zip_on_same_volume,
+  estimated_minutes, required_bytes_to_start, can_start }`.
+- `POST /cases/{caseId}/session/start` `{ serial, platform: "android", android_version, segment_minutes,
+  skip_screen_check, origin_id }` → estado de la sesión. Errores: `400 invalid_case_id` / `invalid_request` /
+  `session_platform_unsupported` (iPhone en esta versión); `409 already_recording` (clip puntual en curso en ese
+  celular) / `session_active` (otra sesión, con su `case_id`) / `screen_off` / `screen_locked`;
+  `504 recording_start_timeout`; `507 insufficient_storage`; `500` con el error de scrcpy. Repetirlo con el mismo
+  caso y celular devuelve el estado actual (idempotente).
+- `POST /cases/{caseId}/session/stop` `{ reason: "cambio_de_paso" | "detenido_por_perito", origin_id }` → responde
+  después de guardar y hashear el último tramo. Idempotente.
+- `GET /cases/{caseId}/session` → el diario sin datos internos (`404 session_not_found` si no hay).
+- `GET /agent/state` suma `recording_session` (solo con una sesión activa) y `session_recovery`
+  (`running` | `done`); `operations[]` suma `recording_session` (bloquea la actualización).
+- Eventos WebSocket: `session_state`, `session_segment_closed` y `session_mark_added`.
+- `POST /devices/{serial}/record/start` en un celular con la sesión activa → `409 session_active` ("Usá «Marcar
+  momento»"). `DELETE /cases/{id}/files/{tramo}` → `409 session_file_protected`. Subir o importar un archivo que
+  empiece con `sesion_` → `400 invalid_filename` (prefijo reservado).
+
+**Cortes cada `segment_minutes` (corte solapado):** el tramo nuevo arranca y recién con su marcador se cierra el
+anterior (~0,7 s de solapamiento, sin hueco). Si el nuevo no arranca, el actual sigue grabando y se reintenta en un
+minuto (aviso `rotation_delayed`). Después de cada corte, si el scrcpy saliente restauró "Pantalla siempre
+encendida", Tatana vuelve a poner el mismo valor que pone scrcpy (7) y al terminar restaura el original (si el
+celular no está, queda pendiente hasta que vuelva a aparecer).
+
+**Desconexión del USB:** el tramo se cierra, se abre un hueco `desconexion` y la sesión queda en `waiting_device`;
+cuando el sondeo de 3 s ve **el mismo** serial, reanuda sola en un tramo nuevo y cierra el hueco. Si scrcpy sale
+con el celular conectado, el hueco es `fallo_grabacion` y se reintenta una vez. Pantalla apagada o bloqueada
+durante la sesión: solo avisos (`screen_off`/`screen_locked`), nunca corta. Espacio: aviso `disk_low` por debajo de
+`Agent:Session:WarnMinutesLeft` y corte limpio `sin_espacio` cerca de `Agent:MinFreeBytes`.
+
+|Actor principal|Sistema|
+|--|:--:|
+|1 - Entra al paso 3 con la grabación de la sesión activada||
+||2 - La web llama a `POST …/session/start`; Tatana chequea espacio y pantalla, lanza scrcpy y espera su marcador|
+||3 - Cada `segment_minutes`, Tatana corta el tramo (solapado), lo valida, lo mueve a la carpeta del caso y lo hashea|
+||4 - La web recibe `session_segment_closed`, registra el tramo en el expediente y sincroniza el diario con el backend|
+|5 - Sale del paso 3||
+||6 - La web llama a `POST …/session/stop`; Tatana guarda el último tramo y abre el hueco `cambio_de_paso`|
+||7 - Fin de caso de uso|
+
+
+### Caso de uso: Marcar un momento de la sesión
+> #### Actor principal: Usuario factum (a través de la web)
+
+Con la sesión grabando, "Grabar" pasa a ser "Marcar momento".
+
+- `POST /cases/{caseId}/session/marks` `{ text?, origin_id }` → `{ id, at, segment_index, offset_seconds, text,
+  kind: "manual" }`. `text` hasta 300 caracteres, sin caracteres de control (`400 invalid_request`); sin sesión
+  grabando para ese caso, `409 session_not_active`.
+- Cada captura de pantalla (`POST /devices/{serial}/screenshot` con el `case_id` de la sesión) deja una marca
+  automática `kind: "captura"` con la hora de antes de `screencap`; la respuesta y el evento `screenshot_taken` suman
+  `session_mark`.
+- El tramo y el segundo del video salen del tramo de pantalla que contiene la hora (en un solapamiento, el más
+  nuevo).
+
+|Actor principal|Sistema|
+|--|:--:|
+|1 - Toca "Marcar momento" y escribe qué pasó (opcional)||
+||2 - Tatana guarda la marca en el diario y emite `session_mark_added`|
+||3 - Fin de caso de uso|
+
+
+### Caso de uso: Recuperar la grabación de la sesión al reabrir Tatana
+> #### Actor principal: Tatana (al arrancar)
+
+Si Tatana se cerró grabando (cierre de golpe, crash, la PC se reinició), al arrancar recorre los diarios en segundo
+plano (`session_recovery: "running"`):
+
+1. Un diario ilegible se renombra a `sesion.json.ilegible-<fecha>` y no se toca ningún video.
+2. Si el scrcpy del tramo abierto sigue vivo (mismo PID y misma hora de inicio), lo cierra limpio: el tramo queda
+   completo.
+3. Cada tramo abierto se valida (con remux si quedó truncado), se mueve a la carpeta del caso y se hashea
+   (`recovered: true`); uno vacío o ilegible se descarta (`descartes/`) y el hueco dice que se perdió.
+4. Abre el hueco `tatana_cerrado` y deja la sesión en `interrupted`: no se reanuda sola; se reanuda cuando el perito
+   vuelve al paso 3.
+5. Restaura "Pantalla siempre encendida" si el celular está conectado (si no, queda pendiente).
+
+#### Post-condiciones:
+ - Los tramos recuperados aparecen en el diario y se emiten `session_segment_closed`; el diario se borra recién al
+   confirmar el ZIP del caso, si no quedó nada abierto.
+
+
+### Caso de uso: Cerrar Tatana con una grabación de la sesión en curso
+> #### Actor principal: Usuario factum (desde la ventana de Tatana)
+
+`POST /agent/prepare-shutdown` (solo local, sin `Origin`; desde un navegador `403 maintenance_local_only`) corta la
+captura, guarda el tramo y deja el diario en `interrupted` con el hueco `tatana_cerrado`, con un presupuesto de
+`Agent:Session:ShutdownBudgetSeconds` (20 s). Responde `{ had_session, segments_saved, pending }`. Lo que no entra en
+el presupuesto queda abierto y lo termina la recuperación. El cierre ordenado del host (`ApplicationStopping`, por
+ejemplo SIGTERM en macOS/Linux) hace lo mismo con 15 s; un cierre de golpe en Windows lo cubre la recuperación.
+
+|Actor principal|Sistema|
+|--|:--:|
+|1 - Cierra o reinicia Tatana desde su ventana||
+||2 - La ventana ve `recording_session` en `/agent/state` y pide confirmación|
+|3 - Confirma||
+||4 - La ventana llama a `POST /agent/prepare-shutdown` y recién después cierra el proceso|
+||5 - Fin de caso de uso|

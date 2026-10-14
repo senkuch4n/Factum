@@ -8,12 +8,13 @@
  */
 
 import {
-  AlertCircle, AlertTriangle, Camera, Clock, ClockAlert, ClockCheck, Cpu, FileCheck, FolderPlus, Image, Pencil, RefreshCw,
-  Trash2, Upload, Video, type LucideIcon,
+  AlertCircle, AlertTriangle, Camera, Circle, Clock, ClockAlert, ClockCheck, Cpu, FileCheck, Film, FolderPlus, Image,
+  PauseCircle, Pencil, PlayCircle, RefreshCw, Trash2, Upload, Video, type LucideIcon,
 } from "lucide-react";
 import type { Case, CaseEvent, CaseEventDetail, CaseEventType } from "@/lib/api";
 import { TARGET_LABEL } from "@/lib/timestamps";
-import { clockReasonLabel, describeEventSkew, exceedsThreshold } from "@/lib/device-details";
+import { clockReasonLabel, describeEventSkew, exceedsThreshold, formatDuration } from "@/lib/device-details";
+import { reasonText } from "@/lib/recording-session";
 
 /** Ícono lucide por tipo de evento (criterio de la SDD §"Cada ítem"). */
 const EVENT_ICON: Record<CaseEventType, LucideIcon> = {
@@ -33,6 +34,12 @@ const EVENT_ICON: Record<CaseEventType, LucideIcon> = {
   timestamp_failed: ClockAlert,
   device_details_recorded: Cpu,
   device_clock_measured: Clock,
+  // grabacion-sesion-completa §9.8
+  recording_session_settings_changed: Video,
+  recording_session_started: Circle,
+  recording_session_segment_closed: Film,
+  recording_session_stopped: PauseCircle,
+  recording_session_resumed: PlayCircle,
 };
 
 /** Ícono del evento; `FolderPlus` para un tipo desconocido (backend más nuevo). */
@@ -215,6 +222,46 @@ export function eventTitle(ev: CaseEvent): string {
         : "Se registraron los datos técnicos del dispositivo";
     case "device_clock_measured":
       return "Se midió el reloj del dispositivo al generar";
+    case "recording_session_settings_changed":
+    case "recording_session_started":
+    case "recording_session_segment_closed":
+    case "recording_session_stopped":
+    case "recording_session_resumed":
+      return recordingSessionTitle(ev);
+    default:
+      return "Actividad del caso";
+  }
+}
+
+/** "pantalla" / "cámara" de un evento de la sesión. */
+function trackWord(track: string | undefined): string {
+  return track === "camara" ? "cámara" : "pantalla";
+}
+
+/** Textos de los eventos de la grabación de la sesión (grabacion-sesion-completa §9.8). */
+function recordingSessionTitle(ev: CaseEvent): string {
+  const d = ev.detail ?? {};
+  switch (ev.type) {
+    case "recording_session_settings_changed":
+      return d.enabled === false
+        ? "Se desactivó la grabación de la sesión"
+        : `Se activó la grabación de la sesión${d.with_camera ? " con cámara" : ""}`;
+    case "recording_session_started":
+      return `Empezó la grabación de la sesión (${trackWord(d.track)})`;
+    case "recording_session_segment_closed": {
+      const n = typeof d.segment_index === "number" ? `${d.segment_index} ` : "";
+      // Misma cifra que el informe (QA B-4): el tiempo grabado (`recorded_seconds`), no la
+      // duración del video. Si el backend no lo manda en el evento, no se muestra duración.
+      const dur = typeof d.recorded_seconds === "number" ? ` · ${formatDuration(d.recorded_seconds)}` : "";
+      const incomplete = d.validation === "incomplete" ? " (incompleto)" : "";
+      return `Se guardó el tramo ${n}de la ${trackWord(d.track)}${dur}${incomplete}`;
+    }
+    case "recording_session_stopped":
+      return `Se cortó la grabación de la sesión: ${reasonText(d.reason)}${d.segment_lost ? " (el tramo en curso no se pudo recuperar)" : ""}`;
+    case "recording_session_resumed":
+      return typeof d.gap_seconds === "number"
+        ? `Se reanudó la grabación de la sesión tras ${formatDuration(d.gap_seconds)}`
+        : "Se reanudó la grabación de la sesión";
     default:
       return "Actividad del caso";
   }
@@ -225,6 +272,7 @@ export function eventFilename(ev: CaseEvent): string | null {
   if (
     ev.type === "evidence_added" || ev.type === "evidence_removed" || ev.type === "evidence_updated"
     || ev.type === "timestamp_granted" || ev.type === "timestamp_failed"
+    || ev.type === "recording_session_segment_closed"
   ) {
     return ev.filename ?? null;
   }

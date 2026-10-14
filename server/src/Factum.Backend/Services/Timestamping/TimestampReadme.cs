@@ -18,9 +18,15 @@ public static class TimestampReadme
     /// <param name="zipFilename">Nombre del ZIP del caso, o null (borrador).</param>
     /// <param name="pdfFilename">Nombre del DOCX del caso, o null (borrador).</param>
     /// <param name="selection">Sellos incluidos (ZIP, informe, evidencia) y lo que quedó sin sello.</param>
+    /// <param name="sessionFiles">
+    /// grabacion-sesion-completa §6.7: tramos de la grabación de la sesión. Su sello se describe como "Tramo de la grabación
+    /// de la sesión" y suma la línea <c>Dentro del ZIP: "sesion/&lt;archivo&gt;"</c>. null o vacío = como siempre.
+    /// </param>
     public static string Build(string caseRef, DateTime nowUtc, TimeZoneInfo zone, string? zipFilename,
-        string? pdfFilename, TimestampSelection selection)
+        string? pdfFilename, TimestampSelection selection, IReadOnlySet<string>? sessionFiles = null)
     {
+        bool IsSession(CaseTimestamp t) =>
+            t.Target == TimestampTargets.Evidence && sessionFiles is not null && sessionFiles.Contains(t.Filename);
         var sealedItems = selection.Sealed;
         var sb = new StringBuilder();
         void L(string line = "") => sb.Append(line).Append(Nl);
@@ -140,7 +146,8 @@ public static class TimestampReadme
         {
             L();
             L(t.Filename);
-            L($"  Tipo: {TypeLabel(t.Target)}");
+            L($"  Tipo: {(IsSession(t) ? SessionTypeLabel : TypeLabel(t.Target))}");
+            if (IsSession(t)) L($"  Dentro del ZIP: \"{SessionZipFolder}/{t.Filename}\"");
             L($"  SHA-256: {t.Sha256}");
             L($"  Autoridad: {t.Authority} ({t.TsaUrl})");
             var gen = t.GenTime ?? DateTime.MinValue;
@@ -185,6 +192,9 @@ public static class TimestampReadme
 
     private static string VerifyDigest(string sha256, string sealedName, string ca) =>
         $"openssl ts -verify -digest {sha256} -in \"{TimestampBundle.Folder}/{sealedName}.tsr\" -CAfile \"{ca}\"";
+
+    internal const string SessionTypeLabel = "Tramo de la grabación de la sesión";
+    internal const string SessionZipFolder = "sesion";
 
     private static string TypeLabel(string target) => target switch
     {

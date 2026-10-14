@@ -111,6 +111,29 @@ public interface ICaseRepository
     /// matcheó.
     /// </summary>
     Task<bool> SetIncludeSsidAsync(string id, bool include, CancellationToken ct = default);
+
+    // ── grabacion-sesion-completa (§6.3): bajo Editable(id) ──────────────────
+
+    /// <summary>
+    /// Crea <c>RecordingSession</c> completo, solo si el caso sigue editable y todavía no lo tiene. false si no matcheó
+    /// (otra pestaña lo creó o dejó de ser editable).
+    /// </summary>
+    Task<bool> CreateRecordingSessionAsync(string id, RecordingSession session, CancellationToken ct = default);
+
+    /// <summary>
+    /// $set de los cuatro campos del switch (<c>Enabled</c>, <c>WithCamera</c>, <c>ModeAtChange</c>,
+    /// <c>SettingsUpdatedAt</c>), solo si el caso sigue editable y ya tiene <c>RecordingSession</c>.
+    /// </summary>
+    Task<bool> SetRecordingSessionSettingsAsync(string id, bool enabled, bool withCamera, string modeAtChange,
+        DateTime updatedAt, CancellationToken ct = default);
+
+    /// <summary>
+    /// $set de la copia del diario (cabecera, tramos, huecos, marcas y <c>SyncedAt</c>; nunca el switch), solo si el caso
+    /// sigue editable y <c>RecordingSession.SyncedAt</c> sigue siendo <paramref name="expectedSyncedAt"/> (null = sin
+    /// sync previo). false si no matcheó.
+    /// </summary>
+    Task<bool> SetRecordingSessionAsync(string id, DateTime? expectedSyncedAt, RecordingSession session,
+        CancellationToken ct = default);
 }
 
 /// <summary>Valores ya normalizados (trim) de un PUT /api/cases/{id}.</summary>
@@ -163,7 +186,9 @@ public sealed class CaseRepository : ICaseRepository
                 .Exclude(c => c.ReportTexts)
                 .Exclude(c => c.ReportTextVersions)
                 .Exclude(c => c.ZipPassword)
-                .Exclude(c => c.PendingGeneration))
+                .Exclude(c => c.PendingGeneration)
+                // grabacion-sesion-completa §6.1: el diario (hasta miles de marcas) no viaja en el listado.
+                .Exclude(c => c.RecordingSession))
             .ToListAsync(ct);
 
     // Solo lectura, con proyección: la siembra de catálogos no necesita (ni debe traer) el resto.
@@ -424,6 +449,61 @@ public sealed class CaseRepository : ICaseRepository
     {
         var res = await _col.UpdateOneAsync(EditableWithDetails(id),
             Builders<Case>.Update.Set(c => c.DeviceDetails!.IncludeSsidInReport, include), cancellationToken: ct);
+        return res.MatchedCount > 0;
+    }
+
+    // ── grabacion-sesion-completa (§6.3) ─────────────────────────────────────
+
+    private static FilterDefinition<Case> HasRecordingSession(bool has)
+    {
+        var f = Builders<Case>.Filter;
+        return has
+            ? f.Exists(c => c.RecordingSession) & f.Ne(c => c.RecordingSession, null)
+            : f.Or(f.Exists(c => c.RecordingSession, false), f.Eq(c => c.RecordingSession, null));
+    }
+
+    public async Task<bool> CreateRecordingSessionAsync(string id, RecordingSession session, CancellationToken ct = default)
+    {
+        var res = await _col.UpdateOneAsync(Editable(id) & HasRecordingSession(false),
+            Builders<Case>.Update.Set(c => c.RecordingSession, session), cancellationToken: ct);
+        return res.MatchedCount > 0;
+    }
+
+    public async Task<bool> SetRecordingSessionSettingsAsync(string id, bool enabled, bool withCamera, string modeAtChange,
+        DateTime updatedAt, CancellationToken ct = default)
+    {
+        var res = await _col.UpdateOneAsync(Editable(id) & HasRecordingSession(true),
+            Builders<Case>.Update
+                .Set(c => c.RecordingSession!.Enabled, enabled)
+                .Set(c => c.RecordingSession!.WithCamera, withCamera)
+                .Set(c => c.RecordingSession!.ModeAtChange, modeAtChange)
+                .Set(c => c.RecordingSession!.SettingsUpdatedAt, updatedAt),
+            cancellationToken: ct);
+        return res.MatchedCount > 0;
+    }
+
+    public async Task<bool> SetRecordingSessionAsync(string id, DateTime? expectedSyncedAt, RecordingSession s,
+        CancellationToken ct = default)
+    {
+        var f = Builders<Case>.Filter;
+        var synced = expectedSyncedAt is { } at
+            ? f.Eq(c => c.RecordingSession!.SyncedAt, at)
+            : f.Or(f.Exists(c => c.RecordingSession!.SyncedAt, false), f.Eq(c => c.RecordingSession!.SyncedAt, null));
+        var u = Builders<Case>.Update
+            .Set(c => c.RecordingSession!.SegmentMinutes, s.SegmentMinutes)
+            .Set(c => c.RecordingSession!.Segments, s.Segments)
+            .Set(c => c.RecordingSession!.Gaps, s.Gaps)
+            .Set(c => c.RecordingSession!.Marks, s.Marks)
+            .Set(c => c.RecordingSession!.SyncedAt, s.SyncedAt);
+        // [BsonIgnoreIfNull] en el modelo: un null se escribe como $unset, igual que lo dejaría el serializador.
+        u = s.SessionId is null ? u.Unset(c => c.RecordingSession!.SessionId) : u.Set(c => c.RecordingSession!.SessionId, s.SessionId);
+        u = s.Platform is null ? u.Unset(c => c.RecordingSession!.Platform) : u.Set(c => c.RecordingSession!.Platform, s.Platform);
+        u = s.ConnectionId is null ? u.Unset(c => c.RecordingSession!.ConnectionId) : u.Set(c => c.RecordingSession!.ConnectionId, s.ConnectionId);
+        u = s.AgentVersion is null ? u.Unset(c => c.RecordingSession!.AgentVersion) : u.Set(c => c.RecordingSession!.AgentVersion, s.AgentVersion);
+        u = s.Audio is null ? u.Unset(c => c.RecordingSession!.Audio) : u.Set(c => c.RecordingSession!.Audio, s.Audio);
+        u = s.Camera is null ? u.Unset(c => c.RecordingSession!.Camera) : u.Set(c => c.RecordingSession!.Camera, s.Camera);
+        u = s.State is null ? u.Unset(c => c.RecordingSession!.State) : u.Set(c => c.RecordingSession!.State, s.State);
+        var res = await _col.UpdateOneAsync(Editable(id) & HasRecordingSession(true) & synced, u, cancellationToken: ct);
         return res.MatchedCount > 0;
     }
 

@@ -6,8 +6,9 @@ import { Tag } from "primereact/tag";
 import {
   ArrowLeft, FileCheck2, ShieldCheck, Shield, User,
   FileText, Video, ImageIcon, Paperclip, Check, Lock, Fingerprint, FolderClosed,
-  AlertTriangle, ArrowRight, Archive, HardDrive, CheckCircle2, Circle, Loader2, Server, Clock,
+  AlertTriangle, ArrowRight, Archive, HardDrive, CheckCircle2, Circle, Loader2, Server, Clock, Film, Square,
 } from "lucide-react";
+import { sessionFilenames } from "@/lib/recording-session";
 import type { Case, CapturedFile } from "@/types";
 import { agent, agentFileURL, type ZipProgress } from "@/lib/agent";
 import { formatBytesPair } from "@/lib/format";
@@ -51,6 +52,16 @@ interface Props {
   /** Advertencia de la generación (p. ej. el mismo caso generándose en otra pestaña, DT9). */
   notice?: string | null;
   onDismissNotice?: () => void;
+  // ── Grabación de la sesión (grabacion-sesion-completa §9.6) ──
+  /** El caso tiene la sesión activada: el checklist suma "Grabación de la sesión cerrada y guardada". */
+  sessionEnabled?: boolean;
+  /** "Primero cerrá la grabación de la sesión" (bloquea "Generar"), o `null`. */
+  sessionBlocker?: string | null;
+  /** Cierre en curso (botón "Cerrar grabación de la sesión"). */
+  sessionClosing?: boolean;
+  onCloseSession?: () => Promise<void>;
+  /** Los tramos suman más de 2 GiB: el ZIP puede tardar varios minutos. */
+  sessionLargeZip?: boolean;
 }
 
 /** Tramo actual de la generación del flujo agent y, en el primero, el avance del ZIP (WS). */
@@ -172,6 +183,7 @@ function EvidenceGroup({
 export function GenerateStep({
   currentCase, files, loading, serverMissing = [], onBack, onGenerate, onGoToField,
   agentBlocker = null, progress = null, reviewNotices, onReviewOperaciones, notice = null, onDismissNotice,
+  sessionEnabled = false, sessionBlocker = null, sessionClosing = false, onCloseSession, sessionLargeZip = false,
 }: Props) {
   // ── Cantidades de "Operaciones realizadas" vs. la evidencia actual (DT13). Best-effort:
   //    si los defaults fallan o el backend no manda conteos, no hay aviso. ──
@@ -210,13 +222,16 @@ export function GenerateStep({
     const m = describeMissing(k);
     if (m && !missing.some(x => x.label === m.label)) missing.push(m);
   });
-  const blocked = missing.length > 0 || !!agentBlocker;
+  const blocked = missing.length > 0 || !!agentBlocker || !!sessionBlocker;
 
+  // Tramos de la sesión: grupo propio y carpeta `sesion/` del ZIP (D-T5: por pertenencia al diario).
+  const sessionNames    = sessionFilenames(currentCase.recording_session);
+  const sessionFiles    = files.filter(f => sessionNames.has(f.name));
   const fiscalFile      = files.find(f => isFuncionario(f.name));
   const denuncianteFile = files.find(f => isDenunciante(f.name));
   const captures        = files.filter(f => isCapture(f.name));
-  const videos          = files.filter(f => isVideo(f.name));
-  const attachments     = files.filter(f => !isIdentity(f.name) && !isVideo(f.name) && !isCapture(f.name));
+  const videos          = files.filter(f => isVideo(f.name) && !sessionNames.has(f.name));
+  const attachments     = files.filter(f => !isIdentity(f.name) && !isVideo(f.name) && !isCapture(f.name) && !sessionNames.has(f.name));
 
   const dev = currentCase.device;
   const deviceName = dev ? [dev.manufacturer, dev.model].filter(Boolean).join(" ") : null;
@@ -231,6 +246,7 @@ export function GenerateStep({
     { name: "videos", count: videos.length },
     { name: "identificaciones", count: (fiscalFile ? 1 : 0) + (denuncianteFile ? 1 : 0) },
     { name: "adjuntos", count: attachments.length },
+    { name: "sesion", count: sessionFiles.length },
   ].filter(f => f.count > 0);
 
   const guarantees = [
@@ -262,6 +278,42 @@ export function GenerateStep({
             Tatana disponible en esta PC
           </h3>
           <p className="m-0 mt-1.5 text-fx-body-sm text-fx-text-2">{agentBlocker}</p>
+        </section>
+      )}
+
+      {/* ── Grabación de la sesión: cerrada y guardada antes de generar (§9.6) ── */}
+      {sessionEnabled && (
+        <section
+          aria-labelledby="generate-session-title"
+          className={`rounded-fx-lg border p-4 sm:p-5 ${sessionBlocker ? "border-fx-warning bg-fx-warning-soft" : "border-fx-border bg-fx-surface-2"}`}
+        >
+          <h3 id="generate-session-title" className="m-0 flex items-center gap-2 text-fx-body-sm font-semibold text-fx-text">
+            {sessionBlocker
+              ? <AlertTriangle className="h-4 w-4 shrink-0 text-fx-warning" aria-hidden="true" />
+              : <CheckCircle2 className="h-4 w-4 shrink-0 text-fx-success" aria-hidden="true" />}
+            Grabación de la sesión cerrada y guardada
+            <span className="sr-only">{sessionBlocker ? ": pendiente" : ": listo"}</span>
+          </h3>
+          {sessionBlocker && (
+            <>
+              <p id="generate-session-reason" className="m-0 mt-1.5 text-fx-body-sm text-fx-text-2">{sessionBlocker}.</p>
+              {onCloseSession && (
+                <Button
+                  type="button"
+                  size="small"
+                  severity="secondary"
+                  icon={sessionClosing
+                    ? <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />
+                    : <Square className="h-3 w-3" aria-hidden="true" />}
+                  label={sessionClosing ? "Cerrando la grabación de la sesión…" : "Cerrar grabación de la sesión"}
+                  onClick={() => { if (!sessionClosing) void onCloseSession(); }}
+                  aria-disabled={sessionClosing || undefined}
+                  aria-busy={sessionClosing || undefined}
+                  className={`mt-2.5 min-h-11 sm:min-h-0 ${sessionClosing ? "cursor-not-allowed opacity-60" : ""}`}
+                />
+              )}
+            </>
+          )}
         </section>
       )}
 
@@ -330,7 +382,7 @@ export function GenerateStep({
           <h3 id="generate-evidence-title" className={BLOCK_TITLE}>Evidencia</h3>
           <Tag value={`${files.length} ${files.length === 1 ? "archivo" : "archivos"}`} />
         </div>
-        {captures.length + videos.length + attachments.length === 0 ? (
+        {captures.length + videos.length + attachments.length + sessionFiles.length === 0 ? (
           <div className="rounded-fx-lg border border-dashed border-fx-border-strong bg-fx-surface-2 px-4 py-6 text-center text-fx-body-sm text-fx-text-2">
             No se capturó evidencia del dispositivo. Podés volver atrás para agregarla.
           </div>
@@ -339,6 +391,7 @@ export function GenerateStep({
             <EvidenceGroup title="Capturas de pantalla" icon={ImageIcon} items={captures} kind="image" urlOf={urlOf} />
             <EvidenceGroup title="Grabaciones" icon={Video} items={videos} kind="video" urlOf={urlOf} />
             <EvidenceGroup title="Adjuntos" icon={Paperclip} items={attachments} kind="doc" urlOf={urlOf} />
+            <EvidenceGroup title="Grabación de la sesión" icon={Film} items={sessionFiles} kind="video" urlOf={urlOf} />
           </div>
         )}
       </section>
@@ -412,7 +465,9 @@ export function GenerateStep({
       />
 
       {/* ── Progreso en dos tramos (flujo agent) ── */}
-      {agentMode && loading && progress && <GenerateStages progress={progress} sealing={timestampingEnabled} />}
+      {agentMode && loading && progress && (
+        <GenerateStages progress={progress} sealing={timestampingEnabled} largeSession={sessionLargeZip} />
+      )}
 
       {/* ── Acciones ── */}
       <StepActions>
@@ -431,7 +486,8 @@ export function GenerateStep({
           icon={<FileCheck2 className="h-5 w-5" aria-hidden="true" />}
           loading={loading}
           disabled={loading || blocked}
-          aria-describedby={missing.length > 0 ? "generate-missing-title" : agentBlocker ? "generate-agent-title" : undefined}
+          aria-describedby={missing.length > 0 ? "generate-missing-title" : agentBlocker ? "generate-agent-title"
+            : sessionBlocker ? "generate-session-reason" : undefined}
           onClick={handleGenerateClick}
           className="w-full sm:flex-1 min-h-11"
         />
@@ -464,7 +520,7 @@ const REPORT_STAGE_SEALING = "Sellando el ZIP, generando el informe y sellándol
 
 /* ── Tramos de la generación del flujo agent (SDD §7.7). Sin animación decorativa:
       solo el spinner del tramo en curso y la barra real del ZIP. ── */
-function GenerateStages({ progress, sealing }: { progress: GenerateProgress; sealing: boolean }) {
+function GenerateStages({ progress, sealing, largeSession = false }: { progress: GenerateProgress; sealing: boolean; largeSession?: boolean }) {
   const zip = progress.zip;
   const known = !!zip && zip.total_bytes > 0;
   const ratio = known ? Math.min(1, zip!.done_bytes / zip!.total_bytes) : 0;
@@ -504,6 +560,11 @@ function GenerateStages({ progress, sealing }: { progress: GenerateProgress; sea
                 {s.id === "report" && sealing && (
                   <p className="m-0 mt-1 pl-5 text-xs text-fx-text-3">
                     El sello de tiempo lo emite una autoridad externa; si no responde, el caso se genera igual.
+                  </p>
+                )}
+                {s.id === "zip" && current && largeSession && (
+                  <p className="m-0 mt-1 pl-5 text-xs text-fx-text-3">
+                    Con la grabación de la sesión, armar el ZIP puede tardar varios minutos.
                   </p>
                 )}
                 {current && s.id === "zip" && zip && (

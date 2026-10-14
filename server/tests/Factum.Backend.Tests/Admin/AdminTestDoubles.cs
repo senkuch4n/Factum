@@ -141,6 +141,11 @@ public sealed class InMemoryCaseCounter : ICaseRepository
     public Task<bool> SetDeviceDetailsAsync(string id, DeviceDetails details, CancellationToken ct = default) => throw No();
     public Task<bool> SetClockCloseAsync(string id, ClockMeasurement measurement, CancellationToken ct = default) => throw No();
     public Task<bool> SetIncludeSsidAsync(string id, bool include, CancellationToken ct = default) => throw No();
+    public Task<bool> CreateRecordingSessionAsync(string id, RecordingSession session, CancellationToken ct = default) => throw No();
+    public Task<bool> SetRecordingSessionSettingsAsync(string id, bool enabled, bool withCamera, string modeAtChange,
+        DateTime updatedAt, CancellationToken ct = default) => throw No();
+    public Task<bool> SetRecordingSessionAsync(string id, DateTime? expectedSyncedAt, RecordingSession session,
+        CancellationToken ct = default) => throw No();
 }
 
 /// <summary>Temporal predecible y distinta en cada llamada (14 caracteres, cumple el mínimo de 10).</summary>

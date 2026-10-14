@@ -81,6 +81,8 @@ export interface ApiErrorBody {
   min_contrast?: number;
   /** `dni_taken` del alta de cuentas (abm-clientes §8.1): id de la cuenta que ya tiene ese DNI. */
   existing_user_id?: string;
+  /** 409 `recording_session_open` del `prepare` (grabacion-sesion-completa §6.5). */
+  pending_files?: string[];
 }
 
 /* ── Corte de sesión (usuarios-locales §9.1) ── */
@@ -561,7 +563,17 @@ export type CaseEventType =
   /** metadatos-dispositivo: ficha técnica registrada (alta, retoma o "Volver a leer"). Sin SSID ni valores. */
   | "device_details_recorded"
   /** metadatos-dispositivo: medición de reloj al generar (`clock_kind = "close"`). */
-  | "device_clock_measured";
+  | "device_clock_measured"
+  /** grabacion-sesion-completa (§6.4): switch del perito (activó/desactivó, con cámara). */
+  | "recording_session_settings_changed"
+  /** grabacion-sesion-completa: primer tramo de una pista en el caso. */
+  | "recording_session_started"
+  /** grabacion-sesion-completa: tramo guardado (`filename` = el del tramo). */
+  | "recording_session_segment_closed"
+  /** grabacion-sesion-completa: hueco nuevo o tramo descartado. */
+  | "recording_session_stopped"
+  /** grabacion-sesion-completa: hueco que se cierra. */
+  | "recording_session_resumed";
 
 /**
  * Detalle acotado de un `CaseEvent`: cada campo solo aplica a ciertos tipos y el
@@ -609,6 +621,27 @@ export interface CaseEventDetail {
   clock_margin_ms?: number;
   /** PC − servidor (ms); ausente si no se midió. */
   pc_minus_server_ms?: number;
+  /* ── grabacion-sesion-completa (§6.4/§7.6.4); `reason`, `sha256` y `size` se reusan ── */
+  /** `recording_session_settings_changed`. */
+  enabled?: boolean;
+  with_camera?: boolean;
+  /** Pista del tramo o del hueco. */
+  track?: RecordingSessionTrack;
+  segment_index?: number;
+  /** Hora real de la PC (Tatana); `timestamp` es la del servidor al sincronizar. */
+  at?: string;
+  duration_seconds?: number;
+  /**
+   * `recording_session_segment_closed`: tiempo grabado del tramo, la cifra del informe
+   * (QA B-4). Opcional: un backend que no lo mande deja el evento sin duración.
+   */
+  recorded_seconds?: number;
+  validation?: "ok" | "incomplete";
+  recovered?: boolean;
+  /** `recording_session_resumed`: duración del hueco que se cerró. */
+  gap_seconds?: number;
+  /** `recording_session_stopped`: el tramo en curso no se pudo recuperar. */
+  segment_lost?: boolean;
 }
 
 /** Un hito de la línea de tiempo del caso (`GET /api/cases/{id}/events`). */
@@ -776,6 +809,11 @@ export interface ManifestFile {
   filename: string;
   size: number;
   sha256: string;
+  /**
+   * Carpeta dentro del ZIP (grabacion-sesion-completa §7.6.2): `"sesion"` para los
+   * tramos de la grabación de la sesión; `null`/ausente = raíz. Se pasa tal cual a Tatana.
+   */
+  zip_folder?: "sesion" | null;
 }
 
 /** Body de `PUT /api/cases/{id}/evidence`. */
@@ -979,6 +1017,110 @@ export interface Case {
    * anterior a la HU, alta con un Tatana sin `device_details_v1` o lectura sin registrar.
    */
   device_details?: DeviceDetails | null;
+  /**
+   * grabacion-sesion-completa (§7.6.1): grabación de la sesión de recolección.
+   * `null`/ausente = caso sin sesión (o anterior a la HU). El backend manda los `null`.
+   */
+  recording_session?: RecordingSession | null;
+}
+
+/* ── Grabación de la sesión completa (grabacion-sesion-completa, SDD §7.5-§7.6) ── */
+
+export type RecordingSessionTrack = "pantalla" | "camara";
+
+/** Motivos de hueco / `stop_reason` (§6.2). */
+export type RecordingSessionReason =
+  | "cambio_de_paso" | "retomado_otro_dia" | "desconexion" | "tatana_cerrado" | "sin_espacio"
+  | "camara_fallo" | "detenido_por_perito" | "fallo_grabacion" | "rotacion";
+
+/** Modo de instalación (`Recording:SessionMode`, §6.6). */
+export type RecordingSessionMode = "disabled" | "optional_off" | "optional_on" | "required";
+
+export interface RecordingSessionCamera {
+  name: string; width: number; height: number; fps: number; with_audio: boolean;
+}
+
+/** Tramo guardado en el caso (solo `saved`/`discarded` llegan al backend). */
+export interface RecordingSessionSegment {
+  id: string;
+  track: RecordingSessionTrack;
+  index: number;
+  filename: string;
+  state: "saved" | "discarded";
+  started_at: string;
+  stopped_at: string;
+  recorded_seconds: number;
+  duration_seconds?: number | null;
+  validation?: "ok" | "incomplete" | null;
+  recovered: boolean;
+  overlap_seconds?: number | null;
+  stop_reason?: RecordingSessionReason | null;
+  size?: number | null;
+  sha256?: string | null;
+}
+
+export interface RecordingSessionGap {
+  id: string;
+  track: RecordingSessionTrack;
+  from: string;
+  to?: string | null;
+  reason: RecordingSessionReason;
+  segment_lost: boolean;
+}
+
+export interface RecordingSessionMark {
+  id: string;
+  at: string;
+  segment_index: number;
+  offset_seconds: number;
+  text?: string | null;
+  filename?: string | null;
+  kind: "manual" | "captura";
+}
+
+/** `Case.recording_session` (§7.6.1). */
+export interface RecordingSession {
+  enabled: boolean;
+  with_camera: boolean;
+  mode_at_change: string;
+  settings_updated_at: string;
+  session_id?: string | null;
+  platform?: "android" | "ios" | null;
+  connection_id?: string | null;
+  agent_version?: string | null;
+  segment_minutes: number;
+  audio?: "device" | "none" | null;
+  camera?: RecordingSessionCamera | null;
+  state?: string | null;
+  segments: RecordingSessionSegment[];
+  gaps: RecordingSessionGap[];
+  marks: RecordingSessionMark[];
+  synced_at?: string | null;
+}
+
+/** Body de `PUT /api/cases/{id}/recording-session/settings`. */
+export interface RecordingSessionSettingsRequest {
+  enabled: boolean;
+  with_camera: boolean;
+}
+
+/**
+ * Body de `PUT /api/cases/{id}/recording-session` (§7.5): el diario de Tatana
+ * sin `case_id`/`schema_version`/`updated_at`, solo tramos `saved`/`discarded`
+ * y con `serial` → `connection_id`. Lo arma `toBackendSnapshot`.
+ */
+export interface RecordingSessionSnapshot {
+  session_id: string;
+  platform: "android" | "ios";
+  connection_id: string;
+  agent_version: string | null;
+  segment_minutes: number;
+  audio: "device" | "none" | null;
+  camera: RecordingSessionCamera | null;
+  state: string;
+  segments: RecordingSessionSegment[];
+  gaps: RecordingSessionGap[];
+  marks: RecordingSessionMark[];
 }
 
 /* ── Ficha técnica del dispositivo (metadatos-dispositivo, SDD §8.2-§8.3) ── */
@@ -1049,6 +1191,10 @@ export interface PublicConfig {
   timestamping_enabled?: boolean;
   /** metadatos-dispositivo: umbral (s) del aviso de diferencia de reloj. Falta en un backend anterior (= 60). */
   clock_skew_warning_seconds?: number;
+  /** grabacion-sesion-completa (§7.6.3): modo de instalación. Falta en un backend anterior. */
+  recording_session_mode?: RecordingSessionMode;
+  /** grabacion-sesion-completa: duración del tramo en minutos (5–120). Falta en un backend anterior. */
+  recording_session_segment_minutes?: number;
 }
 
 /** Modo de autenticación del backend (`GET /api/auth/mode`). */
@@ -1556,6 +1702,24 @@ export const api = {
   /** Medición de reloj de cierre (al generar). 409 `no_device_details` si el caso no tiene ficha. */
   async saveDeviceClock(caseId: string, body: SaveDeviceClockRequest): Promise<Case> {
     return requestSafe<Case>(`/api/cases/${caseId}/device-details/clock`, { method: "PUT", body: JSON.stringify(body) });
+  },
+
+  /**
+   * Switch de la grabación de la sesión del caso (grabacion-sesion-completa §6.3.1).
+   * 409 `recording_session_disabled`, 400 `recording_session_required`; 404 = backend sin la ruta.
+   */
+  async saveRecordingSessionSettings(caseId: string, body: RecordingSessionSettingsRequest): Promise<Case> {
+    return requestSafe<Case>(`/api/cases/${caseId}/recording-session/settings`, { method: "PUT", body: JSON.stringify(body) });
+  },
+
+  /**
+   * Copia del diario de Tatana en el caso (§6.3.2, append-only). 409
+   * `recording_session_not_enabled` / `recording_session_conflict` / `recording_session_busy`.
+   */
+  async syncRecordingSession(caseId: string, snapshot: RecordingSessionSnapshot): Promise<Case> {
+    return trackLongOp(() => requestSafe<Case>(`/api/cases/${caseId}/recording-session`, {
+      method: "PUT", body: JSON.stringify(snapshot),
+    }));
   },
 
   /** Incluir o no el SSID en el informe (D7). Sin evento de trazabilidad. */

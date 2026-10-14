@@ -9,7 +9,7 @@ import {
   RotateCcw, Mic, MicOff, FolderOpen,
   AlertTriangle, Paperclip, Trash2, Smartphone, WifiOff, Loader2, Wifi,
   Shield, User, Check, ChevronRight, Tag as TagIcon, Info, Minus, ArrowRight,
-  HardDrive, AlertCircle, CloudAlert, ClockAlert,
+  HardDrive, AlertCircle, CloudAlert, ClockAlert, Bookmark, Film,
 } from "lucide-react";
 import type { CaptureRole, CaptureRoleValue, CaseTimestamp } from "@/lib/api";
 import { CAPTURE_ROLES_FIELD_ID, isRoleEligible } from "@/lib/pericial";
@@ -42,7 +42,14 @@ import { ConfirmDialog } from "./overlay/ConfirmDialog";
 import { formatBytes } from "@/lib/format";
 import type { LocalBlobInfo } from "@/hooks/useFileManager";
 import { SafeImg, StageEmpty, StageScreen } from "./capture/StageScreen";
-import { AttachmentChip, EvidenceTrayTile, type TrayUploadState } from "./capture/EvidenceTray";
+import { AttachmentChip, EvidenceTrayTile, SessionSegmentTile, type TrayUploadState } from "./capture/EvidenceTray";
+import { SessionRecordingCard, type SessionCardMode } from "./capture/SessionRecordingCard";
+import { SessionIndicator } from "./capture/SessionIndicator";
+import { SessionNotices, noticeOffersResume } from "./capture/SessionNotices";
+import { MarkMomentPopover } from "./capture/MarkMomentPopover";
+import type { SessionCapacity, SessionMarkDto, SessionStateDto } from "@/lib/agent";
+import { hhmm, segmentMetaFromName, trackLabel, type SegmentMeta } from "@/lib/recording-session";
+import type { SessionInterruption, SessionStartProblem } from "@/hooks/useRecordingSession";
 import { UploadLiveRegion, UploadProgressPanel } from "./capture/UploadProgressPanel";
 import type { UploadMessage } from "@/lib/upload-messages";
 import type { FileUploadState, UploadProgress } from "@/types";
@@ -51,7 +58,43 @@ import { AirplayConnectGuide, OnDeviceStopGuide } from "./capture/CaptureGuides"
 import { ElapsedTime, clockTime } from "./capture/ElapsedTime";
 import { ScreenBlockNotice, type ScreenBlock } from "./capture/ScreenBlockNotice";
 
+/** Grabación de la sesión en el paso 3 (grabacion-sesion-completa §9.3-§9.4). */
+export interface CaptureSessionProps {
+  /** `null` = la tarjeta no se muestra (modo `disabled`, backend sin rutas, flujo server). */
+  cardMode: SessionCardMode | null;
+  required: boolean;
+  enabled: boolean;
+  segmentMinutes: number;
+  capacity: SessionCapacity | null;
+  /** Estado de Tatana del caso abierto (o el del diario si no hay sesión activa). */
+  state: SessionStateDto | null;
+  /** Sesión activa de este caso: "Grabar" pasa a "Marcar momento". */
+  active: boolean;
+  /** Grabando de verdad: se puede marcar. */
+  recording: boolean;
+  recovered: boolean;
+  announcement: { id: number; text: string } | null;
+  problem: SessionStartProblem | null;
+  interruption: SessionInterruption | null;
+  resumeNotice: { at: string | null; index: number | null } | null;
+  busy: { start: boolean; stop: boolean; mark: boolean; settings: boolean };
+  lastMark: { id: string; text: string } | null;
+  /** Tramos de la sesión (por pertenencia al diario, D-T5) y su meta para la bandeja. */
+  sessionNames: ReadonlySet<string>;
+  segmentMeta: Record<string, SegmentMeta>;
+  onToggle: (enabled: boolean) => void;
+  onResume: () => void;
+  onForceStart: () => void;
+  onDismissProblem: () => void;
+  onStop: () => Promise<boolean>;
+  onMark: (text: string) => Promise<SessionMarkDto | null>;
+  onDismissInterruption: () => void;
+  onDismissResume: () => void;
+}
+
 interface Props {
+  /** Grabación de la sesión; sin ella, el paso queda como antes de la HU. */
+  session?: CaptureSessionProps | null;
   isRecording: boolean;
   // ── grabacion-android-robusta §7.7 ──
   /** Inicio real de la grabación según Tatana (ISO). Sin él (Tatana viejo) no hay cronómetro. */
@@ -202,6 +245,7 @@ export function CaptureStep({
   caseId, storageMode = null, saveBusy = false, evidenceLock = null,
   syncWarning = null, onDismissSyncWarning, onContinueWithoutSaving,
   timestamps = NO_TIMESTAMPS, timestampingEnabled = false, timestampNotice = null, onDismissTimestampNotice,
+  session = null,
 }: Props) {
   const isIOS = platform === "ios";
   const airplayShotHintId = useId();
@@ -212,6 +256,13 @@ export function CaptureStep({
   // huérfano en <body> vuelve al botón de la acción que se había frenado.
   const screenTileRef = useRef<HTMLButtonElement>(null);
   const recordTileRef = useRef<HTMLButtonElement>(null);
+  const markPopoverId = useId();
+  const [markOpen, setMarkOpen] = useState(false);
+  // Sesión activa de este caso: "Grabar" pasa a "Marcar momento" (D5).
+  const sessionActive = !!session?.active;
+  const sessionNames = session?.sessionNames ?? NO_NAMES;
+  const isSessionFile = (name: string) => sessionNames.has(name);
+  useEffect(() => { if (!session?.recording) setMarkOpen(false); }, [session?.recording]);
   const lastBlockActionRef = useRef<ScreenBlock["action"] | null>(null);
   useEffect(() => {
     if (screenBlock) { lastBlockActionRef.current = screenBlock.action; return; }
@@ -293,8 +344,20 @@ export function CaptureStep({
 
   // Capturas del propio teléfono (van al "escenario" con marco de celular) vs. adjuntos
   // traídos del equipo o de la cámara externa (van como chips).
-  const screenItems = galleryItems.filter(i => i.kind === "screenshot" || i.kind === "video");
-  const attachItems = galleryItems.filter(i => i.kind === "local-image" || i.kind === "local-video" || i.kind === "local-audio" || i.kind === "other");
+  // Tramos de la sesión: grupo propio "Sesión", fuera de "Capturas" y de "Grabaciones" (§9.4).
+  const sessionItems = galleryItems.filter(i => isSessionFile(i.name));
+  const screenItems = galleryItems.filter(i => !isSessionFile(i.name) && (i.kind === "screenshot" || i.kind === "video"));
+  const attachItems = galleryItems.filter(i => !isSessionFile(i.name) && (i.kind === "local-image" || i.kind === "local-video" || i.kind === "local-audio" || i.kind === "other"));
+
+  /** "Pantalla · tramo 2 · 14:02–14:32" (o "· desde 14:02" si el diario no tiene el fin). */
+  function segmentLabel(name: string): string {
+    const m = session?.segmentMeta[name] ?? segmentMetaFromName(name);
+    if (!m) return name;
+    const from = hhmm(m.started_at);
+    const to = hhmm(m.stopped_at);
+    const span = from && to ? ` · ${from}–${to}` : from ? ` · desde ${from}` : "";
+    return `${trackLabel(m.track)} · tramo ${m.index}${span}`;
+  }
 
   // Cada vez que se agrega una captura nueva, la mostramos automáticamente en grande —
   // el feedback inmediato ("mirá lo que acabás de capturar") es el punto central del rediseño.
@@ -314,7 +377,8 @@ export function CaptureStep({
   const [removeError, setRemoveError] = useState<string | null>(null);
 
   function removeItem(item: GItem) {
-    if (removeBlocked || !onRemoveFile) return;
+    // Los tramos de la sesión no se quitan (D-T6): la UI no lo ofrece; esto es defensa.
+    if (removeBlocked || !onRemoveFile || isSessionFile(item.name)) return;
     setPendingRemove(item);
     setRemoveError(null);
     setRemoveOpen(true);
@@ -465,6 +529,21 @@ export function CaptureStep({
         className="mb-6"
       />
 
+      {/* ── Grabación de la sesión: indicador fijo arriba del paso (§9.4) ── */}
+      {session && session.cardMode === "ready" && session.state
+        && (sessionActive || (session.enabled && (session.state.state === "stopped" || session.state.state === "interrupted"))) && (
+        <SessionIndicator
+          state={session.state}
+          recovered={session.recovered}
+          announcement={session.announcement}
+          stopping={session.busy.stop}
+          starting={session.busy.start}
+          onStop={session.onStop}
+          onResume={noticeOffersResume(session.state, session.interruption) || captureBlocked ? undefined : session.onResume}
+          className="mb-4"
+        />
+      )}
+
       {/* ── Evidencia en otra PC / Tatana caído: el motivo, antes que nada ── */}
       {evidenceLock && (
         <FxBanner
@@ -605,6 +684,37 @@ export function CaptureStep({
             </div>
           )}
 
+          {/* ── Grabación de la sesión: avisos (no modales) y tarjeta propia (§9.4) ── */}
+          {session && session.cardMode && (
+            <SessionNotices
+              state={session.state}
+              interruption={session.interruption}
+              resumeNotice={session.resumeNotice}
+              starting={session.busy.start}
+              onResume={session.onResume}
+              onDismissInterruption={session.onDismissInterruption}
+              onDismissResume={session.onDismissResume}
+            />
+          )}
+          {session && session.cardMode && (
+            <SessionRecordingCard
+              mode={session.cardMode}
+              required={session.required}
+              enabled={session.enabled}
+              segmentMinutes={session.segmentMinutes}
+              capacity={session.capacity}
+              active={sessionActive}
+              problem={session.problem}
+              busySettings={session.busy.settings || session.busy.stop}
+              busyStart={session.busy.start}
+              disabled={captureBlocked}
+              onToggle={session.onToggle}
+              onRetryStart={session.onResume}
+              onForceStart={session.onForceStart}
+              onDismissProblem={session.onDismissProblem}
+            />
+          )}
+
           {/* ── Tarjeta: Capturar del celular ── */}
           <section aria-labelledby="capture-actions-title" className="fx-card space-y-3 p-4">
             <h3 id="capture-actions-title" className={LABEL}>
@@ -639,28 +749,67 @@ export function CaptureStep({
                 Pantalla
               </button>
 
-              <button
-                ref={recordTileRef}
-                type="button"
-                onClick={onToggleRecord}
-                disabled={recordBtnDisabled}
-                aria-busy={recordBusy || undefined}
-                aria-describedby={foreignBlocks ? foreignNoticeId : recordHelp ? recordHelpId : undefined}
-                className={cn(
-                  TILE,
-                  isRecording
-                    ? "border-fx-danger-fill bg-fx-danger-fill text-fx-on-danger enabled:hover:bg-fx-danger-fill-hover"
-                    : TILE_IDLE,
-                )}
-              >
-                {recordBusy
-                  ? <Loader2 className="h-5 w-5 motion-safe:animate-spin" aria-hidden="true" />
-                  : isRecording
-                    ? <VideoOff className="h-5 w-5" aria-hidden="true" />
-                    : <Video className="h-5 w-5 text-fx-danger" aria-hidden="true" />}
-                {recordLabel}
-              </button>
+              {sessionActive && !isRecording ? (
+                <button
+                  ref={recordTileRef}
+                  type="button"
+                  onClick={() => setMarkOpen(o => !o)}
+                  disabled={!session?.recording || captureBlocked}
+                  aria-expanded={markOpen}
+                  aria-controls={markPopoverId}
+                  aria-haspopup="true"
+                  className={cn(TILE, markOpen ? "border-fx-accent bg-fx-accent-soft text-fx-text" : TILE_IDLE)}
+                >
+                  <Bookmark className="h-5 w-5 text-fx-accent-text" aria-hidden="true" />
+                  Marcar momento
+                </button>
+              ) : (
+                <button
+                  ref={recordTileRef}
+                  type="button"
+                  onClick={onToggleRecord}
+                  disabled={recordBtnDisabled}
+                  aria-busy={recordBusy || undefined}
+                  aria-describedby={foreignBlocks ? foreignNoticeId : recordHelp ? recordHelpId : undefined}
+                  className={cn(
+                    TILE,
+                    isRecording
+                      ? "border-fx-danger-fill bg-fx-danger-fill text-fx-on-danger enabled:hover:bg-fx-danger-fill-hover"
+                      : TILE_IDLE,
+                  )}
+                >
+                  {recordBusy
+                    ? <Loader2 className="h-5 w-5 motion-safe:animate-spin" aria-hidden="true" />
+                    : isRecording
+                      ? <VideoOff className="h-5 w-5" aria-hidden="true" />
+                      : <Video className="h-5 w-5 text-fx-danger" aria-hidden="true" />}
+                  {recordLabel}
+                </button>
+              )}
             </div>
+
+            {/* "Marcar momento" (D5): popover no modal anclado al tile. */}
+            {session && (
+              <MarkMomentPopover
+                id={markPopoverId}
+                open={markOpen && sessionActive}
+                anchorRef={recordTileRef}
+                busy={session.busy.mark}
+                onClose={() => setMarkOpen(false)}
+                onSave={async text => !!(await session.onMark(text))}
+              />
+            )}
+            {/* Confirmación de la marca (siempre montado: el lector anuncia el cambio). */}
+            {session && (
+              <p role="status" className="m-0 flex items-center gap-1.5 text-xs font-medium text-fx-success empty:hidden">
+                {session.lastMark && (
+                  <>
+                    <Bookmark className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span key={session.lastMark.id}>{session.lastMark.text}</span>
+                  </>
+                )}
+              </p>
+            )}
 
             {/* Ayuda mientras inicia o detiene (siempre montado: el lector anuncia el cambio). */}
             <p id={recordHelpId} role="status" className="m-0 text-xs text-fx-text-2 empty:hidden">
@@ -720,7 +869,7 @@ export function CaptureStep({
 
             {/* Mezclar micrófono de la PC (Android) — mezcla el micrófono de la PC en la
                 grabación normal, análogo al modo with_mic de iOS. Se oculta mientras graba. */}
-            {!isIOS && !isRecording && (
+            {!isIOS && !isRecording && !sessionActive && (
               <div className="flex items-start gap-2.5 py-1">
                 <Checkbox
                   inputId="capture-android-mic"
@@ -822,10 +971,30 @@ export function CaptureStep({
           </section>
 
           {/* ── Bandeja de capturas + adjuntos ── */}
-          {(screenItems.length > 0 || attachItems.length > 0) && (
+          {(sessionItems.length > 0 || screenItems.length > 0 || attachItems.length > 0) && (
             <div className="fx-card space-y-3 p-3.5">
-              {screenItems.length > 0 && (
+              {sessionItems.length > 0 && (
                 <div>
+                  <h4 className={cn(LABEL, "mb-2")}>
+                    <Film className="h-3.5 w-3.5" aria-hidden="true" /> Sesión
+                  </h4>
+                  <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+                    {sessionItems.map(item => (
+                      <SessionSegmentTile
+                        key={item.key}
+                        item={item}
+                        active={item.key === selected?.key}
+                        label={segmentLabel(item.name)}
+                        uploadState={uploadStateOf(item)}
+                        seal={sealOf(item)}
+                        onSelect={() => setSelectedKey(item.key)}
+                      />
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {screenItems.length > 0 && (
+                <div className={sessionItems.length > 0 ? "border-t border-fx-border pt-3" : undefined}>
                   <h4 className={cn(LABEL, "mb-2")}>
                     <ImageIcon className="h-3.5 w-3.5" aria-hidden="true" /> Capturas
                   </h4>
@@ -851,7 +1020,7 @@ export function CaptureStep({
               )}
 
               {attachItems.length > 0 && (
-                <div className={screenItems.length > 0 ? "border-t border-fx-border pt-3" : undefined}>
+                <div className={screenItems.length > 0 || sessionItems.length > 0 ? "border-t border-fx-border pt-3" : undefined}>
                   <h4 className={cn(LABEL, "mb-2")}>
                     <Paperclip className="h-3.5 w-3.5" aria-hidden="true" /> Adjuntos
                   </h4>
@@ -926,6 +1095,9 @@ export function CaptureStep({
             </h3>
             {totalItems > 0 && (
               <div className="flex items-center gap-1.5">
+                {sessionItems.length > 0 && (
+                  <Tag severity="secondary" value={`${sessionItems.length} ${sessionItems.length === 1 ? "tramo" : "tramos"}`} />
+                )}
                 {screenItems.length > 0 && (
                   <Tag severity="secondary" value={`${screenItems.length} ${screenItems.length === 1 ? "captura" : "capturas"}`} />
                 )}
@@ -986,6 +1158,7 @@ export function CaptureStep({
                   validation={notices.recordings[selected.name]}
                   onRemove={() => removeItem(selected)}
                   removeDisabled={removeBlocked}
+                  removable={!isSessionFile(selected.name)}
                 />
               </div>
             ) : (
@@ -1113,7 +1286,8 @@ export function CaptureStep({
             size="large"
             icon={<ArrowRight className="h-4 w-4" aria-hidden="true" />}
             iconPos="right"
-            label="Continuar"
+            label={session?.busy.stop ? "Cerrando la grabación de la sesión…" : "Continuar"}
+            loading={!!session?.busy.stop}
             onClick={onContinueWithoutSaving}
             className="w-full min-h-11 sm:ml-auto sm:w-auto sm:flex-none"
           />
@@ -1122,8 +1296,9 @@ export function CaptureStep({
             type="button"
             size="large"
             icon={<HardDrive className="h-4 w-4" aria-hidden="true" />}
-            label={loading.upload ? "Guardando…" : "Guardar evidencia en esta PC y continuar"}
-            loading={!!loading.upload}
+            label={session?.busy.stop ? "Cerrando la grabación de la sesión…"
+              : loading.upload ? "Guardando…" : "Guardar evidencia en esta PC y continuar"}
+            loading={!!loading.upload || !!session?.busy.stop}
             onClick={onUploadAndContinue}
             className="w-full min-h-11 sm:ml-auto sm:w-auto sm:flex-none"
           />
@@ -1149,6 +1324,7 @@ const NO_UPLOAD_STATES: Record<string, FileUploadState> = {};
 const NO_TIMESTAMPS: Record<string, CaseTimestamp> = {};
 const NO_VARIANT_STATUS: Record<string, Record<string, VideoVariantStatus>> = {};
 const NO_NOTICES: EvidenceNotices = { recordings: {}, black: {}, keptBlack: [] };
+const NO_NAMES: ReadonlySet<string> = new Set();
 
 /* Subtítulo de bloque del paso (misma convención que la parte 2). */
 const LABEL = "m-0 flex items-center gap-1.5 text-fx-label uppercase text-fx-text-2";

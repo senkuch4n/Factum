@@ -57,6 +57,9 @@ services:
       Timestamping__MaxAttempts: ${FACTUM_SELLADO_MAX_INTENTOS:-12}
       # Umbral del aviso por diferencia de reloj celular/PC (metadatos-dispositivo, D6). Segundos.
       Report__ClockSkewWarningSeconds: ${FACTUM_RELOJ_UMBRAL_SEGUNDOS:-60}
+      # Grabación de la sesión completa (grabacion-sesion-completa §6.6): modo y duración de cada tramo (minutos).
+      Recording__SessionMode: ${FACTUM_GRABACION_SESION_MODO:-optional_off}
+      Recording__SegmentMinutes: ${FACTUM_GRABACION_SESION_TRAMO_MINUTOS:-30}
     volumes:
       # Sintaxis larga: evita el problema del "C:" en la corta y, con create_host_path: false,
       # que Docker cree una CARPETA appsettings.Local.json si falta el archivo.

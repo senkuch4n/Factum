@@ -84,8 +84,11 @@ export interface AgentOperation {
   detail?: string | null;  // Tatana omite los null
 }
 
-/** Kinds de `operations[]` que indican una grabación en curso en la PC. */
-export const RECORDING_OPERATION_KINDS = ["recording_android", "recording_ios"] as const;
+/**
+ * Kinds de `operations[]` que indican una grabación en curso en la PC.
+ * `recording_session`: grabación de la sesión (grabacion-sesion-completa §7.4).
+ */
+export const RECORDING_OPERATION_KINDS = ["recording_android", "recording_ios", "recording_session"] as const;
 
 export interface VideoVariant {
   label: string;
@@ -169,6 +172,8 @@ export interface RecordingStartedData {
   origin_id?: string | null;
   started_at?: string;
   filename?: string;
+  /** Marca de la grabación de la sesión (grabacion-sesion-completa §9.1); falta sin sesión. */
+  session_mark?: SessionMarkDto | null;
 }
 
 /**
@@ -181,6 +186,170 @@ export interface ScreenshotTakenData {
   serial?: string;
   case_id?: string | null;
   origin_id?: string | null;
+  /** Marca automática de la sesión (§7.3): `null` si no hubo; falta en un Tatana anterior. */
+  session_mark?: SessionMarkDto | null;
+}
+
+/* ── Grabación de la sesión completa (grabacion-sesion-completa, SDD §7.2-§7.4) ──
+   HTTP: los `null` no viajan (campos opcionales). WebSocket: viajan como `null`. */
+
+/** Estado de la sesión (§5.3). Activos: `starting`…`stopping` (ver `ACTIVE_SESSION_STATES`). */
+export type SessionStateName =
+  | "idle" | "starting" | "recording" | "rotating" | "waiting_device" | "stopping" | "stopped" | "interrupted";
+
+/** Pista de un tramo o hueco. `camara` llega en la fase 2. */
+export type SessionTrack = "pantalla" | "camara";
+
+/** Motivo de un hueco o de un `stop_reason` (§6.2). `rotacion` solo con corte secuencial. */
+export type SessionReason =
+  | "cambio_de_paso" | "retomado_otro_dia" | "desconexion" | "tatana_cerrado" | "sin_espacio"
+  | "camara_fallo" | "detenido_por_perito" | "fallo_grabacion" | "rotacion";
+
+export type SessionWarningKind = "screen_off" | "screen_locked" | "disk_low" | "camera_failed" | "rotation_delayed";
+
+export interface SessionWarning {
+  kind: SessionWarningKind;
+  since: string;
+  /** `disk_low`. */
+  available_bytes?: number | null;
+  minutes_left?: number | null;
+  /** `camera_failed`: `"permission"` si macOS negó la cámara (F2). */
+  detail?: string | null;
+}
+
+/** `SessionStateDto` (§7.2.7): `start`/`stop`, WS `session_state` y `/agent/state.recording_session`. */
+export interface SessionStateDto {
+  case_id: string;
+  serial?: string | null;
+  platform?: "android" | "ios" | null;
+  state: SessionStateName;
+  resumed?: boolean | null;
+  segment_minutes?: number | null;
+  session_started_at?: string | null;
+  /** Inicio del tramo continuo actual (último start o reanudación): lo usa el cronómetro. */
+  run_started_at?: string | null;
+  screen_segment_index?: number | null;
+  screen_segment_started_at?: string | null;
+  camera_state?: "off" | "recording" | "failed" | null;
+  camera_segment_index?: number | null;
+  camera_segment_started_at?: string | null;
+  segments_saved?: number | null;
+  recorded_seconds?: number | null;
+  stop_reason?: SessionReason | null;
+  stopped_at?: string | null;
+  warnings?: SessionWarning[] | null;
+  origin_id?: string | null;
+}
+
+/** Tramo del diario (§7.2.6). `recording`/`closing` solo existen en Tatana. */
+export interface SessionSegmentDto {
+  id: string;
+  track: SessionTrack;
+  index: number;
+  filename: string;
+  state: "recording" | "closing" | "saved" | "discarded";
+  started_at: string;
+  stopped_at?: string | null;
+  recorded_seconds?: number | null;
+  duration_seconds?: number | null;
+  validation?: "ok" | "incomplete" | null;
+  recovered?: boolean | null;
+  overlap_seconds?: number | null;
+  stop_reason?: SessionReason | null;
+  size?: number | null;
+  sha256?: string | null;
+}
+
+/** Hueco del diario: `to` falta (o `null`) si sigue abierto. */
+export interface SessionGapDto {
+  id: string;
+  track: SessionTrack;
+  from: string;
+  to?: string | null;
+  reason: SessionReason;
+  segment_lost?: boolean | null;
+}
+
+/** Marca de momento (§5.9): manual o automática de captura. */
+export interface SessionMarkDto {
+  id: string;
+  at: string;
+  segment_index: number;
+  offset_seconds: number;
+  text?: string | null;
+  filename?: string | null;
+  kind: "manual" | "captura";
+}
+
+/** Cámara de la sesión (fase 2). */
+export interface SessionCameraInfo {
+  name: string;
+  width: number;
+  height: number;
+  fps: number;
+  with_audio: boolean;
+}
+
+/** Diario de la sesión (`GET /cases/{id}/session`, §7.2.6). */
+export interface CaseSessionDto {
+  schema_version: number;
+  session_id: string;
+  case_id: string;
+  serial: string;
+  platform: "android" | "ios";
+  agent_version?: string | null;
+  segment_minutes: number;
+  audio?: "device" | "none" | null;
+  camera?: SessionCameraInfo | null;
+  state: SessionStateName;
+  stop_reason?: SessionReason | null;
+  segments: SessionSegmentDto[];
+  gaps: SessionGapDto[];
+  marks: SessionMarkDto[];
+  updated_at?: string | null;
+}
+
+/** `GET /session/capacity` (§7.2.1). Sin medición del disco: faltan `available_bytes`/`estimated_minutes`. */
+export interface SessionCapacity {
+  available_bytes?: number | null;
+  min_free_bytes?: number | null;
+  bytes_per_minute?: number | null;
+  zip_on_same_volume?: boolean | null;
+  estimated_minutes?: number | null;
+  required_bytes_to_start?: number | null;
+  can_start: boolean;
+}
+
+/** Body de `POST /cases/{caseId}/session/start` (§7.2.2) sin `origin_id` (lo agrega el cliente). */
+export interface SessionStartRequest {
+  serial: string;
+  platform: "android" | "ios";
+  android_version: number;
+  segment_minutes: number;
+  skip_screen_check?: boolean;
+}
+
+/** Motivo de un `stop` pedido por la web (§7.2.3). */
+export type SessionStopReason = "cambio_de_paso" | "detenido_por_perito";
+
+/** WS `session_segment_closed` (§7.3). */
+export interface SessionSegmentClosedData {
+  case_id: string;
+  origin_id?: string | null;
+  segment: SessionSegmentDto;
+}
+
+/** WS `session_mark_added` (§7.3). */
+export interface SessionMarkAddedData {
+  case_id: string;
+  origin_id?: string | null;
+  mark: SessionMarkDto;
+}
+
+/** `/agent/state` → sesión activa (si hay) y estado de la recuperación al arrancar. */
+export interface AgentSessionState {
+  recording_session: SessionStateDto | null;
+  session_recovery: "running" | "done" | null;
 }
 
 /** Evento WS `photo_taken` (`data`): webcam de Tatana, sin `serial`. */
@@ -274,7 +443,11 @@ export type IosDeveloperModeStatus = "enabled" | "restarting" | "manual_required
  * - `case_seals_v1`: `PUT /cases/{id}/zip/seals` copia los `.tsr` y el LEEME a
  *   `sellos/`, al lado del ZIP (sellado-tiempo);
  * - `device_details_v1`: `GET /devices/{serial}/details` (ficha técnica de solo
- *   lectura + reloj) y `GET /devices/{serial}/clock` (metadatos-dispositivo).
+ *   lectura + reloj) y `GET /devices/{serial}/clock` (metadatos-dispositivo);
+ * - `recording_session_v1`: grabación de la sesión completa con la pantalla de
+ *   Android, `zip_folder` en el ZIP y `/agent/state.recording_session`
+ *   (grabacion-sesion-completa); `recording_session_camera_v1` y
+ *   `recording_session_ios_v1` llegan en la fase 2.
  */
 export interface AgentHealth {
   status: string;
@@ -416,7 +589,10 @@ export type AgentErrorCode =
   // Pantalla del celular apagada o bloqueada: 409 de screenshot y record/start (pulido-post-qa-final §6.2).
   | "screen_off" | "screen_locked"
   // Ficha técnica: el dispositivo no está conectado o no autorizó la conexión (metadatos-dispositivo §7.2).
-  | "device_not_found";
+  | "device_not_found"
+  // Grabación de la sesión (grabacion-sesion-completa §7.7).
+  | "session_active" | "session_not_active" | "session_not_found" | "session_file_protected"
+  | "session_platform_unsupported" | "session_ios_mode_unsupported";
 
 /** Cuerpo de error de Tatana (claves literales en snake_case). */
 export interface AgentErrorBody {
@@ -432,6 +608,8 @@ export interface AgentErrorBody {
   validation?: RecordingValidation;
   /** 409 `screen_off`/`screen_locked` de screenshot y record/start (pulido-post-qa-final §6.2). */
   screen_state?: "off" | "locked";
+  /** 409 `session_active` del start de la sesión: caso de la sesión que ya está grabando. */
+  case_id?: string;
 }
 
 /** Opciones de captura: `skipScreenCheck` = "Capturar igual" / "Grabar igual" (pulido-post-qa-final §6.1). */
@@ -620,7 +798,7 @@ export const agent = {
     platform: "android" | "ios" = "android",
     attribution?: AgentAttribution | null,
     opts?: ScreenCheckOptions,
-  ): Promise<{ filename: string; url: string }> {
+  ): Promise<{ filename: string; url: string; session_mark?: SessionMarkDto | null }> {
     const q = attributionParams(attribution);
     if (platform === "ios") q.set("platform", "ios");
     // "Capturar igual": un Tatana sin el chequeo ignora el parámetro.
@@ -840,6 +1018,95 @@ export const agent = {
     return agentJSON<AgentDeviceClockResponse>(`/devices/${encodeURIComponent(serial)}/clock?${q}`, {
       signal: signal ?? AbortSignal.timeout(15_000),
     });
+  },
+
+  /* ── Grabación de la sesión completa (grabacion-sesion-completa, SDD §7.2/§9.1) ── */
+
+  /** `recording_session_v1`: sesión con pantalla de Android (fase 1). Mismo caché que el resto. */
+  async supportsRecordingSession(): Promise<boolean> {
+    return this.hasCapability("recording_session_v1");
+  },
+
+  /** `recording_session_camera_v1`: cámara del procedimiento (fase 2). */
+  async supportsSessionCamera(): Promise<boolean> {
+    return this.hasCapability("recording_session_camera_v1");
+  },
+
+  /** `recording_session_ios_v1`: sesión en iPhone (fase 2). */
+  async supportsSessionIos(): Promise<boolean> {
+    return this.hasCapability("recording_session_ios_v1");
+  },
+
+  /**
+   * Espacio para grabar la sesión en esta PC (`GET /session/capacity`). Timeout 5 s.
+   * `segmentMinutes`: tramo de la instalación (QA B-6); sin él, Tatana asume 30 min.
+   */
+  async sessionCapacity(camera = false, segmentMinutes?: number): Promise<SessionCapacity> {
+    const q = new URLSearchParams({
+      camera: String(camera),
+      ...(typeof segmentMinutes === "number" ? { segment_minutes: String(segmentMinutes) } : {}),
+    }).toString();
+    return agentJSON<SessionCapacity>(`/session/capacity?${q}`, { signal: AbortSignal.timeout(5000) });
+  },
+
+  /**
+   * Empieza (o reanuda) la grabación de la sesión del caso. Vuelve cuando el
+   * celular empezó a capturar. Idempotente con el mismo caso y celular.
+   * Errores: `AgentError` (`session_active`, `already_recording`, `screen_off`,
+   * `screen_locked`, `insufficient_storage` 507, `recording_start_timeout` 504…).
+   */
+  async startSession(caseId: string, body: SessionStartRequest): Promise<SessionStateDto> {
+    return agentJSON<SessionStateDto>(`${caseBase(caseId)}/session/start`, jsonInit("POST", {
+      ...body, origin_id: getTabOriginId(),
+    }));
+  },
+
+  /**
+   * Cierra la sesión del caso. Responde después de guardar los tramos (puede
+   * tardar: hash). Idempotente: sin sesión activa devuelve el estado del diario.
+   */
+  async stopSession(caseId: string, reason: SessionStopReason): Promise<SessionStateDto> {
+    return agentJSON<SessionStateDto>(`${caseBase(caseId)}/session/stop`, {
+      ...jsonInit("POST", { reason, origin_id: getTabOriginId() }),
+      signal: AbortSignal.timeout(90_000),
+    });
+  },
+
+  /** "Marcar momento" (§7.2.4). 409 `session_not_active` sin sesión grabando para el caso. */
+  async addSessionMark(caseId: string, text: string | null): Promise<SessionMarkDto> {
+    return agentJSON<SessionMarkDto>(`${caseBase(caseId)}/session/marks`, jsonInit("POST", {
+      ...(text ? { text } : {}), origin_id: getTabOriginId(),
+    }));
+  },
+
+  /** Diario de la sesión del caso en esta PC. `null` si no hay (404). Otros errores: `AgentError`. */
+  async getCaseSession(caseId: string): Promise<CaseSessionDto | null> {
+    try {
+      return await agentJSON<CaseSessionDto>(`${caseBase(caseId)}/session`, { signal: AbortSignal.timeout(5000) });
+    } catch (e) {
+      if (e instanceof AgentError && e.kind === "http" && e.status === 404) return null;
+      throw e;
+    }
+  },
+
+  /**
+   * Sesión activa en Tatana (`/agent/state.recording_session`, se omite si no
+   * hay) y `session_recovery`. `null` ante cualquier error.
+   */
+  async agentRecordingSession(): Promise<AgentSessionState | null> {
+    try {
+      const r = await agentJSON<{ recording_session?: SessionStateDto | null; session_recovery?: string | null }>(
+        "/agent/state", { signal: AbortSignal.timeout(3000) },
+      );
+      if (!r || typeof r !== "object") return null;
+      const rs = r.recording_session;
+      return {
+        recording_session: rs && typeof rs === "object" && typeof rs.state === "string" ? rs : null,
+        session_recovery: r.session_recovery === "running" || r.session_recovery === "done" ? r.session_recovery : null,
+      };
+    } catch {
+      return null;
+    }
   },
 
   /** Capability de `/health`, cacheada por conexión. Un error de red da `false` y no se cachea. */

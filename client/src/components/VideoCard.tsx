@@ -52,7 +52,7 @@ function variantNote(s: VideoVariantStatus): string | null {
 
 /** Reproductor de una grabación del agente con sus versiones (original + variantes). */
 export function VideoCard({
-  file, variants, variantStatus = NO_STATUS, storedInCase = false, onRemove, removeDisabled, originalURL, validation,
+  file, variants, variantStatus = NO_STATUS, storedInCase = false, onRemove, removeDisabled, removable = true, originalURL, validation,
 }: {
   file: CapturedFile;
   /**
@@ -72,6 +72,8 @@ export function VideoCard({
   onRemove: () => void;
   /** Durante el envío de evidencia no se puede quitar. */
   removeDisabled?: boolean;
+  /** `false`: sin botón de quitar (tramos de la grabación de la sesión, D-T6). */
+  removable?: boolean;
   /**
    * Validación de Tatana (grabacion-android-robusta §7.8). `ok` muestra la
    * duración; `incomplete`, un aviso no bloqueante. Sin ella (iOS, Tatana viejo
@@ -186,16 +188,18 @@ export function VideoCard({
               <span className="sr-only">Duración: </span>{formatElapsed(duration)}
             </span>
           )}
-          <Button
-            type="button"
-            text
-            severity="danger"
-            size="small"
-            icon={<Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
-            aria-label={`Eliminar ${file.name}`}
-            onClick={onRemove}
-            disabled={removeDisabled}
-          />
+          {removable && (
+            <Button
+              type="button"
+              text
+              severity="danger"
+              size="small"
+              icon={<Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
+              aria-label={`Eliminar ${file.name}`}
+              onClick={onRemove}
+              disabled={removeDisabled}
+            />
+          )}
         </div>
       </div>
     </div>

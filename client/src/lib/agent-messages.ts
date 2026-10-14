@@ -11,7 +11,7 @@ import {
 import { formatBytes } from "./format";
 import type { AgentIdentity } from "@/hooks/useAgentIdentity";
 
-export type AgentAction = "save" | "preview" | "generate" | "reveal" | "copy" | "record";
+export type AgentAction = "save" | "preview" | "generate" | "reveal" | "copy" | "record" | "session";
 
 const fmt = (n: number | null | undefined) => (typeof n === "number" && Number.isFinite(n) ? formatBytes(n) : null);
 
@@ -72,11 +72,42 @@ export const RECORDING_ERROR_TEXT = {
 /**
  * Aviso de pantalla del celular apagada o bloqueada antes de capturar o grabar
  * (pulido-post-qa-final §8.7). Mismo texto para los dos estados: el perito
- * resuelve igual (encender y desbloquear).
+ * resuelve igual (encender y desbloquear). `session`: inicio de la grabación de
+ * la sesión (grabacion-sesion-completa §9.3).
  */
-export function screenBlockMessage(action: "screenshot" | "record"): string {
+export function screenBlockMessage(action: "screenshot" | "record" | "session"): string {
+  if (action === "session") return "Para empezar a grabar la recolección, encendé y desbloqueá la pantalla del celular.";
   return `La pantalla del celular está apagada o bloqueada. Encendela y desbloqueala para ${action === "record" ? "grabar" : "capturar"}.`;
 }
+
+/**
+ * Textos por defecto de los errores de la grabación de la sesión (grabacion-sesion-completa
+ * §7.7), si Tatana no manda `error`. `session_active` del start es el aviso de §9.3.
+ */
+export const SESSION_ERROR_TEXT = {
+  session_active: "Tatana está grabando la sesión de otro caso. Cerrala desde ese caso para grabar esta.",
+  session_not_active: "No hay una grabación de la sesión en curso para este caso.",
+  session_not_found: "Este caso no tiene grabación de la sesión en esta PC.",
+  session_file_protected:
+    "Los tramos de la grabación de la sesión no se pueden borrar: son parte del registro de la recolección.",
+  session_platform_unsupported: "Esta versión de Tatana no graba la sesión en iPhone.",
+  session_ios_mode_unsupported: "La grabación de la sesión en iPhone usa solo el modo «Solo video».",
+} as const;
+
+/** 409 `recording_session_open` del backend al generar (§6.5): mismo texto que el bloqueo del paso 5. */
+export const RECORDING_SESSION_OPEN_MESSAGE = "Primero cerrá la grabación de la sesión.";
+
+/** Textos de los códigos nuevos de la API (§7.7), por si el backend no manda `error`. */
+export const RECORDING_SESSION_API_TEXT: Record<string, string> = {
+  recording_session_disabled: "La grabación de la sesión está deshabilitada en esta instalación.",
+  recording_session_required: "La configuración de esta instalación exige grabar la sesión.",
+  recording_session_not_enabled: "Este caso no tiene activada la grabación de la sesión.",
+  invalid_recording_session: "Datos de la grabación de la sesión inválidos.",
+  recording_session_conflict: "La grabación de la sesión registrada no coincide con la de esta PC.",
+  recording_session_busy: "Otra pestaña está actualizando la grabación de la sesión. Reintentá en unos segundos.",
+  recording_session_open: RECORDING_SESSION_OPEN_MESSAGE,
+  recording_session_file: "Los tramos de la grabación de la sesión no se pueden quitar del caso.",
+};
 
 export function agentErrorMessage(err: unknown, ctx: { name?: string; action: AgentAction }): string {
   const name = ctx.name ?? "el archivo";
@@ -142,10 +173,19 @@ export function agentErrorMessage(err: unknown, ctx: { name?: string; action: Ag
     case "screen_locked":
       // Normalmente lo muestra el aviso del paso 3 (con "Capturar igual"); esto es para un llamador genérico.
       return screenBlockMessage(ctx.action === "record" ? "record" : "screenshot");
+    case "session_active":
+      // En la sesión, el aviso propio (§9.3); en `record/start`, el texto de Tatana ("Usá «Marcar momento»").
+      return ctx.action === "session" ? SESSION_ERROR_TEXT.session_active : tatanaText ?? SESSION_ERROR_TEXT.session_active;
+    case "session_not_active":
+    case "session_not_found":
+    case "session_file_protected":
+    case "session_platform_unsupported":
+    case "session_ios_mode_unsupported":
+      return tatanaText ?? SESSION_ERROR_TEXT[err.code];
   }
   const detail = tatanaText;
   // Grabación: los errores de iPhone y de scrcpy ya vienen en castellano y se muestran tal cual.
-  if (ctx.action === "record" && detail) return detail;
+  if ((ctx.action === "record" || ctx.action === "session") && detail) return detail;
   return detail ? `Tatana respondió con un error: ${detail}` : `Tatana respondió con un error (${err.status}).`;
 }
 

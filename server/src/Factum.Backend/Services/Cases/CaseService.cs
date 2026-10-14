@@ -4,6 +4,7 @@ using Factum.Backend.Infrastructure;
 using Factum.Backend.Models;
 using Factum.Backend.Services.Catalogs;
 using Factum.Backend.Services.Profile;
+using Factum.Backend.Services.Recording;
 using Factum.Backend.Services.Reports;
 using Factum.Backend.Services.Timestamping;
 using Microsoft.Extensions.Options;
@@ -102,6 +103,16 @@ public interface ICaseService
     /// <summary>Flag del SSID en el informe (PUT …/device-details/options). Sin evento (D7).</summary>
     Task<Result<Case>> SetDeviceDetailsOptionsAsync(string id, DeviceDetailsOptionsRequest request, string officerDni,
         CancellationToken ct = default);
+
+    // ── grabacion-sesion-completa (§6.3) ─────────────────────────────────────
+    // Ninguno lanza: los rechazos traen Details con code (RecordingSessionErrorCodes). Devuelven el caso recargado.
+
+    /// <summary>Switch de la grabación de la sesión (PUT …/recording-session/settings).</summary>
+    Task<Result<Case>> SaveRecordingSessionSettingsAsync(string id, RecordingSessionSettingsRequest request,
+        string officerDni, CancellationToken ct = default);
+    /// <summary>Copia append-only del diario de Tatana (PUT …/recording-session).</summary>
+    Task<Result<Case>> SyncRecordingSessionAsync(string id, RecordingSessionSnapshotRequest request, string officerDni,
+        CancellationToken ct = default);
 }
 
 public sealed partial class CaseService : ICaseService
@@ -124,6 +135,7 @@ public sealed partial class CaseService : ICaseService
     private readonly ITimestampService _timestamps;
     private readonly StorageOptions _storageOptions;
     private readonly ReportOptions _reportOptions;
+    private readonly RecordingSessionOptions _recordingSession;
     private readonly ILogger<CaseService> _log;
 
     /// <summary>pulido-post-qa-final D7: primeros 8 caracteres del hash en minúscula para el log, o "-".</summary>
@@ -133,8 +145,10 @@ public sealed partial class CaseService : ICaseService
     public CaseService(ICaseRepository repo, IStorageService storage, IReportService reports,
         IExpertProfileService profiles, IReportSettings reportSettings, ICatalogService catalogs,
         ICaseEventRepository caseEvents, IHttpContextAccessor httpContext, ITimestampService timestamps,
-        IOptions<StorageOptions> storageOptions, IOptions<ReportOptions> reportOptions, ILogger<CaseService> log)
+        IOptions<StorageOptions> storageOptions, IOptions<ReportOptions> reportOptions, ILogger<CaseService> log,
+        RecordingSessionOptions? recordingSession = null)
     {
+        _recordingSession = recordingSession ?? RecordingSessionOptions.Default;
         _timestamps = timestamps;
         _storageOptions = storageOptions.Value;
         _reportOptions = reportOptions.Value;

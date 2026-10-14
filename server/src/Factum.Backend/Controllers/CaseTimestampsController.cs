@@ -103,7 +103,8 @@ public sealed class CaseTimestampsController(ICaseRepository cases, IStorageServ
         var all = await timestamps.ListAsync(cas.Id, ct, includeTsr: true);
         var selection = TimestampBundle.Select(cas, all);
         var readme = TimestampReadme.Build(cas.NroReferencia, time.GetUtcNow().UtcDateTime, reportSettings.Zone,
-            ZipFilenameOf(cas), string.IsNullOrEmpty(cas.PdfFilename) ? null : cas.PdfFilename, selection);
+            ZipFilenameOf(cas), string.IsNullOrEmpty(cas.PdfFilename) ? null : cas.PdfFilename, selection,
+            RecordingSessionRules.SessionFilenames(cas));
         return (selection, readme);
     }
 

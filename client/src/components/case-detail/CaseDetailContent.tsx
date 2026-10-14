@@ -21,6 +21,7 @@ import { useCaseAgentFlow } from "./useCaseAgentFlow";
 import { CaseTimeline } from "./CaseTimeline";
 import { CaseVersionHistoryButton } from "./CaseVersionHistoryButton";
 import { TimestampPanel } from "./TimestampPanel";
+import { SessionRecordPanel } from "./SessionRecordPanel";
 import { syncCaseSeals } from "@/lib/timestamps";
 
 /** Id del aviso de compatibilidad (lo referencia el botón "ZIP cifrado" del pie). */
@@ -73,6 +74,9 @@ export function CaseDetailContent({ cas, onResume }: { cas: Case; onResume: (c: 
       {/* metadatos-dispositivo §10.6: ficha técnica de solo lectura (sin "Volver a leer", D-T20). */}
       <DeviceDetailsSection cas={cas} />
 
+      {/* grabacion-sesion-completa §9.7: registro audiovisual (solo si la sesión tiene tramos). */}
+      <SessionRecordSection cas={cas} />
+
       {/* versionado-informe (HU6, D7-B): historial de las secciones del informe,
           accesible desde el detalle; solo lectura en casos completados. */}
       <CaseVersionHistoryButton cas={cas} />
@@ -119,6 +123,28 @@ export function CaseDetailContent({ cas, onResume }: { cas: Case; onResume: (c: 
       )}
     </div>
   );
+}
+
+/**
+ * Registro audiovisual del caso. El `Case` del listado viene sin `recording_session`
+ * (el backend lo excluye de la proyección): si falta, se carga el caso completo
+ * (`GET /api/cases/{id}`). Sin sesión o con error, no se muestra nada.
+ */
+function SessionRecordSection({ cas }: { cas: Case }) {
+  const [full, setFull] = useState<Pick<Case, "id" | "recording_session" | "device_details"> | null>(null);
+  const own = cas.recording_session ?? null;
+  useEffect(() => {
+    if (own) return;
+    let alive = true;
+    api.getCase(cas.id)
+      .then(r => { if (alive) setFull(r.cas); })
+      .catch(() => { /* sin registro audiovisual: el resto del detalle sigue igual */ });
+    return () => { alive = false; };
+  }, [cas.id, own]);
+  const session = own ?? (full?.id === cas.id ? full.recording_session ?? null : null);
+  if (!session) return null;
+  const details = own ? cas.device_details : full?.device_details ?? cas.device_details;
+  return <SessionRecordPanel caseId={cas.id} session={session} deviceDetails={details} />;
 }
 
 /** "Datos técnicos del dispositivo": la ficha registrada o la nota de caso anterior. */

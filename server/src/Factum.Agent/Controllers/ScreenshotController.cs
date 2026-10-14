@@ -1,6 +1,7 @@
 using Factum.Agent.Common;
 using Factum.Agent.Services;
 using Factum.Agent.Services.Ios;
+using Factum.Agent.Services.Session;
 using Factum.Agent.WebSockets;
 using Factum.Agent.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -14,7 +15,9 @@ public sealed class ScreenshotController(
     IIosService ios,
     IFileStorageService storage,
     AgentWebSocketHub hub,
-    IAndroidScreenProbe screenProbe) : ControllerBase
+    IAndroidScreenProbe screenProbe,
+    SessionRecorder sessions,
+    TimeProvider time) : ControllerBase
 {
     // wizard-concurrencia-pestanas §5.1: case_id/origin_id opcionales (solo atribución del evento; inválido → null).
     // pulido-post-qa-final D9: en Android, antes de crear el archivo se chequea la pantalla; apagada o bloqueada →
@@ -37,6 +40,8 @@ public sealed class ScreenshotController(
             }
 
             var path = storage.NewFilePath("screenshot", "png");
+            // grabacion-sesion-completa §5.9: la marca automática usa la hora de ANTES de screencap.
+            var at = time.GetUtcNow().UtcDateTime;
 
             if (platform == "ios")
                 await ios.TakeScreenshotAsync(serial, path, method ?? "auto", ct);
@@ -44,16 +49,26 @@ public sealed class ScreenshotController(
                 await adb.TakeScreenshotAsync(serial, path, ct);
 
             var filename = Path.GetFileName(path);
+            // Solo si la sesión activa es de este celular y de este caso; si no, todo queda como antes.
+            SessionMarkDto? mark = null;
+            if (platform != "ios")
+            {
+                try { mark = await sessions.TryAddCaptureMarkAsync(serial, attr.CaseId, at, filename, attr.OriginId); }
+                catch { /* la marca es accesoria: la captura ya está */ }
+            }
             await hub.BroadcastAsync(new AgentEvent
             {
                 Type = "screenshot_taken",
                 Data = new
                 {
                     filename, url = $"/files/{filename}", serial, case_id = attr.CaseId, origin_id = attr.OriginId,
+                    session_mark = mark,
                 },
             }, ct);
 
-            return Ok(new { filename, url = $"/files/{filename}" });
+            return mark is null
+                ? Ok(new { filename, url = $"/files/{filename}" })
+                : Ok(new { filename, url = $"/files/{filename}", session_mark = mark });
         }
         catch (IosException ex)
         {
