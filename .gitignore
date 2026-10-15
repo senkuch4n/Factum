@@ -58,3 +58,6 @@ deploy/cloud/dist/
 
 # Worktrees efímeros de subagentes
 .claude/worktrees/
+
+# graphify: grafo local del repo (se regenera, no va al repo)
+graphify-out/

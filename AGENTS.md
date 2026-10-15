@@ -36,6 +36,24 @@ npx tsc --noEmit -p tsconfig.web.json && npx tsc --noEmit -p tsconfig.node.json
 Todavía no hay proyectos de tests en .NET ni tests en `client/`/`agent-ui/`.
 Si una HU agrega lógica que vale la pena testear, la SDD dice dónde y cómo.
 
+## Navegar el código con graphify (ahorro de tokens)
+
+Si existe `graphify-out/graph.json` (grafo local del repo, gitignoreado;
+se arma con `uv tool install graphifyy && graphify extract . --code-only`),
+consultalo **antes** de recorrer archivos con grep/lecturas sueltas:
+
+```bash
+graphify query "<pregunta>" --budget 1500   # subgrafo relevante
+graphify explain "CaseService"              # nodo + vecinos
+graphify affected "Case"                    # qué impacta tocar X
+graphify path "A" "B"                       # cómo se conectan dos símbolos
+```
+
+Sin Bash (p. ej. `afinador`): leé `graphify-out/GRAPH_REPORT.md`. El grafo
+puede estar desactualizado: confirmá en el archivo real antes de afirmar
+algo, y quien cambie código puede refrescarlo con `graphify update .` (sin
+LLM). Si no existe, seguí con grep como siempre.
+
 ## Datos de la base de desarrollo — regla dura para implementadores
 
 La MongoDB de desarrollo puede tener **datos cargados a mano por el usuario**
