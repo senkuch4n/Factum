@@ -1,5 +1,6 @@
 using Factum.Backend.DTOs;
 using Factum.Backend.Services.Branding;
+using Factum.Backend.Services.Recording;
 using Factum.Backend.Services.Reports;
 using Factum.Backend.Services.Support;
 using Factum.Backend.Services.Tatana;
@@ -21,7 +22,8 @@ namespace Factum.Backend.Controllers;
 [Route("api/config")]
 [AllowAnonymous]
 public sealed class ConfigController(IBrandingService branding, SupportSettings support,
-    IReportSettings report, IOptions<TatanaOptions> tatana, ITimestampService timestamps) : ControllerBase
+    IReportSettings report, IOptions<TatanaOptions> tatana, ITimestampService timestamps,
+    RecordingSessionOptions? recordingSession = null) : ControllerBase
 {
     public const string LogoPath = "/api/config/branding/logo";
 
@@ -32,9 +34,10 @@ public sealed class ConfigController(IBrandingService branding, SupportSettings 
     {
         var snap = branding.Current;
         var logoUrl = snap.Logo is { } logo ? $"{LogoPath}?v={logo.Version}" : null;
+        var session = recordingSession ?? RecordingSessionOptions.Default;
         return Ok(new PublicConfigResponse(snap.OrganizationName, logoUrl, support.Enabled,
             report.EncryptZip, TatanaOptions.Normalize(tatana.Value.MinVersion), timestamps.IsEnabled,
-            report.ClockSkewWarningSeconds));
+            report.ClockSkewWarningSeconds, session.Mode, session.SegmentMinutes));
     }
 
     // El parámetro "v" de la query es solo cache-busting del lado del cliente; se ignora.

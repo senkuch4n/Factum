@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Security.Cryptography;
 using Factum.Agent.Common;
 using Factum.Agent.Models;
+using Factum.Agent.Services.Session;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -71,7 +72,16 @@ public interface ICaseEvidenceStore
     CaseFilesListing List(string caseId);
     /// <summary>Ruta del archivo del caso si existe; null si no.</summary>
     string? TryGetFile(string caseId, string? filename);
+    /// <summary>
+    /// Borra un archivo de la carpeta del caso. Un tramo de la grabación de la sesión (del diario del caso) da 409
+    /// <c>session_file_protected</c> (grabacion-sesion-completa §5.12, D-T6).
+    /// </summary>
     bool Delete(string caseId, string? filename);
+    /// <summary>
+    /// Igual que <see cref="Delete(string, string?)"/>; con <paramref name="allowSessionFiles"/> = true también borra
+    /// tramos de la sesión. Solo lo usa el commit del ZIP (los sueltos ya están dentro del ZIP confirmado).
+    /// </summary>
+    bool Delete(string caseId, string? filename, bool allowSessionFiles);
     /// <summary>Borra solo los archivos de <c>.upload-tmp/</c>. Al arrancar.</summary>
     int CleanupOrphanUploads();
     Task<string> Sha256Async(string path, CancellationToken ct, Action<long>? onProgress = null);
@@ -89,13 +99,16 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
     private readonly long _minFreeBytes;
     private readonly IAgentDiskProbe _probe;
     private readonly ILogger _log;
+    private readonly SessionJournal _sessions;
 
-    public CaseEvidenceStore(IOptions<AgentOptions> opts, IAgentDiskProbe probe, ILogger<CaseEvidenceStore> log)
-        : this(opts.Value, probe, log)
+    public CaseEvidenceStore(IOptions<AgentOptions> opts, IAgentDiskProbe probe, ILogger<CaseEvidenceStore> log,
+        SessionJournal sessions)
+        : this(opts.Value, probe, log, sessions)
     {
     }
 
-    internal CaseEvidenceStore(AgentOptions opts, IAgentDiskProbe? probe = null, ILogger? log = null)
+    internal CaseEvidenceStore(AgentOptions opts, IAgentDiskProbe? probe = null, ILogger? log = null,
+        SessionJournal? sessions = null)
     {
         _root = Path.GetFullPath(opts.DataDirectory);
         _casesRoot = Path.Combine(_root, "cases");
@@ -104,6 +117,7 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
         _minFreeBytes = opts.MinFreeBytes;
         _probe = probe ?? new DriveInfoAgentDiskProbe();
         _log = log ?? NullLogger.Instance;
+        _sessions = sessions ?? new SessionJournal(opts.DataDirectory);
         Directory.CreateDirectory(_root);
     }
 
@@ -126,11 +140,17 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
     /// Nombre de un archivo que ENTRA (upload-check, upload, import): además rechaza controles bidi y C1
     /// (tatana-ws-y-hosts T-13, D-A4).
     /// </summary>
-    internal static string RequireNewName(string? filename) =>
-        AgentFileNames.IsValidNewName(filename)
-            ? filename!
-            : throw new AgentHttpException(400, AgentErrorCodes.InvalidFilename,
+    internal static string RequireNewName(string? filename)
+    {
+        if (!AgentFileNames.IsValidNewName(filename))
+            throw new AgentHttpException(400, AgentErrorCodes.InvalidFilename,
                 "Nombre de archivo inválido: no puede tener rutas, caracteres de control ni los caracteres < > : \" | ? *");
+        // grabacion-sesion-completa §5.2: solo la sesión crea archivos sesion_*, por rename interno.
+        if (SessionNames.HasReservedPrefix(filename))
+            throw new AgentHttpException(400, AgentErrorCodes.InvalidFilename, SessionNames.ReservedPrefixMessage,
+                new Dictionary<string, object?> { ["filename"] = filename });
+        return filename!;
+    }
 
     public string CaseDir(string caseId) => Path.Combine(_casesRoot, RequireCaseId(caseId));
 
@@ -346,10 +366,16 @@ public sealed class CaseEvidenceStore : ICaseEvidenceStore
         return File.Exists(path) ? path : null;
     }
 
-    public bool Delete(string caseId, string? filename)
+    public bool Delete(string caseId, string? filename) => Delete(caseId, filename, allowSessionFiles: false);
+
+    public bool Delete(string caseId, string? filename, bool allowSessionFiles)
     {
         var dir = CaseDir(caseId);
         var path = Child(dir, RequireName(filename));
+        if (!allowSessionFiles && _sessions.SegmentFilenames(Path.GetFileName(dir)).Contains(filename!))
+            throw new AgentHttpException(409, AgentErrorCodes.SessionFileProtected,
+                "Los tramos de la grabación de la sesión no se pueden borrar: son parte del registro de la recolección.",
+                new Dictionary<string, object?> { ["filename"] = filename });
         if (!File.Exists(path)) return false;
         try
         {

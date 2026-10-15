@@ -73,4 +73,18 @@ public static class AgentErrorCodes
     // ── Ficha técnica del dispositivo (metadatos-dispositivo §7.2) ──
     /// <summary>404 de <c>GET /devices/{serial}/details</c> y <c>/clock</c>: <c>adb get-state</c> no dio <c>device</c>.</summary>
     public const string DeviceNotFound = "device_not_found";
+
+    // ── Grabación de la sesión (grabacion-sesion-completa §7.7) ──
+    /// <summary>409: hay una sesión activa en este Tatana (otro caso o celular), o en <c>record/start</c> del mismo celular.</summary>
+    public const string SessionActive = "session_active";
+    /// <summary>409 de <c>…/session/marks</c>: no hay una sesión grabando para ese caso.</summary>
+    public const string SessionNotActive = "session_not_active";
+    /// <summary>404 de <c>GET /cases/{id}/session</c>: el caso no tiene diario en esta PC.</summary>
+    public const string SessionNotFound = "session_not_found";
+    /// <summary>409 de <c>DELETE /cases/{id}/files/{name}</c>: los tramos de la sesión no se borran.</summary>
+    public const string SessionFileProtected = "session_file_protected";
+    /// <summary>400 del start: plataforma sin soporte de sesión en esta versión (iPhone en F1).</summary>
+    public const string SessionPlatformUnsupported = "session_platform_unsupported";
+    /// <summary>400 del start (F2): en iPhone la sesión usa solo <c>video_only</c>.</summary>
+    public const string SessionIosModeUnsupported = "session_ios_mode_unsupported";
 }

@@ -47,6 +47,25 @@ internal static class EvidenceZip
     /// Método de compresión de una entrada según la extensión de su nombre (sin mirar el contenido,
     /// sin distinguir mayúsculas): Stored si está en <see cref="StoredExtensions"/>, Deflated si no.
     /// </summary>
+    /// <summary>Carpeta permitida dentro del ZIP: los tramos de la grabación de la sesión (§5.13).</summary>
+    internal const string SessionFolder = "sesion";
+
+    /// <summary>
+    /// Nombre de entrada aceptable: un nombre plano (sin <c>/</c>, <c>\</c>, control ni <c>.</c>/<c>..</c>) o
+    /// <c>sesion/&lt;nombre plano&gt;</c>. Nada más: ni <c>../x</c>, ni <c>otra/x</c>, ni <c>sesion/sub/x</c>.
+    /// </summary>
+    internal static bool IsAllowedEntryName(string? name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        var plain = name.StartsWith(SessionFolder + "/", StringComparison.Ordinal)
+            ? name[(SessionFolder.Length + 1)..]
+            : name;
+        if (plain.Length == 0 || plain is "." or "..") return false;
+        foreach (var ch in plain)
+            if (ch is '/' or '\\' || ch < 0x20 || ch == 0x7F) return false;
+        return true;
+    }
+
     internal static CompressionMethod MethodFor(string fileName)
     {
         var ext = Path.GetExtension(fileName);          // ".MP4", "" si no tiene
@@ -61,9 +80,22 @@ internal static class EvidenceZip
     /// <paramref name="password"/> no es null. Cada entrada va con Stored o Deflate nivel 6 según
     /// <see cref="MethodFor"/> (zip-evidencia-sin-recomprimir). Cierra el archivo antes de volver.
     /// </summary>
-    public static async Task WriteAsync(string zipPath, IReadOnlyList<string> filePaths,
+    public static Task WriteAsync(string zipPath, IReadOnlyList<string> filePaths,
+        string? password, CancellationToken ct) =>
+        WriteAsync(zipPath, filePaths.Select(p => new EvidenceZipEntry(p, Path.GetFileName(p))).ToList(), password, ct);
+
+    /// <summary>
+    /// Igual que el overload de rutas, pero con el nombre de entrada explícito (grabacion-sesion-completa §5.13): un
+    /// nombre plano o <c>sesion/&lt;nombre plano&gt;</c> (<see cref="IsAllowedEntryName"/>). Cualquier otro lanza
+    /// <see cref="ArgumentException"/> antes de escribir nada.
+    /// </summary>
+    public static async Task WriteAsync(string zipPath, IReadOnlyList<EvidenceZipEntry> entries,
         string? password, CancellationToken ct)
     {
+        foreach (var e in entries)
+            if (!IsAllowedEntryName(e.EntryName))
+                throw new ArgumentException($"Nombre de entrada del ZIP inválido: {e.EntryName}", nameof(entries));
+
         var fs = new FileStream(zipPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
             bufferSize: 81920, useAsync: true);
         using var zos = new ZipOutputStream(fs) { IsStreamOwner = true };
@@ -75,10 +107,10 @@ internal static class EvidenceZip
 
         // Hora de generación en UTC, igual que el ZipArchive anterior (LastWriteTime = UtcNow).
         var now = DateTime.UtcNow;
-        foreach (var path in filePaths)
+        foreach (var (path, entryName) in entries)
         {
             ct.ThrowIfCancellationRequested();
-            var entry = new ZipEntry(Path.GetFileName(path))
+            var entry = new ZipEntry(entryName)
             {
                 DateTime = now,
                 // Stored para lo que ya viene comprimido (video, imagen, ...), Deflate para el resto.
@@ -153,7 +185,7 @@ internal static class EvidenceZip
             {
                 ct.ThrowIfCancellationRequested();
 
-                if (!e.IsFile)
+                if (!e.IsFile || !IsAllowedEntryName(e.Name))
                     throw new EvidenceZipVerificationException($"{ErrorPrefix}{e.Name} no es un archivo");
                 if (!expectedSha256ByName.TryGetValue(e.Name, out var expectedHash))
                     throw new EvidenceZipVerificationException($"{ErrorPrefix}{e.Name} no es parte de la evidencia");
@@ -221,6 +253,12 @@ internal static class EvidenceZip
     private static EvidenceZipEntryDiagnostics Diagnostics(ZipEntry e, string? expected, string? actualSha256) =>
         new(e.Name, e.Size, e.CompressionMethod.ToString(), e.IsCrypted, expected, actualSha256);
 }
+
+/// <summary>
+/// Un archivo del ZIP: ruta en disco y nombre de la entrada (plano o <c>sesion/&lt;nombre&gt;</c>, grabacion-sesion-completa
+/// §5.13).
+/// </summary>
+public sealed record EvidenceZipEntry(string Path, string EntryName);
 
 /// <summary>
 /// Datos de la entrada que no pasó la verificación, para el log (zip-verificacion-stored D-T3). Nunca

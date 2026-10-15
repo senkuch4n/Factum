@@ -14,9 +14,12 @@ namespace Factum.Backend.DTOs;
 /// <c>real_version_v1</c> (SDD tatana-instalador-autoupdate D6, §13.B).
 /// <c>timestamping_enabled</c> (siempre presente, sellado-tiempo §6.6): si el sellado de tiempo RFC 3161 está
 /// activo (<c>Timestamping:Enabled</c> y al menos una URL). La web lo usa para la etiqueta de la generación.
-/// <c>clock_skew_warning_seconds</c> (siempre presente, último; metadatos-dispositivo D6): <c>Report:ClockSkewWarningSeconds</c>
+/// <c>clock_skew_warning_seconds</c> (siempre presente; metadatos-dispositivo D6): <c>Report:ClockSkewWarningSeconds</c>
 /// ya validado (1…86400, default 60). La web avisa si la diferencia de reloj celular/PC lo supera.
+/// <c>recording_session_mode</c> y <c>recording_session_segment_minutes</c> (siempre presentes, al final;
+/// grabacion-sesion-completa §6.6): <c>Recording:SessionMode</c> (<c>disabled</c> | <c>optional_off</c> |
+/// <c>optional_on</c> | <c>required</c>) y <c>Recording:SegmentMinutes</c> (5–120) ya validados.
 /// </summary>
 public sealed record PublicConfigResponse(string? OrganizationName, string? OrganizationLogoUrl,
     bool SupportEnabled, bool EncryptZip, string? TatanaMinVersion, bool TimestampingEnabled,
-    int ClockSkewWarningSeconds);
+    int ClockSkewWarningSeconds, string RecordingSessionMode = "optional_off", int RecordingSessionSegmentMinutes = 30);

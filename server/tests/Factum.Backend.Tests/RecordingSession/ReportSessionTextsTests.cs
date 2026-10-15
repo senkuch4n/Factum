@@ -1,0 +1,195 @@
+using Factum.Backend.Models;
+using Factum.Backend.Services.Reports;
+
+namespace Factum.Backend.Tests.SesionGrabacion;
+
+/// <summary>Textos exactos de "Registro audiovisual de la recolección" (grabacion-sesion-completa §8.4, DU2=A).</summary>
+public sealed class ReportSessionTextsTests
+{
+    private static readonly TimeZoneInfo Ar = TimeZoneInfo.CreateCustomTimeZone("AR", TimeSpan.FromHours(-3), "AR", "AR");
+    // 14/10/2026 14:02:10 hora AR.
+    private static readonly DateTime T0 = new(2026, 10, 14, 17, 2, 10, DateTimeKind.Utc);
+
+    private static SessionSegment Seg(int i, double start, double seconds, string track = "pantalla",
+        string validation = "ok", bool recovered = false, string? stopReason = "rotacion", double? duration = null) => new()
+    {
+        Id = i.ToString("x32"), Track = track, Index = i, Filename = $"sesion_{track}_{i:000}_20261014_140210.mkv",
+        State = "saved", StartedAt = T0.AddSeconds(start), StoppedAt = T0.AddSeconds(start + seconds),
+        RecordedSeconds = seconds, DurationSeconds = duration ?? seconds, Validation = validation, Recovered = recovered,
+        StopReason = stopReason, Size = 1000, Sha256 = new string('a', 64),
+    };
+
+    private static Models.RecordingSession Session(params SessionSegment[] segs) => new()
+    {
+        Enabled = true, Platform = "android", Audio = "device", SegmentMinutes = 30, State = "stopped",
+        Segments = [.. segs],
+    };
+
+    [Fact]
+    public void Descripcion_AndroidSinCamaraConSelloYReloj()
+    {
+        var rows = new List<SessionSegment> { Seg(1, 0, 1800), Seg(2, 1800, 1500, stopReason: "cambio_de_paso") };
+        var details = new DeviceDetails
+        {
+            ClockStart = new ClockMeasurement { Kind = "start", DeviceMinusPcMs = 10_200, MarginMs = 400 },
+        };
+        var lines = ReportSessionTexts.Description(Session([.. rows]), rows, details, timestampsEnabled: true,
+            sealedCount: 1, Ar).Split('\n');
+        Assert.Equal(
+        [
+            "Durante la recolección se grabó en video, de forma continua, la pantalla del dispositivo. La grabación se " +
+            "guardó en tramos de hasta 30 minutos: cada tramo se cerró, se le calculó su valor hash SHA-256 y se " +
+            "incorporó al caso apenas terminó. Los archivos se entregan sin edición ni recodificación dentro del " +
+            "contenedor de la evidencia, en la carpeta \"sesion\".",
+            "La pantalla se capturó por USB con scrcpy, a un máximo de 1080 píxeles de alto, con el audio interno del " +
+            "dispositivo. Para no perder imagen entre tramos, cada tramo nuevo comenzó antes de cerrar el anterior, por " +
+            "lo que tramos consecutivos se superponen alrededor de un segundo.",
+            "Se grabaron 55 min en 2 tramos, entre el 14/10/2026 14:02:10 y el 14:57:10.",
+            "1 de 2 tramos cuentan con sello de tiempo propio, indicado en la tabla siguiente.",
+            "Las horas de esta sección corresponden al reloj de la estación de trabajo. Al inicio del caso, el " +
+            "dispositivo adelantaba 10 s respecto de la estación de trabajo (± 1 s): para comparar la hora que se ve en " +
+            "la pantalla del dispositivo dentro del video con las de esta sección, debe tenerse en cuenta esa diferencia.",
+        ], lines);
+    }
+
+    [Fact]
+    public void Descripcion_SinSelloSinRelojSinAudio_OtroDia()
+    {
+        var rows = new List<SessionSegment> { Seg(1, 0, 40000) };
+        var s = Session([.. rows]);
+        s.Audio = "none";
+        var lines = ReportSessionTexts.Description(s, rows, null, timestampsEnabled: false, 0, Ar).Split('\n');
+        Assert.Equal(4, lines.Length);
+        Assert.StartsWith("La pantalla se capturó por USB con scrcpy, a un máximo de 1080 píxeles de alto. Para", lines[1]);
+        Assert.Equal("Se grabaron 11 h 6 min 40 s en 1 tramos, entre el 14/10/2026 14:02:10 y el 15/10/2026 01:08:50.", lines[2]);
+        Assert.Equal("Las horas de esta sección corresponden al reloj de la estación de trabajo.", lines[3]);
+    }
+
+    [Fact]
+    public void Descripcion_ConCamara()
+    {
+        var rows = new List<SessionSegment> { Seg(1, 0, 600), Seg(2, 1, 600, track: "camara") };
+        var s = Session([.. rows]);
+        s.Camera = new SessionCamera { Name = "Integrated Webcam", Width = 1280, Height = 720, Fps = 15 };
+        var lines = ReportSessionTexts.Description(s, rows, null, false, 0, Ar).Split('\n');
+        Assert.EndsWith("la pantalla del dispositivo, y con una cámara de la estación de trabajo, el procedimiento " +
+                        "realizado sobre el equipo. La grabación se guardó en tramos de hasta 30 minutos: cada tramo se " +
+                        "cerró, se le calculó su valor hash SHA-256 y se incorporó al caso apenas terminó. Los archivos " +
+                        "se entregan sin edición ni recodificación dentro del contenedor de la evidencia, en la carpeta \"sesion\".",
+            lines[0]);
+        Assert.Equal("Se registró en video el procedimiento sobre el equipo con la cámara «Integrated Webcam» (1280×720, " +
+                     "15 cuadros por segundo, sin audio), en archivos separados de los de la pantalla y con los mismos cortes.",
+            lines[2]);
+        Assert.Equal("Se grabaron 10 min en 1 tramos de pantalla y 1 de cámara, entre el 14/10/2026 14:02:10 y el 14:12:11.",
+            lines[3]);
+    }
+
+    [Fact]
+    public void Reloj_SoloCierre()
+    {
+        var d = new DeviceDetails { ClockClose = new ClockMeasurement { Kind = "close", DeviceMinusPcMs = -3000, MarginMs = 200 } };
+        Assert.Equal("Las horas de esta sección corresponden al reloj de la estación de trabajo. Al cierre del caso, el " +
+                     "dispositivo atrasaba 3 s respecto de la estación de trabajo (± 1 s): para comparar la hora que se ve " +
+                     "en la pantalla del dispositivo dentro del video con las de esta sección, debe tenerse en cuenta esa diferencia.",
+            ReportSessionTexts.ClockLine(d));
+        Assert.Equal("Las horas de esta sección corresponden al reloj de la estación de trabajo.",
+            ReportSessionTexts.ClockLine(new DeviceDetails { ClockStart = new ClockMeasurement { Kind = "start" } }));
+    }
+
+    [Fact]
+    public void Filas_CompletoIncompletoRecuperadoYSello()
+    {
+        var ok = ReportSessionTexts.RowLines(Seg(1, 0, 1800.7), null, timestampsEnabled: false, Ar);
+        Assert.Equal(["Pantalla · tramo 1 · 14/10/2026 14:02:10 a 14:32:10 (30 min 1 s)", "Archivo completo"], ok);
+
+        var inc = ReportSessionTexts.RowLines(Seg(2, 1800, 600, validation: "incomplete", recovered: true, duration: 540),
+            new TimestampView("Free TSA", T0.AddMinutes(41), "01"), timestampsEnabled: true, Ar);
+        Assert.Equal(
+        [
+            "Pantalla · tramo 2 · 14/10/2026 14:32:10 a 14:42:10 (10 min)",
+            "Archivo incompleto: el video dura 9 min de 10 min grabados · recuperado tras el cierre de Tatana",
+            "Sello de tiempo: 14/10/2026 14:43:10 (UTC-03:00) · Free TSA",
+        ], inc);
+
+        var sinSello = ReportSessionTexts.RowLines(Seg(3, 0, 60, track: "camara"), null, timestampsEnabled: true, Ar);
+        Assert.StartsWith("Cámara · tramo 3", sinSello[0]);
+        Assert.Equal("Sin sello de tiempo de un tercero al emitir este informe", sinSello[2]);
+    }
+
+    [Fact]
+    public void Detalle_HuecosAbiertosYCerrados_Marcas()
+    {
+        var s = Session(Seg(1, 0, 1800), Seg(2, 1877, 600, stopReason: "cambio_de_paso"));
+        s.Gaps =
+        [
+            new SessionGap { Id = "g2", Track = "pantalla", From = T0.AddSeconds(2477), Reason = "cambio_de_paso" },
+            new SessionGap { Id = "g1", Track = "pantalla", From = T0.AddSeconds(1800), To = T0.AddSeconds(1877), Reason = "desconexion" },
+            new SessionGap { Id = "g3", Track = "pantalla", From = T0.AddSeconds(100), To = T0.AddSeconds(120), Reason = "fallo_grabacion", SegmentLost = true },
+        ];
+        s.Marks =
+        [
+            new SessionMark { Id = "m2", At = T0.AddSeconds(590.5), SegmentIndex = 1, OffsetSeconds = 590.5, Filename = "screenshot_1.png", Kind = "captura" },
+            new SessionMark { Id = "m1", At = T0.AddSeconds(513.6), SegmentIndex = 1, OffsetSeconds = 513.6, Text = "Abre el chat con Juan", Kind = "manual" },
+            new SessionMark { Id = "m3", At = T0.AddSeconds(1900), SegmentIndex = 2, OffsetSeconds = 23, Kind = "manual" },
+        ];
+        Assert.Equal(
+        [
+            "Huecos en la grabación:",
+            "• 14/10/2026 14:03:50 a 14:04:10 (20 s) — Pantalla: la herramienta de captura se interrumpió por un error — el tramo en curso no se pudo recuperar",
+            "• 14/10/2026 14:32:10 a 14:33:27 (1 min 17 s) — Pantalla: se desconectó el cable USB del dispositivo",
+            "• Desde 14/10/2026 14:43:27 — Pantalla: el perito salió del paso de captura (la grabación no se reanudó)",
+            "La grabación terminó el 14/10/2026 14:43:27 (el perito salió del paso de captura).",
+            "Marcas de momento (para ubicar hechos en el video de la pantalla):",
+            "• 14:10:43 — tramo 1, minuto 08:33 del video — Abre el chat con Juan",
+            "• 14:12:00 — tramo 1, minuto 09:50 del video — Captura screenshot_1.png",
+            "• 14:33:50 — tramo 2, minuto 00:23 del video — Marca sin texto",
+        ], ReportSessionTexts.Detail(s, Ar).Split('\n'));
+    }
+
+    [Fact]
+    public void Detalle_SinHuecos_YMarcasConCamara()
+    {
+        var s = Session(Seg(1, 0, 60), Seg(2, 0, 60, track: "camara", stopReason: "detenido_por_perito"));
+        s.Marks = [new SessionMark { Id = "m", At = T0.AddSeconds(5), SegmentIndex = 1, OffsetSeconds = 5, Text = "x", Kind = "manual" }];
+        var lines = ReportSessionTexts.Detail(s, Ar).Split('\n');
+        Assert.Equal("Sin huecos: la grabación fue continua entre el primer y el último tramo.", lines[0]);
+        Assert.Equal("La grabación terminó el 14/10/2026 14:03:10 (el perito detuvo la grabación).", lines[1]);
+        Assert.Equal("Marcas de momento (para ubicar hechos en el video de la pantalla; el mismo minuto sirve " +
+                     "aproximadamente para el de la cámara):", lines[2]);
+    }
+
+    [Theory]
+    [InlineData("cambio_de_paso", "el perito salió del paso de captura")]
+    [InlineData("retomado_otro_dia", "el caso se retomó otro día")]
+    [InlineData("desconexion", "se desconectó el cable USB del dispositivo")]
+    [InlineData("tatana_cerrado", "Tatana se cerró o la estación de trabajo se reinició")]
+    [InlineData("sin_espacio", "quedaba poco espacio en el disco de la estación de trabajo")]
+    [InlineData("camara_fallo", "la cámara dejó de grabar")]
+    [InlineData("detenido_por_perito", "el perito detuvo la grabación")]
+    [InlineData("fallo_grabacion", "la herramienta de captura se interrumpió por un error")]
+    [InlineData("rotacion", "corte técnico entre tramos")]
+    public void Motivos(string reason, string text) => Assert.Equal(text, ReportSessionTexts.ReasonText(reason));
+
+    [Fact]
+    public void Plural_UnMinuto()
+    {
+        var rows = new List<SessionSegment> { Seg(1, 0, 60) };
+        var s = Session([.. rows]);
+        s.SegmentMinutes = 1;
+        Assert.Contains("en tramos de hasta 1 minuto: cada tramo",
+            ReportSessionTexts.Description(s, rows, null, false, 0, Ar));
+    }
+
+    [Fact]
+    public void Total_NoCuentaDosVecesElSolapamiento()
+    {
+        // Dos tramos de 60 s solapados 2 s y un hueco de 10 s: cubierto = 118 s.
+        var rows = new List<SessionSegment> { Seg(1, 0, 60), Seg(2, 58, 60), Seg(3, 128, 0.5) };
+        Assert.Equal(118.5, ReportSessionTexts.CoveredSeconds(rows), 3);
+        var line = ReportSessionTexts.Description(Session([.. rows]), rows, null, false, 0, Ar).Split('\n')[2];
+        Assert.StartsWith("Se grabaron 1 min 59 s en 3 tramos", line);
+    }
+
+    [Fact]
+    public void MinutoDelVideo() => Assert.Equal("125:03", ReportSessionTexts.MinuteSecond(7503.9));
+}

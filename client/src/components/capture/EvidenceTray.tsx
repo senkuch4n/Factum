@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  AlertCircle, AlertTriangle, Check, CheckCircle2, Clock, ClockAlert, ClockCheck, HardDrive, Loader2, Trash2,
+  AlertCircle, AlertTriangle, Check, CheckCircle2, Clock, ClockAlert, ClockCheck, Film, HardDrive, Loader2, Trash2,
 } from "lucide-react";
 import type { CaptureRoleValue, CaseTimestamp } from "@/lib/api";
 import { CAPTURE_ROLE_LABELS } from "@/lib/pericial";
@@ -303,6 +303,50 @@ export function AttachmentChip({
         )}
       >
         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
+    </li>
+  );
+}
+
+/**
+ * Tramo de la grabación de la sesión (grabacion-sesion-completa §9.4): fila del
+ * grupo "Sesión" con "Pantalla · tramo N · HH:MM–HH:MM", estado de guardado y
+ * sello. Sin botón de quitar (D-T6): los tramos son el registro de la recolección.
+ */
+export function SessionSegmentTile({
+  item, active, label, uploadState, seal, onSelect,
+}: {
+  item: GItem; active: boolean;
+  /** "Pantalla · tramo 2 · 14:02–14:32". */
+  label: string;
+  uploadState?: TrayUploadState;
+  seal?: CaseTimestamp | null;
+  onSelect: () => void;
+}) {
+  return (
+    <li className="motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]">
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-pressed={active}
+        aria-label={`Ver ${label} — ${item.name}${uploadSuffix(uploadState)}${sealSuffix(seal)}`}
+        title={item.name}
+        className={cn(
+          "flex min-h-11 w-full items-center gap-2 rounded-fx-md border bg-fx-surface-2 px-2.5 py-1.5 text-left text-xs",
+          "transition-colors duration-fx-fast ease-fx",
+          FOCUS_RING,
+          active ? "border-fx-accent" : "border-fx-border hover:border-fx-border-strong",
+        )}
+      >
+        <Film className="h-3.5 w-3.5 shrink-0 text-fx-text-3" aria-hidden="true" />
+        <span className="min-w-0 flex-1 break-words font-medium leading-snug text-fx-text">{label}</span>
+        <UploadStateIcon state={uploadState} hash={item.remoteFile?.sha256} />
+        {seal && <SealBadge seal={seal} />}
+        {uploadState && VISIBLE_STATE_TEXT[uploadState] && (
+          <span aria-hidden="true" className="shrink-0 whitespace-nowrap text-[11px] font-medium text-fx-text-2">
+            {VISIBLE_STATE_TEXT[uploadState]}
+          </span>
+        )}
       </button>
     </li>
   );

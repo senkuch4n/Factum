@@ -271,12 +271,19 @@ public static class EvidenceManifest
         return map;
     }
 
-    /// <summary>Manifiesto en la forma <c>{ filename, size, sha256 }</c>, orden ordinal.</summary>
-    public static List<ManifestFileDto> ToManifestFiles(Case cas) =>
-        cas.Evidence
+    /// <summary>
+    /// Manifiesto en la forma <c>{ filename, size, sha256, zip_folder }</c>, orden ordinal. Los tramos de la grabación
+    /// de la sesión (los del diario, no por prefijo) van con <c>zip_folder = "sesion"</c> (grabacion-sesion-completa §6.5).
+    /// </summary>
+    public static List<ManifestFileDto> ToManifestFiles(Case cas)
+    {
+        var session = RecordingSessionRules.SessionFilenames(cas);
+        return cas.Evidence
             .OrderBy(e => e.Filename, StringComparer.Ordinal)
-            .Select(e => new ManifestFileDto(e.Filename, e.Size, e.Sha256))
+            .Select(e => new ManifestFileDto(e.Filename, e.Size, e.Sha256,
+                session.Contains(e.Filename) ? RecordingSessionValues.ZipFolder : null))
             .ToList();
+    }
 
     /// <summary>
     /// Capturas que el informe puede embeber (§5.5 <c>report_images</c>): ítems del manifiesto que

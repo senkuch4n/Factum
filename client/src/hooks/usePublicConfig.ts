@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, type RecordingSessionMode } from "@/lib/api";
 
 export interface PublicClientConfig {
   organizationName: string | null;
@@ -17,10 +17,29 @@ export interface PublicClientConfig {
   timestampingEnabled: boolean;
   /** Umbral (s) del aviso de diferencia de reloj (metadatos-dispositivo D6); 60 si falta o es inválido. */
   clockSkewWarningSeconds: number;
+  /**
+   * Grabación de la sesión (grabacion-sesion-completa §6.6): modo de instalación.
+   * Un backend anterior no lo manda: `optional_off` (y la web oculta la tarjeta
+   * cuando `settings` responde 404).
+   */
+  recordingSessionMode: RecordingSessionMode;
+  /** Duración del tramo en minutos (5–120); 30 si falta o es inválida. */
+  recordingSessionSegmentMinutes: number;
 }
 
 /** Default del umbral de reloj: el mismo que `Report:ClockSkewWarningSeconds`. */
 export const DEFAULT_CLOCK_SKEW_WARNING_SECONDS = 60;
+
+export const DEFAULT_SESSION_SEGMENT_MINUTES = 30;
+const SESSION_MODES: readonly RecordingSessionMode[] = ["disabled", "optional_off", "optional_on", "required"];
+
+function sessionMode(v: unknown): RecordingSessionMode {
+  return SESSION_MODES.includes(v as RecordingSessionMode) ? (v as RecordingSessionMode) : "optional_off";
+}
+
+function segmentMinutes(v: unknown): number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 5 && v <= 120 ? v : DEFAULT_SESSION_SEGMENT_MINUTES;
+}
 
 /** Entero entre 1 y 86400; cualquier otra cosa (o un backend sin el campo) = 60. */
 function clockSkewSeconds(v: unknown): number {
@@ -35,6 +54,8 @@ const EMPTY: PublicClientConfig = {
   tatanaMinVersion: null,
   timestampingEnabled: false,
   clockSkewWarningSeconds: DEFAULT_CLOCK_SKEW_WARNING_SECONDS,
+  recordingSessionMode: "optional_off",
+  recordingSessionSegmentMinutes: DEFAULT_SESSION_SEGMENT_MINUTES,
 };
 
 /* Caché a nivel de módulo: un solo fetch por carga de la app, compartido por
@@ -67,6 +88,8 @@ export function loadPublicConfig(): Promise<PublicClientConfig> {
         // Sin el campo (backend anterior a sellado-tiempo) = la UI no menciona el sellado.
         timestampingEnabled: cfg.timestamping_enabled === true,
         clockSkewWarningSeconds: clockSkewSeconds(cfg.clock_skew_warning_seconds),
+        recordingSessionMode: sessionMode(cfg.recording_session_mode),
+        recordingSessionSegmentMinutes: segmentMinutes(cfg.recording_session_segment_minutes),
       };
     })
     .catch(() => EMPTY)

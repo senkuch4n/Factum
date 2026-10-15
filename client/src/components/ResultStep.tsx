@@ -5,7 +5,8 @@ import { Button } from "primereact/button";
 import {
   Archive, FileText, Key, Hash, RotateCcw, ShieldCheck, CheckCircle2, HardDrive, Server, Download, CloudAlert,
 } from "lucide-react";
-import { api, type EvidenceStorage, type ZipLocation } from "@/lib/api";
+import { api, type DeviceDetails, type EvidenceStorage, type RecordingSession, type ZipLocation } from "@/lib/api";
+import { SessionRecordPanel } from "@/components/case-detail/SessionRecordPanel";
 import { agent } from "@/lib/agent";
 import { useTokenVersion } from "@/lib/session";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
@@ -63,6 +64,10 @@ interface Props {
   sameHost?: boolean;
   /** Archivos sueltos a borrar al completar el commit pendiente (D12). */
   pendingDeleteFiles?: string[];
+  /** Grabación de la sesión del caso (grabacion-sesion-completa §9.7): bloque "Registro audiovisual". */
+  recordingSession?: RecordingSession | null;
+  /** Ficha del dispositivo (#79): línea del reloj del registro audiovisual. */
+  deviceDetails?: DeviceDetails | null;
 }
 
 /** Paso 6: cierre sobrio con los datos de la entrega y las descargas. */
@@ -191,6 +196,7 @@ const BLOCK_TITLE = "m-0 flex items-center gap-1.5 text-fx-label uppercase text-
 function AgentResult({
   caseNumber, zipFile, pdfFile, password, encrypted, hash, reportHash, caseId, onNewCase,
   zipLocation, caseRef = caseNumber, zipState = "final", sameHost = false, pendingDeleteFiles = [],
+  recordingSession = null, deviceDetails = null,
 }: Props) {
   // Re-render al cambiar el token: las URL con ?token= salen siempre con el vigente (sesion-larga §8.11).
   useTokenVersion();
@@ -306,6 +312,9 @@ function AgentResult({
 
         {/* ── Sello de tiempo (sellado-tiempo §9.4): nada si el backend no lo conoce o está apagado ── */}
         <TimestampPanel cas={{ id: caseId, status: "completed" }} sameHost={sameHost} zipState={state} />
+        {recordingSession && (
+          <SessionRecordPanel caseId={caseId} session={recordingSession} deviceDetails={deviceDetails} className="mt-4" />
+        )}
       </div>
 
       <Button

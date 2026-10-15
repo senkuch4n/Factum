@@ -160,6 +160,36 @@ public sealed class CasesController(ICaseService caseService, IOptions<StorageOp
         return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
     }
 
+    // ── grabacion-sesion-completa (§6.3): switch y copia del diario de la sesión ──
+    // 200 con el caso completo; errores { error, code[, field] }: 409 case_not_editable / recording_session_disabled /
+    // recording_session_not_enabled / recording_session_conflict / recording_session_busy, 400 recording_session_required /
+    // invalid_recording_session.
+
+    [HttpPut("{id}/recording-session/settings")]
+    [ProducesResponseType<Case>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SaveRecordingSessionSettings(string id,
+        [FromBody] RecordingSessionSettingsRequest request, CancellationToken ct)
+    {
+        var result = await caseService.SaveRecordingSessionSettingsAsync(id, request, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    [HttpPut("{id}/recording-session")]
+    [RequestSizeLimit(8 * 1024 * 1024)]
+    [ProducesResponseType<Case>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SyncRecordingSession(string id, [FromBody] RecordingSessionSnapshotRequest request,
+        CancellationToken ct)
+    {
+        var result = await caseService.SyncRecordingSessionAsync(id, request, Officer.Dni, ct);
+        return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
     [HttpGet("{id}/report-texts/defaults")]
     [ProducesResponseType<ReportTextsDto>(StatusCodes.Status200OK)]
     public async Task<IActionResult> ReportTextDefaults(string id, CancellationToken ct)

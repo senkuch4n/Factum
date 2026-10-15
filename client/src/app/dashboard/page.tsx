@@ -15,8 +15,14 @@ import {
 import { useDeviceDetails } from "@/hooks/useDeviceDetails";
 import { agent, AgentError, screenBlockOf, type ScreenCheckOptions, type ZipProgress } from "@/lib/agent";
 import {
-  agentErrorMessage, agentStatusMessage, GENERATION_BUSY_MESSAGE, RECORDING_ERROR_TEXT,
+  agentErrorMessage, agentStatusMessage, GENERATION_BUSY_MESSAGE, RECORDING_ERROR_TEXT, RECORDING_SESSION_OPEN_MESSAGE,
 } from "@/lib/agent-messages";
+import { useRecordingSession, type RecordingSessionApi } from "@/hooks/useRecordingSession";
+import {
+  defaultEnabled, generationBlocker, segmentsByName, sessionFilenames, sessionSummary,
+} from "@/lib/recording-session";
+import { SessionIndicator } from "@/components/capture/SessionIndicator";
+import type { CaptureSessionProps } from "@/components/CaptureStep";
 import { shouldAcceptAgentEvent, type AttributedEventData, type AttributionCtx } from "@/lib/agent-event-filter";
 import { getTabOriginId } from "@/lib/tab-origin";
 import { postTabMessage, subscribeTabMessages, withGenerationLock } from "@/lib/tab-channel";
@@ -127,7 +133,9 @@ function useGreetingClock() {
 
 export default function Dashboard() {
   // Soporte opcional: sin la integración habilitada no hay botón en la navbar, en la guía ni modal.
-  const { supportEnabled, clockSkewWarningSeconds } = usePublicConfig();
+  const {
+    supportEnabled, clockSkewWarningSeconds, recordingSessionMode, recordingSessionSegmentMinutes,
+  } = usePublicConfig();
 
   // ── Navigation ──────────────────────────────────────────────────
   const [mode, setMode] = useState<"history" | "wizard">("history");
@@ -246,7 +254,7 @@ export default function Dashboard() {
 
   const {
     files, loading: fileLoading, videoVariants, pendingBlobs, localBlobs,
-    addFile, addVideoVariant, variantStatus, expectVariants, applyVariantStatus, refreshVariantStatus,
+    addFile, addStoredFile, addVideoVariant, variantStatus, expectVariants, applyVariantStatus, refreshVariantStatus,
     removeFile, setCaptureRole, handlePhotoBlob, handleUploadAndContinueLegacy, clearFiles,
     uploadProgress, uploadStates, uploadNotice, dismissUploadNotice, cancelUpload,
     storageMode, saveBusy, bindCase, handleSaveAndContinue, restoreCaseEvidence, cancelSave,
@@ -428,13 +436,22 @@ export default function Dashboard() {
 
   // Relectura de `/agent/state` para el REC del chip (wizard-pulido-ux DT5).
   const agentActivityRefreshRef = useRef<() => void>(() => {});
+  // Grabación de la sesión: el hook se crea después de la conexión con Tatana (necesita `agentOnline`).
+  const sessionEventRef = useRef<(e: AgentEvent) => void>(() => {});
+  const sessionRefreshRef = useRef<() => void>(() => {});
+  const sessionRef = useRef<RecordingSessionApi | null>(null);
 
   const handleWsEvent = useCallback((event: AgentEvent) => {
     // Primero, antes de cualquier filtro de atribución: el chip quiere ver
     // también la grabación de OTRA pestaña (DT5).
-    if (event.type === "recording_started" || event.type === "recording_stopped" || event.type === "devices_changed") {
+    if (
+      event.type === "recording_started" || event.type === "recording_stopped" || event.type === "devices_changed"
+      || event.type === "session_state"
+    ) {
       agentActivityRefreshRef.current();
     }
+    // Grabación de la sesión (grabacion-sesion-completa §9.2): filtra por el caso abierto.
+    sessionEventRef.current(event);
     if (event.type === "devices_changed") {
       const newDevices = (event.data as { devices: Device[] }).devices || [];
       const cur = selDeviceRef.current;
@@ -520,12 +537,42 @@ export default function Dashboard() {
     void refreshVariantStatus();
     void refreshRecording();
     agentActivityRefreshRef.current();
+    sessionRefreshRef.current();
   }, [refreshVariantStatus, refreshRecording]);
   const { agentOnline, devices, loadingDev, refreshDevices } = useAgentConnection(handleWsEvent, handleAgentConnected);
   const deviceConnection = useDeviceConnection(agentOnline, devices, loadingDev, selDevice?.serial ?? null);
   // Chip del header: REC de cualquier grabación en la PC (D2 A) y equipo de la inspección (DT2).
   const { remoteRecording, refresh: refreshAgentActivity } = useAgentRecordingActivity(agentOnline);
   useEffect(() => { agentActivityRefreshRef.current = refreshAgentActivity; }, [refreshAgentActivity]);
+
+  // ── Grabación de la sesión completa (grabacion-sesion-completa §9.2-§9.3) ──
+  /** Tramos llegados por WS antes de que el diario los liste: van al grupo "Sesión" desde el primer momento. */
+  const [arrivedSegments, setArrivedSegments] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => { setArrivedSegments(new Set()); }, [currentCaseId]);
+  const onSegmentSaved = useCallback((seg: { filename: string; size: number; sha256: string }) => {
+    setArrivedSegments(prev => (prev.has(seg.filename) ? prev : new Set(prev).add(seg.filename)));
+    addStoredFile(seg.filename, { size: seg.size, sha256: seg.sha256 });
+  }, [addStoredFile]);
+  const recordingSession = useRecordingSession({
+    currentCase,
+    agentStorage: currentStorage === "agent",
+    deviceSerial: selDevice?.serial ?? null,
+    platform: selDevice?.platform ?? "android",
+    androidVersion: selDevice?.android_version ?? 0,
+    step,
+    agentOnline,
+    captureBlocked: deviceOffline || !!agentLock || (!!currentCase && selDevice?.serial !== currentCase.device.serial),
+    mode: recordingSessionMode,
+    segmentMinutes: recordingSessionSegmentMinutes,
+    onSegmentSaved,
+    onCaseUpdated: updated => setCase(c => (c && c.id === updated.id ? updated : c)),
+    onError: msg => setGlobal(msg),
+  });
+  useEffect(() => {
+    sessionRef.current = recordingSession;
+    sessionEventRef.current = recordingSession.handleAgentEvent;
+    sessionRefreshRef.current = () => { void recordingSession.refresh(); };
+  });
 
   // ── Sesión (sesion-larga §8.10): el asistente activo habilita el re-login en el lugar ──
   // "Detener" del diálogo = el mismo "Detener" del paso 3. Por ref: `handleToggleRecord`
@@ -538,7 +585,7 @@ export default function Dashboard() {
   });
   const stopFromSessionDialog = useCallback(() => stopRecordingRef.current(), []);
   const wizardActive = mode === "wizard" && step >= 2 && step <= 5;
-  const sessionBusy = isRecording || remoteRecording || saveBusy || !!loading.generate;
+  const sessionBusy = isRecording || remoteRecording || saveBusy || !!loading.generate || recordingSession.active;
   // Solo la grabación de esta pestaña: una ajena (`remoteRecording`) no se detiene con este botón.
   const sessionRecording = isRecording && !!selDevice && !!recordingStartedAt;
   const sessionStopping = !!loading.stopRecord || recordingPhase === "stopping";
@@ -632,7 +679,7 @@ export default function Dashboard() {
   }, [timestampsWatch, timestampsPending, currentCaseId, applyCaseTimestamps]);
 
   // ── Navigation ───────────────────────────────────────────────────
-  const go = useCallback((n: number) => {
+  const goNow = useCallback((n: number) => {
     setDir(n > step ? 1 : -1);
     setStep(n); setStatus(""); setGlobal(""); setGenerateNotice(null);
     if (n !== 3) setDeviceOffline(false);
@@ -647,6 +694,21 @@ export default function Dashboard() {
       setCaseForm(f => ({ ...caseToForm(currentCase), imeiOverride: f.imeiOverride }));
     }
   }, [step, setDeviceOffline, currentCase]);
+
+  /**
+   * Navegación del asistente. Salir del paso 3 con la grabación de la sesión en
+   * curso la cierra antes (`cambio_de_paso`, §9.3). Si el cierre falla, se navega
+   * igual: el paso 5 no deja generar con la sesión abierta.
+   */
+  const go = useCallback((n: number) => {
+    const s = sessionRef.current;
+    if (step === 3 && n !== 3 && s?.active) {
+      setStatus("Cerrando la grabación de la sesión…");
+      void s.stop("cambio_de_paso").finally(() => goNow(n));
+      return;
+    }
+    goNow(n);
+  }, [step, goNow]);
 
   /** Va al paso `n` y enfoca `fieldId` cuando el paso monta (checklist de "Generar"). */
   function goToField(n: number, fieldId: string) {
@@ -1035,6 +1097,8 @@ export default function Dashboard() {
         if (e.missing?.length) setGenerateMissing(e.missing);
         if (e.code === "manifest_mismatch" || e.code === "generation_stale") {
           setGlobal("La evidencia del caso cambió mientras se generaba; volvé a intentar.");
+        } else if (e.code === "recording_session_open") {
+          setGlobal(RECORDING_SESSION_OPEN_MESSAGE);
         } else if (e.code === "evidence_on_other_pc") {
           setGlobal(`La evidencia está en la PC ${e.body?.evidence_hostname ?? cas.evidence_host?.hostname ?? "donde se capturó"}; generalo desde ahí.`);
         } else {
@@ -1052,6 +1116,8 @@ export default function Dashboard() {
   }
 
   function resetWizard(opts: { keepMode?: boolean } = {}) {
+    // Salir del asistente con la sesión grabando: se cierra en Tatana sin esperar (§9.3).
+    sessionRef.current?.stopDetached("cambio_de_paso");
     clearFiles(); resetRecording(); resetShotSession();
     setStep(1); setDir(1);
     setSelDevice(null); setCase(null); setResult(null);
@@ -1234,6 +1300,62 @@ export default function Dashboard() {
 
   const draftCases = useMemo(() => historyCases.filter(c => c.status === "draft"), [historyCases]);
 
+  // ── Grabación de la sesión: props del paso 3 y bloqueo del paso 5 (§9.4, §9.6) ──
+  const sessionJournal = recordingSession.journal;
+  const caseRecordingSession = currentCase?.recording_session ?? null;
+  const sessionNames = useMemo(() => {
+    const set = sessionFilenames(caseRecordingSession, sessionJournal);
+    arrivedSegments.forEach(n => set.add(n));
+    return set;
+  }, [caseRecordingSession, sessionJournal, arrivedSegments]);
+  const segmentMeta = useMemo(
+    () => segmentsByName(caseRecordingSession, sessionJournal),
+    [caseRecordingSession, sessionJournal],
+  );
+  const sessionCardMode: CaptureSessionProps["cardMode"] =
+    currentStorage !== "agent" || recordingSessionMode === "disabled" || recordingSession.backendSupported === false
+      ? null
+      : recordingSession.capability === "unknown" ? null
+      : recordingSession.capability === "none" ? "outdated"
+      : (selDevice?.platform ?? "android") === "ios" ? "ios_unsupported"
+      : "ready";
+  const captureSession: CaptureSessionProps | null = currentStorage === "agent" ? {
+    cardMode: sessionCardMode,
+    required: recordingSessionMode === "required",
+    enabled: caseRecordingSession ? caseRecordingSession.enabled : defaultEnabled(recordingSessionMode),
+    segmentMinutes: recordingSessionSegmentMinutes,
+    capacity: recordingSession.capacity,
+    state: recordingSession.state,
+    active: recordingSession.active,
+    recording: recordingSession.recording,
+    recovered: recordingSession.recovered,
+    announcement: recordingSession.announcement,
+    problem: recordingSession.problem,
+    interruption: recordingSession.interruption,
+    resumeNotice: recordingSession.resumeNotice,
+    busy: recordingSession.busy,
+    lastMark: recordingSession.lastMark,
+    sessionNames,
+    segmentMeta,
+    onToggle: enabled => { void recordingSession.setEnabled(enabled); },
+    onResume: () => { void recordingSession.ensureStarted(); },
+    onForceStart: () => { void recordingSession.ensureStarted({ skipScreenCheck: true }); },
+    onDismissProblem: recordingSession.dismissProblem,
+    onStop: () => recordingSession.stop("detenido_por_perito"),
+    onMark: text => recordingSession.mark(text),
+    onDismissInterruption: recordingSession.dismissInterruption,
+    onDismissResume: recordingSession.dismissResumeNotice,
+  } : null;
+  const sessionGenerationBlocker = currentStorage === "agent"
+    ? generationBlocker(recordingSession.state, sessionJournal, currentCase, { pendingSync: recordingSession.pendingSync })
+    : null;
+
+  /** "Cerrar grabación de la sesión" del paso 5: cierra, registra lo que falte y sincroniza. */
+  async function closeSessionForGeneration() {
+    if (recordingSession.active) await recordingSession.stop("cambio_de_paso");
+    else await recordingSession.flushSync();
+  }
+
   // ── Render ───────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-screen overflow-clip bg-fx-bg text-fx-text">
@@ -1386,7 +1508,8 @@ export default function Dashboard() {
       {/* pb-14: reserva la píldora fija de SystemStatusLine para que no tape las últimas tarjetas */}
       {/* `relative`: los `sr-only` (absolute) sin ancestro posicionado tomaban el
           bloque inicial como contenedor y estiraban el documento (M4, F1). */}
-      <div className="relative flex-1 overflow-y-auto pb-14">
+      {/* Con el indicador de la sesión fijo arriba del paso 3, el foco de teclado no queda tapado (scroll-padding). */}
+      <div className={`relative flex-1 overflow-y-auto pb-14${mode === "wizard" && step === 3 && recordingSession.active ? " [scroll-padding-top:5rem]" : ""}`}>
 
         {mode === "history" && (
           <div className="p-4 sm:p-6 motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]">
@@ -1520,6 +1643,17 @@ export default function Dashboard() {
                     {formatDateTime(deviceDetailsNotice.readAt) ? ` (lectura del ${formatDateTime(deviceDetailsNotice.readAt)})` : ""}.
                   </FxBanner>
                 )}
+                {/* Sesión todavía abierta fuera del paso 3 (p. ej. si falló el cierre): indicador compacto. */}
+                {step !== 3 && recordingSession.active && recordingSession.state && (
+                  <SessionIndicator
+                    compact
+                    state={recordingSession.state}
+                    recovered={recordingSession.recovered}
+                    announcement={null}
+                    stopping={recordingSession.busy.stop}
+                    starting={recordingSession.busy.start}
+                  />
+                )}
                 {recordingInfo && step === 3 && (
                   <FxBanner tone="info" onClose={() => setRecordingInfo("")}>{recordingInfo}</FxBanner>
                 )}
@@ -1649,9 +1783,14 @@ export default function Dashboard() {
                               })}
                               onUploadAndContinue={() =>
                                 currentStorage === "agent"
-                                  ? handleSaveAndContinue(currentCase!, () => go(4), setGlobal, setStatus, handleCaptureRolesSaved)
+                                  ? (async () => {
+                                    // El último tramo de la sesión entra en la misma cola de guardado (§9.3).
+                                    if (recordingSession.active) await recordingSession.stop("cambio_de_paso");
+                                    await handleSaveAndContinue(currentCase!, () => goNow(4), setGlobal, setStatus, handleCaptureRolesSaved);
+                                  })()
                                   : handleUploadAndContinueLegacy(currentCase!, () => go(4), setGlobal, setStatus, handleCaptureRolesSaved)
                               }
+                              session={captureSession}
                               caseId={currentCase?.id}
                               storageMode={storageMode}
                               saveBusy={saveBusy}
@@ -1742,6 +1881,11 @@ export default function Dashboard() {
                               onReviewOperaciones={() => goToField(4, reportFieldId("operaciones_realizadas"))}
                               notice={generateNotice}
                               onDismissNotice={() => setGenerateNotice(null)}
+                              sessionEnabled={currentCase.recording_session?.enabled === true}
+                              sessionBlocker={sessionGenerationBlocker?.text ?? null}
+                              sessionClosing={recordingSession.busy.stop}
+                              onCloseSession={closeSessionForGeneration}
+                              sessionLargeZip={sessionSummary(currentCase.recording_session).totalBytes > 2 * 1024 ** 3}
                             />
                           )}
 
@@ -1763,6 +1907,8 @@ export default function Dashboard() {
                               zipState={result.zipState ?? "unknown"}
                               sameHost={isSameHostFor(identity, currentCase)}
                               pendingDeleteFiles={result.deleteFiles}
+                              recordingSession={currentCase.recording_session ?? null}
+                              deviceDetails={currentCase.device_details ?? null}
                             />
                           )}
                         </div>

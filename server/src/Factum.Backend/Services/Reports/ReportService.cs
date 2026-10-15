@@ -328,6 +328,9 @@ public sealed class ReportService : IReportService
         "{fichaSistemaOperativo}", "{fichaCompilacion}", "{fichaParcheSeguridad}", "{fichaNumeroSerie}",
         "{fichaIdentificadorConexion}", "{fichaKernel}", "{fichaOperadorSim}", "{fichaEstadoArranque}",
         "{fichaZonaHoraria}", "{fichaWifi}", "{descripcionRelojDispositivo}",
+        // grabacion-sesion-completa §8.1: bloque {#registroAudiovisual} con la tabla de tramos.
+        "{descripcionRegistroAudiovisual}", "{nombreArchivoSesion}", "{hashArchivoSesion}",
+        "{detalleRegistroAudiovisual}",
         "{ORGANIZACION}", "{CONTACTO}", "{CONTACTO_EN_LINEA}",
         AttributionSlot,
     };
@@ -339,6 +342,7 @@ public sealed class ReportService : IReportService
         "ISOTIPO", "MEMBRETE_CON_LOGO", "MEMBRETE_SIN_LOGO",
         "selloTiempo",
         "fichaTecnica",
+        "registroAudiovisual",
     };
 
     private static readonly Regex AnyPlaceholderRegex = new(
@@ -396,6 +400,12 @@ public sealed class ReportService : IReportService
             var values = ReportValues.Placeholders(cas, settings, brand);
             var texts = cas.ReportTexts ?? new ReportTexts();
 
+            // grabacion-sesion-completa §8.3: los tramos de la sesión (por pertenencia al diario, D-T5) van en su propia
+            // tabla y no en la general, ni en los conteos, ni en el "n de m" del sello.
+            var sessionNames = Cases.RecordingSessionRules.SessionFilenames(cas);
+            var generalFiles = files.Where(f => !sessionNames.Contains(f.Name)).ToList();
+            var sessionRows = SessionRows(cas, files);
+
             // Capturas por rol (§7.7). Las fotos de identidad no van al informe (D9 B).
             var sources = cas.FileSources.Select(s => s.Filename).ToHashSet(StringComparer.Ordinal);
             var roles = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -431,6 +441,8 @@ public sealed class ReportService : IReportService
                 ["selloTiempo"] = timestamps is not null,
                 // metadatos-dispositivo §9.3: sin ficha (casos anteriores o Tatana viejo) el bloque desaparece.
                 ["fichaTecnica"] = cas.DeviceDetails is not null,
+                // grabacion-sesion-completa §8.3 (D10 A): solo con tramos guardados; sin constancia negativa.
+                ["registroAudiovisual"] = cas.RecordingSession is not null && sessionRows.Count > 0,
             };
 
             // B-R1: placeholders desconocidos fuera, ANTES de insertar valores.
@@ -521,7 +533,17 @@ public sealed class ReportService : IReportService
             // sellado-tiempo §8.4: bloque explicativo, siempre texto plano.
             if (timestamps is not null)
                 ReplaceParagraphPerLine(body, "{descripcionSelloTiempo}",
-                    ReportTimestampTexts.Block(timestamps, files, settings.Zone), resolved);
+                    ReportTimestampTexts.Block(timestamps, generalFiles, settings.Zone), resolved);
+            // grabacion-sesion-completa §8.4: textos de la sección de la sesión (texto plano).
+            if (cas.RecordingSession is { } session && sessionRows.Count > 0)
+            {
+                var sealedCount = timestamps is null ? 0 : sessionRows.Count(r => timestamps.Evidence.ContainsKey(r.Filename));
+                ReplaceParagraphPerLine(body, "{descripcionRegistroAudiovisual}",
+                    ReportSessionTexts.Description(session, sessionRows, cas.DeviceDetails, timestamps is not null,
+                        sealedCount, settings.Zone), resolved);
+                ReplaceParagraphPerLine(body, "{detalleRegistroAudiovisual}",
+                    ReportSessionTexts.Detail(session, settings.Zone), resolved);
+            }
             // metadatos-dispositivo §9.3: párrafo "Reloj del dispositivo", texto plano (un párrafo por línea).
             if (cas.DeviceDetails is not null)
                 ReplaceParagraphPerLine(body, "{descripcionRelojDispositivo}",
@@ -529,7 +551,10 @@ public sealed class ReportService : IReportService
 
             // B-R5: tabla de hashes. Corre después de B-R2b: el tinte de la fila del ZIP es el
             // acento ya resuelto, no un centinela.
-            FillHashTable(body, files, hashes, zipFilename, zipHash, brand.AccentColor, resolved, timestamps);
+            FillHashTable(body, generalFiles, hashes, zipFilename, zipHash, brand.AccentColor, resolved, timestamps);
+            // B-R5b (grabacion-sesion-completa §8.3): tabla de tramos de la sesión, sin fila del ZIP.
+            if (sessionRows.Count > 0 && cas.RecordingSession is not null)
+                FillSessionTable(body, sessionRows, hashes, resolved, timestamps);
 
             // B-R6: texto, por run y en una sola pasada. Los headers usan valores recortados
             // (informe-formato-fixes §6.5: encabezado interior de 2 líneas como máximo); el cuerpo y
@@ -719,21 +744,61 @@ public sealed class ReportService : IReportService
         model.Remove();
     }
 
+    // ── B-R5b: tabla de la grabación de la sesión (grabacion-sesion-completa §8.3) ─────────────────────────
+
+    /// <summary>
+    /// Tramos <c>saved</c> del diario que están en la evidencia del informe, ordenados por inicio y después por pista
+    /// (pantalla primero).
+    /// </summary>
+    internal static List<SessionSegment> SessionRows(Case cas, IEnumerable<FileInfoDto> files)
+    {
+        if (cas.RecordingSession is not { } rs) return [];
+        var present = files.Select(f => f.Name).ToHashSet(StringComparer.Ordinal);
+        return rs.Segments
+            .Where(s => s.State == "saved" && present.Contains(s.Filename))
+            .OrderBy(s => s.StartedAt)
+            .ThenBy(s => s.Track == ReportSessionTexts.TrackScreen ? 0 : 1)
+            .ToList();
+    }
+
+    private void FillSessionTable(Body body, IReadOnlyList<SessionSegment> rows, IReadOnlyDictionary<string, string> hashes,
+        HashSet<Paragraph> resolved, ReportTimestampInfo? timestamps)
+    {
+        var model = body.Descendants<TableRow>()
+            .FirstOrDefault(r => r.Descendants<Paragraph>().Any(p => ParagraphText(p).Contains("{nombreArchivoSesion}")));
+        if (model is null)
+        {
+            logger.LogWarning("Plantilla: no se encontró la fila {{nombreArchivoSesion}} de la tabla de la sesión");
+            return;
+        }
+        foreach (var row in rows)
+        {
+            var lines = ReportSessionTexts.RowLines(row, timestamps?.Evidence.GetValueOrDefault(row.Filename),
+                timestamps is not null, settings.Zone);
+            model.InsertBeforeSelf(BuildHashRow(model, row.Filename, lines,
+                hashes.GetValueOrDefault(row.Filename, row.Sha256 ?? "-"), resolved,
+                namePh: "{nombreArchivoSesion}", hashPh: "{hashArchivoSesion}"));
+        }
+        model.Remove();
+    }
+
     // isContainer: la fila del ZIP lleva el tinte (acento) de fondo, el nombre en negrita y la
     // leyenda recta en gris; así se distingue también impresa en blanco y negro.
+    // namePh/hashPh (grabacion-sesion-completa §8.3): la tabla de la sesión usa {nombreArchivoSesion}/{hashArchivoSesion}.
     private static TableRow BuildHashRow(TableRow model, string name, IReadOnlyList<string> extraLines, string hash,
-        HashSet<Paragraph> resolved, bool isContainer = false, string? tint = null)
+        HashSet<Paragraph> resolved, bool isContainer = false, string? tint = null,
+        string namePh = "{nombreArchivo}", string hashPh = "{hashArchivo}")
     {
         var row = (TableRow)model.CloneNode(true);
         StripParagraphIds(row);
 
-        var namePara = row.Descendants<Paragraph>().First(p => ParagraphText(p).Contains("{nombreArchivo}"));
-        var hashPara = row.Descendants<Paragraph>().FirstOrDefault(p => ParagraphText(p).Contains("{hashArchivo}"));
+        var namePara = row.Descendants<Paragraph>().First(p => ParagraphText(p).Contains(namePh));
+        var hashPara = row.Descendants<Paragraph>().FirstOrDefault(p => ParagraphText(p).Contains(hashPh));
 
         RewriteParagraph(namePara, TextPlaceholderRegex,
-            m => m.Value == "{nombreArchivo}" ? ReportValues.Clean(name) : null);
+            m => m.Value == namePh ? ReportValues.Clean(name) : null);
         if (hashPara is not null)
-            RewriteParagraph(hashPara, TextPlaceholderRegex, m => m.Value == "{hashArchivo}" ? hash : null);
+            RewriteParagraph(hashPara, TextPlaceholderRegex, m => m.Value == hashPh ? hash : null);
 
         // Párrafos extra en la misma celda, en orden (el "Origen:"/"Contenedor…" y, con sellado, la línea del
         // sello). Archivos: cursiva, 7 pt, gris (el estilo del "Origen:" de la v3). Contenedor ZIP: recto,

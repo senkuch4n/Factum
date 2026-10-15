@@ -581,7 +581,12 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
         return Finish(snap, outPath, null, validation, null);
     }
 
-    private async Task<bool> GenerateMockVideoAsync(string ffmpeg, string outPath, double recordedSeconds)
+    private Task<bool> GenerateMockVideoAsync(string ffmpeg, string outPath, double recordedSeconds) =>
+        GenerateMockVideoAsync(ffmpeg, outPath, recordedSeconds, _log);
+
+    /// <summary>Video de prueba (lavfi testsrc2) de la duración pedida. También lo usa la grabación de la sesión (mock).</summary>
+    internal static async Task<bool> GenerateMockVideoAsync(string ffmpeg, string outPath, double recordedSeconds,
+        ILogger log)
     {
         var secs = Math.Max(1, recordedSeconds).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
         var r = await ProcessRunner.RunArgumentListAsync(ffmpeg,
@@ -589,12 +594,12 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
              "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", outPath],
             CancellationToken.None, timeout: TimeSpan.FromMinutes(5));
         if (r.Success && FileSize(outPath) > 0) return true;
-        _log.LogWarning("mock: ffmpeg no pudo generar el video de prueba; se usa el MKV embebido: {E}", LastLines(r.Stderr, 3));
+        log.LogWarning("mock: ffmpeg no pudo generar el video de prueba; se usa el MKV embebido: {E}", LastLines(r.Stderr, 3));
         return false;
     }
 
     // MKV de 1 s, 16x16, H.264 (555 bytes), generado una vez con ffmpeg (lavfi color, libx264, bitexact).
-    private static byte[] MockMkvBytes() =>
+    internal static byte[] MockMkvBytes() =>
         Convert.FromBase64String(
             "GkXfo6NChoEBQveBAULygQRC84EIQoKIbWF0cm9za2FCh4EEQoWBAhhTgGcBAAAAAAAB9xFNm3TAv4ScBwFVTbuLU6uEFUmpZlOs" +
             "gaFNu4tTq4QWVK5rU6yBzE27jFOrhBJUw2dTrIIBYE27jFOrhBxTu2tTrIIB2+wBAAAAAAAAUwAAAAAAAAAAAAAAAAAAAAAAAAAA" +
@@ -665,13 +670,16 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
 
     // Tras un cierre forzado, el MKV puede quedar sin duración ni índice: se reescribe el
     // contenedor sin recodificar. Si falla, queda el MKV crudo (la validación decide).
-    private async Task RemuxAsync(string outPath, CancellationToken ct)
+    private Task RemuxAsync(string outPath, CancellationToken ct) => RemuxFileAsync(outPath, _log, ct);
+
+    /// <summary>Remux sin recodificar (<c>ffmpeg -c copy</c>); true si reemplazó el archivo. También lo usa la sesión.</summary>
+    internal static async Task<bool> RemuxFileAsync(string outPath, ILogger log, CancellationToken ct)
     {
         var ffmpeg = ToolResolver.Find(AgentTools.Ffmpeg)?.Path;
         if (ffmpeg is null)
         {
-            _log.LogWarning("No se encontró ffmpeg para remuxear el MKV tras el cierre forzado; queda el archivo crudo");
-            return;
+            log.LogWarning("No se encontró ffmpeg para remuxear el MKV tras el cierre forzado; queda el archivo crudo");
+            return false;
         }
         var tmp = outPath + ".remux.mkv";
         try
@@ -681,25 +689,29 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
             if (r.Success && File.Exists(tmp))
             {
                 File.Move(tmp, outPath, overwrite: true);
-                _log.LogInformation("MKV remuxeado tras cierre forzado: {Path}", outPath);
-                return;
+                log.LogInformation("MKV remuxeado tras cierre forzado: {Path}", outPath);
+                return true;
             }
-            _log.LogWarning("El remux del MKV falló; queda el archivo crudo: {E}", LastLines(r.Stderr, 5));
+            log.LogWarning("El remux del MKV falló; queda el archivo crudo: {E}", LastLines(r.Stderr, 5));
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "El remux del MKV falló; queda el archivo crudo");
+            log.LogWarning(ex, "El remux del MKV falló; queda el archivo crudo");
         }
         TryDelete(tmp);
+        return false;
     }
 
     // <DataDirectory>/descartes/<nombre> (con _1, _2… si ya existe). Nunca borra. Devuelve la ruta nueva.
-    private string? MoveToDiscards(string path)
+    private string? MoveToDiscards(string path) => MoveToDiscards(_dataDir, path, _log);
+
+    /// <summary><c>&lt;dataDir&gt;/descartes/&lt;nombre&gt;</c> (con _1, _2… si ya existe). Nunca borra. También lo usa la sesión.</summary>
+    internal static string? MoveToDiscards(string dataDir, string path, ILogger log)
     {
         try
         {
             if (!File.Exists(path)) return null;
-            var dir = Path.Combine(_dataDir, DiscardDirName);
+            var dir = Path.Combine(dataDir, DiscardDirName);
             Directory.CreateDirectory(dir);
             var dest = UniqueDiscardPath(dir, Path.GetFileName(path), File.Exists);
             File.Move(path, dest, overwrite: false);
@@ -707,7 +719,7 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "No se pudo mover {Path} a descartes; queda en la raíz", path);
+            log.LogWarning(ex, "No se pudo mover {Path} a descartes; queda en la raíz", path);
             return null;
         }
     }
@@ -727,19 +739,19 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
         }
     }
 
-    private static long FileSize(string path)
+    internal static long FileSize(string path)
     {
         try { return File.Exists(path) ? new FileInfo(path).Length : 0; }
         catch { return 0; }
     }
 
     // E1: solo en macOS se sugiere Homebrew.
-    private static string ScrcpyMissingMessage() =>
+    internal static string ScrcpyMissingMessage() =>
         OperatingSystem.IsMacOS()
             ? ErrorScrcpyMissing + " En la Mac: brew install scrcpy."
             : ErrorScrcpyMissing;
 
-    private static bool IsScrcpyWarningLine(string line) =>
+    internal static bool IsScrcpyWarningLine(string line) =>
         line.StartsWith("ERROR", StringComparison.Ordinal) ||
         line.StartsWith("WARN", StringComparison.Ordinal) ||
         line.Contains("adb server version", StringComparison.OrdinalIgnoreCase) ||
@@ -747,7 +759,7 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
 
     // Hasta 3 líneas de error de scrcpy unidas con " · ". Prefiere las ERROR/WARN; si no hay,
     // las últimas líneas que haya escrito. null si no escribió nada.
-    private static string? ScrcpyErrorSummary(LineTail tail)
+    internal static string? ScrcpyErrorSummary(LineTail tail)
     {
         var lines = tail.Snapshot()
             .Select(l => l.Trim())
@@ -759,10 +771,10 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
         return string.Join(" · ", chosen);
     }
 
-    private static string LastLines(string text, int n) =>
+    internal static string LastLines(string text, int n) =>
         string.Join(" | ", text.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).TakeLast(n));
 
-    private static bool HasExitedSafe(Process p)
+    internal static bool HasExitedSafe(Process p)
     {
         try { return p.HasExited; }
         catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException
@@ -775,7 +787,7 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
         catch (InvalidOperationException) { return -1; }
     }
 
-    private static void TryDelete(string path)
+    internal static void TryDelete(string path)
     {
         try { if (File.Exists(path)) File.Delete(path); } catch { }
     }

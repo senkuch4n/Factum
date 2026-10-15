@@ -61,10 +61,17 @@ BODY_PLACEHOLDERS = {
     "{fichaSistemaOperativo}", "{fichaCompilacion}", "{fichaParcheSeguridad}", "{fichaNumeroSerie}",
     "{fichaIdentificadorConexion}", "{fichaKernel}", "{fichaOperadorSim}", "{fichaEstadoArranque}",
     "{fichaZonaHoraria}", "{fichaWifi}", "{descripcionRelojDispositivo}",
+    # grabacion-sesion-completa §8.1: bloque {#registroAudiovisual} con la segunda tabla (tramos de la sesion).
+    "{descripcionRegistroAudiovisual}", "{nombreArchivoSesion}", "{hashArchivoSesion}",
+    "{detalleRegistroAudiovisual}",
 }
 BODY_BLOCKS = {"organismoTribunal", "objetoInforme", "capturasNombreDispositivo",
                "descripcionNotasTecnicas", "descripcionReserva", "anexoCapturas",
-               "selloTiempo", "fichaTecnica"}
+               "selloTiempo", "fichaTecnica", "registroAudiovisual"}
+
+# grabacion-sesion-completa §8.1: subtitulo del bloque de la sesion (la v6 lo ubica por este texto).
+SESION_TITLE = "Registro audiovisual de la recolección"
+SESION_OPEN, SESION_CLOSE = "{#registroAudiovisual}", "{/registroAudiovisual}"
 
 # metadatos-dispositivo §9.1: filas de la ficha tecnica, en orden ("**Etiqueta:** {placeholder}"). La v6 las ubica
 # por el placeholder (FICHA_ROWS) y las convierte en una segunda ficha etiqueta/valor.
@@ -472,6 +479,32 @@ def build_document(doc, ids):
     t_end = t0 + len(tbl)
     out = out[:t_end] + sello + out[t_end:]
 
+    # grabacion-sesion-completa §8.1: bloque {#registroAudiovisual} inmediatamente despues de {/selloTiempo} (antes
+    # de "CADENA DE CUSTODIA DIGITAL"). La tabla es un clon de la de hashes YA reescrita (grilla 3600/4691,
+    # encabezado repetido, cantSplit), con paraIds nuevos y {nombreArchivoSesion}/{hashArchivoSesion}. Sin tramos,
+    # ReportService borra el bloque entero (B-R2) y el informe queda como antes.
+    ses_tbl = re.sub(r'w14:paraId="([0-9A-Fa-f]{8})"',
+                     lambda m: 'w14:paraId="%s"' % ids.new("a7:ses-" + m.group(1).upper()), tbl)
+    if ses_tbl.count("{nombreArchivo}") != 1 or ses_tbl.count("{hashArchivo}") != 1:
+        raise Falla("ancla tabla")
+    ses_tbl = (ses_tbl.replace("{nombreArchivo}", "{nombreArchivoSesion}")
+               .replace("{hashArchivo}", "{hashArchivoSesion}"))
+    body_rp = base_rpr(paras["2D02EAD7"])
+
+    def body_para(seed, markup):
+        return '<w:p w14:paraId="%s">%s%s</w:p>' % (ids.new("a7:ses-" + seed), norm_ppr, build_runs(markup, body_rp))
+
+    sesion = (marker(SESION_OPEN, "ses-open")
+              + '<w:p w14:paraId="%s"><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/>'
+                '</w:pPr></w:p>' % ids.new("a7:ses-espacio")
+              + body_para("titulo", "**" + SESION_TITLE + "**")
+              + body_para("descripcion", "{descripcionRegistroAudiovisual}")
+              + ses_tbl
+              + body_para("detalle", "{detalleRegistroAudiovisual}")
+              + marker(SESION_CLOSE, "ses-close"))
+    s_end = t_end + len(sello)
+    out = out[:s_end] + sesion + out[s_end:]
+
     # sectPr: encabezado + pie a 1 cm del borde.
     if out.count("<w:sectPr>") != 1 or 'w:footer="0"' not in out:
         raise Falla("ancla sectPr")
@@ -626,6 +659,25 @@ def check_placeholders(xml, expected, blocks, fails, label):
         fails.add("FALLA:placeholder-desconocido")
 
 
+def check_sesion(doc, fails):
+    """grabacion-sesion-completa §8.1: una sola tabla entre los marcadores, con dos filas y los dos placeholders."""
+    o, c = doc.find(SESION_OPEN), doc.find(SESION_CLOSE)
+    if not (0 <= o < c):
+        fails.add("FALLA:sesion")
+        return
+    tbls = re.findall(r"<w:tbl>.*?</w:tbl>", doc[o:c], re.S)
+    if len(tbls) != 1 or len(re.findall(r"<w:tr\b", tbls[0])) != 2:
+        fails.add("FALLA:sesion")
+        return
+    text = "".join(T_RE.findall(tbls[0]))
+    if "{nombreArchivoSesion}" not in text or "{hashArchivoSesion}" not in text:
+        fails.add("FALLA:sesion")
+    # La tabla de hashes sigue siendo la PRIMERA con tblStyle 17 (la v6 la ubica asi).
+    first = re.search(r'<w:tbl><w:tblPr><w:tblStyle w:val="17"/>.*?</w:tbl>', doc, re.S)
+    if not first or "{hashArchivo}" not in "".join(T_RE.findall(first.group(0))):
+        fails.add("FALLA:sesion")
+
+
 def check(src, dst):
     fails = set()
     s = dict(read_parts(src))
@@ -677,6 +729,7 @@ def check(src, dst):
     hdr = xml_parts.get("word/header1.xml", "")
     check_placeholders(doc, BODY_PLACEHOLDERS, BODY_BLOCKS, fails, "cuerpo")
     check_placeholders(hdr, HEADER_PLACEHOLDERS, HEADER_BLOCKS, fails, "header")
+    check_sesion(doc, fails)
     for n, x in xml_parts.items():
         if re.match(r"word/(header|footer)\d*\.xml$", n) and n != "word/header1.xml":
             single, joined = placeholders_of(x)

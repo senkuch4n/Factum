@@ -1,6 +1,7 @@
 using Factum.Agent.Common;
 using Factum.Agent.Models;
 using Factum.Agent.Services;
+using Factum.Agent.Services.Session;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -16,7 +17,7 @@ namespace Factum.Agent.Controllers;
 [Route("agent")]
 public sealed class AgentStateController(OperationTracker tracker, LocalConfigStatus localConfig,
     IOptions<AgentOptions> opts, IVideoPostprocessService post, IEnumerable<IRecordingStateSource> recordingSources,
-    RecordingRegistry registry) : ControllerBase
+    RecordingRegistry registry, SessionRecorder sessions) : ControllerBase
 {
     public const int DefaultTtlSeconds = 120;
     public const int MinTtlSeconds = 10;
@@ -42,7 +43,33 @@ public sealed class AgentStateController(OperationTracker tracker, LocalConfigSt
                 localConfig.OverridesAllowedOrigins, localConfig.Error),
             // grabacion-android-robusta §6.5: siempre presentes (pueden ser []).
             ActiveRecordings(),
-            registry.Unclaimed()));
+            registry.Unclaimed(),
+            // grabacion-sesion-completa §7.4: solo con una sesión activa (si no, se omite) y la recuperación, siempre.
+            SafeSessionState(),
+            sessions.RecoveryStatus));
+    }
+
+    private SessionStateDto? SafeSessionState()
+    {
+        try { return sessions.ActiveState; }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// grabacion-sesion-completa §7.2.9 (DU3=A): Electron lo llama antes de cerrar o reiniciar Tatana. Corta la captura,
+    /// guarda el tramo y deja el diario en <c>interrupted</c>. Solo local, como el mantenimiento.
+    /// </summary>
+    [HttpPost("prepare-shutdown")]
+    public async Task<IActionResult> PrepareShutdown()
+    {
+        if (!IsLocalCaller(Request))
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "El cierre ordenado solo se puede pedir desde Tatana, no desde un navegador.",
+                code = AgentErrorCodes.MaintenanceLocalOnly,
+            });
+        var budget = TimeSpan.FromSeconds(sessions.Options.ShutdownBudgetSeconds);
+        return Ok(await sessions.ShutdownAsync(budget));
     }
 
     // Una fuente que falla no tumba /agent/state (mismo criterio que OperationTracker.Snapshot).
@@ -136,4 +163,5 @@ public sealed record LocalConfigDto(string Path, bool Exists, bool Loaded, bool 
 public sealed record AgentStateResponse(string Version, string Mode, bool Busy, bool Maintenance,
     IReadOnlyList<AgentOperationDto> Operations, IReadOnlyList<AgentOperationDto> BackgroundOperations,
     LocalConfigDto LocalConfig, IReadOnlyList<RecordingStateDto> Recordings,
-    IReadOnlyList<UnclaimedRecordingDto> UnclaimedRecordings);
+    IReadOnlyList<UnclaimedRecordingDto> UnclaimedRecordings, SessionStateDto? RecordingSession = null,
+    string SessionRecovery = "done");

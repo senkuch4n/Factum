@@ -40,8 +40,13 @@ public sealed record EvidenceResponse(
 /// <summary><c>POST /api/cases/{id}/generate/prepare</c>: <c>{ "hostname": "…" }</c>.</summary>
 public sealed record PrepareGenerationRequest(string? Hostname = null);
 
-/// <summary><c>{ "filename", "size", "sha256" }</c> (manifiesto sin ruta de origen).</summary>
-public sealed record ManifestFileDto(string? Filename = null, long? Size = null, string? Sha256 = null);
+/// <summary>
+/// <c>{ "filename", "size", "sha256", "zip_folder" }</c> (manifiesto sin ruta de origen). <c>zip_folder</c>
+/// (grabacion-sesion-completa §6.5): <c>"sesion"</c> para los tramos de la grabación de la sesión, null para el resto
+/// (siempre presente en el JSON). <c>EvidenceManifest.Matches</c> lo ignora.
+/// </summary>
+public sealed record ManifestFileDto(string? Filename = null, long? Size = null, string? Sha256 = null,
+    string? ZipFolder = null);
 
 /// <summary>Respuesta de <c>generate/prepare</c> (§5.5).</summary>
 public sealed record PrepareGenerationResponse(

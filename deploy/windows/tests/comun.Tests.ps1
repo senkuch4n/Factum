@@ -293,6 +293,18 @@ Describe 'Guardas del repo (perfil de memoria)' {
         $valores['FACTUM_RELOJ_UMBRAL_SEGUNDOS'] | Should -Be '60'
     }
 
+    It '.env.example trae la grabación de la sesión en optional_off y tramos de 30 min (grabacion-sesion-completa §6.6)' {
+        $valores = Read-EnvFile (Join-Path $script:raizW '.env.example')
+        $valores['FACTUM_GRABACION_SESION_MODO'] | Should -Be 'optional_off'
+        $valores['FACTUM_GRABACION_SESION_TRAMO_MINUTOS'] | Should -Be '30'
+    }
+
+    It 'restaurar.ps1 conserva las dos variables de la grabación de la sesión' {
+        $texto = Get-Content -LiteralPath (Join-Path (Join-Path $script:raizW 'scripts') 'restaurar.ps1') -Raw
+        $texto | Should -Match "'FACTUM_GRABACION_SESION_MODO'"
+        $texto | Should -Match "'FACTUM_GRABACION_SESION_TRAMO_MINUTOS'"
+    }
+
     It 'el compose de poca RAM no tiene image: (Get-MongoImagen devuelve $null)' {
         Get-MongoImagen (Join-Path $script:raizW 'docker-compose.poca-ram.yml') | Should -BeNullOrEmpty
     }

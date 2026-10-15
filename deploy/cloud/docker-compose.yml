@@ -98,6 +98,9 @@ services:
       Timestamping__MaxAttempts: ${FACTUM_SELLADO_MAX_INTENTOS:-12}
       # Umbral del aviso por diferencia de reloj celular/PC (metadatos-dispositivo, D6). Segundos.
       Report__ClockSkewWarningSeconds: ${FACTUM_RELOJ_UMBRAL_SEGUNDOS:-60}
+      # Grabación de la sesión completa (grabacion-sesion-completa §6.6): modo y duración de cada tramo (minutos).
+      Recording__SessionMode: ${FACTUM_GRABACION_SESION_MODO:-optional_off}
+      Recording__SegmentMinutes: ${FACTUM_GRABACION_SESION_TRAMO_MINUTOS:-30}
       # Branding global del login (opcional). Vacío = el default de la app.
       Branding__OrganizationName: ${FACTUM_BRANDING_NOMBRE:-}
       Branding__OrganizationLogo: ${FACTUM_BRANDING_LOGO:-}

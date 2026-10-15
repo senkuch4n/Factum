@@ -154,7 +154,7 @@ try {
         $tomar = @{}
         foreach ($k in @('FACTUM_JWT_SECRET', 'FACTUM_JWT_EXPIRY_HOURS', 'FACTUM_SESION_TOPE_HORAS', 'FACTUM_AUTH_MODE', 'FACTUM_BACKUP_DESTINO', 'FACTUM_BACKUP_CONSERVAR',
                          'FACTUM_SELLADO_URLS', 'FACTUM_SELLADO_HABILITADO', 'FACTUM_SELLADO_TIMEOUT_SEGUNDOS', 'FACTUM_SELLADO_MAX_INTENTOS',
-                         'FACTUM_RELOJ_UMBRAL_SEGUNDOS')) {
+                         'FACTUM_RELOJ_UMBRAL_SEGUNDOS', 'FACTUM_GRABACION_SESION_MODO', 'FACTUM_GRABACION_SESION_TRAMO_MINUTOS')) {
             if ($valoresBackup.ContainsKey($k)) { $tomar[$k] = $valoresBackup[$k] }
         }
         Write-EnvFile -Path $envPath -Valores $tomar

@@ -68,6 +68,8 @@ export function busyOperationText(kind: string): string {
       return 'grabación en curso'
     case 'airplay_session':
       return 'sesión AirPlay en curso'
+    case 'recording_session':
+      return 'grabación de la sesión en curso'
     case 'video_postprocess':
       return 'procesando un video'
     default:

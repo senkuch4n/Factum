@@ -4,6 +4,7 @@ import * as http from 'http'
 import * as https from 'https'
 import { readConfig, writeConfig, applyLoginItem } from './config'
 import { agentProcess } from './agent-process'
+import { confirmSessionShutdown } from './session-shutdown'
 import { appInfo, type NoticeId } from './app-info'
 import { updateManager } from './updater/update-manager'
 
@@ -32,7 +33,9 @@ ipcMain.handle('tatana:dismiss-notice', (_e, id: unknown) => {
 // ── Agent process ──────────────────────────────────────────────────────────────
 ipcMain.handle('tatana:agent-status', () => ({ running: agentProcess.isRunning() }))
 
-ipcMain.handle('tatana:restart-agent', () => {
+ipcMain.handle('tatana:restart-agent', async () => {
+  // Grabación de la sesión en curso (grabacion-sesion-completa §10): mismo diálogo que la bandeja.
+  if (!(await confirmSessionShutdown())) return { ok: false }
   agentProcess.stop()
   setTimeout(() => agentProcess.start(), 600)
   return { ok: true }

@@ -7,6 +7,7 @@ using Factum.Backend.Services.Auth;
 using Factum.Backend.Services.Branding;
 using Factum.Backend.Services.Cases;
 using Factum.Backend.Services.Profile;
+using Factum.Backend.Services.Recording;
 using Factum.Backend.Services.Reports;
 using Factum.Backend.Services.Support;
 using Factum.Backend.Services.Tatana;
@@ -85,6 +86,10 @@ if (configErrors.Count > 0)
         "Configuración inválida, el backend no arranca:" + string.Concat(configErrors.Select(e => "\n  - " + e)));
 builder.Services.AddSingleton(authSettings);
 builder.Services.AddSingleton(supportSettings);
+// grabacion-sesion-completa §6.6: modo y tramo de la grabación de la sesión. Un valor inválido no impide arrancar
+// (warning + default, como ReportSettings).
+var recordingSessionSettings = RecordingSessionOptions.Resolve(builder.Configuration);
+builder.Services.AddSingleton(recordingSessionSettings);
 
 // ── Configuración tipada ──────────────────────────────────────────────────────
 builder.Services.Configure<MongoOptions>(builder.Configuration.GetSection("MongoDb"));
@@ -247,8 +252,11 @@ if (supportSettings.Enabled)
     app.Logger.LogInformation("Soporte: habilitado ({Host})", new Uri(supportSettings.Options.BaseUrl).Authority);
 else
     app.Logger.LogInformation("Soporte: deshabilitado");
-foreach (var warning in authSettings.Warnings.Concat(supportSettings.Warnings).Concat(jwtWarnings))
+foreach (var warning in authSettings.Warnings.Concat(supportSettings.Warnings).Concat(jwtWarnings)
+             .Concat(recordingSessionSettings.Warnings))
     app.Logger.LogWarning("{Warning}", warning);
+app.Logger.LogInformation("Grabación de la sesión: modo {Mode}, tramos de {Minutes} min",
+    recordingSessionSettings.Mode, recordingSessionSettings.SegmentMinutes);
 {
     var jwt = app.Services.GetRequiredService<IOptions<JwtOptions>>().Value;
     app.Logger.LogInformation("Sesión: token {Ttl} h, tope {Max} h desde el login",

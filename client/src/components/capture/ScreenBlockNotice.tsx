@@ -8,7 +8,8 @@ import { screenBlockMessage } from "@/lib/agent-messages";
 import { cn } from "@/lib/utils";
 
 export interface ScreenBlock {
-  action: "screenshot" | "record";
+  /** `session`: inicio de la grabación de la sesión (grabacion-sesion-completa §9.3). */
+  action: "screenshot" | "record" | "session";
   state: "off" | "locked";
 }
 
@@ -41,7 +42,7 @@ export function ScreenBlockNotice({ block, busy, onRetry, onForce, onDismiss }: 
     rootRef.current?.querySelector<HTMLButtonElement>("button[data-screen-retry]")?.focus();
   }, []);
 
-  const forceLabel = block.action === "record" ? "Grabar igual" : "Capturar igual";
+  const forceLabel = block.action === "screenshot" ? "Capturar igual" : "Grabar igual";
   const spinner = <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />;
   const busyCls = busy && "cursor-not-allowed opacity-60";
 

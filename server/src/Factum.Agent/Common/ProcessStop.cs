@@ -6,6 +6,9 @@ namespace Factum.Agent.Common;
 // (SDD grabacion-android-windows §6.3).
 public static class ProcessStop
 {
+    /// <summary>Primera señal de la grabación de la sesión en macOS/Linux (SIGTERM, QA #80 B-1).</summary>
+    public const string SessionSignal = "-15";
+
     private static readonly TimeSpan HelperTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan AfterFailedSignalWait = TimeSpan.FromSeconds(1);
 
@@ -18,8 +21,13 @@ public static class ProcessStop
         (await StopAsync(p, timeout, log, name, ct, escalateAfter)).Clean;
 
     /// <summary>Igual que <see cref="StopGracefullyAsync"/>, pero informa además si hubo escalado a SIGTERM.</summary>
+    /// <param name="unixSignal">
+    /// Primera señal en macOS/Linux: <c>"-2"</c> (SIGINT, default) o <c>"-15"</c> (SIGTERM). La grabación de la sesión usa
+    /// SIGTERM directo (QA #80 B-1): scrcpy/SDL la trata igual que SIGINT (cierra el archivo y sale 0), pero no queda
+    /// ignorada si Tatana heredó SIGINT ignorado de quien lo lanzó.
+    /// </param>
     public static async Task<ProcessStopResult> StopAsync(Process p, TimeSpan timeout, ILogger log,
-        string name, CancellationToken ct = default, TimeSpan? escalateAfter = null)
+        string name, CancellationToken ct = default, TimeSpan? escalateAfter = null, string unixSignal = "-2")
     {
         if (HasExitedSafe(p)) return new ProcessStopResult(true, false);
 
@@ -37,8 +45,8 @@ public static class ProcessStop
         }
         else
         {
-            await SendSignalAsync(p.Id, "-2", ct);
-            if (escalateAfter is { } esc && esc > TimeSpan.Zero && esc < timeout)
+            await SendSignalAsync(p.Id, unixSignal == "-15" ? "-15" : "-2", ct);
+            if (unixSignal != "-15" && escalateAfter is { } esc && esc > TimeSpan.Zero && esc < timeout)
             {
                 if (!await WaitForExitAsync(p, esc, ct))
                 {

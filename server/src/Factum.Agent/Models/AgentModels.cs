@@ -62,6 +62,11 @@ public sealed class AgentOptions
     /// <summary>Grabación de Android con scrcpy (arranque, cierre y validación). Ver <see cref="RecordingOptions"/>.</summary>
     public RecordingOptions Recording { get; set; } = new();
 
+    // ── grabacion-sesion-completa (§5.14) ────────────────────────────────────
+
+    /// <summary>Grabación de la sesión (tramos, espacio, cortes). Ver <see cref="SessionOptions"/>.</summary>
+    public SessionOptions Session { get; set; } = new();
+
     /// <summary>
     /// Solo con <see cref="Mock"/> = true: video que se copia como "grabación" Android al detener. No va en
     /// appsettings.json: variable de entorno, CLI o appsettings.Local.json.
@@ -282,6 +287,176 @@ public sealed class RecordingOptions
 
     /// <summary>Copia (Normalize no toca las opciones compartidas de IOptions).</summary>
     public RecordingOptions Clone() => (RecordingOptions)MemberwiseClone();
+}
+
+/// <summary>
+/// Config <c>Agent:Session:*</c> (grabacion-sesion-completa §5.14): parámetros por PC de la grabación de la sesión. El
+/// modo y la duración del tramo son de la instalación (backend) y llegan en el start. Un valor inválido no impide
+/// arrancar: <see cref="Normalize"/> loguea un warning y vuelve al default de ese campo.
+/// </summary>
+public sealed class SessionOptions
+{
+    public const long DefaultScreenBytesPerMinute = 30L * 1024 * 1024;
+    public const long DefaultCameraBytesPerMinute = 12L * 1024 * 1024;
+    public const int DefaultMinSegmentMinutes = 5;
+    public const int DefaultMaxSegmentMinutes = 120;
+    public const int DefaultDiskCheckSeconds = 60;
+    public const int DefaultWarnMinutesLeft = 60;
+    public const int DefaultCutReserveMinutes = 2;
+    public const int DefaultResumeDelaySeconds = 3;
+    public const int DefaultScreenProbeSeconds = 30;
+    public const int DefaultRotationRetrySeconds = 60;
+    public const int DefaultShutdownBudgetSeconds = 20;
+    public const int DefaultRotationConfirmMilliseconds = 1500;
+    public const int DefaultRotationStartAttempts = 3;
+    public const int DefaultCameraWidth = 1280;
+    public const int DefaultCameraHeight = 720;
+    public const int DefaultCameraFps = 15;
+    public const int DefaultCameraCrf = 26;
+
+    /// <summary>Tasa mínima supuesta de la pantalla (bytes/min) para estimar el espacio.</summary>
+    public long ScreenBytesPerMinute { get; set; } = DefaultScreenBytesPerMinute;
+    /// <summary>Tasa mínima supuesta de la cámara (F2).</summary>
+    public long CameraBytesPerMinute { get; set; } = DefaultCameraBytesPerMinute;
+    /// <summary>Rango aceptado de <c>segment_minutes</c> del start (fuera de rango se acota).</summary>
+    public int MinSegmentMinutes { get; set; } = DefaultMinSegmentMinutes;
+    public int MaxSegmentMinutes { get; set; } = DefaultMaxSegmentMinutes;
+    /// <summary>Chequeo de espacio y latido del diario.</summary>
+    public int DiskCheckSeconds { get; set; } = DefaultDiskCheckSeconds;
+    /// <summary>Aviso <c>disk_low</c> por debajo de estos minutos de grabación.</summary>
+    public int WarnMinutesLeft { get; set; } = DefaultWarnMinutesLeft;
+    /// <summary>Corte limpio <c>sin_espacio</c> cuando quedan menos de estos minutos (sobre <c>MinFreeBytes</c>).</summary>
+    public int CutReserveMinutes { get; set; } = DefaultCutReserveMinutes;
+    /// <summary>Espera antes de reanudar tras la reconexión o una salida de scrcpy con el celular conectado.</summary>
+    public int ResumeDelaySeconds { get; set; } = DefaultResumeDelaySeconds;
+    /// <summary>Chequeo de pantalla apagada/bloqueada durante la sesión. 0 = sin chequeo.</summary>
+    public int ScreenProbeSeconds { get; set; } = DefaultScreenProbeSeconds;
+    /// <summary>Reintento de un corte que no pudo abrir el tramo nuevo.</summary>
+    public int RotationRetrySeconds { get; set; } = DefaultRotationRetrySeconds;
+    /// <summary>
+    /// Corte solapado: después del marcador, el scrcpy nuevo tiene que seguir vivo este tiempo antes de cerrar el
+    /// anterior (post-review #80: en el SM-M127F un scrcpy nuevo llegó a caerse 0,5–0,7 s después del marcador).
+    /// 0–10000 ms.
+    /// </summary>
+    public int RotationConfirmMilliseconds { get; set; } = DefaultRotationConfirmMilliseconds;
+    /// <summary>Intentos de arrancar el tramo nuevo en un corte, sin cortar el anterior (1–5).</summary>
+    public int RotationStartAttempts { get; set; } = DefaultRotationStartAttempts;
+    /// <summary>Presupuesto de <c>prepare-shutdown</c> para cerrar y guardar el tramo en curso.</summary>
+    public int ShutdownBudgetSeconds { get; set; } = DefaultShutdownBudgetSeconds;
+    /// <summary>Cámara del procedimiento (F2).</summary>
+    public int CameraWidth { get; set; } = DefaultCameraWidth;
+    public int CameraHeight { get; set; } = DefaultCameraHeight;
+    public int CameraFps { get; set; } = DefaultCameraFps;
+    public int CameraCrf { get; set; } = DefaultCameraCrf;
+    /// <summary>Solo mock o desarrollo: duración del tramo en segundos (0 = usar los minutos del start).</summary>
+    public int MockSegmentSeconds { get; set; }
+    /// <summary>Solo mock: espacio libre simulado (para ver los avisos sin llenar el disco).</summary>
+    public long? MockFreeBytes { get; set; }
+
+    /// <summary>Corrige, campo por campo, los valores inválidos al default (con un warning). Devuelve this.</summary>
+    public SessionOptions Normalize(ILogger? log)
+    {
+        void Warn(string field, object? value, object fallback) =>
+            log?.LogWarning("Agent:Session:{Field} inválido ({Value}); se usa {Default}", field, value, fallback);
+
+        if (ScreenBytesPerMinute <= 0)
+        {
+            Warn(nameof(ScreenBytesPerMinute), ScreenBytesPerMinute, DefaultScreenBytesPerMinute);
+            ScreenBytesPerMinute = DefaultScreenBytesPerMinute;
+        }
+        if (CameraBytesPerMinute <= 0)
+        {
+            Warn(nameof(CameraBytesPerMinute), CameraBytesPerMinute, DefaultCameraBytesPerMinute);
+            CameraBytesPerMinute = DefaultCameraBytesPerMinute;
+        }
+        if (MinSegmentMinutes < 1 || MaxSegmentMinutes < MinSegmentMinutes)
+        {
+            log?.LogWarning(
+                "Agent:Session:MinSegmentMinutes ({Min}) / MaxSegmentMinutes ({Max}) inválidos; se usan {DMin} y {DMax}",
+                MinSegmentMinutes, MaxSegmentMinutes, DefaultMinSegmentMinutes, DefaultMaxSegmentMinutes);
+            MinSegmentMinutes = DefaultMinSegmentMinutes;
+            MaxSegmentMinutes = DefaultMaxSegmentMinutes;
+        }
+        if (DiskCheckSeconds is < 10 or > 600)
+        {
+            Warn(nameof(DiskCheckSeconds), DiskCheckSeconds, DefaultDiskCheckSeconds);
+            DiskCheckSeconds = DefaultDiskCheckSeconds;
+        }
+        if (WarnMinutesLeft < 0)
+        {
+            Warn(nameof(WarnMinutesLeft), WarnMinutesLeft, DefaultWarnMinutesLeft);
+            WarnMinutesLeft = DefaultWarnMinutesLeft;
+        }
+        if (CutReserveMinutes < 1)
+        {
+            Warn(nameof(CutReserveMinutes), CutReserveMinutes, DefaultCutReserveMinutes);
+            CutReserveMinutes = DefaultCutReserveMinutes;
+        }
+        if (ResumeDelaySeconds is < 0 or > 60)
+        {
+            Warn(nameof(ResumeDelaySeconds), ResumeDelaySeconds, DefaultResumeDelaySeconds);
+            ResumeDelaySeconds = DefaultResumeDelaySeconds;
+        }
+        if (ScreenProbeSeconds != 0 && ScreenProbeSeconds is < 10 or > 600)
+        {
+            Warn(nameof(ScreenProbeSeconds), ScreenProbeSeconds, DefaultScreenProbeSeconds);
+            ScreenProbeSeconds = DefaultScreenProbeSeconds;
+        }
+        if (RotationRetrySeconds is < 10 or > 600)
+        {
+            Warn(nameof(RotationRetrySeconds), RotationRetrySeconds, DefaultRotationRetrySeconds);
+            RotationRetrySeconds = DefaultRotationRetrySeconds;
+        }
+        if (RotationConfirmMilliseconds is < 0 or > 10000)
+        {
+            Warn(nameof(RotationConfirmMilliseconds), RotationConfirmMilliseconds, DefaultRotationConfirmMilliseconds);
+            RotationConfirmMilliseconds = DefaultRotationConfirmMilliseconds;
+        }
+        if (RotationStartAttempts is < 1 or > 5)
+        {
+            Warn(nameof(RotationStartAttempts), RotationStartAttempts, DefaultRotationStartAttempts);
+            RotationStartAttempts = DefaultRotationStartAttempts;
+        }
+        if (ShutdownBudgetSeconds is < 5 or > 120)
+        {
+            Warn(nameof(ShutdownBudgetSeconds), ShutdownBudgetSeconds, DefaultShutdownBudgetSeconds);
+            ShutdownBudgetSeconds = DefaultShutdownBudgetSeconds;
+        }
+        if (CameraWidth is < 160 or > 3840)
+        {
+            Warn(nameof(CameraWidth), CameraWidth, DefaultCameraWidth);
+            CameraWidth = DefaultCameraWidth;
+        }
+        if (CameraHeight is < 120 or > 2160)
+        {
+            Warn(nameof(CameraHeight), CameraHeight, DefaultCameraHeight);
+            CameraHeight = DefaultCameraHeight;
+        }
+        if (CameraFps is < 1 or > 60)
+        {
+            Warn(nameof(CameraFps), CameraFps, DefaultCameraFps);
+            CameraFps = DefaultCameraFps;
+        }
+        if (CameraCrf is < 0 or > 51)
+        {
+            Warn(nameof(CameraCrf), CameraCrf, DefaultCameraCrf);
+            CameraCrf = DefaultCameraCrf;
+        }
+        if (MockSegmentSeconds != 0 && MockSegmentSeconds is < 10 or > 3600)
+        {
+            Warn(nameof(MockSegmentSeconds), MockSegmentSeconds, 0);
+            MockSegmentSeconds = 0;
+        }
+        if (MockFreeBytes is < 0)
+        {
+            Warn(nameof(MockFreeBytes), MockFreeBytes, "null");
+            MockFreeBytes = null;
+        }
+        return this;
+    }
+
+    /// <summary>Copia (Normalize no toca las opciones compartidas de IOptions).</summary>
+    public SessionOptions Clone() => (SessionOptions)MemberwiseClone();
 }
 
 public sealed class Device

@@ -7,6 +7,7 @@ import {
 import { api, ApiError, UploadError, type EvidenceResponse, type EvidenceStorage } from "@/lib/api";
 import { agentErrorMessage, agentStatusMessage } from "@/lib/agent-messages";
 import { isRoleEligible } from "@/lib/pericial";
+import { SESSION_SEGMENT_RE } from "@/lib/recording-session";
 import { uploadErrorMessage, type UploadMessage } from "@/lib/upload-messages";
 import { ensureAgentIdentity, isSameHostFor } from "@/hooks/useAgentIdentity";
 import { SessionExpiredError, isSessionExpiredError, onSessionRestored, sessionState } from "@/lib/session";
@@ -151,6 +152,27 @@ export function useFileManager() {
     });
     // DP1 A: en el flujo agent, cada captura se guarda en la PC apenas existe.
     if (added && boundRef.current?.storage === "agent") enqueueSaveRef.current(name);
+  }, [setFiles]);
+
+  /**
+   * Tramo de la grabación de la sesión ya guardado y hasheado por Tatana en la
+   * carpeta del caso (grabacion-sesion-completa §9.5): entra a la bandeja con
+   * `storedInCase` + `sha256` + `size`, así `saveOne` lo registra sin reimportar.
+   * Si ya estaba sin hash (p. ej. "extra" de `restoreCaseEvidence`), se completa.
+   */
+  const addStoredFile = useCallback((name: string, info: { size: number; sha256: string }) => {
+    let enqueue = false;
+    setFiles(prev => {
+      const cur = prev.find(f => f.name === name);
+      if (!cur) {
+        enqueue = true;
+        return [...prev, { name, uploaded: false, storedInCase: true, sha256: info.sha256, size: info.size, availability: "here" }];
+      }
+      if (cur.uploaded || (cur.sha256 && typeof cur.size === "number")) return prev;
+      enqueue = true;
+      return prev.map(f => f.name === name ? { ...f, storedInCase: true, sha256: info.sha256, size: info.size, availability: "here" } : f);
+    });
+    if (enqueue && boundRef.current?.storage === "agent") enqueueSaveRef.current(name);
   }, [setFiles]);
 
   const addVideoVariant = useCallback((d: {
@@ -819,7 +841,9 @@ export function useFileManager() {
       const names = new Set(restored.map(f => f.name));
       return [...restored, ...prev.filter(f => !names.has(f.name))];
     });
-    if (boundRef.current?.storage === "agent") extras.forEach(n => enqueueSave(n));
+    // Tramos de la sesión sin registrar: no se importan (Tatana reserva el prefijo `sesion_`);
+    // los registra `useRecordingSession` con el SHA-256 del diario (`addStoredFile`).
+    if (boundRef.current?.storage === "agent") extras.filter(n => !SESSION_SEGMENT_RE.test(n)).forEach(n => enqueueSave(n));
     // Variantes en curso o ya generadas de las grabaciones de iPhone (no bloquea la restauración).
     if (restored.some(f => IOS_RECORDING_RE.test(f.name))) void refreshVariantStatus();
   }
@@ -846,7 +870,7 @@ export function useFileManager() {
 
   return {
     files, loading, videoVariants, pendingBlobs, localBlobs,
-    setLoad, addFile, addVideoVariant,
+    setLoad, addFile, addStoredFile, addVideoVariant,
     // Post-proceso de video (ios-grabacion-larga)
     variantStatus, expectVariants, applyVariantStatus, refreshVariantStatus,
     removeFile, setCaptureRole, handlePhotoBlob, handleUploadAndContinueLegacy, clearFiles,

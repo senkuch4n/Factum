@@ -8,6 +8,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using Factum.Agent.Services;
 using Factum.Agent.Services.Ios;
+using Factum.Agent.Services.Session;
 using Factum.Agent.WebSockets;
 using Factum.Agent.Common;
 
@@ -153,6 +154,16 @@ builder.Services.AddSingleton<IFolderReveal, FolderReveal>();
 // ios-grabacion-larga §5.3: variantes de previsualización de grabaciones iOS, en segundo plano.
 builder.Services.AddSingleton<VideoPostprocessService>();
 builder.Services.AddSingleton<IVideoPostprocessService>(sp => sp.GetRequiredService<VideoPostprocessService>());
+// grabacion-sesion-completa §5.1: grabación de la sesión (diario por caso, tramos, recuperación). La sesión activa es
+// una operación en curso (bloquea el auto-update).
+builder.Services.AddSingleton<SessionJournal>();
+builder.Services.AddSingleton<SegmentCloser>();
+builder.Services.AddSingleton<StayAwakeKeeper>();
+builder.Services.AddSingleton<ISessionTrackFactory, SessionTrackFactory>();
+builder.Services.AddSingleton<SessionRecoveryStatus>();
+builder.Services.AddSingleton<SessionRecorder>();
+builder.Services.AddSingleton<IOperationSource>(sp => sp.GetRequiredService<SessionRecorder>());
+builder.Services.AddSingleton<SessionRecovery>();
 
 // ── Puerto y dirección de escucha (CLI > config > default) ───────────────────
 var port = builder.Configuration.GetValue<int>("Agent:Port", 8765);
@@ -320,6 +331,9 @@ else if (localConfigStatus.Loaded)
         "Evidencia: carpeta de trabajo {DataDirectory}/cases, ZIP en {EvidenceDirectory}; orígenes permitidos {Lista} (temporales huérfanos borrados: {N}; trabajos de post-proceso huérfanos borrados: {P}; ZIP parciales huérfanos borrados: {Z}; vistas previas borradas: {V})",
         store.DataDirectory, zipDir, string.Join(", ", allowedOrigins), orphanUploads, orphanPostprocess, orphanParts,
         clearedPreviews);
+    // grabacion-sesion-completa §5.10: tramos que quedaron abiertos si Tatana se cerró grabando la sesión. En segundo
+    // plano (puede remuxear y hashear GB); mientras tanto /agent/state.session_recovery = "running".
+    _ = app.Services.GetRequiredService<SessionRecovery>().StartInBackground();
     if (AgentFileNames.IsSyncedFolder(zipDir))
         logger.LogWarning(
             "La carpeta de evidencia {Ruta} está dentro de una carpeta sincronizada con la nube; el ZIP se subiría a ese servicio. Configurá Agent:EvidenceDirectory fuera de OneDrive/iCloud.",
@@ -336,13 +350,18 @@ if (exposedToNetwork)
 await adb.EnsureServerAsync();
 
 // Apagado (tatana-ws-y-hosts §4.2), UN solo callback para que el orden no dependa del LIFO de Register:
+// 0. grabacion-sesion-completa §5.11: primero se corta y guarda la grabación de la sesión (15 s como máximo; un
+//    TerminateProcess de Windows no pasa por acá y lo cubre la recuperación).
 // 1. ios-grabacion-larga §5.6: se cancela el post-proceso (agent_stopping) y se le dan 5 s para matar ffmpeg
 //    y limpiar la carpeta de trabajo (sus eventos terminales quedan encolados en el hub).
 // 2. close 1001 "going away" a cada WebSocket, DETRÁS de esos eventos, con 1 s de espera.
 {
     var post = app.Services.GetRequiredService<IVideoPostprocessService>();
+    var sessionRecorder = app.Services.GetRequiredService<SessionRecorder>();
     app.Lifetime.ApplicationStopping.Register(() =>
     {
+        try { sessionRecorder.ShutdownAsync(TimeSpan.FromSeconds(15)).GetAwaiter().GetResult(); }
+        catch (Exception ex) { logger.LogWarning(ex, "Error al cerrar la grabación de la sesión al apagar"); }
         try
         {
             post.CancelAll("agent_stopping");
@@ -358,6 +377,7 @@ await adb.EnsureServerAsync();
 app.Services.GetRequiredService<ToolInventory>().WarmUp();
 
 var stopping = app.Lifetime.ApplicationStopping;
+var sessions = app.Services.GetRequiredService<SessionRecorder>();
 _ = Task.Run(async () =>
 {
     List<string> lastSerials = [];
@@ -371,6 +391,9 @@ _ = Task.Run(async () =>
                 .ToList();
 
             var serials = devices.Select(d => d.Serial).OrderBy(s => s).ToList();
+            // grabacion-sesion-completa §5.7: reconexión del mismo celular y restauraciones pendientes.
+            try { sessions.OnDevicesPolled(serials); }
+            catch (Exception ex) { logger.LogWarning(ex, "Error avisando dispositivos a la grabación de la sesión"); }
             if (!serials.SequenceEqual(lastSerials))
             {
                 lastSerials = serials;

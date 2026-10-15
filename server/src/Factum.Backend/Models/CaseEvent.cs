@@ -89,6 +89,32 @@ public sealed class CaseEventDetail
     public long? ClockMarginMs { get; set; }
     [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? PcMinusServerMs { get; set; }         // null si no se midió
+
+    // ── grabacion-sesion-completa §6.4 (recording_session_*). Reutilizan Reason, Sha256 y Size. Nunca llevan el texto
+    //    de las marcas. At = hora real de la PC (Timestamp es la del servidor al sincronizar). ──
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Enabled { get; set; }                 // recording_session_settings_changed
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? WithCamera { get; set; }              // recording_session_settings_changed
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Track { get; set; }                 // pantalla | camara
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? SegmentIndex { get; set; }
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTime? At { get; set; }
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? DurationSeconds { get; set; }
+    /// <summary>QA #80 B-4: segundos grabados del tramo (recording_session_segment_closed), los mismos del informe.</summary>
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? RecordedSeconds { get; set; }
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Validation { get; set; }            // ok | incomplete
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Recovered { get; set; }
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? GapSeconds { get; set; }            // recording_session_resumed
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? SegmentLost { get; set; }             // recording_session_stopped
 }
 
 /// <summary>
@@ -121,4 +147,14 @@ public static class CaseEventTypes
     public const string DeviceDetailsRecorded = "device_details_recorded";
     /// <summary>metadatos-dispositivo: medición de reloj al generar (clock_kind = "close").</summary>
     public const string DeviceClockMeasured = "device_clock_measured";
+    /// <summary>grabacion-sesion-completa §6.4: el perito activó/desactivó la grabación de la sesión (detail.enabled/with_camera).</summary>
+    public const string RecordingSessionSettingsChanged = "recording_session_settings_changed";
+    /// <summary>Primer tramo de una pista en el caso (detail.track/segment_index/at).</summary>
+    public const string RecordingSessionStarted = "recording_session_started";
+    /// <summary>Tramo guardado (filename + detail.track/segment_index/sha256/size/duration_seconds/validation/recovered).</summary>
+    public const string RecordingSessionSegmentClosed = "recording_session_segment_closed";
+    /// <summary>Hueco nuevo o tramo descartado (detail.track/at/reason/segment_lost).</summary>
+    public const string RecordingSessionStopped = "recording_session_stopped";
+    /// <summary>Hueco que se cierra (detail.track/at/reason/gap_seconds/segment_index).</summary>
+    public const string RecordingSessionResumed = "recording_session_resumed";
 }

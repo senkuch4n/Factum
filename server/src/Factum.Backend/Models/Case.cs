@@ -152,6 +152,13 @@ public sealed class Case
     /// </summary>
     [BsonIgnoreIfNull]
     public DeviceDetails? DeviceDetails { get; set; }
+
+    /// <summary>
+    /// grabacion-sesion-completa §6.1: switch de la grabación de la sesión y copia append-only del diario de Tatana. null en
+    /// los casos anteriores (sin backfill). El listado la proyecta afuera. JSON: <c>recording_session</c>.
+    /// </summary>
+    [BsonIgnoreIfNull]
+    public RecordingSession? RecordingSession { get; set; }
 }
 
 [BsonIgnoreExtraElements]

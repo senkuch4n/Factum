@@ -64,7 +64,8 @@ public sealed class TatanaMinVersionTests
         Assert.Equal(JsonValueKind.Null, v.ValueKind);
         Assert.Equal(
             ["organization_name", "organization_logo_url", "support_enabled", "encrypt_zip", "tatana_min_version",
-                "timestamping_enabled", "clock_skew_warning_seconds"],
+                "timestamping_enabled", "clock_skew_warning_seconds", "recording_session_mode",
+                "recording_session_segment_minutes"],
             root.EnumerateObject().Select(p => p.Name).ToArray());
     }
 
