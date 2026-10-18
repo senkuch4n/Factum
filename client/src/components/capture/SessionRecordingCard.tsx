@@ -1,15 +1,18 @@
 "use client";
 
-import { useId } from "react";
+import { useId, useState } from "react";
 import { Button } from "primereact/button";
-import { AlertCircle, HardDrive, Loader2, Lock, RotateCcw, Video } from "lucide-react";
+import { Checkbox } from "primereact/checkbox";
+import { AlertCircle, Check, HardDrive, Loader2, Lock, RotateCcw, Video } from "lucide-react";
 import type { SessionCapacity } from "@/lib/agent";
 import { capacityText, noSpaceText } from "@/lib/recording-session";
 import { screenBlockMessage } from "@/lib/agent-messages";
 import { FOCUS_RING } from "@/lib/prime/pt/shared";
 import { cn } from "@/lib/utils";
 import { FxBanner } from "@/components/feedback/FxBanner";
-import type { SessionStartProblem } from "@/hooks/useRecordingSession";
+import type { SessionCameraApi, SessionStartProblem } from "@/hooks/useRecordingSession";
+import { ConfirmDialog } from "@/components/overlay/ConfirmDialog";
+import { SessionCameraPicker } from "./SessionCameraPicker";
 
 /** Qué muestra la tarjeta (lo decide `CaptureStep` con el estado del hook). */
 export type SessionCardMode =
@@ -37,6 +40,10 @@ interface Props {
   onRetryStart: () => void;
   onForceStart: () => void;
   onDismissProblem: () => void;
+  /** Cámara del procedimiento (F2 §9.3); solo con `available` (Tatana con `recording_session_camera_v1`). */
+  camera?: SessionCameraApi | null;
+  /** La sesión está en un estado que admite sumar la cámara (`recording`/`rotating`/`waiting_device`). */
+  cameraSessionReady?: boolean;
 }
 
 const LABEL = "m-0 flex items-center gap-1.5 text-fx-label uppercase text-fx-text-2";
@@ -48,8 +55,12 @@ const LABEL = "m-0 flex items-center gap-1.5 text-fx-label uppercase text-fx-tex
  */
 export function SessionRecordingCard({
   mode, required, enabled, segmentMinutes, capacity, active, problem, busySettings, busyStart, disabled = false,
-  onToggle, onRetryStart, onForceStart, onDismissProblem,
+  onToggle, onRetryStart, onForceStart, onDismissProblem, camera = null, cameraSessionReady = false,
 }: Props) {
+  const [removeCameraOpen, setRemoveCameraOpen] = useState(false);
+  const cameraBlockId = useId();
+  const cameraCheckId = useId();
+  const cameraHintId = useId();
   const descId = useId();
   const requiredId = useId();
   const titleId = useId();
@@ -76,7 +87,8 @@ export function SessionRecordingCard({
 
   const on = required || enabled;
   const locked = required || disabled || busySettings;
-  const capText = !active ? capacityText(capacity) : null;
+  const cameraOn = !!camera?.available && (camera.checked || camera.recording);
+  const capText = !active ? capacityText(capacity, { camera: cameraOn }) : null;
   const noRoom = !active && capacity?.can_start === false;
 
   return (
@@ -142,6 +154,69 @@ export function SessionRecordingCard({
           <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span>{noSpaceText(capacity?.available_bytes)}</span>
         </p>
+      )}
+
+      {/* ── Cámara del procedimiento (F2 §9.3): solo con la sesión habilitada y un Tatana que la tenga ── */}
+      {on && camera?.available && (
+        <div className="space-y-2.5 border-t border-fx-border pt-3">
+          <div className="flex items-start gap-2.5">
+            <Checkbox
+              inputId={cameraCheckId}
+              checked={camera.checked}
+              onChange={e => {
+                if (camera.busy) return;
+                if (e.checked) { void camera.setOptIn(true); return; }
+                // Sacarla con la cámara grabando deja un hueco: se confirma.
+                if (camera.recording) setRemoveCameraOpen(true);
+                else void camera.setOptIn(false);
+              }}
+              disabled={disabled}
+              icon={<Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden="true" />}
+              aria-expanded={camera.checked}
+              aria-controls={cameraBlockId}
+              aria-describedby={cameraHintId}
+              className="mt-0.5"
+            />
+            <div className="min-w-0">
+              <label htmlFor={cameraCheckId} className={cn("text-fx-body-sm font-semibold text-fx-text", disabled ? "cursor-not-allowed" : "cursor-pointer")}>
+                Sumar cámara del procedimiento
+              </label>
+              <p id={cameraHintId} className="m-0 mt-0.5 text-xs text-fx-text-2">
+                Graba con una cámara de esta PC lo que se hace sobre el celular, en tramos propios con hash y sello.
+              </p>
+            </div>
+          </div>
+          {camera.checked && (
+            <SessionCameraPicker
+              id={cameraBlockId}
+              cameras={camera.cameras}
+              camerasError={camera.camerasError}
+              selected={camera.recording ? (camera.liveCamera ?? camera.selected) : camera.selected}
+              withMic={camera.recording ? camera.liveWithAudio : camera.withMic}
+              previewOn={camera.previewOn}
+              previewProblem={camera.previewProblem}
+              recording={camera.recording}
+              sessionReady={cameraSessionReady}
+              busy={camera.busy}
+              disabled={disabled}
+              onSelect={camera.select}
+              onWithMic={camera.setWithMic}
+              onStart={() => { void camera.start(); }}
+              onRefreshList={camera.refreshList}
+              onRefreshPreview={camera.refreshPreview}
+            />
+          )}
+          <ConfirmDialog
+            open={removeCameraOpen}
+            onOpenChange={setRemoveCameraOpen}
+            onConfirm={async () => { await camera.setOptIn(false); }}
+            tone="neutral"
+            title="¿Dejar de grabar la cámara?"
+            description="Va a quedar un hueco en el video de la cámara."
+            confirmLabel="Dejar de grabar"
+            cancelLabel="Seguir grabando"
+          />
+        </div>
       )}
 
       {problem?.kind === "screen" && (

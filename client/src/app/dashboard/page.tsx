@@ -1328,6 +1328,8 @@ export default function Dashboard() {
     state: recordingSession.state,
     active: recordingSession.active,
     recording: recordingSession.recording,
+    canMark: recordingSession.canMark,
+    camera: recordingSession.camera.available ? recordingSession.camera : null,
     recovered: recordingSession.recovered,
     announcement: recordingSession.announcement,
     problem: recordingSession.problem,

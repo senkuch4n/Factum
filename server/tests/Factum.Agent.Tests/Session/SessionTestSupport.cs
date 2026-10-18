@@ -122,6 +122,101 @@ public sealed class FakeTrackFactory : ISessionTrackFactory
     }
 }
 
+/// <summary>
+/// Cámara falsa (F2): no lanza ffmpeg. Cada tramo es el MKV embebido de 1 s en su <c>part_file</c>; el test decide cuándo
+/// "rota" (línea del CSV), cuándo falla y si el cierre deja la última línea o hubo que matarla.
+/// </summary>
+public sealed class FakeCameraTrack(FakeCameraTrackFactory owner, CameraSpec spec) : ICameraTrack
+{
+    public CameraSpec Spec { get; } = spec;
+    public string? Staging { get; private set; }
+    public int Current { get; private set; }
+    public DateTime Anchor { get; private set; }
+    public bool Stopped { get; private set; }
+    private double _segStart;
+    public event Action<CameraSegmentClosed>? SegmentClosed;
+    public event Action<CameraExit>? Exited;
+
+    public Task<CameraStart> StartAsync(string stagingDir, int startNumber, int segmentSeconds)
+    {
+        if (owner.FailNextStart is { } fail)
+        {
+            owner.FailNextStart = null;
+            throw new CameraStartException(fail == "" ? null : fail, "La cámara no abrió");
+        }
+        Staging = stagingDir;
+        Current = startNumber;
+        Anchor = DateTime.UtcNow;
+        _segStart = 0;
+        owner.StartNumbers.Add(startNumber);
+        owner.SegmentSeconds = segmentSeconds;
+        Write(Current);
+        return Task.FromResult(new CameraStart(Anchor, 4242, Anchor, 1280, 720, 15, false));
+    }
+
+    private double Elapsed => Math.Max(_segStart + 0.001, (DateTime.UtcNow - Anchor).TotalSeconds);
+
+    private void Write(int index) =>
+        File.WriteAllBytes(Path.Combine(Staging!, CameraArgs.PartName(index)),
+            owner.EmptyFiles ? [] : AdbService.MockMkvBytes());
+
+    /// <summary>El segment muxer cerró el tramo en curso y abrió el siguiente.</summary>
+    public void Rotate()
+    {
+        var end = Elapsed;
+        Write(Current + 1);
+        var ev = new CameraSegmentClosed(Current, Path.Combine(Staging!, CameraArgs.PartName(Current)), _segStart, end);
+        Current++;
+        _segStart = end;
+        SegmentClosed?.Invoke(ev);
+    }
+
+    /// <summary>ffmpeg terminó solo.</summary>
+    public void Fail(string? detail) => Exited?.Invoke(new CameraExit(DateTime.UtcNow, detail, "fake"));
+
+    public Task<TrackStop> StopAsync()
+    {
+        var requested = DateTime.UtcNow;
+        Stopped = true;
+        if (owner.KillOnStop) return Task.FromResult(new TrackStop(requested, false));
+        SegmentClosed?.Invoke(new CameraSegmentClosed(Current, Path.Combine(Staging!, CameraArgs.PartName(Current)),
+            _segStart, Elapsed, Final: true));
+        return Task.FromResult(new TrackStop(requested, true));
+    }
+
+    public void Dispose() { }
+}
+
+public sealed class FakeCameraTrackFactory : ICameraTrackFactory
+{
+    /// <summary>"" = falla sin detalle; null = arranca.</summary>
+    public string? FailNextStart { get; set; }
+    public bool KillOnStop { get; set; }
+    public bool EmptyFiles { get; set; }
+    public int SegmentSeconds { get; set; }
+    public List<int> StartNumbers { get; } = [];
+    public List<FakeCameraTrack> Tracks { get; } = [];
+    public FakeCameraTrack Last => Tracks[^1];
+
+    public ICameraTrack Create(CameraSpec spec)
+    {
+        var t = new FakeCameraTrack(this, spec);
+        Tracks.Add(t);
+        return t;
+    }
+}
+
+/// <summary>Vista previa falsa: cuenta los cortes.</summary>
+public sealed class FakePreview : ICameraPreview
+{
+    public int Stops;
+    public Task StopAsync()
+    {
+        Interlocked.Increment(ref Stops);
+        return Task.CompletedTask;
+    }
+}
+
 /// <summary>Entorno de una sesión con dobles: carpetas temporales propias que se borran al final.</summary>
 public sealed class SessionHarness : IDisposable
 {
@@ -135,6 +230,8 @@ public sealed class SessionHarness : IDisposable
     public CaseEvidenceStore Store { get; }
     public SegmentCloser Closer { get; }
     public FakeTrackFactory Tracks { get; } = new();
+    public FakeCameraTrackFactory Cameras { get; } = new();
+    public FakePreview Preview { get; } = new();
     public FixedScreenProbe Screen { get; } = new();
     public FixedDiskProbe Disk { get; } = new(500L * 1024 * 1024 * 1024);
     public RecordingSink Sink { get; } = new();
@@ -153,6 +250,7 @@ public sealed class SessionHarness : IDisposable
         };
         Options.Session.ResumeDelaySeconds = 0;
         Options.Session.ScreenProbeSeconds = 0;
+        Options.Session.CameraEnabled = true;
         configure?.Invoke(Options.Session);
         Journal = new SessionJournal(Options.DataDirectory);
         Store = new CaseEvidenceStore(Options, Disk, sessions: Journal);
@@ -160,11 +258,16 @@ public sealed class SessionHarness : IDisposable
         Recorder = new SessionRecorder(Options, Journal, Closer,
             new StayAwakeKeeper(false, null, (_, _) => Task.FromResult(new ProcessResult(0, "0", ""))),
             Tracks, Screen, Disk, Sink, PointRecordings, Recovery, TimeProvider.System, null,
-            serial => Task.FromResult(Connected.Contains(serial)));
+            serial => Task.FromResult(Connected.Contains(serial)), Cameras, Preview);
     }
 
     public StartSessionRequest Start(string serial = Serial, bool skip = false) =>
         new(serial, "android", 11, 30, skip, "t_1");
+
+    public static readonly StartCameraRequest Mac = new("Cámara de la MacBook Air", "Cámara de la MacBook Air", false, "t_c");
+
+    public StartSessionRequest StartWithCamera(StartCameraRequest? camera = null) =>
+        new(Serial, "android", 11, 30, false, "t_1", Camera: camera ?? Mac);
 
     public SessionJournalDoc Doc(string caseId = CaseId) => Journal.Load(caseId).Doc!;
 

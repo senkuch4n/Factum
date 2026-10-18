@@ -92,6 +92,10 @@ export const SESSION_ERROR_TEXT = {
     "Los tramos de la grabación de la sesión no se pueden borrar: son parte del registro de la recolección.",
   session_platform_unsupported: "Esta versión de Tatana no graba la sesión en iPhone.",
   session_ios_mode_unsupported: "La grabación de la sesión en iPhone usa solo el modo «Solo video».",
+  // Cámara del procedimiento (grabacion-sesion-completa-f2 §7.6).
+  session_camera_unsupported: "La cámara del procedimiento no está habilitada en este Tatana.",
+  camera_busy: "La cámara del procedimiento está grabando. Detenela para elegir otra.",
+  camera_preview_unavailable: "Todavía no hay vista previa de la cámara.",
 } as const;
 
 /** 409 `recording_session_open` del backend al generar (§6.5): mismo texto que el bloqueo del paso 5. */
@@ -181,6 +185,9 @@ export function agentErrorMessage(err: unknown, ctx: { name?: string; action: Ag
     case "session_file_protected":
     case "session_platform_unsupported":
     case "session_ios_mode_unsupported":
+    case "session_camera_unsupported":
+    case "camera_busy":
+    case "camera_preview_unavailable":
       return tatanaText ?? SESSION_ERROR_TEXT[err.code];
   }
   const detail = tatanaText;

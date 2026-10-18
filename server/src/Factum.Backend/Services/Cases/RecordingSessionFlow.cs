@@ -51,7 +51,8 @@ public sealed partial class CaseService
         if (request.Enabled is not { } enabled)
             return SessionFail<Case>(ErrorKind.Validation, RecordingSessionErrorCodes.InvalidRecordingSessionMessage,
                 RecordingSessionErrorCodes.InvalidRecordingSession, ("field", "enabled"));
-        var withCamera = request.WithCamera ?? false;
+        // F2 (§6.3, D9 = A): no hay cámara sin sesión.
+        var withCamera = enabled && (request.WithCamera ?? false);
 
         var mode = _recordingSession.Mode;
         if (mode == RecordingSessionModes.Disabled && enabled)
@@ -88,7 +89,13 @@ public sealed partial class CaseService
         }
 
         var evt = CaseEventFor(cas, CaseEventTypes.RecordingSessionSettingsChanged);
-        evt.Detail = new CaseEventDetail { Enabled = enabled, WithCamera = withCamera };
+        evt.Detail = new CaseEventDetail
+        {
+            Enabled = enabled,
+            WithCamera = withCamera,
+            PreviousEnabled = existing?.Enabled,
+            PreviousWithCamera = existing?.WithCamera,
+        };
         await RecordEventAsync(evt);
         _log.LogInformation("Caso {CaseId}: grabación de la sesión {Estado} (modo {Mode})", id,
             enabled ? "activada" : "desactivada", mode);

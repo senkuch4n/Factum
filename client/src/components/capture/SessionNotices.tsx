@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "primereact/button";
-import { HardDrive, Loader2, Play, PlayCircle, Unplug } from "lucide-react";
+import { HardDrive, Loader2, Play, PlayCircle, RotateCcw, Unplug, VideoOff } from "lucide-react";
 import type { SessionStateDto, SessionWarning } from "@/lib/agent";
 import { hhmm, isSessionActive, warningText } from "@/lib/recording-session";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,8 @@ interface Props {
   onResume: () => void;
   onDismissInterruption: () => void;
   onDismissResume: () => void;
+  /** Cámara del procedimiento (F2 §9.3): "Reintentar cámara" en el aviso `camera_failed`. */
+  camera?: { neverStarted: boolean; busy: boolean; onRetry: () => void } | null;
 }
 
 /** Orden fijo de los avisos de Tatana; uno por tipo. */
@@ -27,7 +29,7 @@ const WARNING_ORDER: SessionWarning["kind"][] = ["disk_low", "screen_off", "scre
  * van en el aviso del corte que las necesita.
  */
 export function SessionNotices({
-  state, interruption, resumeNotice, starting, onResume, onDismissInterruption, onDismissResume,
+  state, interruption, resumeNotice, starting, onResume, onDismissInterruption, onDismissResume, camera = null,
 }: Props) {
   const active = isSessionActive(state?.state);
   const stoppedAt = hhmm(state?.stopped_at) ?? "--:--";
@@ -50,12 +52,16 @@ export function SessionNotices({
   );
 
   const stoppedReason = !active && state?.state === "stopped" ? state.stop_reason ?? null : null;
+  const cameraFailed = active && camera && state?.camera_state === "failed"
+    ? (state.warnings ?? []).find(w => w.kind === "camera_failed") ?? { kind: "camera_failed" as const, since: "" }
+    : null;
 
   return (
     <>
       {state?.state === "waiting_device" && (
         <FxBanner tone="warn" icon={<Unplug className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}>
           Cable desconectado: la grabación de la sesión se cortó a las {stoppedAt}. Se reanuda sola al volver a conectar el mismo celular.
+          {state.camera_state === "recording" && " La cámara del procedimiento sigue grabando."}
         </FxBanner>
       )}
 
@@ -88,6 +94,24 @@ export function SessionNotices({
         <FxBanner tone="warn">
           <p className="m-0">La grabación de la sesión se interrumpió por un error a las {stoppedAt}.</p>
           {resumeButton}
+        </FxBanner>
+      )}
+
+      {cameraFailed && camera && (
+        <FxBanner tone="warn" icon={<VideoOff className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}>
+          <p className="m-0">{warningText(cameraFailed, { cameraNeverStarted: camera.neverStarted })}</p>
+          <Button
+            type="button"
+            size="small"
+            severity="secondary"
+            icon={camera.busy
+              ? <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />
+              : <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />}
+            label={camera.busy ? "Abriendo la cámara…" : "Reintentar cámara"}
+            onClick={() => { if (!camera.busy) camera.onRetry(); }}
+            aria-disabled={camera.busy || undefined}
+            className={cn("mt-2.5 min-h-11 sm:min-h-0", camera.busy && "cursor-not-allowed opacity-60")}
+          />
         </FxBanner>
       )}
 

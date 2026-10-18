@@ -156,7 +156,7 @@ internal sealed class MicCapture
 
     // ── Windows: elección del dispositivo dshow ──────────────────────────────
 
-    private static async Task<string> ResolveWindowsDeviceAsync(string ffmpeg, string? configured,
+    internal static async Task<string> ResolveWindowsDeviceAsync(string ffmpeg, string? configured,
         ILogger log, CancellationToken ct)
     {
         if (!string.IsNullOrWhiteSpace(configured))
@@ -175,7 +175,7 @@ internal sealed class MicCapture
     }
 
     // `ffmpeg -hide_banner -list_devices true -f dshow -i dummy` sale con código ≠ 0: es normal.
-    private static async Task<string> ListDshowDevicesAsync(string ffmpeg, ILogger log, CancellationToken ct)
+    internal static async Task<string> ListDshowDevicesAsync(string ffmpeg, ILogger log, CancellationToken ct)
     {
         var psi = new ProcessStartInfo
         {
@@ -234,11 +234,21 @@ internal static class DshowDevices
 
     // Parsea el stderr de `ffmpeg -hide_banner -list_devices true -f dshow -i dummy` y devuelve
     // los dispositivos de audio en el orden en que los lista Windows.
-    public static IReadOnlyList<(string Name, string? AlternativeName)> ParseAudioDevices(string stderr)
+    public static IReadOnlyList<(string Name, string? AlternativeName)> ParseAudioDevices(string stderr) =>
+        ParseDevices(stderr, "audio");
+
+    // grabacion-sesion-completa-f2 §5.2.1: las cámaras del mismo listado.
+    public static IReadOnlyList<(string Name, string? AlternativeName)> ParseVideoDevices(string stderr) =>
+        ParseDevices(stderr, "video");
+
+    // Dispositivos del tipo pedido ("audio" | "video"), con el tipo por paréntesis (formato nuevo) o
+    // por sección (formato viejo). El alternative name se asocia al último dispositivo del tipo
+    // pedido. Un dispositivo "(audio, video)" aparece en las dos listas.
+    public static IReadOnlyList<(string Name, string? AlternativeName)> ParseDevices(string stderr, string kind)
     {
         var result = new List<(string Name, string? AlternativeName)>();
         string? section = null;  // formato viejo: "audio" / "video"
-        int lastAudio = -1;      // índice del último dispositivo de audio (para su alternative name)
+        int last = -1;           // índice del último dispositivo del tipo pedido (para su alternative name)
 
         foreach (var raw in stderr.Split('\n'))
         {
@@ -246,15 +256,15 @@ internal static class DshowDevices
             if (line.Length == 0) continue;
 
             if (line.StartsWith("DirectShow audio devices", StringComparison.OrdinalIgnoreCase))
-            { section = "audio"; lastAudio = -1; continue; }
+            { section = "audio"; last = -1; continue; }
             if (line.StartsWith("DirectShow video devices", StringComparison.OrdinalIgnoreCase))
-            { section = "video"; lastAudio = -1; continue; }
+            { section = "video"; last = -1; continue; }
 
             var alt = AltLine.Match(line);
             if (alt.Success)
             {
-                if (lastAudio >= 0 && result[lastAudio].AlternativeName is null)
-                    result[lastAudio] = (result[lastAudio].Name, alt.Groups["alt"].Value);
+                if (last >= 0 && result[last].AlternativeName is null)
+                    result[last] = (result[last].Name, alt.Groups["alt"].Value);
                 continue;
             }
 
@@ -262,16 +272,16 @@ internal static class DshowDevices
             if (!dev.Success) continue;
 
             var type = dev.Groups["type"].Success ? dev.Groups["type"].Value : section;
-            var isAudio = type is not null &&
-                type.Split(',').Any(t => t.Trim().Equals("audio", StringComparison.OrdinalIgnoreCase));
-            if (isAudio)
+            var matches = type is not null &&
+                type.Split(',').Any(t => t.Trim().Equals(kind, StringComparison.OrdinalIgnoreCase));
+            if (matches)
             {
                 result.Add((dev.Groups["name"].Value, null));
-                lastAudio = result.Count - 1;
+                last = result.Count - 1;
             }
             else
             {
-                lastAudio = -1;
+                last = -1;
             }
         }
         return result;

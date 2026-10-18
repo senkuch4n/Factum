@@ -310,7 +310,8 @@ export function AttachmentChip({
 
 /**
  * Tramo de la grabación de la sesión (grabacion-sesion-completa §9.4): fila del
- * grupo "Sesión" con "Pantalla · tramo N · HH:MM–HH:MM", estado de guardado y
+ * grupo "Sesión" con "Pantalla · tramo N · HH:MM–HH:MM" (o "Cámara · tramo N · …", F2
+ * §9.3, intercalados por hora con los de pantalla), estado de guardado y
  * sello. Sin botón de quitar (D-T6): los tramos son el registro de la recolección.
  */
 export function SessionSegmentTile({

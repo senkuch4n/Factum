@@ -54,7 +54,9 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
             // recording_session_v1: grabación de la sesión completa en Android (grabacion-sesion-completa §7.4):
             // /cases/{id}/session/*, /session/capacity, eventos session_*, zip_folder en el ZIP, session_active en
             // record/start, session_file_protected y /agent/prepare-shutdown.
-            capabilities = Capabilities,
+            // recording_session_camera_v1 (grabacion-sesion-completa-f2 §7.2.8): /cameras*, …/session/camera/*, camera en
+            // el start y la ubicación de las marcas en la cámara. Solo con Agent:Session:CameraEnabled efectivo.
+            capabilities = CapabilitiesFor(CameraEnabledFor(opts.Value)),
         });
     }
 
@@ -77,6 +79,15 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
         ["case_evidence_v1", "ios_developer_mode_v1", "real_version_v1", "agent_state_v1", "video_postprocess_v1",
          "recording_state_v1", "event_attribution_v1", "device_preview_v1", "screen_check_v1", "case_seals_v1",
          "device_details_v1", "recording_session_v1"];
+
+    public const string SessionCameraCapability = "recording_session_camera_v1";
+
+    /// <summary>Lista de capabilities: la fija más <c>recording_session_camera_v1</c> si la cámara está habilitada.</summary>
+    internal static string[] CapabilitiesFor(bool cameraEnabled) =>
+        cameraEnabled ? [.. Capabilities, SessionCameraCapability] : Capabilities;
+
+    /// <summary><c>Agent:Session:CameraEnabled</c> efectivo (null = solo macOS, D-T12).</summary>
+    internal static bool CameraEnabledFor(AgentOptions o) => (o.Session ?? new Models.SessionOptions()).EffectiveCameraEnabled;
 
     /// <summary><c>--mode</c> gana (D-T15); sin él, la heurística de <c>tools/</c> (portátil).</summary>
     internal static string ResolveMode(AgentOptions o) => o.InstallMode ?? (IsPortable() ? "portable" : "installed");

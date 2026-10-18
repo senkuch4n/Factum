@@ -4,7 +4,10 @@ import { useEffect, useId, useState } from "react";
 import { ChevronRight, Clock, ClockAlert, ClockCheck, Film } from "lucide-react";
 import { api, type CaseTimestamp, type DeviceDetails, type RecordingSession } from "@/lib/api";
 import { describeEventSkew, formatDuration } from "@/lib/device-details";
-import { reasonText, sessionSummary, trackLabel } from "@/lib/recording-session";
+import {
+  cameraConfigText, cameraConfigs, markLocationText, reasonText, segmentSeconds, sessionHasCamera, sessionSummary,
+  trackLabel,
+} from "@/lib/recording-session";
 import { sealText } from "@/components/capture/EvidenceTray";
 import { CopyButton } from "@/components/feedback/CopyButton";
 import { cn } from "@/lib/utils";
@@ -53,16 +56,18 @@ function clockLine(details: DeviceDetails | null | undefined): string {
 /**
  * "Registro audiovisual" (grabacion-sesion-completa §9.7) en el resultado y en
  * el detalle del caso: resumen y un desplegable con tramos, huecos y marcas.
- * Solo se muestra si la sesión tiene tramos guardados.
+ * Solo se muestra si la sesión tiene tramos guardados. Desde F2 (B-9, D10 = A) las
+ * cifras son las del informe: tiempo cubierto por pista y `recorded_seconds` por tramo.
  */
 export function SessionRecordPanel({ caseId, session, deviceDetails, className }: Props) {
   const headingId = useId();
   const summary = sessionSummary(session);
+  const savedCount = summary.screen.segments + summary.camera.segments;
   const [seals, setSeals] = useState<Record<string, CaseTimestamp> | null>(null);
   const [sealing, setSealing] = useState(false);
 
   useEffect(() => {
-    if (summary.segments === 0) return;
+    if (savedCount === 0) return;
     const ctrl = new AbortController();
     api.getCaseTimestamps(caseId, ctrl.signal)
       .then(res => {
@@ -73,9 +78,9 @@ export function SessionRecordPanel({ caseId, session, deviceDetails, className }
       })
       .catch(() => { /* backend sin sellado o sin respuesta: el panel queda sin sellos */ });
     return () => ctrl.abort();
-  }, [caseId, summary.segments]);
+  }, [caseId, savedCount]);
 
-  if (summary.segments === 0) return null;
+  if (savedCount === 0) return null;
 
   const saved = session.segments
     .filter(s => s.state === "saved")
@@ -84,11 +89,16 @@ export function SessionRecordPanel({ caseId, session, deviceDetails, className }
   const marks = [...session.marks].sort((a, b) => a.at.localeCompare(b.at));
   const sealed = seals ? saved.filter(s => seals[s.filename]?.status === "granted").length : 0;
 
+  const hasCamera = summary.camera.segments > 0 || sessionHasCamera(session);
+  const configs = cameraConfigs(session);
+  const { screen, camera } = summary;
+  const tracks = hasCamera
+    ? `${screen.segments} ${screen.segments === 1 ? "tramo" : "tramos"} de pantalla (${formatDuration(screen.coveredSeconds)}) y ${camera.segments} de cámara (${formatDuration(camera.coveredSeconds)})`
+    : `${screen.segments} ${screen.segments === 1 ? "tramo" : "tramos"} de pantalla · ${formatDuration(screen.coveredSeconds)}`;
   const parts = [
-    `${summary.segments} ${summary.segments === 1 ? "tramo" : "tramos"}`,
-    formatDuration(summary.totalSeconds),
+    tracks,
     `${summary.gaps} ${summary.gaps === 1 ? "hueco" : "huecos"}`,
-    ...(sealing && seals ? [`sellos ${sealed}/${summary.segments}`] : []),
+    ...(sealing && seals ? [`sellos ${sealed}/${savedCount}`] : []),
   ];
 
   return (
@@ -97,6 +107,11 @@ export function SessionRecordPanel({ caseId, session, deviceDetails, className }
         <Film className="h-3.5 w-3.5" aria-hidden="true" /> Registro audiovisual
       </h3>
       <p className="m-0 text-fx-body-sm font-medium text-fx-text">{parts.join(" · ")}</p>
+      {configs.length > 0 && (
+        <ul className="m-0 list-none space-y-0.5 p-0 text-xs text-fx-text-2">
+          {configs.map(c => <li key={`${c.name}|${c.width}|${c.height}|${c.fps}|${c.with_audio}`}>{cameraConfigText(c)}</li>)}
+        </ul>
+      )}
 
       <details className="group">
         <summary
@@ -124,7 +139,7 @@ export function SessionRecordPanel({ caseId, session, deviceDetails, className }
                     <p className="m-0 font-semibold text-fx-text">
                       {trackLabel(s.track)} · tramo {s.index}
                       <span className="font-normal text-fx-text-2">
-                        {" · "}{span(s.started_at, s.stopped_at)} ({formatDuration(s.duration_seconds ?? s.recorded_seconds)})
+                        {" · "}{span(s.started_at, s.stopped_at)} ({formatDuration(segmentSeconds(s))})
                       </span>
                     </p>
                     <p className="m-0 mt-0.5 text-fx-text-2">
@@ -183,7 +198,7 @@ export function SessionRecordPanel({ caseId, session, deviceDetails, className }
               <ul className="m-0 list-disc space-y-1 pl-5 text-xs text-fx-text-2">
                 {marks.map(m => (
                   <li key={m.id}>
-                    {time(m.at)} — tramo {m.segment_index}, minuto {minuteOf(m.offset_seconds)} del video —{" "}
+                    {time(m.at)} — {markLocationText(m, hasCamera)}{hasCamera ? "" : " del video"} —{" "}
                     {m.text ? m.text : m.filename
                       ? <>Captura <span translate="no" className="font-mono">{m.filename}</span></>
                       : "Marca sin texto"}
@@ -198,9 +213,4 @@ export function SessionRecordPanel({ caseId, session, deviceDetails, className }
       </details>
     </section>
   );
-}
-
-function minuteOf(seconds: number): string {
-  const t = Math.max(0, Math.floor(seconds));
-  return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
 }

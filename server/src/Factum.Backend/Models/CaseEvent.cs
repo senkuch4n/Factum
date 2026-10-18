@@ -96,6 +96,11 @@ public sealed class CaseEventDetail
     public bool? Enabled { get; set; }                 // recording_session_settings_changed
     [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? WithCamera { get; set; }              // recording_session_settings_changed
+    /// <summary>F2 (D-T11): valores anteriores en recording_session_settings_changed (null si se creó en ese pedido).</summary>
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? PreviousEnabled { get; set; }
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? PreviousWithCamera { get; set; }
     [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Track { get; set; }                 // pantalla | camara
     [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

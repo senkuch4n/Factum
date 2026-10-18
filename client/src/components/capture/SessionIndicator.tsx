@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "primereact/button";
-import { Camera, Loader2, Play, Square, Unplug } from "lucide-react";
+import { Loader2, Play, Square, Unplug, Video, VideoOff } from "lucide-react";
 import type { SessionStateDto } from "@/lib/agent";
 import { elapsedText, hhmm, isSessionActive, isSessionRecording } from "@/lib/recording-session";
 import { cn } from "@/lib/utils";
@@ -101,8 +101,12 @@ export function SessionIndicator({
             </>
           )}
         </span>
+        {/* Cámara del procedimiento (F2 §9.3): sin animación, solo el estado. */}
         {state.camera_state === "recording" && (
-          <Camera className="h-3.5 w-3.5 shrink-0 text-fx-text-2" aria-label="Con cámara del procedimiento" />
+          <Video role="img" className="h-3.5 w-3.5 shrink-0 text-fx-text-2" aria-label="Cámara grabando" />
+        )}
+        {state.camera_state === "failed" && (
+          <VideoOff role="img" className="h-3.5 w-3.5 shrink-0 text-fx-warning" aria-label="Cámara detenida" />
         )}
       </span>
 

@@ -141,14 +141,8 @@ public static partial class RecordingSessionRules
         SessionCamera? camera = null;
         if (dto.Camera is { } c)
         {
-            var name = SafeText.Clean(c.Name, TextShape.SingleLine).Trim();
-            if (name.Length is 0 or > 200) return Fail("camera.name");
-            if (c.Width is not (> 0 and <= 10000) || c.Height is not (> 0 and <= 10000) || c.Fps is not (> 0 and <= 240))
-                return Fail("camera");
-            camera = new SessionCamera
-            {
-                Name = name, Width = c.Width.Value, Height = c.Height.Value, Fps = c.Fps.Value, WithAudio = c.WithAudio ?? false,
-            };
+            camera = ValidCamera(c, out var cameraField);
+            if (camera is null) return Fail(cameraField == "name" ? "camera.name" : "camera");
         }
 
         var segmentsIn = dto.Segments ?? [];
@@ -195,6 +189,14 @@ public static partial class RecordingSessionRules
                 if (s.Size is < 0) return Fail(f + ".size");
                 if (s.Validation is not (null or "ok" or "incomplete")) return Fail(f + ".validation");
             }
+            // F2 (§6.2): la configuración de la cámara viaja solo en los tramos de cámara.
+            SessionCamera? segCamera = null;
+            if (s.Camera is { } sc)
+            {
+                if (s.Track != RecordingSessionValues.TrackCamera) return Fail(f + ".camera");
+                segCamera = ValidCamera(sc, out _);
+                if (segCamera is null) return Fail(f + ".camera");
+            }
             segments.Add(new SessionSegment
             {
                 Id = s.Id, Track = s.Track!, Index = s.Index.Value, Filename = s.Filename, State = s.State!,
@@ -202,6 +204,7 @@ public static partial class RecordingSessionRules
                 RecordedSeconds = s.RecordedSeconds ?? Math.Round((stopped - started).TotalSeconds, 1),
                 DurationSeconds = s.DurationSeconds, Validation = s.Validation, Recovered = s.Recovered ?? false,
                 OverlapSeconds = s.OverlapSeconds, StopReason = s.StopReason, Size = s.Size, Sha256 = s.Sha256,
+                Camera = segCamera,
             });
         }
 
@@ -235,8 +238,27 @@ public static partial class RecordingSessionRules
             if (m.At is not { } atRaw) return Fail(f + ".at");
             var at = Utc(atRaw);
             if (Future(at)) return Fail(f + ".at");
-            if (m.SegmentIndex is not (>= 1 and <= 9999)) return Fail(f + ".segment_index");
-            if (m.OffsetSeconds is not { } off || !Finite(off) || off < 0) return Fail(f + ".offset_seconds");
+            // F2 (§6.2): ubicación en la cámara, los dos campos o ninguno.
+            if (m.CameraSegmentIndex is not null || m.CameraOffsetSeconds is not null)
+            {
+                if (m.CameraSegmentIndex is not (>= 1 and <= 9999) || m.CameraOffsetSeconds is not { } coff ||
+                    !Finite(coff) || coff < 0)
+                    return Fail(f + ".camera_segment_index");
+            }
+            // [DU1=A] Sin pantalla grabando, la marca puede venir sin segment_index/offset_seconds, pero solo si trae
+            // la ubicación en la cámara. Uno sin el otro → segment_index.
+            double? off = null;
+            if (m.SegmentIndex is null && m.OffsetSeconds is null)
+            {
+                if (m.CameraSegmentIndex is null) return Fail(f + ".segment_index");
+            }
+            else
+            {
+                if (m.SegmentIndex is null || m.OffsetSeconds is null) return Fail(f + ".segment_index");
+                if (m.SegmentIndex is not (>= 1 and <= 9999)) return Fail(f + ".segment_index");
+                if (m.OffsetSeconds is not { } o || !Finite(o) || o < 0) return Fail(f + ".offset_seconds");
+                off = o;
+            }
             var text = SafeText.CleanOrNull(m.Text, TextShape.SingleLine);
             if (text is { Length: > MaxMarkText }) return Fail(f + ".text");
             if (text is { Length: 0 }) text = null;
@@ -244,13 +266,38 @@ public static partial class RecordingSessionRules
             if (m.Kind is not ("manual" or "captura")) return Fail(f + ".kind");
             marks.Add(new SessionMark
             {
-                Id = m.Id, At = at, SegmentIndex = m.SegmentIndex.Value, OffsetSeconds = off, Text = text,
-                Filename = m.Filename, Kind = m.Kind,
+                Id = m.Id, At = at, SegmentIndex = m.SegmentIndex, OffsetSeconds = off, Text = text,
+                Filename = m.Filename, Kind = m.Kind, CameraSegmentIndex = m.CameraSegmentIndex,
+                CameraOffsetSeconds = m.CameraOffsetSeconds,
             });
         }
 
         return new SnapshotValidation(null, null, new ValidatedSnapshot(dto.SessionId, dto.Platform!, connection,
             agentVersion, dto.SegmentMinutes!.Value, dto.Audio, camera, dto.State, segments, gaps, marks));
+    }
+
+    /// <summary>
+    /// Cámara válida (§6.2): <c>name</c> 1–200 tras <c>SafeText.Clean</c>, W/H 1–10000, fps 1–240. null si no;
+    /// <paramref name="field"/> = <c>name</c> o <c>size</c>.
+    /// </summary>
+    private static SessionCamera? ValidCamera(SessionCameraDto c, out string? field)
+    {
+        field = null;
+        var name = SafeText.Clean(c.Name, TextShape.SingleLine).Trim();
+        if (name.Length is 0 or > 200)
+        {
+            field = "name";
+            return null;
+        }
+        if (c.Width is not (> 0 and <= 10000) || c.Height is not (> 0 and <= 10000) || c.Fps is not (> 0 and <= 240))
+        {
+            field = "size";
+            return null;
+        }
+        return new SessionCamera
+        {
+            Name = name, Width = c.Width.Value, Height = c.Height.Value, Fps = c.Fps.Value, WithAudio = c.WithAudio ?? false,
+        };
     }
 
     // ── Merge append-only ────────────────────────────────────────────────────
@@ -303,9 +350,13 @@ public static partial class RecordingSessionRules
                     newSegments.Add(old);
                     continue;
                 }
+                // F2: la cámara del tramo se completa si faltaba; distinta de la guardada → conflicto.
+                if (old.Camera is not null && s.Camera is not null && !SameCamera(old.Camera, s.Camera))
+                    return Conflict("segments.camera");
                 old.Size ??= s.Size;
                 old.Sha256 ??= s.Sha256;
                 old.DurationSeconds ??= s.DurationSeconds;
+                old.Camera ??= CopyCamera(s.Camera);
                 continue;
             }
             if (byName.ContainsKey(s.Filename)) return Conflict("segments.filename");
@@ -356,7 +407,8 @@ public static partial class RecordingSessionRules
             if (marksById.TryGetValue(m.Id, out var old))
             {
                 if (TruncateMs(old.At) != m.At || old.SegmentIndex != m.SegmentIndex || old.OffsetSeconds != m.OffsetSeconds ||
-                    old.Text != m.Text || old.Filename != m.Filename || old.Kind != m.Kind)
+                    old.Text != m.Text || old.Filename != m.Filename || old.Kind != m.Kind ||
+                    old.CameraSegmentIndex != m.CameraSegmentIndex || old.CameraOffsetSeconds != m.CameraOffsetSeconds)
                     return Conflict("marks");
                 continue;
             }
@@ -393,14 +445,20 @@ public static partial class RecordingSessionRules
         target.StopReason = s.StopReason;
         target.Size = s.Size;
         target.Sha256 = s.Sha256;
+        target.Camera = CopyCamera(s.Camera);
     }
+
+    private static SessionCamera? CopyCamera(SessionCamera? c) => c is null ? null : new SessionCamera
+    {
+        Name = c.Name, Width = c.Width, Height = c.Height, Fps = c.Fps, WithAudio = c.WithAudio,
+    };
 
     internal static SessionSegment Copy(SessionSegment s) => new()
     {
         Id = s.Id, Track = s.Track, Index = s.Index, Filename = s.Filename, State = s.State, StartedAt = s.StartedAt,
         StoppedAt = s.StoppedAt, RecordedSeconds = s.RecordedSeconds, DurationSeconds = s.DurationSeconds,
         Validation = s.Validation, Recovered = s.Recovered, OverlapSeconds = s.OverlapSeconds, StopReason = s.StopReason,
-        Size = s.Size, Sha256 = s.Sha256,
+        Size = s.Size, Sha256 = s.Sha256, Camera = CopyCamera(s.Camera),
     };
 
     private static SessionGap Copy(SessionGap g) => new()
@@ -411,7 +469,8 @@ public static partial class RecordingSessionRules
     private static SessionMark Copy(SessionMark m) => new()
     {
         Id = m.Id, At = m.At, SegmentIndex = m.SegmentIndex, OffsetSeconds = m.OffsetSeconds, Text = m.Text,
-        Filename = m.Filename, Kind = m.Kind,
+        Filename = m.Filename, Kind = m.Kind, CameraSegmentIndex = m.CameraSegmentIndex,
+        CameraOffsetSeconds = m.CameraOffsetSeconds,
     };
 
     // ── Eventos (§6.4) ───────────────────────────────────────────────────────

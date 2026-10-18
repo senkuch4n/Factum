@@ -76,5 +76,41 @@ public sealed class DshowDevicesTests
     public void Salida_vacia_da_lista_vacia()
     {
         Assert.Empty(DshowDevices.ParseAudioDevices(""));
+        Assert.Empty(DshowDevices.ParseVideoDevices(""));
+    }
+
+    // grabacion-sesion-completa-f2 §5.2.1: cámaras del mismo listado.
+    [Fact]
+    public void Video_formato_nuevo_nombre_y_alternative_name()
+    {
+        var cams = DshowDevices.ParseVideoDevices(NuevoFormato.Replace("\n", "\r\n"));
+        var cam = Assert.Single(cams); // "OBS Virtual Camera" (none) no es video
+        Assert.Equal("Integrated Webcam", cam.Name);
+        Assert.Equal(@"@device_pnp_\\?\usb#vid_0c45&pid_6a10&mi_00#6&2b4d7c1&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global",
+            cam.AlternativeName);
+    }
+
+    [Fact]
+    public void Video_formato_viejo_por_seccion()
+    {
+        var cam = Assert.Single(DshowDevices.ParseVideoDevices(ViejoFormato));
+        Assert.Equal("Integrated Webcam", cam.Name);
+        Assert.Equal(@"@device_pnp_\\?\usb#vid_0c45&pid_6a10#{65e8773d}\global", cam.AlternativeName);
+    }
+
+    [Fact]
+    public void Audio_y_video_aparece_en_las_dos_listas()
+    {
+        const string ambos = """
+            [in#0 @ 0000020a] "USB Capture HDMI" (audio, video)
+            [in#0 @ 0000020a]   Alternative name "@device_pnp_\\?\usb#vid_534d\global"
+            [in#0 @ 0000020a] "Micrófono" (audio)
+            [in#0 @ 0000020a]   Alternative name "@device_cm_mic"
+            """;
+        var cam = Assert.Single(DshowDevices.ParseVideoDevices(ambos));
+        Assert.Equal(("USB Capture HDMI", @"@device_pnp_\\?\usb#vid_534d\global"), (cam.Name, cam.AlternativeName));
+        var mics = DshowDevices.ParseAudioDevices(ambos);
+        Assert.Equal(["USB Capture HDMI", "Micrófono"], mics.Select(m => m.Name));
+        Assert.Equal("@device_cm_mic", mics[1].AlternativeName);
     }
 }

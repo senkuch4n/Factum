@@ -49,7 +49,7 @@ import { SessionNotices, noticeOffersResume } from "./capture/SessionNotices";
 import { MarkMomentPopover } from "./capture/MarkMomentPopover";
 import type { SessionCapacity, SessionMarkDto, SessionStateDto } from "@/lib/agent";
 import { hhmm, segmentMetaFromName, trackLabel, type SegmentMeta } from "@/lib/recording-session";
-import type { SessionInterruption, SessionStartProblem } from "@/hooks/useRecordingSession";
+import type { SessionBusy, SessionCameraApi, SessionInterruption, SessionStartProblem } from "@/hooks/useRecordingSession";
 import { UploadLiveRegion, UploadProgressPanel } from "./capture/UploadProgressPanel";
 import type { UploadMessage } from "@/lib/upload-messages";
 import type { FileUploadState, UploadProgress } from "@/types";
@@ -57,6 +57,9 @@ import { CaptureRoleMenu } from "./capture/CaptureRoleMenu";
 import { AirplayConnectGuide, OnDeviceStopGuide } from "./capture/CaptureGuides";
 import { ElapsedTime, clockTime } from "./capture/ElapsedTime";
 import { ScreenBlockNotice, type ScreenBlock } from "./capture/ScreenBlockNotice";
+
+/** Motivo de D4 = B (grabacion-sesion-completa-f2 §9.3). */
+const CAMERA_IN_USE_TEXT = "La cámara del procedimiento está en uso. Detenela o quitala para usar la cámara desde el navegador.";
 
 /** Grabación de la sesión en el paso 3 (grabacion-sesion-completa §9.3-§9.4). */
 export interface CaptureSessionProps {
@@ -70,14 +73,18 @@ export interface CaptureSessionProps {
   state: SessionStateDto | null;
   /** Sesión activa de este caso: "Grabar" pasa a "Marcar momento". */
   active: boolean;
-  /** Grabando de verdad: se puede marcar. */
+  /** Grabando de verdad. */
   recording: boolean;
+  /** Se puede "Marcar momento" (F2 [DU1=A]: también con el cable desconectado si la cámara graba). */
+  canMark: boolean;
+  /** Cámara del procedimiento (F2 §9.3). `null` = sin cámara en este Tatana. */
+  camera: SessionCameraApi | null;
   recovered: boolean;
   announcement: { id: number; text: string } | null;
   problem: SessionStartProblem | null;
   interruption: SessionInterruption | null;
   resumeNotice: { at: string | null; index: number | null } | null;
-  busy: { start: boolean; stop: boolean; mark: boolean; settings: boolean };
+  busy: SessionBusy;
   lastMark: { id: string; text: string } | null;
   /** Tramos de la sesión (por pertenencia al diario, D-T5) y su meta para la bandeja. */
   sessionNames: ReadonlySet<string>;
@@ -262,7 +269,11 @@ export function CaptureStep({
   const sessionActive = !!session?.active;
   const sessionNames = session?.sessionNames ?? NO_NAMES;
   const isSessionFile = (name: string) => sessionNames.has(name);
-  useEffect(() => { if (!session?.recording) setMarkOpen(false); }, [session?.recording]);
+  useEffect(() => { if (!session?.canMark) setMarkOpen(false); }, [session?.canMark]);
+  // D4 = B (+ D-T10): con la cámara del procedimiento grabando o en vista previa, Tatana ocupa
+  // la cámara de la PC y el navegador no puede usarla (no se sabe cuál de sus cámaras es).
+  const cameraInUse = !!session?.camera?.available && !!session.camera.inUse;
+  const cameraInUseId = useId();
   const lastBlockActionRef = useRef<ScreenBlock["action"] | null>(null);
   useEffect(() => {
     if (screenBlock) { lastBlockActionRef.current = screenBlock.action; return; }
@@ -345,7 +356,12 @@ export function CaptureStep({
   // Capturas del propio teléfono (van al "escenario" con marco de celular) vs. adjuntos
   // traídos del equipo o de la cámara externa (van como chips).
   // Tramos de la sesión: grupo propio "Sesión", fuera de "Capturas" y de "Grabaciones" (§9.4).
-  const sessionItems = galleryItems.filter(i => isSessionFile(i.name));
+  // Pantalla y cámara intercaladas por hora de inicio (F2 §9.3); sin meta, al final en su orden.
+  const sessionStart = (name: string) => (session?.segmentMeta[name] ?? segmentMetaFromName(name))?.started_at ?? "\uffff";
+  const sessionItems = galleryItems.filter(i => isSessionFile(i.name))
+    .map((item, order) => ({ item, order, at: sessionStart(item.name) }))
+    .sort((a, b) => a.at.localeCompare(b.at) || a.order - b.order)
+    .map(x => x.item);
   const screenItems = galleryItems.filter(i => !isSessionFile(i.name) && (i.kind === "screenshot" || i.kind === "video"));
   const attachItems = galleryItems.filter(i => !isSessionFile(i.name) && (i.kind === "local-image" || i.kind === "local-video" || i.kind === "local-audio" || i.kind === "other"));
 
@@ -584,7 +600,8 @@ export function CaptureStep({
               agentFilename={fotoFunc?.name}
               onCapture={() => setWebcam("funcionario")}
               loading={!!loading.photo}
-              disabled={captureBlocked} />
+              disabled={captureBlocked}
+              disabledReason={cameraInUse ? CAMERA_IN_USE_TEXT : undefined} />
           </li>
           <li>
             <IdentityCard label="Titular del dispositivo" role="Titular" icon={User}
@@ -596,7 +613,8 @@ export function CaptureStep({
               agentFilename={fotoDen?.name}
               onCapture={() => setWebcam("denunciante")}
               loading={!!loading.photo}
-              disabled={captureBlocked} />
+              disabled={captureBlocked}
+              disabledReason={cameraInUse ? CAMERA_IN_USE_TEXT : undefined} />
           </li>
         </ul>
       </section>
@@ -694,6 +712,9 @@ export function CaptureStep({
               onResume={session.onResume}
               onDismissInterruption={session.onDismissInterruption}
               onDismissResume={session.onDismissResume}
+              camera={session.camera?.available
+                ? { neverStarted: session.camera.neverStarted, busy: session.camera.busy, onRetry: () => { void session.camera?.retry(); } }
+                : null}
             />
           )}
           {session && session.cardMode && (
@@ -712,6 +733,9 @@ export function CaptureStep({
               onRetryStart={session.onResume}
               onForceStart={session.onForceStart}
               onDismissProblem={session.onDismissProblem}
+              camera={session.camera}
+              cameraSessionReady={sessionActive && (session.state?.state === "recording"
+                || session.state?.state === "rotating" || session.state?.state === "waiting_device")}
             />
           )}
 
@@ -754,7 +778,7 @@ export function CaptureStep({
                   ref={recordTileRef}
                   type="button"
                   onClick={() => setMarkOpen(o => !o)}
-                  disabled={!session?.recording || captureBlocked}
+                  disabled={!session?.canMark || captureBlocked}
                   aria-expanded={markOpen}
                   aria-controls={markPopoverId}
                   aria-haspopup="true"
@@ -797,6 +821,9 @@ export function CaptureStep({
                 busy={session.busy.mark}
                 onClose={() => setMarkOpen(false)}
                 onSave={async text => !!(await session.onMark(text))}
+                hint={session.state?.state === "waiting_device" && session.state.camera_state === "recording"
+                  ? "La pantalla no está grabando: la marca queda ubicada en el video de la cámara."
+                  : null}
               />
             )}
             {/* Confirmación de la marca (siempre montado: el lector anuncia el cambio). */}
@@ -918,9 +945,14 @@ export function CaptureStep({
                     icon={<Camera className="h-3.5 w-3.5" aria-hidden="true" />}
                     label="Filmar con cámara externa"
                     onClick={() => setCameraRecordOpen(true)}
-                    disabled={!!deviceOffline || captureBlocked}
+                    disabled={!!deviceOffline || captureBlocked || cameraInUse}
                     aria-haspopup="dialog"
+                    aria-describedby={cameraInUse ? cameraInUseId : undefined}
+                    title={cameraInUse ? CAMERA_IN_USE_TEXT : undefined}
                     className="w-full min-h-11 sm:min-h-0" />
+                  {cameraInUse && (
+                    <p id={cameraInUseId} className="m-0 text-xs text-fx-text-3">{CAMERA_IN_USE_TEXT}</p>
+                  )}
                   {!isIOS && (
                     <Button type="button" outlined severity="secondary" size="small"
                       icon={<FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />}

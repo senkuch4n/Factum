@@ -87,4 +87,12 @@ public static class AgentErrorCodes
     public const string SessionPlatformUnsupported = "session_platform_unsupported";
     /// <summary>400 del start (F2): en iPhone la sesión usa solo <c>video_only</c>.</summary>
     public const string SessionIosModeUnsupported = "session_ios_mode_unsupported";
+
+    // ── Cámara del procedimiento (grabacion-sesion-completa-f2 §7.6) ──
+    /// <summary>400 de <c>/cameras*</c> y <c>…/session/camera/*</c>: la cámara no está habilitada en este Tatana.</summary>
+    public const string SessionCameraUnsupported = "session_camera_unsupported";
+    /// <summary>409: la cámara de la sesión está grabando (otra cámara pedida, o la vista previa).</summary>
+    public const string CameraBusy = "camera_busy";
+    /// <summary>404 de <c>GET /cameras/preview.jpg</c>: todavía no hay imagen.</summary>
+    public const string CameraPreviewUnavailable = "camera_preview_unavailable";
 }

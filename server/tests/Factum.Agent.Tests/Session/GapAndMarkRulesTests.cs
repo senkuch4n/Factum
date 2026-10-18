@@ -100,6 +100,46 @@ public sealed class MarkRulesTests
         Assert.Equal(300, off);
     }
 
+    private static JournalSegment Cam(int index, DateTime start, DateTime? stop, string state = "saved")
+    {
+        var s = Seg(index, start, stop, state);
+        s.Track = "camara";
+        return s;
+    }
+
+    // F2 (§5.7, D-T5): ubicación en la cámara, estricta (sin respaldo al último que empezó antes).
+    [Fact]
+    public void Locate_Camara_Estricta()
+    {
+        var segs = new[]
+        {
+            Seg(1, T0, T0.AddMinutes(30)),
+            Cam(1, T0.AddSeconds(42.2), T0.AddSeconds(1842.2)),
+            Cam(2, T0.AddSeconds(1842.2), null, "recording"),
+        };
+        Assert.Equal((1, 471.4), MarkRules.Locate(segs, T0.AddSeconds(513.64), T0.AddHours(1), "camara"));
+        Assert.Equal((2, 0.0), MarkRules.Locate(segs, T0.AddSeconds(1842.2), T0.AddHours(1), "camara")); // límite: el nuevo
+        Assert.Equal((2, 100.0), MarkRules.Locate(segs, T0.AddSeconds(1942.2), T0.AddHours(1), "camara"));
+        Assert.Null(MarkRules.Locate(segs, T0.AddSeconds(10), T0.AddHours(1), "camara")); // antes de la cámara
+        Assert.Null(MarkRules.Locate(segs, T0.AddHours(2), T0.AddHours(1), "camara")); // después de "ahora"
+        // Pantalla, igual que antes.
+        Assert.Equal((1, 513.6), MarkRules.Locate(segs, T0.AddSeconds(513.64), T0.AddHours(1), "pantalla"));
+    }
+
+    [Fact]
+    public void Locate_Camara_HuecoYDescartados()
+    {
+        var segs = new[]
+        {
+            Cam(1, T0, T0.AddSeconds(60)),
+            Cam(2, T0.AddSeconds(120), T0.AddSeconds(180), "discarded"),
+        };
+        Assert.Null(MarkRules.Locate(segs, T0.AddSeconds(90), T0.AddHours(1), "camara")); // en el hueco
+        Assert.Null(MarkRules.Locate(segs, T0.AddSeconds(150), T0.AddHours(1), "camara")); // descartado
+        Assert.Null(MarkRules.Locate([], T0, T0, "camara"));
+        Assert.Null(MarkRules.Locate([], T0, T0, "pantalla"));
+    }
+
     [Theory]
     [InlineData("  hola  ", "  hola")]
     [InlineData("", null)]

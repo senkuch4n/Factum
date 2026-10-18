@@ -69,8 +69,39 @@ public static class MarkKinds
     public const string Captura = "captura";
 }
 
-/// <summary>Cámara del procedimiento (F2). En F1 nunca viaja.</summary>
+/// <summary>
+/// Cámara del procedimiento (F2, §7.2.6): la configuración real con la que se grabó. Nunca lleva el <c>id</c> técnico
+/// (D5: no va al backend).
+/// </summary>
 public sealed record SessionCameraDto(string Name, int Width, int Height, int Fps, bool WithAudio);
+
+/// <summary>
+/// Cámara de la sesión activa (§7.2.7, <c>SessionStateDto.camera</c>): este sí lleva el <c>id</c> (lo usa la web para
+/// recordar la cámara, D5). W×H y fps faltan si nunca arrancó.
+/// </summary>
+public sealed record SessionActiveCameraDto(string Id, string Name, int? Width, int? Height, int? Fps, bool WithAudio);
+
+/// <summary>
+/// Tramo continuo de cámara en curso (§5.4, interno: no sale por HTTP). Sirve para conciliar el CSV del segment muxer en
+/// la recuperación (§5.8): ffmpeg sigue vivo si Tatana muere y puede cerrar tramos solo.
+/// </summary>
+public sealed class CameraRunState
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public bool WithAudio { get; set; }
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public int Fps { get; set; }
+    public bool Fallback { get; set; }
+    /// <summary>Hora UTC de la línea <c>Output #0</c>: el segundo 0 de los tiempos del CSV.</summary>
+    public DateTime AnchorAt { get; set; }
+    public int StartNumber { get; set; }
+    public int Pid { get; set; }
+    public DateTime? ProcessStartedAt { get; set; }
+    /// <summary>Líneas del CSV ya aplicadas al diario.</summary>
+    public int CsvLinesDone { get; set; }
+}
 
 /// <summary>Proceso de captura de un tramo abierto (interno: no sale por HTTP). Sirve para la recuperación (§5.10).</summary>
 public sealed class SegmentProcess
@@ -115,15 +146,23 @@ public sealed class JournalSegment
     public SegmentProcess? Process { get; set; }
     /// <summary>Interno: el cierre fue forzado (kill) y hace falta remux.</summary>
     public bool? Forced { get; set; }
+    /// <summary>F2: configuración de la cámara del tramo (solo tramos <c>camara</c>).</summary>
+    public SessionCameraDto? Camera { get; set; }
+    /// <summary>
+    /// Interno (F2, §5.4): archivo que escribe ffmpeg mientras el tramo de cámara graba (<c>camara_NNNN.part.mkv</c>). Se
+    /// renombra a <see cref="Filename"/> al cerrarse.
+    /// </summary>
+    public string? PartFile { get; set; }
 
     public SessionSegmentDto ToDto() => new(Id, Track, Index, Filename, State, StartedAt, StoppedAt, RecordedSeconds,
-        DurationSeconds, Validation, Recovered, OverlapSeconds, StopReason, Size, Sha256);
+        DurationSeconds, Validation, Recovered, OverlapSeconds, StopReason, Size, Sha256, Camera);
 }
 
-/// <summary>Tramo como lo ve la web (§7.2.6), sin el proceso.</summary>
+/// <summary>Tramo como lo ve la web (§7.2.6), sin el proceso ni el <c>part_file</c>.</summary>
 public sealed record SessionSegmentDto(string Id, string Track, int Index, string Filename, string State,
     DateTime StartedAt, DateTime? StoppedAt, double? RecordedSeconds, double? DurationSeconds, string? Validation,
-    bool Recovered, double? OverlapSeconds, string? StopReason, long? Size, string? Sha256);
+    bool Recovered, double? OverlapSeconds, string? StopReason, long? Size, string? Sha256,
+    SessionCameraDto? Camera = null);
 
 /// <summary>Hueco (§7.2.6). <c>to</c> falta mientras sigue abierto.</summary>
 public sealed class SessionGapDto
@@ -141,8 +180,12 @@ public sealed class SessionMarkDto
 {
     public string Id { get; set; } = "";
     public DateTime At { get; set; }
-    public int SegmentIndex { get; set; }
-    public double OffsetSeconds { get; set; }
+    /// <summary>Tramo de pantalla. [DU1=A] null si la pantalla no grababa (marca con el cable desconectado).</summary>
+    public int? SegmentIndex { get; set; }
+    public double? OffsetSeconds { get; set; }
+    /// <summary>F2: tramo de cámara que contiene <c>at</c> (null si la cámara no grababa).</summary>
+    public int? CameraSegmentIndex { get; set; }
+    public double? CameraOffsetSeconds { get; set; }
     public string? Text { get; set; }
     public string? Filename { get; set; }
     public string Kind { get; set; } = MarkKinds.Manual;
@@ -180,6 +223,8 @@ public sealed class SessionJournalDoc
     public int? AndroidVersion { get; set; }
     /// <summary>Hora del último corte (para <c>stopped_at</c> del estado).</summary>
     public DateTime? StoppedAt { get; set; }
+    /// <summary>F2: tramo continuo de cámara en curso (null = la cámara no graba).</summary>
+    public CameraRunState? CameraRun { get; set; }
 
     public CaseSessionDto ToDto() => new(SchemaVersion, SessionId, CaseId, Serial, Platform, AgentVersion,
         SegmentMinutes, Audio, Camera, State, SessionStates.HasStopReason(State) ? StopReason : null,
@@ -196,7 +241,8 @@ public sealed class SessionJournalDoc
 
     internal static SessionMarkDto Clone(SessionMarkDto m) => new()
     {
-        Id = m.Id, At = m.At, SegmentIndex = m.SegmentIndex, OffsetSeconds = m.OffsetSeconds, Text = m.Text,
+        Id = m.Id, At = m.At, SegmentIndex = m.SegmentIndex, OffsetSeconds = m.OffsetSeconds,
+        CameraSegmentIndex = m.CameraSegmentIndex, CameraOffsetSeconds = m.CameraOffsetSeconds, Text = m.Text,
         Filename = m.Filename, Kind = m.Kind,
     };
 }
@@ -233,12 +279,38 @@ public sealed record SessionStateDto(
     string? StopReason,
     DateTime? StoppedAt,
     IReadOnlyList<SessionWarningDto> Warnings,
-    string? OriginId)
+    string? OriginId,
+    SessionActiveCameraDto? Camera = null)
 {
     public static SessionStateDto IdleFor(string caseId) =>
-        new(caseId, null, null, SessionStates.Idle, false, null, null, null, null, null, "off", null, null, 0, 0,
+        new(caseId, null, null, SessionStates.Idle, false, null, null, null, null, null, CameraStates.Off, null, null, 0, 0,
             null, null, [], null);
 }
+
+/// <summary><c>camera_state</c> (§7.2.7).</summary>
+public static class CameraStates
+{
+    public const string Off = "off";
+    public const string Recording = "recording";
+    public const string Failed = "failed";
+}
+
+/// <summary><c>warnings[].detail</c> de <c>camera_failed</c> (§7.2.7).</summary>
+public static class CameraFailDetails
+{
+    public const string Permission = "permission";
+    public const string Blocked = "blocked";
+    public const string NotFound = "not_found";
+    public const string Unsupported = "unsupported";
+    public const string Stalled = "stalled";
+}
+
+/// <summary>Cámara pedida en el start de la sesión y en <c>…/session/camera/start</c> (§7.2.4, §7.2.5).</summary>
+public sealed record StartCameraRequest(string? Id = null, string? Name = null, bool WithAudio = false,
+    string? OriginId = null);
+
+/// <summary>Body de <c>…/session/camera/stop</c> y <c>…/session/camera/retry</c> (§7.2.5).</summary>
+public sealed record CameraClosedRequest(string? OriginId = null);
 
 /// <summary>Body de <c>POST /cases/{caseId}/session/start</c> (§7.2.2).</summary>
 public sealed record StartSessionRequest(
@@ -249,7 +321,7 @@ public sealed record StartSessionRequest(
     bool SkipScreenCheck = false,
     string? OriginId = null,
     string? IosMode = null,
-    JsonElement? Camera = null);
+    StartCameraRequest? Camera = null);
 
 /// <summary>Body de <c>POST /cases/{caseId}/session/stop</c> (§7.2.3).</summary>
 public sealed record StopSessionRequest(string? Reason = null, string? OriginId = null);

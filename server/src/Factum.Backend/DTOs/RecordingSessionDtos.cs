@@ -27,7 +27,8 @@ public sealed record SessionSegmentDto(
     double? OverlapSeconds = null,
     string? StopReason = null,
     long? Size = null,
-    string? Sha256 = null);
+    string? Sha256 = null,
+    SessionCameraDto? Camera = null);
 
 /// <summary>Hueco del diario (<c>to</c> ausente o null = abierto).</summary>
 public sealed record SessionGapDto(
@@ -46,7 +47,9 @@ public sealed record SessionMarkDto(
     double? OffsetSeconds = null,
     string? Text = null,
     string? Filename = null,
-    string? Kind = null);
+    string? Kind = null,
+    int? CameraSegmentIndex = null,
+    double? CameraOffsetSeconds = null);
 
 /// <summary>
 /// <c>PUT /api/cases/{id}/recording-session</c>: el diario de Tatana sin <c>case_id</c>, <c>schema_version</c> ni

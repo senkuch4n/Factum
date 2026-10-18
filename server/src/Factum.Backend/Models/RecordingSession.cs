@@ -72,6 +72,8 @@ public sealed class SessionSegment
     [BsonIgnoreIfNull] public string? StopReason { get; set; }
     [BsonIgnoreIfNull] public long? Size { get; set; }
     [BsonIgnoreIfNull] public string? Sha256 { get; set; }
+    /// <summary>F2: configuración de la cámara con la que se grabó el tramo (solo tramos <c>camara</c>).</summary>
+    [BsonIgnoreIfNull] public SessionCamera? Camera { get; set; }
 }
 
 /// <summary>Hueco de la grabación: <c>To</c> null mientras sigue abierto.</summary>
@@ -92,8 +94,17 @@ public sealed class SessionMark
 {
     public string Id { get; set; } = "";
     public DateTime At { get; set; }
-    public int SegmentIndex { get; set; }
-    public double OffsetSeconds { get; set; }
+    /// <summary>
+    /// Tramo de pantalla que contiene la marca. F2 [DU1=A]: null si la marca se hizo con la pantalla sin grabar (solo
+    /// con <see cref="CameraSegmentIndex"/>). Los documentos de F1 tienen el entero y se leen igual.
+    /// </summary>
+    public int? SegmentIndex { get; set; }
+    /// <summary>Segundo del video de pantalla; null junto con <see cref="SegmentIndex"/>.</summary>
+    [BsonIgnoreIfNull] public double? OffsetSeconds { get; set; }
+    /// <summary>F2: tramo de cámara que contiene la marca (null si la cámara no grababa).</summary>
+    [BsonIgnoreIfNull] public int? CameraSegmentIndex { get; set; }
+    /// <summary>F2: segundo del video de cámara (junto con <see cref="CameraSegmentIndex"/>).</summary>
+    [BsonIgnoreIfNull] public double? CameraOffsetSeconds { get; set; }
     [BsonIgnoreIfNull] public string? Text { get; set; }
     [BsonIgnoreIfNull] public string? Filename { get; set; }
     /// <summary><c>manual</c> | <c>captura</c>.</summary>

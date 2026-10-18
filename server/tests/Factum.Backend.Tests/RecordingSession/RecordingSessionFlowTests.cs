@@ -152,6 +152,40 @@ public sealed class RecordingSessionFlowTests
     }
 
     [Fact]
+    public async Task Settings_PreviousEnabledYPreviousWithCamera_F2()
+    {
+        var svc = Service();
+        await svc.SaveRecordingSessionSettingsAsync("c1", new RecordingSessionSettingsRequest(true, false), Dni);
+        var created = _events.Events[^1].Detail!;
+        Assert.Null(created.PreviousEnabled); // el sub-documento se creó en ese pedido
+        Assert.Null(created.PreviousWithCamera);
+
+        await svc.SaveRecordingSessionSettingsAsync("c1", new RecordingSessionSettingsRequest(true, true), Dni);
+        var sumo = _events.Events[^1].Detail!;
+        Assert.Equal((true, true, true, false), (sumo.Enabled, sumo.WithCamera, sumo.PreviousEnabled, sumo.PreviousWithCamera));
+
+        await svc.SaveRecordingSessionSettingsAsync("c1", new RecordingSessionSettingsRequest(true, false), Dni);
+        var quito = _events.Events[^1].Detail!;
+        Assert.Equal((true, false, true, true), (quito.Enabled, quito.WithCamera, quito.PreviousEnabled, quito.PreviousWithCamera));
+        Assert.Equal(3, _events.Events.Count);
+    }
+
+    [Fact]
+    public async Task Settings_EnabledFalse_GuardaWithCameraFalse_F2()
+    {
+        var svc = Service();
+        await svc.SaveRecordingSessionSettingsAsync("c1", new RecordingSessionSettingsRequest(true, true), Dni);
+        Assert.True(_store.Get("c1").RecordingSession!.WithCamera);
+
+        await svc.SaveRecordingSessionSettingsAsync("c1", new RecordingSessionSettingsRequest(false, true), Dni);
+        var rs = _store.Get("c1").RecordingSession!;
+        Assert.False(rs.Enabled);
+        Assert.False(rs.WithCamera); // D9 = A: no hay cámara sin sesión
+        var off = _events.Events[^1].Detail!;
+        Assert.Equal((false, false, true, true), (off.Enabled, off.WithCamera, off.PreviousEnabled, off.PreviousWithCamera));
+    }
+
+    [Fact]
     public async Task Settings_ModosDeLaInstalacion()
     {
         var disabled = Service("disabled");

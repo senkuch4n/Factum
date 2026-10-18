@@ -15,6 +15,11 @@ interface Props {
   onClose: () => void;
   /** `true` si la marca se guardó (cierra el popover). */
   onSave: (text: string) => Promise<boolean>;
+  /**
+   * Aclaración sobre dónde queda la marca (F2 [DU1=A]): con el cable desconectado y la
+   * cámara grabando, la marca se ubica solo en el video de la cámara.
+   */
+  hint?: string | null;
 }
 
 /**
@@ -22,7 +27,7 @@ interface Props {
  * anclado al tile. Esc o un clic afuera lo cierran y el foco vuelve al tile.
  * Entra desde el tile (origen arriba, 150 ms) y solo con `motion-safe`.
  */
-export function MarkMomentPopover({ id, open, anchorRef, busy, onClose, onSave }: Props) {
+export function MarkMomentPopover({ id, open, anchorRef, busy, onClose, onSave, hint = null }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
@@ -80,8 +85,10 @@ export function MarkMomentPopover({ id, open, anchorRef, busy, onClose, onSave }
           value={text}
           onChange={e => setText(e.target.value)}
           autoComplete="off"
+          aria-describedby={hint ? `${id}-hint` : undefined}
           className="w-full"
         />
+        {hint && <p id={`${id}-hint`} className="m-0 text-xs text-fx-text-2">{hint}</p>}
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button type="button" text severity="secondary" size="small" label="Cancelar" onClick={close}
             className="min-h-11 sm:min-h-0" />
