@@ -82,23 +82,30 @@ public static class ReportSessionTexts
               ". Para no perder imagen entre tramos, cada tramo nuevo comenzó antes de cerrar el anterior, por lo que " +
               "tramos consecutivos se superponen alrededor de un segundo.");
 
-        if (camera && session.Camera is { } c)
-            lines.Add($"Se registró en video el procedimiento sobre el equipo con la cámara «{c.Name}» " +
-                      $"({c.Width}×{c.Height}, {c.Fps} cuadros por segundo, " +
-                      (c.WithAudio ? "con el micrófono de la estación de trabajo" : "sin audio") +
-                      "), en archivos separados de los de la pantalla y con los mismos cortes.");
-
         var screen = rows.Where(r => r.Track != TrackCamera).ToList();
         var cams = rows.Where(r => r.Track == TrackCamera).ToList();
+
+        // F2 (§6.4 punto 3): la cámara tiene sus propios cortes; la configuración sale de cada tramo (D-T4).
+        if (camera) lines.Add(CameraParagraph(session, cams));
+
         if (rows.Count > 0)
         {
             var first = rows.Min(r => r.StartedAt);
             var last = rows.Max(r => r.StoppedAt);
-            // QA #80 B-3: tiempo cubierto (unión de intervalos), sin contar dos veces los solapamientos de los cortes.
-            var total = CoveredSeconds(screen.Count > 0 ? screen : rows);
-            lines.Add($"Se grabaron {Duration(total)} en {screen.Count} tramos" +
-                      (cams.Count > 0 ? $" de pantalla y {cams.Count} de cámara" : "") +
-                      $", entre el {Full(first, zone)} y el {End(first, last, zone)}.");
+            if (cams.Count > 0)
+            {
+                // F2 (§6.4 punto 4, D10 = A): total por pista con la unión de intervalos.
+                lines.Add($"Se grabaron {Duration(CoveredSeconds(screen))} de pantalla en {screen.Count} tramos y " +
+                          $"{Duration(CoveredSeconds(cams))} de cámara en {cams.Count} tramos, entre el " +
+                          $"{Full(first, zone)} y el {End(first, last, zone)}.");
+            }
+            else
+            {
+                // QA #80 B-3: tiempo cubierto (unión de intervalos), sin contar dos veces los solapamientos de los cortes.
+                var total = CoveredSeconds(screen.Count > 0 ? screen : rows);
+                lines.Add($"Se grabaron {Duration(total)} en {screen.Count} tramos" +
+                          $", entre el {Full(first, zone)} y el {End(first, last, zone)}.");
+            }
         }
 
         if (timestampsEnabled)
@@ -106,6 +113,63 @@ public static class ReportSessionTexts
 
         lines.Add(ClockLine(deviceDetails));
         return string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// Párrafo de la cámara (§6.4 punto 3): una sola configuración, o varias agrupadas por tramos consecutivos de cámara
+    /// con la misma {nombre, W×H, fps, audio}; siempre seguido de la frase de los cortes propios.
+    /// </summary>
+    internal static string CameraParagraph(RecordingSession session, IReadOnlyList<SessionSegment> cams)
+    {
+        var groups = new List<(SessionCamera Camera, List<int> Indexes)>();
+        foreach (var seg in cams.OrderBy(c => c.Index))
+        {
+            var cfg = seg.Camera ?? session.Camera;
+            if (cfg is null) continue;
+            if (groups.Count > 0 && SameConfig(groups[^1].Camera, cfg)) groups[^1].Indexes.Add(seg.Index);
+            else groups.Add((cfg, [seg.Index]));
+        }
+        if (groups.Count == 0 && session.Camera is { } header) groups.Add((header, []));
+
+        string first;
+        var distinct = groups.Select(g => g.Camera).Distinct(CameraConfigComparer.Instance).Count();
+        if (groups.Count == 0)
+            first = "Se registró en video el procedimiento sobre el equipo, en archivos separados de los de la pantalla.";
+        else if (distinct == 1)
+            first = $"Se registró en video el procedimiento sobre el equipo con la cámara «{groups[0].Camera.Name}» " +
+                    $"({CameraSpec(groups[0].Camera)}), en archivos separados de los de la pantalla.";
+        else
+        {
+            var parts = groups.Select(g =>
+                $"con la cámara «{g.Camera.Name}» ({CameraSpec(g.Camera)}) en {SegmentRange(g.Indexes)}").ToList();
+            first = "Se registró en video el procedimiento sobre el equipo, en archivos separados de los de la pantalla, " +
+                    JoinList(parts) + ".";
+        }
+        var minutes = session.SegmentMinutes;
+        return first + $" La cámara se grabó en tramos propios de hasta {minutes} {(minutes == 1 ? "minuto" : "minutos")}, " +
+               "contados desde que empezó a grabar, y siguió grabando aunque se cortara la grabación de la pantalla. Para " +
+               "cruzar los dos videos deben usarse las horas de inicio y fin de cada tramo y la ubicación de las marcas de " +
+               "momento en cada video.";
+    }
+
+    private static string CameraSpec(SessionCamera c) =>
+        $"{c.Width}×{c.Height}, {c.Fps} cuadros por segundo, " +
+        (c.WithAudio ? "con el micrófono de la estación de trabajo" : "sin audio");
+
+    private static string SegmentRange(List<int> indexes) =>
+        indexes.Count == 1 ? $"el tramo de cámara {indexes[0]}" : $"los tramos de cámara {indexes[0]} a {indexes[^1]}";
+
+    private static string JoinList(List<string> parts) =>
+        parts.Count == 1 ? parts[0] : string.Join(", ", parts.Take(parts.Count - 1)) + " y " + parts[^1];
+
+    private static bool SameConfig(SessionCamera a, SessionCamera b) =>
+        a.Name == b.Name && a.Width == b.Width && a.Height == b.Height && a.Fps == b.Fps && a.WithAudio == b.WithAudio;
+
+    private sealed class CameraConfigComparer : IEqualityComparer<SessionCamera>
+    {
+        public static readonly CameraConfigComparer Instance = new();
+        public bool Equals(SessionCamera? a, SessionCamera? b) => a is null ? b is null : b is not null && SameConfig(a, b);
+        public int GetHashCode(SessionCamera c) => HashCode.Combine(c.Name, c.Width, c.Height, c.Fps, c.WithAudio);
     }
 
     /// <summary>Segundos cubiertos por la unión de los intervalos [inicio, fin] de los tramos (los solapados cuentan una vez).</summary>
@@ -160,6 +224,12 @@ public static class ReportSessionTexts
         return lines;
     }
 
+    private const string NotRecording = "no grababa en ese momento";
+
+    /// <summary>"tramo i, minuto mm:ss" o "no grababa en ese momento" (§6.4, marcas en las dos pistas).</summary>
+    public static string Location(int? index, double? offsetSeconds) =>
+        index is { } i ? $"tramo {i}, minuto {MinuteSecond(offsetSeconds ?? 0)}" : NotRecording;
+
     /// <summary><c>{detalleRegistroAudiovisual}</c>: huecos, fin de la grabación y marcas.</summary>
     public static string Detail(RecordingSession session, TimeZoneInfo zone)
     {
@@ -195,16 +265,23 @@ public static class ReportSessionTexts
         var marks = session.Marks.OrderBy(m => m.At).ToList();
         if (marks.Count > 0)
         {
-            var camera = session.Camera is not null || session.Segments.Any(s => s.Track == TrackCamera);
+            var camera = session.Camera is not null || session.Segments.Any(s => s.Track == TrackCamera) ||
+                         marks.Any(m => m.CameraSegmentIndex is not null);
             lines.Add(camera
-                ? "Marcas de momento (para ubicar hechos en el video de la pantalla; el mismo minuto sirve aproximadamente para el de la cámara):"
+                ? "Marcas de momento (para ubicar hechos en los videos de la pantalla y de la cámara):"
                 : "Marcas de momento (para ubicar hechos en el video de la pantalla):");
             foreach (var m in marks)
             {
                 var what = !string.IsNullOrWhiteSpace(m.Text) ? m.Text!
                     : !string.IsNullOrWhiteSpace(m.Filename) ? "Captura " + m.Filename
                     : "Marca sin texto";
-                lines.Add($"• {Time(m.At, zone)} — tramo {m.SegmentIndex}, minuto {MinuteSecond(m.OffsetSeconds)} del video — {what}");
+                if (camera)
+                    lines.Add($"• {Time(m.At, zone)} — pantalla: {Location(m.SegmentIndex, m.OffsetSeconds)}; cámara: " +
+                              $"{Location(m.CameraSegmentIndex, m.CameraOffsetSeconds)} — {what}");
+                else if (m.SegmentIndex is { } index)
+                    lines.Add($"• {Time(m.At, zone)} — tramo {index}, minuto {MinuteSecond(m.OffsetSeconds ?? 0)} del video — {what}");
+                else
+                    lines.Add($"• {Time(m.At, zone)} — pantalla: {NotRecording} — {what}");
             }
         }
         return string.Join("\n", lines);

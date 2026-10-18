@@ -243,9 +243,15 @@ function recordingSessionTitle(ev: CaseEvent): string {
   const d = ev.detail ?? {};
   switch (ev.type) {
     case "recording_session_settings_changed":
-      return d.enabled === false
-        ? "Se desactivó la grabación de la sesión"
-        : `Se activó la grabación de la sesión${d.with_camera ? " con cámara" : ""}`;
+      if (d.enabled === false) return "Se desactivó la grabación de la sesión";
+      // Cámara sumada o quitada con la sesión ya activa (F2 §9.3, `previous_*` del backend).
+      if (d.with_camera === true && d.previous_enabled === true && d.previous_with_camera === false) {
+        return "Se sumó la cámara a la grabación de la sesión";
+      }
+      if (d.with_camera === false && d.previous_with_camera === true) {
+        return "Se quitó la cámara de la grabación de la sesión";
+      }
+      return `Se activó la grabación de la sesión${d.with_camera ? " con cámara" : ""}`;
     case "recording_session_started":
       return `Empezó la grabación de la sesión (${trackWord(d.track)})`;
     case "recording_session_segment_closed": {

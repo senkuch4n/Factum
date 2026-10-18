@@ -297,7 +297,11 @@ public sealed class RecordingOptions
 public sealed class SessionOptions
 {
     public const long DefaultScreenBytesPerMinute = 30L * 1024 * 1024;
-    public const long DefaultCameraBytesPerMinute = 12L * 1024 * 1024;
+    /// <summary>F2 (§5.10): 18 MiB/min, medido 17 MB/min con <c>-tune zerolatency</c> (D-T1).</summary>
+    public const long DefaultCameraBytesPerMinute = 18L * 1024 * 1024;
+    public const int DefaultCameraStartTimeoutSeconds = 10;
+    public const int DefaultCameraStallSeconds = 20;
+    public const int DefaultCameraPreviewIdleSeconds = 120;
     public const int DefaultMinSegmentMinutes = 5;
     public const int DefaultMaxSegmentMinutes = 120;
     public const int DefaultDiskCheckSeconds = 60;
@@ -348,6 +352,23 @@ public sealed class SessionOptions
     public int CameraHeight { get; set; } = DefaultCameraHeight;
     public int CameraFps { get; set; } = DefaultCameraFps;
     public int CameraCrf { get; set; } = DefaultCameraCrf;
+    /// <summary>
+    /// F2 (§5.10, D-T12): cámara del procedimiento habilitada. null = solo en macOS (Windows y Linux sin QA). Se usa
+    /// <see cref="EffectiveCameraEnabled"/>.
+    /// </summary>
+    public bool? CameraEnabled { get; set; }
+    /// <summary>Espera de la línea <c>Output #0</c> de ffmpeg al arrancar la cámara (3–60 s).</summary>
+    public int CameraStartTimeoutSeconds { get; set; } = DefaultCameraStartTimeoutSeconds;
+    /// <summary>Vigilancia del archivo de la cámara: sin crecer este tiempo, se corta (0 = sin vigilancia; 10–300).</summary>
+    public int CameraStallSeconds { get; set; } = DefaultCameraStallSeconds;
+    /// <summary>La vista previa antes de grabar se corta sola sin pedidos de la imagen (10–600 s).</summary>
+    public int CameraPreviewIdleSeconds { get; set; } = DefaultCameraPreviewIdleSeconds;
+    /// <summary>Solo tests y desarrollo: la cámara es lavfi (testsrc2) aunque no sea mock. Nunca abre una cámara real.</summary>
+    public bool CameraLavfi { get; set; }
+
+    /// <summary><see cref="CameraEnabled"/> o, si no se configuró, true solo en macOS.</summary>
+    public bool EffectiveCameraEnabled => CameraEnabled ?? OperatingSystem.IsMacOS();
+
     /// <summary>Solo mock o desarrollo: duración del tramo en segundos (0 = usar los minutos del start).</summary>
     public int MockSegmentSeconds { get; set; }
     /// <summary>Solo mock: espacio libre simulado (para ver los avisos sin llenar el disco).</summary>
@@ -441,6 +462,21 @@ public sealed class SessionOptions
         {
             Warn(nameof(CameraCrf), CameraCrf, DefaultCameraCrf);
             CameraCrf = DefaultCameraCrf;
+        }
+        if (CameraStartTimeoutSeconds is < 3 or > 60)
+        {
+            Warn(nameof(CameraStartTimeoutSeconds), CameraStartTimeoutSeconds, DefaultCameraStartTimeoutSeconds);
+            CameraStartTimeoutSeconds = DefaultCameraStartTimeoutSeconds;
+        }
+        if (CameraStallSeconds != 0 && CameraStallSeconds is < 10 or > 300)
+        {
+            Warn(nameof(CameraStallSeconds), CameraStallSeconds, DefaultCameraStallSeconds);
+            CameraStallSeconds = DefaultCameraStallSeconds;
+        }
+        if (CameraPreviewIdleSeconds is < 10 or > 600)
+        {
+            Warn(nameof(CameraPreviewIdleSeconds), CameraPreviewIdleSeconds, DefaultCameraPreviewIdleSeconds);
+            CameraPreviewIdleSeconds = DefaultCameraPreviewIdleSeconds;
         }
         if (MockSegmentSeconds != 0 && MockSegmentSeconds is < 10 or > 3600)
         {

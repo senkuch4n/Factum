@@ -48,6 +48,44 @@ public sealed class CaseSessionController(SessionRecorder recorder, ILogger<Case
         catch (AgentHttpException ex) { return Error(ex); }
     }
 
+    // ── Cámara del procedimiento (grabacion-sesion-completa-f2 §7.2.5) ──
+
+    [HttpPost("camera/start")]
+    public async Task<IActionResult> StartCamera(string caseId, [FromBody] StartCameraRequest? request)
+    {
+        try { return Ok(await recorder.StartCameraAsync(caseId, request)); }
+        catch (AgentHttpException ex) { return Error(ex); }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "No se pudo sumar la cámara a la sesión del caso {CaseId}", caseId);
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
+
+    [HttpPost("camera/stop")]
+    public async Task<IActionResult> StopCamera(string caseId, [FromBody] CameraClosedRequest? request)
+    {
+        try { return Ok(await recorder.StopCameraAsync(caseId, request?.OriginId)); }
+        catch (AgentHttpException ex) { return Error(ex); }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "No se pudo quitar la cámara de la sesión del caso {CaseId}", caseId);
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
+
+    [HttpPost("camera/retry")]
+    public async Task<IActionResult> RetryCamera(string caseId, [FromBody] CameraClosedRequest? request)
+    {
+        try { return Ok(await recorder.RetryCameraAsync(caseId, request?.OriginId)); }
+        catch (AgentHttpException ex) { return Error(ex); }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "No se pudo reintentar la cámara de la sesión del caso {CaseId}", caseId);
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
+
     [HttpGet]
     public IActionResult Get(string caseId)
     {

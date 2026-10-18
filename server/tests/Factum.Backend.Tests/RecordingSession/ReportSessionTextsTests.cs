@@ -77,11 +77,70 @@ public sealed class ReportSessionTextsTests
                         "cerró, se le calculó su valor hash SHA-256 y se incorporó al caso apenas terminó. Los archivos " +
                         "se entregan sin edición ni recodificación dentro del contenedor de la evidencia, en la carpeta \"sesion\".",
             lines[0]);
+        // F2 (§6.4): la configuración sale del tramo si la tiene, si no de la cabecera; sin "los mismos cortes".
         Assert.Equal("Se registró en video el procedimiento sobre el equipo con la cámara «Integrated Webcam» (1280×720, " +
-                     "15 cuadros por segundo, sin audio), en archivos separados de los de la pantalla y con los mismos cortes.",
+                     "15 cuadros por segundo, sin audio), en archivos separados de los de la pantalla." +
+                     " La cámara se grabó en tramos propios de hasta 30 minutos, contados desde que empezó a grabar, y siguió " +
+                     "grabando aunque se cortara la grabación de la pantalla. Para cruzar los dos videos deben usarse las " +
+                     "horas de inicio y fin de cada tramo y la ubicación de las marcas de momento en cada video.",
             lines[2]);
-        Assert.Equal("Se grabaron 10 min en 1 tramos de pantalla y 1 de cámara, entre el 14/10/2026 14:02:10 y el 14:12:11.",
+        Assert.Equal("Se grabaron 10 min de pantalla en 1 tramos y 10 min de cámara en 1 tramos, entre el 14/10/2026 " +
+                     "14:02:10 y el 14:12:11.",
             lines[3]);
+        Assert.DoesNotContain("mismos cortes", string.Join("\n", lines));
+    }
+
+    private static SessionCamera Cam(string name = "Cámara de la MacBook Air", int w = 1280, int h = 720, int fps = 15,
+        bool audio = false) => new() { Name = name, Width = w, Height = h, Fps = fps, WithAudio = audio };
+
+    [Fact]
+    public void Descripcion_ConCamara_DosConfiguraciones_TotalesPorPistaConSolapamiento()
+    {
+        // Pantalla: 0–600 y 599–1200 (1 s de solapamiento) = 1200 s cubiertos. Cámara: 1 y 2 con la Mac, 3 con otra.
+        var c1 = Seg(1, 0, 300, track: "camara"); c1.Camera = Cam();
+        var c2 = Seg(2, 300, 300, track: "camara"); c2.Camera = Cam();
+        var c3 = Seg(3, 700, 100, track: "camara"); c3.Camera = Cam("Integrated Webcam", 640, 480, 30, audio: true);
+        var rows = new List<SessionSegment> { Seg(1, 0, 600), Seg(2, 599, 601), c1, c2, c3 };
+        var s = Session([.. rows]);
+        s.Camera = c3.Camera;
+        var lines = ReportSessionTexts.Description(s, rows, null, false, 0, Ar).Split('\n');
+        Assert.Equal("Se registró en video el procedimiento sobre el equipo, en archivos separados de los de la pantalla, " +
+                     "con la cámara «Cámara de la MacBook Air» (1280×720, 15 cuadros por segundo, sin audio) en los tramos " +
+                     "de cámara 1 a 2 y con la cámara «Integrated Webcam» (640×480, 30 cuadros por segundo, con el " +
+                     "micrófono de la estación de trabajo) en el tramo de cámara 3." +
+                     " La cámara se grabó en tramos propios de hasta 30 minutos, contados desde que empezó a grabar, y siguió " +
+                     "grabando aunque se cortara la grabación de la pantalla. Para cruzar los dos videos deben usarse las " +
+                     "horas de inicio y fin de cada tramo y la ubicación de las marcas de momento en cada video.",
+            lines[2]);
+        Assert.Equal("Se grabaron 20 min de pantalla en 2 tramos y 11 min 40 s de cámara en 3 tramos, entre el " +
+                     "14/10/2026 14:02:10 y el 14:22:10.", lines[3]);
+    }
+
+    [Fact]
+    public void Descripcion_TresGrupos_SeparadorComaY()
+    {
+        var segs = new[] { Cam("A"), Cam("B"), Cam("A") }.Select((c, i) =>
+        {
+            var seg = Seg(i + 1, i * 60, 60, track: "camara");
+            seg.Camera = c;
+            return seg;
+        }).ToList();
+        var text = ReportSessionTexts.CameraParagraph(Session([.. segs]), segs);
+        Assert.StartsWith("Se registró en video el procedimiento sobre el equipo, en archivos separados de los de la " +
+                          "pantalla, con la cámara «A» (1280×720, 15 cuadros por segundo, sin audio) en el tramo de cámara " +
+                          "1, con la cámara «B» (1280×720, 15 cuadros por segundo, sin audio) en el tramo de cámara 2 y " +
+                          "con la cámara «A» (1280×720, 15 cuadros por segundo, sin audio) en el tramo de cámara 3.", text);
+    }
+
+    [Fact]
+    public void Descripcion_SinCamara_IdenticaAF1()
+    {
+        // Regresión: los textos aprobados en #80 no cambian si el caso no tiene cámara.
+        var rows = new List<SessionSegment> { Seg(1, 0, 600), Seg(2, 599, 601) };
+        var lines = ReportSessionTexts.Description(Session([.. rows]), rows, null, false, 0, Ar).Split('\n');
+        Assert.Equal(4, lines.Length);
+        Assert.Equal("Se grabaron 20 min en 2 tramos, entre el 14/10/2026 14:02:10 y el 14:22:10.", lines[2]);
+        Assert.DoesNotContain("cámara", string.Join("\n", lines));
     }
 
     [Fact]
@@ -154,8 +213,33 @@ public sealed class ReportSessionTextsTests
         var lines = ReportSessionTexts.Detail(s, Ar).Split('\n');
         Assert.Equal("Sin huecos: la grabación fue continua entre el primer y el último tramo.", lines[0]);
         Assert.Equal("La grabación terminó el 14/10/2026 14:03:10 (el perito detuvo la grabación).", lines[1]);
-        Assert.Equal("Marcas de momento (para ubicar hechos en el video de la pantalla; el mismo minuto sirve " +
-                     "aproximadamente para el de la cámara):", lines[2]);
+        Assert.Equal("Marcas de momento (para ubicar hechos en los videos de la pantalla y de la cámara):", lines[2]);
+        Assert.Equal("• 14:02:15 — pantalla: tramo 1, minuto 00:05; cámara: no grababa en ese momento — x", lines[3]);
+        Assert.DoesNotContain("aproximadamente", string.Join("\n", lines));
+    }
+
+    [Fact]
+    public void Detalle_MarcasEnLasDosPistas_YSoloCamara()
+    {
+        var s = Session(Seg(1, 0, 600), Seg(1, 0, 900, track: "camara"));
+        s.Marks =
+        [
+            new SessionMark { Id = "m1", At = T0.AddSeconds(512.4), SegmentIndex = 1, OffsetSeconds = 512.4,
+                CameraSegmentIndex = 1, CameraOffsetSeconds = 470.3, Text = "Abre el chat", Kind = "manual" },
+            // [DU1=A] con el cable desconectado: solo ubicación en la cámara.
+            new SessionMark { Id = "m2", At = T0.AddSeconds(773), CameraSegmentIndex = 1, CameraOffsetSeconds = 773,
+                Text = "Desconecto el cable para cambiarlo", Kind = "manual" },
+            new SessionMark { Id = "m3", At = T0.AddSeconds(800), CameraSegmentIndex = 1, CameraOffsetSeconds = 800,
+                Filename = "foto_1.jpg", Kind = "captura" },
+        ];
+        var lines = ReportSessionTexts.Detail(s, Ar).Split('\n');
+        Assert.Equal(
+        [
+            "Marcas de momento (para ubicar hechos en los videos de la pantalla y de la cámara):",
+            "• 14:10:42 — pantalla: tramo 1, minuto 08:32; cámara: tramo 1, minuto 07:50 — Abre el chat",
+            "• 14:15:03 — pantalla: no grababa en ese momento; cámara: tramo 1, minuto 12:53 — Desconecto el cable para cambiarlo",
+            "• 14:15:30 — pantalla: no grababa en ese momento; cámara: tramo 1, minuto 13:20 — Captura foto_1.jpg",
+        ], lines[^4..]);
     }
 
     [Theory]

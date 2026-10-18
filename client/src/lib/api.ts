@@ -625,6 +625,9 @@ export interface CaseEventDetail {
   /** `recording_session_settings_changed`. */
   enabled?: boolean;
   with_camera?: boolean;
+  /** Valores anteriores al cambio (grabacion-sesion-completa-f2 §6.3); ausentes si el sub-documento se creó ahí. */
+  previous_enabled?: boolean;
+  previous_with_camera?: boolean;
   /** Pista del tramo o del hueco. */
   track?: RecordingSessionTrack;
   segment_index?: number;
@@ -1057,6 +1060,8 @@ export interface RecordingSessionSegment {
   stop_reason?: RecordingSessionReason | null;
   size?: number | null;
   sha256?: string | null;
+  /** Configuración de la cámara del tramo: objeto en tramos `camara`, `null` en pantalla (F2 §7.4). */
+  camera?: RecordingSessionCamera | null;
 }
 
 export interface RecordingSessionGap {
@@ -1071,8 +1076,12 @@ export interface RecordingSessionGap {
 export interface RecordingSessionMark {
   id: string;
   at: string;
-  segment_index: number;
-  offset_seconds: number;
+  /** Ubicación en la pantalla; `null` si la pantalla no grababa (F2 [DU1=A]). */
+  segment_index?: number | null;
+  offset_seconds?: number | null;
+  /** Ubicación en la cámara; `null` si ningún tramo de cámara cubre `at` (F2 §7.5). */
+  camera_segment_index?: number | null;
+  camera_offset_seconds?: number | null;
   text?: string | null;
   filename?: string | null;
   kind: "manual" | "captura";

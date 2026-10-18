@@ -76,6 +76,72 @@ public sealed class SessionJournalTests : IDisposable
     }
 
     [Fact]
+    public void Camara_IdaYVuelta_YDtoSinInternos()
+    {
+        var doc = Sample();
+        var cam = new SessionCameraDto("Cámara de la MacBook Air", 1280, 720, 15, false);
+        doc.Camera = cam;
+        doc.CameraRun = new CameraRunState
+        {
+            Id = "Cámara de la MacBook Air", Name = "Cámara de la MacBook Air", Width = 1280, Height = 720, Fps = 15,
+            AnchorAt = T0, StartNumber = 1, Pid = 777, ProcessStartedAt = T0, CsvLinesDone = 2,
+        };
+        doc.Segments.Add(new JournalSegment
+        {
+            Id = "c1", Track = "camara", Index = 1, Filename = "sesion_camara_001_20261014_140210.mkv",
+            State = SegmentStates.Recording, StartedAt = T0, PartFile = "camara_0001.part.mkv", Camera = cam,
+            Process = new SegmentProcess { Pid = 777, StartedAt = T0, Exe = "ffmpeg" },
+        });
+        doc.Marks.Add(new SessionMarkDto
+        {
+            Id = "m2", At = T0.AddSeconds(900), CameraSegmentIndex = 1, CameraOffsetSeconds = 900, Text = "Sin cable",
+            Kind = "manual",
+        });
+        _journal.Save(doc, T0.AddHours(1));
+        var json = File.ReadAllText(_journal.PathFor(CaseId));
+        foreach (var key in new[] { "\"camera_run\"", "\"part_file\"", "\"csv_lines_done\"", "\"anchor_at\"",
+                     "\"camera_segment_index\"", "\"camera_offset_seconds\"", "\"with_audio\"" })
+            Assert.Contains(key, json);
+
+        var back = _journal.Load(CaseId).Doc!;
+        Assert.Equal(2, back.CameraRun!.CsvLinesDone);
+        Assert.Equal("camara_0001.part.mkv", back.Segments[2].PartFile);
+        Assert.Equal(cam, back.Segments[2].Camera);
+        Assert.Null(back.Marks[1].SegmentIndex);
+        Assert.Equal(1, back.Marks[1].CameraSegmentIndex);
+
+        var dto = JsonSerializer.Serialize(back.ToDto(),
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        Assert.DoesNotContain("camera_run", dto);
+        Assert.DoesNotContain("part_file", dto);
+        Assert.DoesNotContain("\"process\"", dto);
+        Assert.Contains("\"camera\":{\"name\":\"Cámara de la MacBook Air\",\"width\":1280,\"height\":720,\"fps\":15,\"with_audio\":false}", dto);
+        Assert.DoesNotContain("\"id\":\"Cámara", dto); // el id técnico no sale (D5)
+        // [DU1=A] Marca solo de cámara: sin segment_index en HTTP.
+        Assert.Contains("\"id\":\"m2\",\"at\":", dto);
+        Assert.DoesNotContain("\"id\":\"m2\",\"at\":\"2026-10-14T17:17:10.481Z\",\"segment_index\"", dto);
+    }
+
+    [Fact]
+    public void DiarioDeF1_SinCamposDeCamara_SeLeeIgual()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_journal.PathFor(CaseId))!);
+        File.WriteAllText(_journal.PathFor(CaseId), """
+            { "schema_version": 1, "session_id": "3f1c0000000000000000000000000001", "case_id": "3f2a9c1e-0000-4000-8000-0000000000d1",
+              "serial": "R58", "platform": "android", "segment_minutes": 30, "audio": "device", "state": "stopped",
+              "segments": [], "gaps": [],
+              "marks": [ { "id": "m1", "at": "2026-10-14T17:10:43.000Z", "segment_index": 1, "offset_seconds": 513.6, "kind": "manual" } ],
+              "updated_at": "2026-10-14T18:00:00.000Z" }
+            """);
+        var doc = _journal.Load(CaseId).Doc!;
+        Assert.Null(doc.CameraRun);
+        Assert.Equal(1, doc.Marks[0].SegmentIndex);
+        Assert.Null(doc.Marks[0].CameraSegmentIndex);
+    }
+
+    [Fact]
     public void Dto_SinProcesoNiStayAwake()
     {
         var dto = Sample().ToDto();

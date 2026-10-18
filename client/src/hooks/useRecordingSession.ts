@@ -8,24 +8,41 @@
  * - refleja el estado de Tatana (WS `session_state` y `/agent/state`);
  * - activa la sesión al entrar al paso 3 y la cierra al salir (`ensureStarted` / `stop`);
  * - suma cada tramo cerrado a la bandeja (`onSegmentSaved` → guardado + registro + sello);
- * - replica el diario en el backend (`PUT …/recording-session`, debounce 1 s, de a uno).
+ * - replica el diario en el backend (`PUT …/recording-session`, debounce 1 s, de a uno);
+ * - suma la cámara del procedimiento (grabacion-sesion-completa-f2 §9.2): lista, vista
+ *   previa, empezar / quitar / reintentar y la cámara recordada en esta PC (D5).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   agent, AgentError, screenBlockOf,
-  type AgentEvent, type CaseSessionDto, type SessionCapacity, type SessionMarkAddedData, type SessionMarkDto,
-  type SessionSegmentClosedData, type SessionStateDto, type SessionStopReason, type ScreenshotTakenData,
+  type AgentEvent, type CameraDevice, type CaseSessionDto, type SessionCameraRequest, type SessionCapacity,
+  type SessionMarkAddedData, type SessionMarkDto, type SessionSegmentClosedData, type SessionStateDto,
+  type SessionStopReason, type ScreenshotTakenData,
 } from "@/lib/agent";
 import { api, ApiError, type Case, type RecordingSessionMode } from "@/lib/api";
 import { agentErrorMessage, RECORDING_SESSION_API_TEXT } from "@/lib/agent-messages";
 import {
-  defaultEnabled, isSessionActive, isSessionRecording, lastStopAt, noSpaceText, offsetText, toBackendSnapshot,
+  canMarkSession, defaultEnabled, isSessionActive, isSessionRecording, lastStopAt, markLocationText, noSpaceText,
+  sessionHasCamera, toBackendSnapshot,
 } from "@/lib/recording-session";
+import { loadSessionCamera, saveSessionCamera, type SessionCameraPref } from "@/lib/session-camera-pref";
 import { isSessionExpiredError, onSessionRestored, sessionState as webSessionState } from "@/lib/session";
 
-/** Qué ofrece el Tatana conectado. `unknown` mientras se consulta. F2 suma cámara e iPhone. */
-export type SessionCapability = "unknown" | "none" | "android";
+/**
+ * Qué ofrece el Tatana conectado. `unknown` mientras se consulta. `android+camera`:
+ * informa `recording_session_camera_v1` (grabacion-sesion-completa-f2 §9.2).
+ */
+export type SessionCapability = "unknown" | "none" | "android" | "android+camera";
+
+/** La pantalla de Android se puede grabar (con o sin cámara). */
+export const capabilityRecordsAndroid = (c: SessionCapability): boolean => c === "android" || c === "android+camera";
+
+/** La vista previa no abrió la cámara (`POST /cameras/preview` con `ok: false`). */
+export interface CameraPreviewProblem {
+  detail: string | null;
+  error: string | null;
+}
 
 /** Por qué no arrancó la sesión (se muestra en la tarjeta). */
 export type SessionStartProblem =
@@ -60,6 +77,8 @@ export interface UseRecordingSessionInput {
 }
 
 const SYNC_DEBOUNCE_MS = 1000;
+/** Busy de la sesión: la cámara (F2) tiene el suyo. */
+export interface SessionBusy { start: boolean; stop: boolean; mark: boolean; settings: boolean; camera: boolean }
 const SYNC_RETRY_MS = 15_000;
 const RESUME_NOTICE_MS = 8000;
 
@@ -85,6 +104,23 @@ function stateFromJournal(j: CaseSessionDto): SessionStateDto {
   };
 }
 
+/**
+ * Cámara a pedir en el `start` al retomar (F2 §9.2, D1 = A): solo si el caso la usaba y
+ * Tatana tiene la cámara. `id` = el recordado en esta PC si es la misma cámara; si no, el nombre.
+ */
+function resumeCamera(
+  rs: Case["recording_session"] | null | undefined,
+  capability: SessionCapability,
+): SessionCameraRequest | null {
+  if (rs?.with_camera !== true || capability !== "android+camera") return null;
+  const remembered = loadSessionCamera();
+  const withAudio = rs.camera?.with_audio ?? false;
+  if (remembered && (!rs.camera || remembered.name === rs.camera.name)) {
+    return { id: remembered.id, name: remembered.name, with_audio: withAudio };
+  }
+  return rs.camera ? { name: rs.camera.name, with_audio: withAudio } : null;
+}
+
 export function useRecordingSession(input: UseRecordingSessionInput) {
   const {
     currentCase, agentStorage, deviceSerial, platform, androidVersion, step, agentOnline, captureBlocked,
@@ -102,9 +138,20 @@ export function useRecordingSession(input: UseRecordingSessionInput) {
   const [journal, setJournal] = useState<CaseSessionDto | null>(null);
   const [capacity, setCapacity] = useState<SessionCapacity | null>(null);
   const [pendingSync, setPendingSync] = useState(false);
-  const [busy, setBusy] = useState<{ start: boolean; stop: boolean; mark: boolean; settings: boolean }>({
-    start: false, stop: false, mark: false, settings: false,
+  const [busy, setBusy] = useState<SessionBusy>({
+    start: false, stop: false, mark: false, settings: false, camera: false,
   });
+  // ── Cámara del procedimiento (F2 §9.2) ──
+  const [cameras, setCameras] = useState<CameraDevice[] | null>(null);
+  const [camerasError, setCamerasError] = useState<string | null>(null);
+  const [selectedCamera, setSelectedCamera] = useState<SessionCameraPref | null>(null);
+  const [withMic, setWithMic] = useState(false);
+  /** Casilla "Sumar cámara del procedimiento" (además, queda tildada con la cámara grabando o caída). */
+  const [cameraOptIn, setCameraOptInRaw] = useState(false);
+  const [previewOn, setPreviewOn] = useState(false);
+  const [previewProblem, setPreviewProblem] = useState<CameraPreviewProblem | null>(null);
+  /** La cámara llegó a grabar en esta entrada al caso (texto "dejó de grabar" vs. "no se pudo empezar"). */
+  const [cameraEverRecorded, setCameraEverRecorded] = useState(false);
   const [problem, setProblem] = useState<SessionStartProblem | null>(null);
   const [interruption, setInterruption] = useState<SessionInterruption | null>(null);
   const [resumeNotice, setResumeNotice] = useState<{ at: string | null; index: number | null } | null>(null);
@@ -123,6 +170,18 @@ export function useRecordingSession(input: UseRecordingSessionInput) {
   const caseIdRef = useRef(caseId);
   useEffect(() => { caseIdRef.current = caseId; }, [caseId]);
   const stateRef = useRef(state);
+  const capabilityRef = useRef(capability);
+  useEffect(() => { capabilityRef.current = capability; }, [capability]);
+  const selectedCameraRef = useRef(selectedCamera);
+  useEffect(() => { selectedCameraRef.current = selectedCamera; }, [selectedCamera]);
+  const previewOnRef = useRef(previewOn);
+  useEffect(() => { previewOnRef.current = previewOn; }, [previewOn]);
+  const cameraOptInRef = useRef(cameraOptIn);
+  useEffect(() => { cameraOptInRef.current = cameraOptIn; }, [cameraOptIn]);
+  const journalRef = useRef(journal);
+  useEffect(() => { journalRef.current = journal; }, [journal]);
+  const withMicRef = useRef(withMic);
+  useEffect(() => { withMicRef.current = withMic; }, [withMic]);
   const announceSeq = useRef(0);
 
   const announce = useCallback((text: string) => {
@@ -138,7 +197,11 @@ export function useRecordingSession(input: UseRecordingSessionInput) {
     const prev = stateRef.current;
     stateRef.current = next;
     setStateRaw(next);
+    if (next?.camera_state === "recording") setCameraEverRecorded(true);
     if (!next || opts.silent) return;
+    // Cámara (F2 §9.3): "Cámara grabando" / "La cámara dejó de grabar".
+    if (next.camera_state === "recording" && prev?.camera_state !== "recording") announce("Cámara grabando");
+    else if (next.camera_state === "failed" && prev?.camera_state === "recording") announce("La cámara dejó de grabar");
     const wasActive = isSessionActive(prev?.state);
     const wasRecording = isSessionRecording(prev?.state);
     const nowRecording = isSessionRecording(next.state);
@@ -184,6 +247,12 @@ export function useRecordingSession(input: UseRecordingSessionInput) {
     setCapacity(null);
     setBackendSupported(null);
     setRefreshedCase(null);
+    setCameraOptInRaw(false);
+    setPreviewProblem(null);
+    setCameraEverRecorded(false);
+    // La vista previa es de la PC, no del caso: se corta al cambiar de caso.
+    if (previewOnRef.current) void agent.stopCameraPreview().catch(() => { /* sin Tatana: se corta sola */ });
+    setPreviewOn(false);
   }, [caseId]);
 
   // Tatana reconectado (puede ser otra versión): se vuelve a consultar la capability.
@@ -292,7 +361,9 @@ export function useRecordingSession(input: UseRecordingSessionInput) {
         if (!id) return;
         const ok = await agent.supportsRecordingSession();
         if (caseIdRef.current !== id) continue;
-        setCapability(ok ? "android" : "none");
+        const withCamera = ok && await agent.supportsSessionCamera();
+        if (caseIdRef.current !== id) continue;
+        setCapability(!ok ? "none" : withCamera ? "android+camera" : "android");
         if (!ok) return;
         const [agentState, j] = await Promise.all([
           agent.agentRecordingSession(),
@@ -332,7 +403,11 @@ export function useRecordingSession(input: UseRecordingSessionInput) {
   /** Espacio libre (antes de empezar y después de detener). Sin medición o con error, nada. */
   const refreshCapacity = useCallback(async () => {
     try {
-      const cap = await agent.sessionCapacity(false, inputRef.current.segmentMinutes);
+      // Con la cámara pedida (casilla, grabando, o el caso la usaba): la estimación de las dos pistas.
+      const st = stateRef.current;
+      const camera = capabilityRef.current === "android+camera" && (cameraOptInRef.current
+        || st?.camera_state === "recording" || inputRef.current.currentCase?.recording_session?.with_camera === true);
+      const cap = await agent.sessionCapacity(camera, inputRef.current.segmentMinutes);
       setCapacity(cap);
     } catch { /* Tatana viejo o sin respuesta: sin estimación */ }
   }, []);
@@ -346,10 +421,10 @@ export function useRecordingSession(input: UseRecordingSessionInput) {
     void refresh();
   }, [watchStep, step, caseId, agentOnline, refresh]);
   useEffect(() => {
-    if (!inStep3 || !agentOnline || capability !== "android") return;
+    if (!inStep3 || !agentOnline || !capabilityRecordsAndroid(capability)) return;
     if (isSessionActive(state?.state)) return;
     void refreshCapacity();
-  }, [inStep3, agentOnline, capability, state?.state, refreshCapacity]);
+  }, [inStep3, agentOnline, capability, state?.state, cameraOptIn, refreshCapacity]);
 
   // Pestaña de vuelta al frente: Tatana pudo cambiar mientras tanto.
   useEffect(() => {
@@ -423,12 +498,14 @@ export function useRecordingSession(input: UseRecordingSessionInput) {
     setBusy(b => ({ ...b, start: true }));
     setProblem(null);
     try {
+      const camera = resumeCamera(inp.currentCase?.recording_session, capabilityRef.current);
       const res = await agent.startSession(id, {
         serial: inp.deviceSerial,
         platform: "android",
         android_version: inp.androidVersion,
         segment_minutes: inp.segmentMinutes,
         ...(opts.skipScreenCheck ? { skip_screen_check: true } : {}),
+        ...(camera ? { camera } : {}),
       });
       if (caseIdRef.current !== id) return false;
       setRecovered(false);
@@ -500,7 +577,10 @@ export function useRecordingSession(input: UseRecordingSessionInput) {
     setBusy(b => ({ ...b, mark: true }));
     try {
       const m = await agent.addSessionMark(id, text.trim() || null);
-      setLastMark({ id: m.id, text: `Marca guardada · tramo ${m.segment_index}, minuto ${offsetText(m.offset_seconds)}` });
+      // Con cámara en la sesión, la ubicación en los dos videos (F2 §9.3).
+      const hasCamera = typeof m.camera_segment_index === "number" || stateRef.current?.camera_state === "recording"
+        || sessionHasCamera(journalRef.current) || sessionHasCamera(inputRef.current.currentCase?.recording_session);
+      setLastMark({ id: m.id, text: `Marca guardada · ${markLocationText(m, hasCamera)}` });
       scheduleSync();
       return m;
     } catch (e) {
@@ -537,6 +617,183 @@ export function useRecordingSession(input: UseRecordingSessionInput) {
     }
   }, [ensureStarted, stop]);
 
+  /* ══ Cámara del procedimiento (F2 §9.2) ══ */
+
+
+  const settingsError = (e: unknown) => {
+    const msg = e instanceof ApiError
+      ? (e.serverMessage ?? (e.code ? RECORDING_SESSION_API_TEXT[e.code] : null)
+        ?? "No se pudo guardar la opción de la grabación de la sesión. Reintentá.")
+      : "No se pudo guardar la opción de la grabación de la sesión. Reintentá.";
+    inputRef.current.onError(msg);
+  };
+
+  /** `with_camera` del caso (D-T11): solo si cambia. */
+  const saveWithCamera = useCallback(async (id: string, withCamera: boolean) => {
+    if ((inputRef.current.currentCase?.recording_session?.with_camera === true) === withCamera) return;
+    try {
+      const updated = await api.saveRecordingSessionSettings(id, { enabled: true, with_camera: withCamera });
+      if (caseIdRef.current === id) inputRef.current.onCaseUpdated(updated);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) { setBackendSupported(false); return; }
+      settingsError(e);
+    }
+  }, []);
+
+  const startPreview = useCallback(async (cam: SessionCameraPref) => {
+    if (stateRef.current?.camera_state === "recording") return; // la previa sale de la grabación
+    setPreviewProblem(null);
+    try {
+      const r = await agent.startCameraPreview(cam.id, cam.name);
+      if (selectedCameraRef.current?.id !== cam.id || !cameraOptInRef.current) return;
+      if (r.ok) { setPreviewOn(true); return; }
+      setPreviewOn(false);
+      setPreviewProblem({ detail: r.detail ?? null, error: r.error ?? null });
+    } catch (e) {
+      setPreviewOn(false);
+      if (e instanceof AgentError && e.code === "camera_busy") return; // la cámara de la sesión ya graba
+      setPreviewProblem({ detail: null, error: agentErrorMessage(e, { action: "session" }) });
+    }
+  }, []);
+
+  const stopPreview = useCallback(() => {
+    if (!previewOnRef.current) return;
+    setPreviewOn(false);
+    void agent.stopCameraPreview().catch(() => { /* Tatana la corta sola a los 120 s */ });
+  }, []);
+
+  /** Lista de cámaras con la preselección: la recordada (D5) → por nombre → la primera. */
+  const loadCameras = useCallback(async (refreshList: boolean): Promise<SessionCameraPref | null> => {
+    try {
+      const r = await agent.listCameras(refreshList);
+      setCameras(r.cameras);
+      setCamerasError(r.error ?? null);
+      const cur = selectedCameraRef.current;
+      const inList = (c: SessionCameraPref | null) => !!c && r.cameras.some(x => x.id === c.id);
+      if (inList(cur)) return cur;
+      const live = stateRef.current?.camera;
+      const remembered = loadSessionCamera();
+      const pick = (live && r.cameras.find(x => x.id === live.id || x.name === live.name))
+        ?? (remembered && (r.cameras.find(x => x.id === remembered.id) ?? r.cameras.find(x => x.name === remembered.name)))
+        ?? r.cameras[0] ?? null;
+      const next = pick ? { id: pick.id, name: pick.name } : null;
+      selectedCameraRef.current = next;
+      setSelectedCamera(next);
+      return next;
+    } catch (e) {
+      setCameras([]);
+      setCamerasError(agentErrorMessage(e, { action: "session" }));
+      return null;
+    }
+  }, []);
+
+  /** Casilla "Sumar cámara del procedimiento". Apagarla con la cámara grabando la saca (la confirmación es de la UI). */
+  const setCameraOptIn = useCallback(async (on: boolean): Promise<void> => {
+    const id = caseIdRef.current;
+    if (!id) return;
+    if (on) {
+      cameraOptInRef.current = true;
+      setCameraOptInRaw(true);
+      const cam = await loadCameras(false);
+      if (cam && cameraOptInRef.current && stateRef.current?.camera_state !== "recording") await startPreview(cam);
+      return;
+    }
+    cameraOptInRef.current = false;
+    setCameraOptInRaw(false);
+    setPreviewProblem(null);
+    stopPreview();
+    const camState = stateRef.current?.camera_state;
+    if (camState !== "recording" && camState !== "failed") return;
+    setBusy(b => ({ ...b, camera: true }));
+    try {
+      const res = await agent.stopSessionCamera(id);
+      if (caseIdRef.current !== id) return;
+      applyState(res);
+      scheduleSync();
+      await saveWithCamera(id, false);
+    } catch (e) {
+      inputRef.current.onError(agentErrorMessage(e, { action: "session" }));
+    } finally {
+      setBusy(b => ({ ...b, camera: false }));
+    }
+  }, [applyState, loadCameras, saveWithCamera, scheduleSync, startPreview, stopPreview]);
+
+  /** Elegir otra cámara: cambia la vista previa. No se puede con la cámara grabando. */
+  const selectCamera = useCallback((cam: SessionCameraPref) => {
+    if (stateRef.current?.camera_state === "recording") return;
+    selectedCameraRef.current = cam;
+    setSelectedCamera(cam);
+    if (cameraOptInRef.current) void startPreview(cam);
+  }, [startPreview]);
+
+  /** "Empezar a grabar la cámara". */
+  const startCamera = useCallback(async (): Promise<void> => {
+    const id = caseIdRef.current;
+    const cam = selectedCameraRef.current;
+    if (!id || !cam) return;
+    setBusy(b => ({ ...b, camera: true }));
+    try {
+      // Windows (dshow) no comparte la cámara: primero se corta la previa.
+      if (previewOnRef.current) {
+        setPreviewOn(false);
+        await agent.stopCameraPreview().catch(() => { /* Tatana igual la corta al abrir la de la sesión */ });
+      }
+      const res = await agent.startSessionCamera(id, { id: cam.id, name: cam.name, with_audio: withMicRef.current });
+      if (caseIdRef.current !== id) return;
+      applyState(res);
+      scheduleSync();
+      if (res.camera_state === "recording") {
+        saveSessionCamera(cam);
+        await saveWithCamera(id, true);
+      }
+    } catch (e) {
+      inputRef.current.onError(agentErrorMessage(e, { action: "session" }));
+    } finally {
+      setBusy(b => ({ ...b, camera: false }));
+    }
+  }, [applyState, saveWithCamera, scheduleSync]);
+
+  /** "Reintentar cámara" del aviso `camera_failed`. */
+  const retryCamera = useCallback(async (): Promise<void> => {
+    const id = caseIdRef.current;
+    if (!id) return;
+    setBusy(b => ({ ...b, camera: true }));
+    try {
+      const res = await agent.retrySessionCamera(id);
+      if (caseIdRef.current !== id) return;
+      applyState(res);
+      scheduleSync();
+      if (res.camera_state === "recording") await saveWithCamera(id, true);
+    } catch (e) {
+      inputRef.current.onError(agentErrorMessage(e, { action: "session" }));
+    } finally {
+      setBusy(b => ({ ...b, camera: false }));
+    }
+  }, [applyState, saveWithCamera, scheduleSync]);
+
+  /** "Actualizar vista": vuelve a pedir la previa (Tatana la corta sola a los 120 s sin pedidos). */
+  const refreshPreview = useCallback(async () => {
+    const cam = selectedCameraRef.current;
+    if (cam && cameraOptInRef.current && stateRef.current?.camera_state !== "recording") await startPreview(cam);
+  }, [startPreview]);
+
+  // Cámara grabando o caída sin la casilla tildada en esta pestaña (recarga, retomar): la lista hace falta igual.
+  const cameraChecked = cameraOptIn || state?.camera_state === "recording" || state?.camera_state === "failed";
+  useEffect(() => {
+    if (!inStep3 || !agentOnline || capability !== "android+camera" || !cameraChecked || cameras !== null) return;
+    void loadCameras(false);
+  }, [inStep3, agentOnline, capability, cameraChecked, cameras, loadCameras]);
+
+  // Fuera del paso 3 (o sin Tatana): la vista previa se corta sin esperar.
+  useEffect(() => {
+    if (inStep3 && agentOnline) return;
+    stopPreview();
+    if (!inStep3) { cameraOptInRef.current = false; setCameraOptInRaw(false); setPreviewProblem(null); }
+  }, [inStep3, agentOnline, stopPreview]);
+  useEffect(() => () => {
+    if (previewOnRef.current) void agent.stopCameraPreview().catch(() => { /* se corta sola */ });
+  }, []);
+
   /* ══ Activación al entrar al paso 3 (§9.3) ══ */
 
   /** Una sola vez por entrada al paso (y por caso): un "Detener" no se deshace solo. */
@@ -544,7 +801,7 @@ export function useRecordingSession(input: UseRecordingSessionInput) {
   const settingsAttempted = useRef<string | null>(null);
   useEffect(() => { if (!inStep3) entryKey.current = null; }, [inStep3]);
 
-  const ready = inStep3 && agentOnline && capability === "android" && !!deviceSerial && platform === "android"
+  const ready = inStep3 && agentOnline && capabilityRecordsAndroid(capability) && !!deviceSerial && platform === "android"
     && !captureBlocked && backendSupported !== false && mode !== "disabled";
   const enabledInCase = rs?.enabled === true;
   const hasSettings = !!rs;
@@ -596,11 +853,41 @@ export function useRecordingSession(input: UseRecordingSessionInput) {
     void ensureStarted();
   }, [ready, caseId, hasSettings, enabledInCase, currentState, mode, refreshedCase, ensureStarted]);
 
+  const ownState = sameId(state?.case_id, caseId);
+  const cameraRecording = ownState && state?.camera_state === "recording";
+  // "No se pudo empezar" si la cámara nunca grabó en esta entrada ni dejó tramos en esta sesión.
+  const runStart = state?.session_started_at ?? state?.run_started_at ?? null;
+  const cameraNeverStarted = !cameraEverRecorded && !(journal?.segments ?? []).some(
+    s => s.track === "camara" && (!runStart || s.started_at >= runStart),
+  );
+
   return {
     capability, backendSupported, state, foreign, journal, capacity, pendingSync, busy, problem,
     interruption, resumeNotice, announcement, recovered, lastMark,
-    active: isSessionActive(state?.state) && sameId(state?.case_id, caseId),
-    recording: isSessionRecording(state?.state) && sameId(state?.case_id, caseId),
+    active: isSessionActive(state?.state) && ownState,
+    recording: isSessionRecording(state?.state) && ownState,
+    /** "Marcar momento" disponible (F2 [DU1=A]: también con el cable desconectado si la cámara graba). */
+    canMark: canMarkSession(state) && ownState,
+    camera: {
+      available: capability === "android+camera",
+      checked: cameraChecked,
+      cameras, camerasError, selected: selectedCamera, withMic, previewOn, previewProblem,
+      recording: cameraRecording,
+      /** Cámara en uso según Tatana (se muestra bloqueada mientras graba). */
+      liveCamera: ownState && state?.camera ? { id: state.camera.id, name: state.camera.name } : null,
+      liveWithAudio: ownState && state?.camera?.with_audio === true,
+      busy: busy.camera,
+      neverStarted: cameraNeverStarted,
+      /** D4 = B (+ D-T10): la cámara de la PC está ocupada por Tatana. */
+      inUse: cameraRecording || previewOn,
+      setOptIn: setCameraOptIn,
+      select: selectCamera,
+      setWithMic,
+      start: startCamera,
+      retry: retryCamera,
+      refreshList: async () => { await loadCameras(true); },
+      refreshPreview,
+    },
     refresh, handleAgentEvent, ensureStarted, stop, stopDetached, mark, setEnabled, flushSync,
     dismissProblem: () => setProblem(null),
     dismissInterruption: () => setInterruption(null),
@@ -609,3 +896,6 @@ export function useRecordingSession(input: UseRecordingSessionInput) {
 }
 
 export type RecordingSessionApi = ReturnType<typeof useRecordingSession>;
+
+/** Controles de la cámara del procedimiento que expone el hook (F2 §9.2). */
+export type SessionCameraApi = RecordingSessionApi["camera"];

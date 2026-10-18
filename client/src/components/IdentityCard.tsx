@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button } from "primereact/button";
 import { Camera, Check, Loader2, RotateCcw } from "lucide-react";
 import { agentFileURL } from "@/lib/agent";
@@ -14,7 +14,7 @@ import { Lightbox } from "./Lightbox";
  * captura a la derecha. Va dentro de un `<li>` de una lista con `divide-y`.
  */
 export function IdentityCard({
-  label, role, icon: Icon, name, dni, blobURL, agentFilename, fileURL, onCapture, loading, done, disabled,
+  label, role, icon: Icon, name, dni, blobURL, agentFilename, fileURL, onCapture, loading, done, disabled, disabledReason,
 }: {
   label: string; role: string; icon: React.ElementType<{ className?: string }>;
   name?: string; dni?: string;
@@ -24,8 +24,15 @@ export function IdentityCard({
   onCapture: () => void; loading: boolean; done: boolean;
   /** Durante el envío de evidencia: no se puede tomar ni retomar la foto (verla sí). */
   disabled?: boolean;
+  /**
+   * Motivo visible por el que no se puede tomar la foto (grabacion-sesion-completa-f2 D4 = B:
+   * la cámara del procedimiento ocupa la de la PC). Deshabilita la captura; ver la foto sigue.
+   */
+  disabledReason?: string;
 }) {
   const [lightbox, setLightbox] = useState(false);
+  const reasonId = useId();
+  const blocked = !!disabled || !!disabledReason;
   const previewSrc = blobURL || fileURL || (agentFilename ? agentFileURL(agentFilename) : undefined);
   const showPhoto = done && !!previewSrc;
 
@@ -42,8 +49,10 @@ export function IdentityCard({
         <button
           type="button"
           onClick={showPhoto ? () => setLightbox(true) : onCapture}
-          disabled={loading || (!!disabled && !showPhoto)}
+          disabled={loading || (blocked && !showPhoto)}
           aria-label={showPhoto ? `Ver foto — ${label}` : `Tomar foto — ${label}`}
+          aria-describedby={disabledReason && !showPhoto ? reasonId : undefined}
+          title={disabledReason && !showPhoto ? disabledReason : undefined}
           aria-haspopup="dialog"
           className={cn("relative h-14 w-14 shrink-0 rounded-full disabled:cursor-wait", FOCUS_RING)}
         >
@@ -79,6 +88,9 @@ export function IdentityCard({
             <span className="text-fx-text-3">· {role}</span>
           </p>
           <p className="m-0 mt-0.5 truncate text-xs text-fx-text-2">{subtitle}</p>
+          {disabledReason && (
+            <p id={reasonId} className="m-0 mt-1 text-xs text-fx-text-3">{disabledReason}</p>
+          )}
         </div>
 
         {/* ── Acción ── */}
@@ -91,8 +103,10 @@ export function IdentityCard({
             : <Camera className="h-3.5 w-3.5" aria-hidden="true" />}
           label={loading ? "Abriendo…" : showPhoto ? "Retomar" : "Tomar foto"}
           loading={loading}
-          disabled={disabled}
+          disabled={blocked}
           onClick={onCapture}
+          title={disabledReason}
+          aria-describedby={disabledReason ? reasonId : undefined}
           aria-label={`${showPhoto ? "Retomar" : "Tomar"} foto — ${label}`}
           aria-haspopup="dialog"
           className="shrink-0 min-h-11 sm:min-h-0"

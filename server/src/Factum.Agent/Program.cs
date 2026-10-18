@@ -161,6 +161,11 @@ builder.Services.AddSingleton<SegmentCloser>();
 builder.Services.AddSingleton<StayAwakeKeeper>();
 builder.Services.AddSingleton<ISessionTrackFactory, SessionTrackFactory>();
 builder.Services.AddSingleton<SessionRecoveryStatus>();
+// grabacion-sesion-completa-f2 §5.1: cámara del procedimiento (lista, pistas de ffmpeg y vista previa).
+builder.Services.AddSingleton<CameraDevices>();
+builder.Services.AddSingleton<ICameraTrackFactory, CameraTrackFactory>();
+builder.Services.AddSingleton<CameraPreviewService>();
+builder.Services.AddSingleton<ICameraPreview>(sp => sp.GetRequiredService<CameraPreviewService>());
 builder.Services.AddSingleton<SessionRecorder>();
 builder.Services.AddSingleton<IOperationSource>(sp => sp.GetRequiredService<SessionRecorder>());
 builder.Services.AddSingleton<SessionRecovery>();
@@ -358,10 +363,14 @@ await adb.EnsureServerAsync();
 {
     var post = app.Services.GetRequiredService<IVideoPostprocessService>();
     var sessionRecorder = app.Services.GetRequiredService<SessionRecorder>();
+    var cameraPreview = app.Services.GetRequiredService<CameraPreviewService>();
     app.Lifetime.ApplicationStopping.Register(() =>
     {
         try { sessionRecorder.ShutdownAsync(TimeSpan.FromSeconds(15)).GetAwaiter().GetResult(); }
         catch (Exception ex) { logger.LogWarning(ex, "Error al cerrar la grabación de la sesión al apagar"); }
+        // grabacion-sesion-completa-f2 §5.9: la vista previa de la cámara no sobrevive al apagado.
+        try { cameraPreview.StopAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult(); }
+        catch (Exception ex) { logger.LogWarning(ex, "Error al cortar la vista previa de la cámara al apagar"); }
         try
         {
             post.CancelAll("agent_stopping");

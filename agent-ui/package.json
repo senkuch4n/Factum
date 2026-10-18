@@ -55,7 +55,11 @@
     "mac": {
       "target": "dmg",
       "category": "public.app-category.utilities",
-      "icon": "resources/icon.icns"
+      "icon": "resources/icon.icns",
+      "extendInfo": {
+        "NSCameraUsageDescription": "Tatana usa la cámara para grabar el procedimiento de recolección cuando el perito lo activa.",
+        "NSMicrophoneUsageDescription": "Tatana usa el micrófono solo cuando el perito lo activa para una grabación."
+      }
     },
     "win": {
       "target": [

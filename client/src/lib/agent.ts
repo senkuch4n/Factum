@@ -213,8 +213,49 @@ export interface SessionWarning {
   /** `disk_low`. */
   available_bytes?: number | null;
   minutes_left?: number | null;
-  /** `camera_failed`: `"permission"` si macOS negó la cámara (F2). */
-  detail?: string | null;
+  /** `camera_failed`: motivo de la falla de la cámara (grabacion-sesion-completa-f2 §7.2.7). */
+  detail?: SessionCameraFailDetail | string | null;
+}
+
+/** `warnings[].detail` de `camera_failed` (F2 §7.2.7). Ausente = sin motivo conocido. */
+export type SessionCameraFailDetail = "permission" | "blocked" | "not_found" | "unsupported" | "stalled";
+
+/** Cámara de la sesión activa (`SessionStateDto.camera`, F2 §7.2.7). W×H y fps faltan si nunca arrancó. */
+export interface SessionActiveCamera {
+  id: string;
+  name: string;
+  width?: number | null;
+  height?: number | null;
+  fps?: number | null;
+  with_audio: boolean;
+}
+
+/** Cámara de la PC (`GET /cameras`, F2 §7.2.1). */
+export interface CameraDevice {
+  id: string;
+  name: string;
+  backend: "avfoundation" | "dshow" | "v4l2" | "mock" | string;
+}
+
+/** `GET /cameras`. Sin ffmpeg: lista vacía con `error`. */
+export interface CameraListResponse {
+  cameras: CameraDevice[];
+  error?: string | null;
+}
+
+/** `POST /cameras/preview` (F2 §7.2.2). Una cámara que no abre no es error HTTP. */
+export interface CameraPreviewResult {
+  ok: boolean;
+  detail?: SessionCameraFailDetail | string | null;
+  error?: string | null;
+}
+
+/** Cámara elegida para la sesión (body de `camera/start` y `camera` del start, F2 §7.2.4–7.2.5). */
+export interface SessionCameraRequest {
+  /** Opcional en el start de la sesión: si falta, Tatana busca por `name`. */
+  id?: string;
+  name: string;
+  with_audio: boolean;
 }
 
 /** `SessionStateDto` (§7.2.7): `start`/`stop`, WS `session_state` y `/agent/state.recording_session`. */
@@ -233,6 +274,8 @@ export interface SessionStateDto {
   camera_state?: "off" | "recording" | "failed" | null;
   camera_segment_index?: number | null;
   camera_segment_started_at?: string | null;
+  /** Cámara de la sesión mientras `camera_state ≠ "off"` (F2 §7.2.7). */
+  camera?: SessionActiveCamera | null;
   segments_saved?: number | null;
   recorded_seconds?: number | null;
   stop_reason?: SessionReason | null;
@@ -258,6 +301,8 @@ export interface SessionSegmentDto {
   stop_reason?: SessionReason | null;
   size?: number | null;
   sha256?: string | null;
+  /** Solo en tramos `camara` (F2 §7.2.6). Nunca trae el `id` técnico. */
+  camera?: SessionCameraInfo | null;
 }
 
 /** Hueco del diario: `to` falta (o `null`) si sigue abierto. */
@@ -274,8 +319,12 @@ export interface SessionGapDto {
 export interface SessionMarkDto {
   id: string;
   at: string;
-  segment_index: number;
-  offset_seconds: number;
+  /** Ubicación en la pantalla. Falta si la marca se hizo con la pantalla sin grabar (F2 [DU1=A]). */
+  segment_index?: number | null;
+  offset_seconds?: number | null;
+  /** Ubicación en la cámara: solo si un tramo de cámara cubre `at` (F2 §5.7). */
+  camera_segment_index?: number | null;
+  camera_offset_seconds?: number | null;
   text?: string | null;
   filename?: string | null;
   kind: "manual" | "captura";
@@ -327,6 +376,8 @@ export interface SessionStartRequest {
   android_version: number;
   segment_minutes: number;
   skip_screen_check?: boolean;
+  /** Cámara del procedimiento al retomar (F2 §7.2.4, D1 = A). */
+  camera?: SessionCameraRequest;
 }
 
 /** Motivo de un `stop` pedido por la web (§7.2.3). */
@@ -592,7 +643,9 @@ export type AgentErrorCode =
   | "device_not_found"
   // Grabación de la sesión (grabacion-sesion-completa §7.7).
   | "session_active" | "session_not_active" | "session_not_found" | "session_file_protected"
-  | "session_platform_unsupported" | "session_ios_mode_unsupported";
+  | "session_platform_unsupported" | "session_ios_mode_unsupported"
+  // Cámara del procedimiento (grabacion-sesion-completa-f2 §7.6).
+  | "session_camera_unsupported" | "camera_busy" | "camera_preview_unavailable";
 
 /** Cuerpo de error de Tatana (claves literales en snake_case). */
 export interface AgentErrorBody {
@@ -1077,6 +1130,61 @@ export const agent = {
     return agentJSON<SessionMarkDto>(`${caseBase(caseId)}/session/marks`, jsonInit("POST", {
       ...(text ? { text } : {}), origin_id: getTabOriginId(),
     }));
+  },
+
+  /* ── Cámara del procedimiento (grabacion-sesion-completa-f2 §7.2) ── */
+
+  /** Cámaras de esta PC (`GET /cameras`). `refresh` saltea la caché de 10 s de Tatana. */
+  async listCameras(refresh = false): Promise<CameraListResponse> {
+    const r = await agentJSON<Partial<CameraListResponse>>(`/cameras${refresh ? "?refresh=true" : ""}`, {
+      signal: AbortSignal.timeout(15_000),
+    });
+    return {
+      cameras: Array.isArray(r?.cameras) ? r.cameras.filter(c => c && typeof c.name === "string") : [],
+      error: typeof r?.error === "string" && r.error.trim() ? r.error.trim() : null,
+    };
+  },
+
+  /** Enciende la vista previa (antes de grabar). `ok: false` si la cámara no abre; 409 `camera_busy`. */
+  async startCameraPreview(id: string, name: string): Promise<CameraPreviewResult> {
+    return agentJSON<CameraPreviewResult>("/cameras/preview", {
+      ...jsonInit("POST", { id, name }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  },
+
+  /** Corta la vista previa. Idempotente (204). */
+  async stopCameraPreview(): Promise<void> {
+    await agentFetch("/cameras/preview", { method: "DELETE", signal: AbortSignal.timeout(5000) });
+  },
+
+  /** URL de la imagen de la vista previa, con `?t=` para no usar la caché. */
+  cameraPreviewURL(): string {
+    return `${AGENT_URL}/cameras/preview.jpg?t=${Date.now()}`;
+  },
+
+  /** Suma la cámara a la sesión en curso del caso. Una cámara que no abre vuelve 200 con `camera_state: "failed"`. */
+  async startSessionCamera(caseId: string, cam: SessionCameraRequest): Promise<SessionStateDto> {
+    return agentJSON<SessionStateDto>(`${caseBase(caseId)}/session/camera/start`, {
+      ...jsonInit("POST", { ...cam, origin_id: getTabOriginId() }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  },
+
+  /** Saca la cámara de la sesión (queda un hueco de cámara). */
+  async stopSessionCamera(caseId: string): Promise<SessionStateDto> {
+    return agentJSON<SessionStateDto>(`${caseBase(caseId)}/session/camera/stop`, {
+      ...jsonInit("POST", { origin_id: getTabOriginId() }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  },
+
+  /** "Reintentar cámara": vuelve a abrir la última cámara pedida en la sesión. */
+  async retrySessionCamera(caseId: string): Promise<SessionStateDto> {
+    return agentJSON<SessionStateDto>(`${caseBase(caseId)}/session/camera/retry`, {
+      ...jsonInit("POST", { origin_id: getTabOriginId() }),
+      signal: AbortSignal.timeout(15_000),
+    });
   },
 
   /** Diario de la sesión del caso en esta PC. `null` si no hay (404). Otros errores: `AgentError`. */

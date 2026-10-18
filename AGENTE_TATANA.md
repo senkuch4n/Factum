@@ -14,6 +14,8 @@
 - Marcar un momento de la sesión
 - Recuperar la grabación de la sesión al reabrir Tatana
 - Cerrar Tatana con una grabación de la sesión en curso
+- Sumar la cámara del procedimiento a la grabación de la sesión
+- Quitar o reintentar la cámara del procedimiento
 
 ### Caso de uso: Instalar Librerias
 > #### Actor principal: Usuario Factum
@@ -379,3 +381,80 @@ ejemplo SIGTERM en macOS/Linux) hace lo mismo con 15 s; un cierre de golpe en Wi
 |3 - Confirma||
 ||4 - La ventana llama a `POST /agent/prepare-shutdown` y recién después cierra el proceso|
 ||5 - Fin de caso de uso|
+
+
+### Caso de uso: Sumar la cámara del procedimiento a la grabación de la sesión
+> #### Actor principal: Usuario factum (a través de la web)
+
+Cámara de la PC grabando el procedimiento sobre el equipo, en archivos propios, mientras graba la pantalla
+(`Refactorizaciones/grabacion-sesion-completa-f2.md` §5 y §7.2). Solo si `/health.capabilities` informa
+`recording_session_camera_v1`.
+
+- **Habilitación:** `Agent:Session:CameraEnabled`. Sin configurar, la cámara está habilitada **solo en macOS**; en
+  Windows y Linux viene apagada (sin QA con hardware). Para probarla en Windows:
+  `Agent__Session__CameraEnabled=true` o, en `appsettings.Local.json`, `"Agent": { "Session": { "CameraEnabled": true } }`.
+  Apagada: sin la capability, y `/cameras*` y `…/session/camera/*` responden `400 session_camera_unsupported`.
+- **Lista:** `GET /cameras[?refresh=true]` → `{ cameras: [{ id, name, backend }] }` (macOS: avfoundation sin las
+  entradas "Capture screen"; Windows: dshow, `id` = *alternative name*). Listar no abre la cámara. Caché de 10 s.
+  Sin ffmpeg: `{ cameras: [], error }`.
+- **Vista previa antes de grabar:** `POST /cameras/preview { id, name }` → `{ ok }` o `{ ok: false, detail, error }`;
+  `GET /cameras/preview.jpg` (JPG de 320 px cada 2 s; `404 camera_preview_unavailable` si todavía no hay);
+  `DELETE /cameras/preview` (204). Se corta sola a los `CameraPreviewIdleSeconds` (120) sin pedidos de la imagen, al
+  empezar a grabar la cámara y al cerrar Tatana. Con la cámara de la sesión grabando, `POST` responde
+  `409 camera_busy` y `GET preview.jpg` devuelve la imagen de la grabación (un solo ffmpeg).
+- **Empezar:** `POST /cases/{caseId}/session/camera/start { id, name, with_audio, origin_id }` (o `camera` en el body
+  del `session/start`, para retomar). Requiere la sesión del caso en `recording`, `rotating` o `waiting_device`
+  (`409 session_not_active`). Otra cámara grabando → `409 camera_busy`; la misma → 200. Sin espacio para las dos
+  pistas → `507 insufficient_storage` (en el `session/start`, la pantalla graba igual con el aviso `disk_low`).
+- Una cámara que no abre **no** es error HTTP: 200 con `camera_state: "failed"` y el aviso `camera_failed`
+  (`detail`: `permission`, `blocked`, `not_found`, `unsupported`, `stalled` o ausente). Si la cámara no acepta la
+  resolución pedida, se reintenta una vez con otro modo; el diario guarda la resolución y los fps reales.
+- **Grabación:** ffmpeg (`-tune zerolatency`, segment muxer) en tramos propios de `segment_minutes` contados desde que
+  arrancó, sin hueco entre tramos: el inicio de uno es el fin del anterior. Cada tramo se valida, se mueve a la carpeta
+  del caso, se hashea y se emite `session_segment_closed` (pista `camara`). En macOS el micrófono es el de entrada por
+  defecto del sistema (`:default`), nunca `:0`.
+- La cámara **no** se corta con los cortes de la pantalla y **sigue grabando** con el cable del celular desconectado
+  (`waiting_device`). Ahí "Marcar momento" sigue disponible y la marca se ubica solo en la cámara (sin
+  `segment_index`). Cada marca suma `camera_segment_index` y `camera_offset_seconds` si un tramo de cámara la contiene.
+- Se corta con el `stop` de la sesión (con su motivo), el corte por espacio, el reintento fallido de la pantalla y el
+  cierre de Tatana (`tatana_cerrado`), siempre antes que la pantalla.
+- Mientras graba: `<DataDirectory>/sessions/<caseId>/camara.csv`, `camara_NNNN.part.mkv` y `camara-preview.jpg` son
+  archivos de Tatana. Un `camara_NNNN.part.mkv` que no está en el diario nunca se pisa ni se borra.
+
+#### Pre-condiciones:
+ - Grabación de la sesión en curso para el caso. En macOS, la app de Tatana tiene permiso de cámara (Ajustes del
+   Sistema > Privacidad y seguridad > Cámara). Con la firma *ad hoc* actual, macOS puede volver a pedirlo tras una
+   actualización.
+
+#### Post-condiciones:
+ - Tramos `sesion_camara_NNN_<fecha>_<hora>.mkv` en la carpeta del caso, con su configuración (`segments[].camera`).
+ - Si la cámara falla, la pantalla sigue; queda el hueco `camara_fallo` y el aviso con "Reintentar cámara".
+
+|Actor principal|Sistema|
+|--|:--:|
+|1 - Tilda "Sumar cámara del procedimiento" y elige la cámara||
+||2 - La web pide `GET /cameras` y la vista previa|
+|3 - Toca "Empezar a grabar la cámara"||
+||4 - La web llama a `POST …/session/camera/start`; Tatana corta la previa, abre la cámara y registra el tramo 1|
+||5 - Fin de caso de uso|
+
+
+### Caso de uso: Quitar o reintentar la cámara del procedimiento
+> #### Actor principal: Usuario factum (a través de la web)
+
+- `POST /cases/{caseId}/session/camera/stop { origin_id }`: corta la cámara (el último tramo con
+  `detenido_por_perito`) y abre el hueco de cámara `detenido_por_perito`; la pantalla sigue. Volver a sumarla cierra el
+  hueco y sigue la numeración.
+- `POST /cases/{caseId}/session/camera/retry { origin_id }`: vuelve a abrir la última cámara pedida en esta sesión (sin
+  ella, `409 session_not_active`). No hay reintento automático: si la cámara se desenchufa o se cuelga (archivo que no
+  crece durante `CameraStallSeconds`, 20 s), queda `failed` hasta que el perito reintenta.
+- **Recuperación al reabrir Tatana:** si Tatana murió con la cámara grabando, ffmpeg sigue vivo y puede cerrar tramos
+  solo. Al arrancar, Tatana cierra ese ffmpeg (SIGTERM; Ctrl+C en Windows), concilia el `camara.csv` completo (crea los
+  tramos que el diario no conocía), remuxea el tramo que quedó abierto sin línea, abre el hueco de cámara
+  `tatana_cerrado` y no vuelve a abrir la cámara sola.
+
+|Actor principal|Sistema|
+|--|:--:|
+|1 - Destilda "Sumar cámara del procedimiento" y confirma||
+||2 - La web llama a `POST …/session/camera/stop`; Tatana guarda el último tramo de cámara y abre el hueco|
+||3 - Fin de caso de uso|

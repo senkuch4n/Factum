@@ -53,6 +53,8 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
     private readonly TimeProvider _time;
     private readonly ILogger _log;
     private readonly Func<string, Task<bool>> _isConnected;
+    private readonly ICameraTrackFactory? _cameras;
+    private readonly ICameraPreview? _preview;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Lock _sync = new();
@@ -65,16 +67,17 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
     public SessionRecorder(IOptions<AgentOptions> opts, SessionJournal journal, SegmentCloser closer,
         StayAwakeKeeper keeper, ISessionTrackFactory tracks, IAndroidScreenProbe screen, IAgentDiskProbe disk,
         IAgentEventSink events, IEnumerable<IRecordingStateSource> pointRecordings, SessionRecoveryStatus recovery,
-        TimeProvider time, ILogger<SessionRecorder> log)
+        TimeProvider time, ILogger<SessionRecorder> log, ICameraTrackFactory cameras, ICameraPreview preview)
         : this(opts.Value, journal, closer, keeper, tracks, screen, disk, events, pointRecordings, recovery, time, log,
-            isConnected: null)
+            isConnected: null, cameras, preview)
     {
     }
 
     internal SessionRecorder(AgentOptions opts, SessionJournal journal, SegmentCloser closer, StayAwakeKeeper keeper,
         ISessionTrackFactory tracks, IAndroidScreenProbe screen, IAgentDiskProbe disk, IAgentEventSink events,
         IEnumerable<IRecordingStateSource> pointRecordings, SessionRecoveryStatus recovery, TimeProvider time,
-        ILogger? log, Func<string, Task<bool>>? isConnected)
+        ILogger? log, Func<string, Task<bool>>? isConnected, ICameraTrackFactory? cameras = null,
+        ICameraPreview? preview = null)
     {
         _log = log ?? NullLogger.Instance;
         _opt = (opts.Session ?? new SessionOptions()).Clone().Normalize(_log);
@@ -93,7 +96,12 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
         _recovery = recovery;
         _time = time;
         _isConnected = isConnected ?? DefaultIsConnectedAsync;
+        _cameras = cameras;
+        _preview = preview;
     }
+
+    /// <summary>F2 (§5.10): cámara del procedimiento habilitada en este Tatana (y con fábrica de pistas).</summary>
+    public bool CameraEnabled => _opt.EffectiveCameraEnabled && _cameras is not null;
 
     internal SessionOptions Options => _opt;
 
@@ -118,6 +126,14 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
         public Task CloseChain = Task.CompletedTask;
         public long? LastWarnMinutes;
         public int ResumeScheduled;
+        // ── Cámara del procedimiento (F2, §5.6) ──
+        public ICameraTrack? Camera;                 // null = no graba
+        public JournalSegment? CameraCurrent;        // tramo de cámara abierto
+        public string CameraState = CameraStates.Off;
+        public CameraSpec? CameraSpec;               // última cámara pedida en esta sesión (para retry)
+        public CameraStart? CameraStarted;           // W×H, fps y ancla del tramo continuo en curso
+        public string? CameraStopReason;             // motivo del cierre pedido (para la última línea del CSV)
+        public CancellationTokenSource? CameraCts;   // chequeo de disco mientras graba la cámara sola
     }
 
     public bool IsActiveOn(string serial)
@@ -173,6 +189,12 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
             _log.LogInformation("Sesión: segment_minutes {Pedido} fuera de rango, se usa {Usado}", minutes, clamped);
         var originId = EventAttribution.Normalize(req.OriginId);
         var androidVersion = Math.Max(0, req.AndroidVersion ?? 0);
+        var cameraSpec = ParseCamera(req.Camera);
+        if (cameraSpec is not null && !CameraEnabled)
+        {
+            _log.LogInformation("Sesión: se pidió la cámara del procedimiento pero no está habilitada en este Tatana; se ignora");
+            cameraSpec = null;
+        }
 
         // Un diario a medio recuperar no se toca: se espera a la recuperación del arranque.
         await _recovery.Completion;
@@ -186,6 +208,9 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
                     if (originId is not null) current.OriginId = originId;
                     if (current.State == SessionStates.WaitingDevice && await _isConnected(serial))
                         await BeginRunLockedAsync(current, blockingScreenCheck: !req.SkipScreenCheck);
+                    if (cameraSpec is not null && current.CameraState == CameraStates.Off &&
+                        current.State is SessionStates.Recording or SessionStates.Rotating or SessionStates.WaitingDevice)
+                        await StartCameraLockedAsync(current, cameraSpec, explicitRequest: false);
                     return BuildState(current);
                 }
                 throw new AgentHttpException(409, AgentErrorCodes.SessionActive,
@@ -239,6 +264,8 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
                 await EmitAsync("session_state", StateFromDoc(ReloadOrSame(caseId, doc), originId));
                 throw;
             }
+            // D1 = A: la cámara arranca después del arranque confirmado de la pantalla; si no abre, la pantalla sigue.
+            if (cameraSpec is not null) await StartCameraLockedAsync(a, cameraSpec, explicitRequest: false);
             return BuildState(a);
         }
         finally
@@ -400,6 +427,9 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
         return a is null ? null : await RotateOnceAsync(a);
     }
 
+    /// <summary>Para los tests: corre el chequeo de disco ya.</summary>
+    internal Task DiskTickNowAsync() => Volatile.Read(ref _active) is { } a ? DiskTickAsync(a) : Task.CompletedTask;
+
     // Corte solapado (§5.4, DU2=A). Devuelve el inicio del tramo nuevo, o null si se demoró (rotation_delayed).
     private async Task<DateTime?> RotateOnceAsync(Active a)
     {
@@ -495,10 +525,12 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
             a.Doc.LastAliveAt = Now;
             SaveLocked(a.Doc);
         }
-        if (a.State is not (SessionStates.Recording or SessionStates.Rotating)) return;
+        // F2 (§5.6): corre si graba la pantalla o la cámara (D2 = A: la cámara sigue en waiting_device).
+        var screenRecording = a.State is SessionStates.Recording or SessionStates.Rotating;
+        if (!screenRecording && a.CameraState != CameraStates.Recording) return;
 
         var available = AvailableBytes();
-        var rate = ScreenRate(a.Doc);
+        var rate = TotalRate(a);
         if (SessionDiskBudget.ShouldCut(available, _minFree, rate, _opt.CutReserveMinutes))
         {
             _log.LogWarning("Sesión del caso {CaseId}: poco espacio en el disco ({Available} bytes); se corta la grabación",
@@ -508,6 +540,10 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
             {
                 if (ReferenceEquals(Volatile.Read(ref _active), a) && a.State is SessionStates.Recording or SessionStates.Rotating)
                     await StopLockedAsync(a, SessionReasons.SinEspacio, SessionStates.Stopped, closeBudget: null);
+                else if (ReferenceEquals(Volatile.Read(ref _active), a) && a.State == SessionStates.WaitingDevice &&
+                         a.CameraState == CameraStates.Recording)
+                    await FinishInactiveLockedAsync(a, SessionReasons.SinEspacio, SessionStates.Stopped,
+                        SessionReasons.SinEspacio);
             }
             finally
             {
@@ -536,6 +572,10 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
         }
         if (emit) await EmitStateAsync(a);
     }
+
+    // Con la pantalla sin grabar (waiting_device) y la cámara grabando, el chequeo de disco lo hace este lazo.
+    private Task CameraDiskTickAsync(Active a) =>
+        a.State is SessionStates.Recording or SessionStates.Rotating ? Task.CompletedTask : DiskTickAsync(a);
 
     private async Task ScreenTickAsync(Active a)
     {
@@ -597,7 +637,7 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
                 seg.State = SegmentStates.Closing;
                 seg.Process = null;
                 a.Current = null;
-                a.Doc.Gaps.Add(NewGap(exit.At, reason));
+                a.Doc.Gaps.Add(NewGap(exit.At, reason, SessionNames.TrackScreen));
                 a.Doc.StopReason = reason;
                 a.Doc.StoppedAt = exit.At;
                 a.State = connected ? SessionStates.Starting : SessionStates.WaitingDevice;
@@ -682,8 +722,10 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
 
     // Sin captura en curso (waiting_device o reintento fallido): pasa a un estado final sin abrir otro hueco (el de la
     // desconexión o la falla ya está abierto).
-    private async Task FinishInactiveLockedAsync(Active a, string reason, string finalState)
+    private async Task FinishInactiveLockedAsync(Active a, string reason, string finalState, string? cameraReason = null)
     {
+        // D9 = A: no hay cámara sin sesión. Se corta con el motivo pedido (stop) o el de la sesión.
+        await StopCameraLockedAsync(a, cameraReason ?? reason);
         await AwaitQuietly(a.CloseChain);
         var connected = await _isConnected(a.Serial);
         StayAwakeState? stay;
@@ -752,7 +794,8 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
             {
                 if (originId is not null) a.OriginId = originId;
                 if (a.State == SessionStates.WaitingDevice)
-                    await FinishInactiveLockedAsync(a, a.Doc.StopReason ?? SessionReasons.Desconexion, SessionStates.Stopped);
+                    await FinishInactiveLockedAsync(a, a.Doc.StopReason ?? SessionReasons.Desconexion, SessionStates.Stopped,
+                        cameraReason: reason);
                 else
                     await StopLockedAsync(a, reason!, SessionStates.Stopped, closeBudget: null);
                 return BuildState(a);
@@ -773,6 +816,8 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
     private async Task StopLockedAsync(Active a, string reason, string finalState, TimeSpan? closeBudget)
     {
         await a.RunCts.CancelAsync();
+        // Primero la cámara (q, rápido) y después la pantalla: el presupuesto del apagado alcanza a las dos (§5.6).
+        await StopCameraLockedAsync(a, reason);
         DateTime stoppedAt;
         JournalSegment? last = null;
         if (a.Track is { } track && a.Current is { } seg)
@@ -816,7 +861,7 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
         {
             if (!a.Doc.Gaps.Any(g => g.Track == SessionNames.TrackScreen && g.To is null))
             {
-                var gap = NewGap(stoppedAt, reason);
+                var gap = NewGap(stoppedAt, reason, SessionNames.TrackScreen);
                 gap.SegmentLost = last?.State == SegmentStates.Discarded;
                 a.Doc.Gaps.Add(gap);
             }
@@ -943,14 +988,22 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
         if (a is null || a.CaseId != caseId || (serial is not null && a.Serial != serial)) return null;
         lock (_sync)
         {
-            if (a.State is not (SessionStates.Recording or SessionStates.Rotating)) return null;
-            var (index, offset) = MarkRules.Locate(a.Doc.Segments, at, Now);
+            // [DU1=A] Con el cable desconectado (waiting_device) y la cámara grabando, la marca se ubica solo en la cámara.
+            var screenOn = a.State is SessionStates.Recording or SessionStates.Rotating;
+            if (!screenOn && !(a.State == SessionStates.WaitingDevice && a.CameraState == CameraStates.Recording))
+                return null;
+            int? index = null;
+            double? offset = null;
+            if (screenOn) (index, offset) = MarkRules.Locate(a.Doc.Segments, at, Now);
+            var camera = MarkRules.Locate(a.Doc.Segments, at, Now, SessionNames.TrackCamera);
             var mark = new SessionMarkDto
             {
                 Id = Guid.NewGuid().ToString("N"),
                 At = at,
                 SegmentIndex = index,
                 OffsetSeconds = offset,
+                CameraSegmentIndex = camera?.Index,
+                CameraOffsetSeconds = camera?.OffsetSeconds,
                 Text = text,
                 Filename = filename,
                 Kind = kind,
@@ -959,6 +1012,368 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
             if (originId is not null) a.OriginId = originId;
             SaveLocked(a.Doc);
             return SessionJournalDoc.Clone(mark);
+        }
+    }
+
+    // ── Cámara del procedimiento (grabacion-sesion-completa-f2 §5.4–§5.7) ─────
+
+    private const int MaxCameraName = 200;
+    private const int MaxCameraId = 1024;
+
+    private static AgentHttpException CameraUnsupported() =>
+        new(400, AgentErrorCodes.SessionCameraUnsupported, "La cámara del procedimiento no está habilitada en este Tatana.");
+
+    private static AgentHttpException NotActive() =>
+        new(409, AgentErrorCodes.SessionNotActive, "No hay una grabación de la sesión en curso para este caso.");
+
+    /// <summary>Cámara del body (start de la sesión o <c>camera/start</c>). null si no vino. 400 si no es válida.</summary>
+    internal static CameraSpec? ParseCamera(StartCameraRequest? c)
+    {
+        if (c is null) return null;
+        var name = c.Name?.Trim();
+        if (string.IsNullOrEmpty(name) || name.Length > MaxCameraName || name.Any(char.IsControl) ||
+            AgentFileNames.HasUnsafeControls(name))
+            throw Invalid("Falta el nombre de la cámara o no es válido");
+        var id = string.IsNullOrWhiteSpace(c.Id) ? null : c.Id.Trim();
+        if (id is not null && (id.Length > MaxCameraId || id.Any(char.IsControl)))
+            throw Invalid("El id de la cámara no es válido");
+        return new CameraSpec(id ?? name, name, c.WithAudio, "");
+    }
+
+    private Active? ActiveForCamera(string caseId) =>
+        Volatile.Read(ref _active) is { } a && a.CaseId == caseId &&
+        a.State is SessionStates.Recording or SessionStates.Rotating or SessionStates.WaitingDevice
+            ? a
+            : null;
+
+    /// <summary><c>POST /cases/{caseId}/session/camera/start</c> (§7.2.5).</summary>
+    public async Task<SessionStateDto> StartCameraAsync(string caseIdRaw, StartCameraRequest? req)
+    {
+        var caseId = CaseEvidenceStore.RequireCaseId(caseIdRaw);
+        if (!CameraEnabled) throw CameraUnsupported();
+        var spec = ParseCamera(req ?? new StartCameraRequest()) ?? throw Invalid("Falta la cámara");
+        var originId = EventAttribution.Normalize(req?.OriginId);
+        await _gate.WaitAsync();
+        try
+        {
+            var a = ActiveForCamera(caseId) ?? throw NotActive();
+            if (originId is not null) a.OriginId = originId;
+            if (a.Camera is not null)
+            {
+                if (a.CameraSpec?.Id == spec.Id) return BuildState(a);
+                throw new AgentHttpException(409, AgentErrorCodes.CameraBusy,
+                    "La cámara del procedimiento está grabando. Detenela para elegir otra.");
+            }
+            await StartCameraLockedAsync(a, spec, explicitRequest: true);
+            return BuildState(a);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary><c>POST /cases/{caseId}/session/camera/retry</c>: con la última cámara pedida en esta sesión.</summary>
+    public async Task<SessionStateDto> RetryCameraAsync(string caseIdRaw, string? originIdRaw)
+    {
+        var caseId = CaseEvidenceStore.RequireCaseId(caseIdRaw);
+        if (!CameraEnabled) throw CameraUnsupported();
+        var originId = EventAttribution.Normalize(originIdRaw);
+        await _gate.WaitAsync();
+        try
+        {
+            var a = ActiveForCamera(caseId) ?? throw NotActive();
+            if (originId is not null) a.OriginId = originId;
+            if (a.Camera is not null) return BuildState(a);
+            var spec = a.CameraSpec ?? throw NotActive();
+            await StartCameraLockedAsync(a, spec, explicitRequest: true);
+            return BuildState(a);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary><c>POST /cases/{caseId}/session/camera/stop</c> (D3 = A): la pantalla sigue.</summary>
+    public async Task<SessionStateDto> StopCameraAsync(string caseIdRaw, string? originIdRaw)
+    {
+        var caseId = CaseEvidenceStore.RequireCaseId(caseIdRaw);
+        if (!CameraEnabled) throw CameraUnsupported();
+        var originId = EventAttribution.Normalize(originIdRaw);
+        await _gate.WaitAsync();
+        try
+        {
+            var a = ActiveForCamera(caseId) ?? throw NotActive();
+            if (originId is not null) a.OriginId = originId;
+            await StopCameraLockedAsync(a, SessionReasons.DetenidoPorPerito);
+            a.CameraSpec = null;
+            _log.LogInformation("Sesión del caso {CaseId}: el perito quitó la cámara", a.CaseId);
+            await EmitStateAsync(a);
+            return BuildState(a);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>true si la cámara de la sesión está grabando (la vista previa no puede abrirla).</summary>
+    public bool IsCameraRecording => Volatile.Read(ref _active) is { CameraState: CameraStates.Recording };
+
+    /// <summary>Imagen de la vista previa que escribe la grabación de la cámara en curso (§5.9), o null.</summary>
+    public string? SessionCameraPreviewPath =>
+        Volatile.Read(ref _active) is { CameraState: CameraStates.Recording } a
+            ? Path.Combine(_journal.DirFor(a.CaseId), CameraArgs.PreviewFileName)
+            : null;
+
+    /// <summary>
+    /// Arranca el tramo continuo de cámara (§5.4). Con el gate tomado. Una cámara que no abre no es error: queda
+    /// <c>failed</c> con el aviso. Sin espacio para las dos pistas: 507 si lo pidió el perito; en el start de la sesión,
+    /// la pantalla sigue sola con el aviso <c>disk_low</c> (D-T9).
+    /// </summary>
+    private async Task StartCameraLockedAsync(Active a, CameraSpec spec, bool explicitRequest)
+    {
+        if (a.Camera is not null || _cameras is null) return;
+        var available = AvailableBytes();
+        var rate = ScreenRate(a.Doc) + CameraRate(a.Doc);
+        var minutes = Math.Max(1, a.Doc.SegmentMinutes);
+        if (!SessionDiskBudget.CanStart(available, _minFree, minutes, rate))
+        {
+            var required = SessionDiskBudget.RequiredToStart(_minFree, minutes, rate);
+            if (explicitRequest)
+                throw new AgentHttpException(507, AgentErrorCodes.InsufficientStorage,
+                    $"No hay espacio en el disco de esta PC para grabar también la cámara (quedan {CaseEvidenceStore.FormatBytes(available ?? 0)})",
+                    new Dictionary<string, object?> { ["available_bytes"] = available, ["required_bytes"] = required });
+            _log.LogWarning("Sesión del caso {CaseId}: sin espacio para sumar la cámara; la pantalla graba sola", a.CaseId);
+            lock (_sync)
+                a.Warnings[SessionWarningKinds.DiskLow] = new SessionWarningDto(SessionWarningKinds.DiskLow, Now, available,
+                    SessionDiskBudget.MinutesLeft(available, _minFree, rate));
+            await EmitStateAsync(a);
+            return;
+        }
+
+        // Windows (dshow) no comparte la cámara: la vista previa se corta antes.
+        if (_preview is not null)
+        {
+            try { await _preview.StopAsync(); }
+            catch (Exception ex) { _log.LogDebug(ex, "No se pudo cortar la vista previa de la cámara"); }
+        }
+
+        var dir = _journal.DirFor(a.CaseId);
+        Directory.CreateDirectory(dir);
+        int start;
+        lock (_sync)
+        {
+            // El CSV de un tramo continuo anterior ya conciliado es un archivo propio.
+            if (a.Doc.CameraRun is null) AdbService.TryDelete(Path.Combine(dir, CameraArgs.CsvFileName));
+            start = NextIndex(a.Doc, SessionNames.TrackCamera);
+        }
+        // Un part_file que no está en el diario no se pisa (regla dura de datos): se saltea el número.
+        while (start < SessionNames.MaxIndex && File.Exists(Path.Combine(dir, CameraArgs.PartName(start))))
+        {
+            _log.LogWarning("Cámara: {Part} ya existe y no está en el diario; no se toca", CameraArgs.PartName(start));
+            start++;
+        }
+        var segSeconds = (int)Math.Max(1, SegmentDuration(a).TotalSeconds);
+
+        var track = _cameras.Create(spec);
+        track.SegmentClosed += ev => OnCameraSegmentClosed(a, track, ev);
+        track.Exited += exit => _ = Task.Run(() => OnCameraExitedAsync(a, track, exit));
+        CameraStart started;
+        try
+        {
+            started = await track.StartAsync(dir, start, segSeconds);
+        }
+        catch (Exception ex)
+        {
+            try { track.Dispose(); } catch { /* best effort */ }
+            var detail = (ex as CameraStartException)?.Detail;
+            _log.LogWarning("Sesión del caso {CaseId}: no se pudo empezar a grabar la cámara «{Name}» ({Detail}): {Error}",
+                a.CaseId, spec.Name, detail ?? "sin detalle", ex.Message);
+            lock (_sync)
+            {
+                a.CameraState = CameraStates.Failed;
+                a.CameraSpec = spec;
+                a.CameraStarted = null;
+                a.Warnings[SessionWarningKinds.CameraFailed] =
+                    new SessionWarningDto(SessionWarningKinds.CameraFailed, Now, Detail: detail);
+            }
+            await EmitStateAsync(a);
+            return;
+        }
+
+        lock (_sync)
+        {
+            var run = new CameraRunState
+            {
+                Id = spec.Id, Name = spec.Name, WithAudio = spec.WithAudio, Width = started.Width,
+                Height = started.Height, Fps = started.Fps, Fallback = started.Fallback, AnchorAt = started.AnchorAt,
+                StartNumber = start, Pid = started.Pid, ProcessStartedAt = started.ProcessStartedAt, CsvLinesDone = 0,
+            };
+            var camera = new SessionCameraDto(spec.Name, started.Width, started.Height, started.Fps, spec.WithAudio);
+            var seg = CameraJournal.NewSegment(start, started.AnchorAt, camera, run, TimeZoneInfo.Local);
+            a.Doc.CameraRun = run;
+            a.Doc.Segments.Add(seg);
+            a.Doc.Camera = camera;
+            // D3 = A: cierra el hueco de cámara si lo había; si no (primera vez), no se crea ninguno.
+            GapRules.CloseOpenGap(a.Doc.Gaps, SessionNames.TrackCamera, started.AnchorAt, TimeZoneInfo.Local);
+            a.Camera = track;
+            a.CameraCurrent = seg;
+            a.CameraState = CameraStates.Recording;
+            a.CameraSpec = spec;
+            a.CameraStarted = started;
+            a.CameraStopReason = null;
+            a.Warnings.Remove(SessionWarningKinds.CameraFailed);
+            SaveLocked(a.Doc);
+        }
+        a.CameraCts = new CancellationTokenSource();
+        var ct = a.CameraCts.Token;
+        _ = Task.Run(() => TickLoopAsync(a, TimeSpan.FromSeconds(_opt.DiskCheckSeconds), CameraDiskTickAsync, ct));
+        _log.LogInformation("Sesión del caso {CaseId}: cámara «{Name}» grabando, tramo {Index} ({W}x{H} a {Fps} fps)",
+            a.CaseId, spec.Name, start, started.Width, started.Height, started.Fps);
+        await EmitStateAsync(a);
+    }
+
+    /// <summary>
+    /// Línea nueva del CSV (§5.4): cierra el tramo, abre el siguiente si ffmpeg sigue, renombra el <c>part_file</c> y lo
+    /// manda a la cola de cierre. Corre en el hilo de la pista y solo toma el lock del diario (no el gate: el cierre pedido
+    /// espera la última línea con el gate tomado).
+    /// </summary>
+    private void OnCameraSegmentClosed(Active a, ICameraTrack track, CameraSegmentClosed ev)
+    {
+        JournalSegment closed;
+        lock (_sync)
+        {
+            if (!ReferenceEquals(a.Camera, track) && a.Camera is not null) return;
+            if (a.Doc.CameraRun is not { } run) return;
+            var (seg, next) = CameraJournal.ApplyLine(a.Doc, run,
+                new CameraCsvLine(ev.Index, Path.GetFileName(ev.PartPath), ev.StartSeconds, ev.EndSeconds), ev.Final,
+                a.CameraStopReason ?? SessionReasons.CamaraFallo, recovered: false, TimeZoneInfo.Local);
+            a.CameraCurrent = next;
+            CameraJournal.RenamePart(_journal.DirFor(a.CaseId), seg, _log);
+            SaveLocked(a.Doc);
+            closed = seg;
+        }
+        EnqueueClose(a, closed, ev.Final
+            ? null
+            : new LostGap(closed.StartedAt, closed.StoppedAt ?? closed.StartedAt, SessionReasons.CamaraFallo));
+        _log.LogInformation("Sesión del caso {CaseId}: tramo de cámara {Index} cerrado{Final}", a.CaseId, ev.Index,
+            ev.Final ? " (último)" : "");
+        _ = EmitStateAsync(a);
+    }
+
+    /// <summary>
+    /// Corta la cámara con el motivo pedido (§5.6): la última línea del CSV cierra el último tramo; si hubo que matar a
+    /// ffmpeg, el tramo abierto queda <c>forced</c> (remux). Abre el hueco <c>camara</c> si no hay uno abierto. Con el gate
+    /// tomado. Sin cámara grabando: si estaba <c>failed</c>, pasa a <c>off</c> y el hueco sigue tal cual.
+    /// </summary>
+    private async Task StopCameraLockedAsync(Active a, string reason)
+    {
+        try { a.CameraCts?.Cancel(); } catch { /* best effort */ }
+        a.CameraCts = null;
+        if (a.Camera is not { } track)
+        {
+            lock (_sync)
+            {
+                if (a.CameraState == CameraStates.Failed) a.CameraState = CameraStates.Off;
+                a.CameraStarted = null;
+                a.Warnings.Remove(SessionWarningKinds.CameraFailed);
+            }
+            return;
+        }
+        a.CameraStopReason = reason;
+        var stop = await track.StopAsync();
+        JournalSegment? forced = null;
+        var dir = _journal.DirFor(a.CaseId);
+        lock (_sync)
+        {
+            if (a.CameraCurrent is { } seg)
+            {
+                seg.StoppedAt = stop.StopRequestedAt;
+                seg.StopReason = reason;
+                seg.State = SegmentStates.Closing;
+                seg.Forced = true;
+                seg.Process = null;
+                CameraJournal.RenamePart(dir, seg, _log);
+                forced = seg;
+                a.CameraCurrent = null;
+            }
+            var stoppedAt = LastCameraStop(a.Doc) ?? stop.StopRequestedAt;
+            a.Doc.CameraRun = null;
+            AdbService.TryDelete(Path.Combine(dir, CameraArgs.CsvFileName));
+            AdbService.TryDelete(Path.Combine(dir, CameraArgs.PreviewFileName));
+            if (!a.Doc.Gaps.Any(g => g.Track == SessionNames.TrackCamera && g.To is null))
+                a.Doc.Gaps.Add(NewGap(stoppedAt, reason, SessionNames.TrackCamera));
+            a.Camera = null;
+            a.CameraState = CameraStates.Off;
+            a.CameraStarted = null;
+            a.CameraStopReason = null;
+            a.Warnings.Remove(SessionWarningKinds.CameraFailed);
+            SaveLocked(a.Doc);
+        }
+        if (forced is not null) EnqueueClose(a, forced, lost: null);
+        try { track.Dispose(); } catch { /* best effort */ }
+        _log.LogInformation("Sesión del caso {CaseId}: cámara detenida ({Reason}{Clean})", a.CaseId, reason,
+            stop.Clean ? "" : ", forzada");
+    }
+
+    private static DateTime? LastCameraStop(SessionJournalDoc doc) =>
+        doc.Segments.Where(s => s.Track == SessionNames.TrackCamera).OrderBy(s => s.Index).LastOrDefault()?.StoppedAt;
+
+    /// <summary>
+    /// ffmpeg de la cámara terminó sin que se lo pidieran (§5.4 "fin no pedido"): la pantalla no se toca. Hueco
+    /// <c>camara_fallo</c>, aviso <c>camera_failed</c> y <c>camera_state = failed</c>; sin reintento automático (D-T7).
+    /// </summary>
+    private async Task OnCameraExitedAsync(Active a, ICameraTrack track, CameraExit exit)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            if (!ReferenceEquals(Volatile.Read(ref _active), a) || !ReferenceEquals(a.Camera, track)) return;
+            try { a.CameraCts?.Cancel(); } catch { /* best effort */ }
+            a.CameraCts = null;
+            JournalSegment? forced = null;
+            var dir = _journal.DirFor(a.CaseId);
+            lock (_sync)
+            {
+                if (a.CameraCurrent is { } seg)
+                {
+                    seg.StoppedAt = exit.At;
+                    seg.StopReason = SessionReasons.CamaraFallo;
+                    seg.State = SegmentStates.Closing;
+                    seg.Forced = true;
+                    seg.Process = null;
+                    CameraJournal.RenamePart(dir, seg, _log);
+                    forced = seg;
+                    a.CameraCurrent = null;
+                }
+                var from = LastCameraStop(a.Doc) ?? exit.At;
+                a.Doc.CameraRun = null;
+                AdbService.TryDelete(Path.Combine(dir, CameraArgs.CsvFileName));
+                AdbService.TryDelete(Path.Combine(dir, CameraArgs.PreviewFileName));
+                if (!a.Doc.Gaps.Any(g => g.Track == SessionNames.TrackCamera && g.To is null))
+                    a.Doc.Gaps.Add(NewGap(from, SessionReasons.CamaraFallo, SessionNames.TrackCamera));
+                a.Camera = null;
+                a.CameraState = CameraStates.Failed;
+                a.CameraStarted = null;
+                a.Warnings[SessionWarningKinds.CameraFailed] =
+                    new SessionWarningDto(SessionWarningKinds.CameraFailed, Now, Detail: exit.Detail);
+                SaveLocked(a.Doc);
+            }
+            if (forced is not null) EnqueueClose(a, forced, lost: null);
+            try { track.Dispose(); } catch { /* best effort */ }
+            _log.LogWarning("Sesión del caso {CaseId}: la cámara dejó de grabar ({Detail}); la pantalla sigue", a.CaseId,
+                exit.Detail ?? "sin detalle");
+            await EmitStateAsync(a);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Sesión: error manejando la salida de la cámara");
+        }
+        finally
+        {
+            _gate.Release();
         }
     }
 
@@ -981,7 +1396,8 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
     public SessionCapacityDto Capacity(bool camera, int? segmentMinutes)
     {
         var available = AvailableBytes();
-        var rate = ScreenRate(Volatile.Read(ref _active)?.Doc) + (camera ? _opt.CameraBytesPerMinute : 0);
+        var doc = Volatile.Read(ref _active)?.Doc;
+        var rate = ScreenRate(doc) + (camera ? CameraRate(doc) : 0);
         var minutes = Math.Clamp(segmentMinutes ?? 30, _opt.MinSegmentMinutes, _opt.MaxSegmentMinutes);
         var same = SessionDiskBudget.SameVolume(_dataDir, _evidenceDir);
         return new SessionCapacityDto(available, _minFree, rate, same,
@@ -1008,6 +1424,23 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
         return SessionDiskBudget.Rate(_opt.ScreenBytesPerMinute, observed);
     }
 
+    /// <summary>F2 (§5.6): max(CameraBytesPerMinute, tasa observada del último tramo de cámara guardado).</summary>
+    private long CameraRate(SessionJournalDoc? doc)
+    {
+        double? observed = null;
+        if (doc is not null)
+            lock (_sync)
+            {
+                var last = doc.Segments.LastOrDefault(s => s.Track == SessionNames.TrackCamera && s.State == SegmentStates.Saved);
+                observed = SessionDiskBudget.ObservedPerMinute(last?.Size, last?.DurationSeconds ?? last?.RecordedSeconds);
+            }
+        return SessionDiskBudget.Rate(_opt.CameraBytesPerMinute, observed);
+    }
+
+    /// <summary>R = pantalla + cámara si la cámara graba (§5.6).</summary>
+    private long TotalRate(Active a) =>
+        ScreenRate(a.Doc) + (a.CameraState == CameraStates.Recording ? CameraRate(a.Doc) : 0);
+
     private SessionStateDto BuildState(Active a)
     {
         lock (_sync)
@@ -1025,6 +1458,13 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
                 StopReason = SessionStates.HasStopReason(a.State) ? a.Doc.StopReason : null,
                 StoppedAt = SessionStates.HasStopReason(a.State) ? a.Doc.StoppedAt : null,
                 Warnings = a.Warnings.Values.OrderBy(w => w.Since).ToList(),
+                CameraState = a.CameraState,
+                CameraSegmentIndex = a.CameraCurrent?.Index,
+                CameraSegmentStartedAt = a.CameraCurrent?.StartedAt,
+                Camera = a.CameraState != CameraStates.Off && a.CameraSpec is { } spec
+                    ? new SessionActiveCameraDto(spec.Id, spec.Name, a.CameraStarted?.Width, a.CameraStarted?.Height,
+                        a.CameraStarted?.Fps, spec.WithAudio)
+                    : null,
             };
         }
     }
@@ -1055,6 +1495,11 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
     /// </summary>
     public async Task<PrepareShutdownResponse> ShutdownAsync(TimeSpan budget)
     {
+        if (_preview is not null)
+        {
+            try { await _preview.StopAsync().WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (Exception ex) { _log.LogDebug(ex, "No se pudo cortar la vista previa de la cámara"); }
+        }
         var a = Volatile.Read(ref _active);
         if (a is null) return new PrepareShutdownResponse(false, 0, 0);
         var deadline = Now + budget;
@@ -1064,8 +1509,12 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
             if (!ReferenceEquals(Volatile.Read(ref _active), a)) return Counts(a, hadSession: true);
             if (a.State == SessionStates.WaitingDevice)
             {
-                // El hueco de la desconexión sigue abierto tal cual; la recuperación lo deja en interrupted.
+                // El hueco de la desconexión sigue abierto tal cual; la recuperación lo deja en interrupted. F2: la cámara
+                // sí graba en waiting_device (D2 = A) y se corta con tatana_cerrado dentro del mismo presupuesto.
                 await a.RunCts.CancelAsync();
+                await StopCameraLockedAsync(a, SessionReasons.TatanaCerrado);
+                var left = deadline - Now;
+                if (left > TimeSpan.Zero) await Task.WhenAny(a.CloseChain, Task.Delay(left));
                 lock (_sync) SaveLocked(a.Doc);
                 Volatile.Write(ref _active, null);
                 _previous = a;
@@ -1097,10 +1546,10 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
 
     // ── Auxiliares ───────────────────────────────────────────────────────────
 
-    private SessionGapDto NewGap(DateTime from, string reason) => new()
+    private static SessionGapDto NewGap(DateTime from, string reason, string track) => new()
     {
         Id = Guid.NewGuid().ToString("N"),
-        Track = SessionNames.TrackScreen,
+        Track = track,
         From = from,
         Reason = reason,
     };
@@ -1141,6 +1590,7 @@ public sealed class SessionRecorder : IOperationSource, IDisposable
     {
         var a = Volatile.Read(ref _active);
         try { a?.RunCts.Cancel(); } catch { /* best effort */ }
+        try { a?.CameraCts?.Cancel(); } catch { /* best effort */ }
         _gate.Dispose();
     }
 }
@@ -1205,6 +1655,22 @@ public static class MarkRules
         var match = screen.LastOrDefault(s => s.StartedAt <= at && at < (s.StoppedAt ?? now.AddMilliseconds(1)))
                     ?? screen.LastOrDefault(s => s.StartedAt <= at)
                     ?? screen[0];
+        var offset = Math.Max(0, (at - match.StartedAt).TotalSeconds);
+        return (match.Index, Math.Round(offset, 1, MidpointRounding.AwayFromZero));
+    }
+
+    /// <summary>
+    /// Ubicación por pista (F2, §5.7). Pantalla: como <see cref="Locate(IEnumerable{JournalSegment}, DateTime, DateTime)"/>
+    /// (null sin tramos). Cámara, estricta (D-T5): el tramo no descartado cuyo <c>[started_at, stopped_at ?? ahora)</c>
+    /// contiene <paramref name="at"/>, sin respaldo; null si ninguno.
+    /// </summary>
+    public static (int Index, double OffsetSeconds)? Locate(IEnumerable<JournalSegment> segments, DateTime at,
+        DateTime now, string track)
+    {
+        var list = segments.Where(s => s.Track == track && s.State != SegmentStates.Discarded).OrderBy(s => s.Index).ToList();
+        if (track != SessionNames.TrackCamera) return list.Count == 0 ? null : Locate(list, at, now);
+        var match = list.LastOrDefault(s => s.StartedAt <= at && at < (s.StoppedAt ?? now.AddMilliseconds(1)));
+        if (match is null) return null;
         var offset = Math.Max(0, (at - match.StartedAt).TotalSeconds);
         return (match.Index, Math.Round(offset, 1, MidpointRounding.AwayFromZero));
     }
