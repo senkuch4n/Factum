@@ -6,7 +6,10 @@
  * con `tsx --test`, sin Electron). Nada de red ni de disco acá.
  *
  * Sobre:   { schema: 1, key_id, payload: base64(bytes UTF-8 del payload), signature: base64(64 bytes) }
- * Payload: { schema: 1, product: "tatana-windows", version, released_at, commit, file, size, sha512, sha256, notes? }
+ * Payload: { schema: 1, product: "tatana-windows" | "tatana-linux", version, released_at, commit, file, size, sha512, sha256, notes? }
+ *   Windows: `tatana-update.json`, file `Tatana-Setup-X.Y.Z.exe`.
+ *   Linux (tatana-linux D-T8, §10.C): `tatana-update-linux.json`, file `Tatana-X.Y.Z-x86_64.AppImage`.
+ * Cada plataforma rechaza el manifiesto de la otra (`manifiesto_invalido`).
  *
  * Se firma con Ed25519 los BYTES EXACTOS del payload que viajan en base64: no
  * se re-serializa nada, así no hay ambigüedad de canonicalización.
@@ -29,7 +32,7 @@ export interface UpdateEnvelope {
 
 export interface UpdatePayload {
   schema: 1
-  product: 'tatana-windows'
+  product: UpdateProduct
   version: string
   released_at: string
   commit: string
@@ -40,6 +43,23 @@ export interface UpdatePayload {
   /** hex */
   sha256: string
   notes?: string
+}
+
+export type UpdateProduct = 'tatana-windows' | 'tatana-linux'
+
+/** Producto esperado por plataforma: `linux` → `tatana-linux`; cualquier otra → `tatana-windows` (como hoy). */
+export function expectedProduct(platform: string = process.platform): UpdateProduct {
+  return platform === 'linux' ? 'tatana-linux' : 'tatana-windows'
+}
+
+/** Nombre del manifiesto en el canal según el producto (§10.C). */
+export function manifestFileName(product: UpdateProduct): string {
+  return product === 'tatana-linux' ? 'tatana-update-linux.json' : 'tatana-update.json'
+}
+
+/** Archivo que tiene que nombrar el payload para esa versión y producto (§10.C). */
+export function expectedFile(product: UpdateProduct, version: string): string {
+  return product === 'tatana-linux' ? `Tatana-${version}-x86_64.AppImage` : `Tatana-Setup-${version}.exe`
 }
 
 export type VerifyFailure = 'firma_invalida' | 'clave_desconocida' | 'manifiesto_invalido'
@@ -90,12 +110,12 @@ export function parseEnvelope(text: string): UpdateEnvelope | null {
   return { schema: 1, key_id: raw.key_id, payload: raw.payload, signature: raw.signature }
 }
 
-function validatePayload(raw: unknown): UpdatePayload | null {
+function validatePayload(raw: unknown, expected: UpdateProduct): UpdatePayload | null {
   if (!isRecord(raw)) return null
-  if (raw.schema !== 1 || raw.product !== 'tatana-windows') return null
+  if (raw.schema !== 1 || raw.product !== expected) return null
   const { version, file, size, sha512, sha256, released_at, commit, notes } = raw
   if (typeof version !== 'string' || !RELEASE_VERSION.test(version) || !semver.valid(version)) return null
-  if (file !== `Tatana-Setup-${version}.exe`) return null
+  if (file !== expectedFile(expected, version)) return null
   if (typeof size !== 'number' || !Number.isSafeInteger(size) || size <= 0) return null
   if (typeof sha512 !== 'string' || decodeBase64Strict(sha512)?.length !== 64) return null
   if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(sha256)) return null
@@ -103,7 +123,7 @@ function validatePayload(raw: unknown): UpdatePayload | null {
   if (notes !== undefined && notes !== null && typeof notes !== 'string') return null
   return {
     schema: 1,
-    product: 'tatana-windows',
+    product: expected,
     version,
     released_at,
     commit,
@@ -118,8 +138,11 @@ function validatePayload(raw: unknown): UpdatePayload | null {
 /**
  * Verifica la firma Ed25519 del sobre contra las claves confiables (por
  * `key_id`) y valida el payload (§13.C). Nunca tira: un error es un `reason`.
+ * `product` = el de esta plataforma (`expectedProduct()`); los tests lo fijan.
  */
-export function verifyEnvelope(env: UpdateEnvelope, keys: ReadonlyArray<TrustedKey>): VerifyResult {
+export function verifyEnvelope(
+  env: UpdateEnvelope, keys: ReadonlyArray<TrustedKey>, product: UpdateProduct = expectedProduct(),
+): VerifyResult {
   const key = keys.find((k) => k.keyId === env.key_id)
   if (!key) return { ok: false, reason: 'clave_desconocida' }
 
@@ -149,7 +172,7 @@ export function verifyEnvelope(env: UpdateEnvelope, keys: ReadonlyArray<TrustedK
   } catch {
     return { ok: false, reason: 'manifiesto_invalido' }
   }
-  const payload = validatePayload(parsed)
+  const payload = validatePayload(parsed, product)
   return payload ? { ok: true, payload } : { ok: false, reason: 'manifiesto_invalido' }
 }
 

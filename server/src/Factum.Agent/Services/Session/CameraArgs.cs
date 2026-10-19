@@ -31,7 +31,14 @@ public sealed record CameraArgsInput(
     int Crf,
     int SegmentSeconds,
     int StartNumber,
-    string StagingDir);
+    string StagingDir)
+{
+    /// <summary>
+    /// Solo v4l2 (Linux): el audio por ALSA <c>default</c> en vez de PulseAudio (tatana-linux D-T14; fallback cuando el
+    /// ffmpeg no trae libpulse).
+    /// </summary>
+    public bool LinuxAlsaAudio { get; init; }
+}
 
 /// <summary>
 /// Comando de ffmpeg de la cámara del procedimiento (grabacion-sesion-completa-f2 §5.3–§5.5). Puro: arma la
@@ -67,7 +74,7 @@ public static partial class CameraArgs
 
     /// <summary>Argumentos de entrada (<c>-f … -i …</c>) y el <c>-map</c> del audio (o null sin audio).</summary>
     internal static (List<string> Args, string? AudioMap) Input(string backend, string video, bool withAudio, string? mic,
-        CameraMode? mode)
+        CameraMode? mode, bool linuxAlsaAudio = false)
     {
         var a = new List<string>();
         string? audioMap = null;
@@ -95,7 +102,8 @@ public static partial class CameraArgs
                 a.AddRange(["-i", video]);
                 if (withAudio)
                 {
-                    a.AddRange(["-f", "alsa", "-i", "default"]);
+                    // tatana-linux D-T14: PulseAudio (o PipeWire) con Agent:MicDevice o "default"; ALSA como fallback.
+                    a.AddRange(MicCapture.LinuxInputArgs(mic, linuxAlsaAudio));
                     audioMap = "1:a";
                 }
                 break;
@@ -116,7 +124,7 @@ public static partial class CameraArgs
     public static List<string> Build(CameraArgsInput i)
     {
         var args = new List<string> { "-hide_banner", "-nostats", "-loglevel", "info", "-y" };
-        var (input, audioMap) = Input(i.Backend, i.Video, i.WithAudio, i.Mic, i.Mode);
+        var (input, audioMap) = Input(i.Backend, i.Video, i.WithAudio, i.Mic, i.Mode, i.LinuxAlsaAudio);
         args.AddRange(input);
         var seg = Math.Max(1, i.SegmentSeconds);
         args.AddRange(["-filter_complex",

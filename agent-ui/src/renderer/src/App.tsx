@@ -3,10 +3,11 @@ import { Sidebar } from './components/Sidebar'
 import { Dashboard } from './components/Dashboard'
 import { Libraries } from './components/Libraries'
 import { Settings } from './components/Settings'
+import { LinuxPc } from './components/LinuxPc'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useTatanaUpdates } from './hooks/useTatanaUpdates'
 
-type View = 'dashboard' | 'libraries' | 'settings'
+type View = 'dashboard' | 'libraries' | 'settings' | 'linux'
 
 export default function App() {
   const [view, setView] = useState<View>('dashboard')
@@ -14,6 +15,21 @@ export default function App() {
   const [agentStatus, setAgentStatus] = useState('unknown')
   const [serverConnected, setServerConnected] = useState(false)
   const { appInfo, update } = useTatanaUpdates()
+  // tatana-linux §8.3: "Esta PC" solo en Linux; "Librerías" no se muestra en el AppImage (D-T19).
+  const isLinux = appInfo?.platform === 'linux'
+  const showLibraries = !(isLinux && appInfo?.packaged)
+
+  // El main pide abrir "Esta PC" (primera vez, o configuración incompleta).
+  useEffect(() => {
+    if (!window.tatana) return
+    window.tatana.onOpenView((v) => { if (v === 'linux') setView('linux') })
+    return () => window.tatana.removeAllListeners('tatana:open-view')
+  }, [])
+
+  // Si la vista actual no existe en esta plataforma, volver al Dashboard.
+  useEffect(() => {
+    if ((view === 'linux' && appInfo && !isLinux) || (view === 'libraries' && !showLibraries)) setView('dashboard')
+  }, [view, appInfo, isLinux, showLibraries])
 
   // Load config on mount
   useEffect(() => {
@@ -41,6 +57,8 @@ export default function App() {
       <Sidebar
         view={view}
         onView={setView}
+        showLinux={isLinux}
+        showLibraries={showLibraries}
         agentRunning={agentStatus === 'running'}
         serverConnected={serverConnected}
         appVersion={appInfo?.appVersion}
@@ -51,9 +69,10 @@ export default function App() {
           {view === 'dashboard' && (
             <Dashboard agentStatus={agentStatus} config={config} update={update} appInfo={appInfo} />
           )}
-          {view === 'libraries' && <Libraries />}
+          {view === 'libraries' && showLibraries && <Libraries />}
+          {view === 'linux' && isLinux && <LinuxPc />}
           {view === 'settings' && (
-            <Settings config={config} onSave={setConfig} />
+            <Settings config={config} onSave={setConfig} appInfo={appInfo} onView={setView} />
           )}
         </ErrorBoundary>
       </main>

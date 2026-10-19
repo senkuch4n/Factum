@@ -56,4 +56,32 @@ public sealed class ProcessStopTests
         Assert.True(r.Clean);
         Assert.False(r.Escalated);
     }
+
+    // tatana-linux D-T16: Linux manda las señales con kill(2) (UnixSignals); macOS y Windows no.
+    [Theory]
+    [InlineData(HostOs.Linux, true)]
+    [InlineData(HostOs.MacOS, false)]
+    [InlineData(HostOs.Windows, false)]
+    public void Linux_usa_UnixSignals(HostOs os, bool expected) =>
+        Assert.Equal(expected, ProcessStop.UsesNativeSignals(os));
+
+    [Theory]
+    [InlineData("-2", 2)]
+    [InlineData("-15", 15)]
+    [InlineData("-9", 2)]
+    public void Numero_de_senal(string signal, int expected) =>
+        Assert.Equal(expected, ProcessStop.SignalNumber(signal));
+
+    [Fact]
+    public async Task SigtermDirecto_CierraLimpio()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var psi = new ProcessStartInfo("sleep") { UseShellExecute = false };
+        psi.ArgumentList.Add("30");
+        using var p = Process.Start(psi)!;
+        var r = await ProcessStop.StopAsync(p, TimeSpan.FromSeconds(5), NullLogger.Instance, "test",
+            unixSignal: ProcessStop.SessionSignal);
+        Assert.True(r.Clean);
+        Assert.True(p.HasExited);
+    }
 }

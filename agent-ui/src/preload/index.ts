@@ -27,6 +27,17 @@ contextBridge.exposeInMainWorld('tatana', {
   installUpdate: () => ipcRenderer.invoke('tatana:install-update'),
   dismissNotice: (id: 'migration' | 'local_config') => ipcRenderer.invoke('tatana:dismiss-notice', id),
 
+  // Linux: "Esta PC" (tatana-linux §10.G)
+  getLinuxStatus: () => ipcRenderer.invoke('tatana:get-linux-status'),
+  preparePc: () => ipcRenderer.invoke('tatana:prepare-pc'),
+  simulatePreparePc: () => ipcRenderer.invoke('tatana:simulate-prepare-pc'),
+  installOnPc: () => ipcRenderer.invoke('tatana:install-on-pc'),
+  openPrepareLog: () => ipcRenderer.invoke('tatana:open-prepare-log'),
+  onPrepareStep: (cb: (paso: unknown) => void) =>
+    ipcRenderer.on('tatana:prepare-pc-step', (_e, paso) => cb(paso)),
+  onOpenView: (cb: (view: string) => void) =>
+    ipcRenderer.on('tatana:open-view', (_e, view) => cb(view)),
+
   // Events (one-way: main → renderer)
   onAgentLog: (cb: (lines: string[]) => void) =>
     ipcRenderer.on('tatana:agent-log-batch', (_e, lines) => cb(lines)),

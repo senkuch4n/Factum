@@ -42,6 +42,11 @@ internal sealed record RecordingSnapshot(string Serial, string OutputPath, strin
 
 public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateSource
 {
+    // tatana-linux §5.4: texto de "adb no encontrado". En Linux, la pantalla Librerías no existe empaquetada.
+    internal static string AdbMissingMessage(HostOs os) => os == HostOs.Linux
+        ? "No se encontró adb, el componente de Android de Tatana. Descargá Tatana de nuevo desde la página de Factum."
+        : "ADB no instalado — instalalo desde la sección Librerías de Tatana";
+
     // adb: tools/platform-tools junto al exe (portátil), PATH o Homebrew (ToolResolver). Si no
     // aparece, queda el nombre pelado "adb": ProcessRunner devuelve -1 y se mantienen los
     // mensajes de "ADB no instalado".
@@ -166,8 +171,7 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
         // screencap -p emite PNG binario a stdout — leer como stream binario
         var exit = await ProcessRunner.RunBinaryToFileAsync(AdbPath.Value,
             ["-s", serial, "exec-out", "screencap", "-p"], outputPath, ct);
-        if (exit == -1) throw new InvalidOperationException(
-            "ADB no instalado — instalalo desde la sección Librerías de Tatana");
+        if (exit == -1) throw new InvalidOperationException(AdbMissingMessage(HostOsInfo.Current));
         if (exit != 0) throw new InvalidOperationException($"screencap falló (exit {exit})");
 
         return outputPath;
@@ -913,8 +917,7 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
         // (confirmado en un dispositivo real: con comillas, "cat" no encontraba el archivo).
         var exit = await ProcessRunner.RunBinaryToFileAsync(AdbPath.Value,
             ["-s", serial, "exec-out", "cat", devicePath], localOutputPath, ct);
-        if (exit == -1) throw new InvalidOperationException(
-            "ADB no instalado — instalalo desde la sección Librerías de Tatana");
+        if (exit == -1) throw new InvalidOperationException(AdbMissingMessage(HostOsInfo.Current));
         if (exit != 0 || !File.Exists(localOutputPath) || new FileInfo(localOutputPath).Length == 0)
             throw new InvalidOperationException($"No se pudo traer el archivo: {devicePath}");
     }

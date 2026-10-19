@@ -26,6 +26,13 @@ if (args.Length == 2 && args[0] == IosSelfTest.Flag)
     Environment.Exit(await IosSelfTest.RunAsync(args[1]));
 }
 
+// Modo `--autoprueba-linux <carpeta>`: prueba de humo de lo propio de Linux (herramientas portátiles, ffmpeg con
+// pulse/v4l2, SIGTERM, estado de la PC y glibc) sin celular (SDD tatana-linux §5.7). No levanta el host.
+if (args.Length == 2 && args[0] == Factum.Agent.Services.Linux.LinuxSelfTest.Flag)
+{
+    Environment.Exit(await Factum.Agent.Services.Linux.LinuxSelfTest.RunAsync(args[1]));
+}
+
 // DP12: que scrcpy no herede un "ignorar Ctrl+C" que haya dejado algún lanzador (solo Windows).
 WindowsConsoleSignal.EnableCtrlCForChildren();
 
@@ -128,6 +135,7 @@ builder.Services.AddSingleton<AdbService>();
 builder.Services.AddSingleton<IAdbService>(sp => sp.GetRequiredService<AdbService>());
 builder.Services.AddSingleton<IOperationSource>(sp => sp.GetRequiredService<AdbService>());
 builder.Services.AddSingleton<AppleServiceProbe>();
+builder.Services.AddSingleton<Factum.Agent.Services.Linux.LinuxHostProbe>(); // tatana-linux §5.2
 builder.Services.AddSingleton<IosService>();
 builder.Services.AddSingleton<IIosService>(sp => sp.GetRequiredService<IosService>());
 builder.Services.AddSingleton<IOperationSource>(sp => sp.GetRequiredService<IosService>());

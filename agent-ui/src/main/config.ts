@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { readDistConfig } from './updater/dist-config'
+import { applyAutostart } from './linux/desktop-integration'
 
 export interface TatanaConfig {
   serverUrl: string
@@ -14,6 +15,8 @@ export interface TatanaConfig {
   agentDataDir?: string
   /** Firma del aviso de config local que el perito cerró (se vuelve a mostrar si cambia). */
   dismissedLocalConfigNotice?: string
+  /** Linux (tatana-linux D-T6): ya se mostró el diálogo "Instalá Tatana en esta PC". */
+  linuxInstallOffered?: boolean
 }
 
 /**
@@ -53,6 +56,12 @@ export function writeConfig(patch: Partial<TatanaConfig>): TatanaConfig {
  */
 export function applyLoginItem(config: TatanaConfig): void {
   if (!app.isPackaged) return
+  // Linux (tatana-linux D-T18): Electron no implementa setLoginItemSettings; se
+  // usa el autoarranque XDG, solo con la instalación canónica.
+  if (process.platform === 'linux') {
+    applyAutostart(config.autostart)
+    return
+  }
   app.setLoginItemSettings({
     openAtLogin: config.autostart,
     path: process.execPath,

@@ -465,8 +465,12 @@ export interface AgentToolStatus {
 /** Estado del servicio de dispositivos de Apple en la PC (`/health.ios.apple_service`). */
 export type AppleServiceState = "ok" | "missing" | "unknown";
 
-/** Motivo de AirPlay no disponible (`/health.ios.airplay_unavailable_reason`). */
-export type AirplayUnavailableReason = "not_supported_on_windows" | "uxplay_not_found";
+/**
+ * Motivo de AirPlay no disponible (`/health.ios.airplay_unavailable_reason`).
+ * `uxplay_without_mp4` y `avahi_not_running` solo los manda Tatana en Linux (tatana-linux §10.A).
+ */
+export type AirplayUnavailableReason =
+  | "not_supported_on_windows" | "uxplay_not_found" | "uxplay_without_mp4" | "avahi_not_running";
 
 /** `/health.ios` (ios-herramientas-windows §4.2). Tatanas anteriores a 1.3.0 no lo mandan. */
 export interface AgentIosStatus {
@@ -500,6 +504,35 @@ export type IosDeveloperModeStatus = "enabled" | "restarting" | "manual_required
  *   (grabacion-sesion-completa); `recording_session_camera_v1` y
  *   `recording_session_ios_v1` llegan en la fase 2.
  */
+/** SO de la PC donde corre Tatana (`/health.os`, tatana-linux §10.A). Falta en Tatanas anteriores. */
+export type AgentOs = "windows" | "macos" | "linux";
+
+/** `id` de los chequeos de Linux (siempre los 7, en este orden). */
+export type AgentLinuxCheckId =
+  | "usbmuxd" | "android_usb" | "avahi" | "uxplay" | "camera" | "microphone" | "sandbox";
+
+/** Un chequeo de `/health.linux.checks[]`. */
+export interface AgentLinuxCheck {
+  id: AgentLinuxCheckId;
+  status: "ok" | "missing" | "outdated" | "warning" | "not_applicable";
+  /** `true` solo para `usbmuxd` y `android_usb`. */
+  required: boolean;
+  detail?: string;
+}
+
+/** `/health.linux` (solo en Linux). La web lo declara pero no lo usa: lo muestra Tatana en "Esta PC". */
+export interface AgentLinuxStatus {
+  distro_id: string;
+  distro_version?: string;
+  distro_name?: string;
+  distro_like?: string;
+  glibc_version?: string;
+  package_manager: "apt" | "dnf" | "pacman" | "zypper" | "unknown";
+  setup_supported: boolean;
+  setup_state: "ok" | "incomplete";
+  checks: AgentLinuxCheck[];
+}
+
 export interface AgentHealth {
   status: string;
   version: string;
@@ -510,6 +543,10 @@ export interface AgentHealth {
   tools?: Record<string, AgentToolStatus>;
   /** Falta en Tatana < 1.3.0 (ios-herramientas-windows). */
   ios?: AgentIosStatus;
+  /** Falta en Tatanas anteriores a tatana-linux. */
+  os?: AgentOs;
+  /** Solo en Linux (tatana-linux §10.A). */
+  linux?: AgentLinuxStatus;
 }
 
 /* ── Evidencia del caso en Tatana (zip-local-informe-servidor, SDD §6.2 y §8.2) ── */

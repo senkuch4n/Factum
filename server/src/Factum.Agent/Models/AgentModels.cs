@@ -154,6 +154,15 @@ public sealed class VideoPostprocessOptions
     public int TimeoutMaxSeconds { get; set; } = DefaultTimeoutMaxSeconds;
     /// <summary>Intervalo mínimo entre eventos de progreso.</summary>
     public int ProgressIntervalSeconds { get; set; } = DefaultProgressIntervalSeconds;
+    /// <summary>
+    /// Mínimo de núcleos para generar variantes (tatana-linux D-T20). null = 4 en Linux y 0 (sin mínimo) en
+    /// Windows/macOS. Con menos núcleos, el stop devuelve <c>variants: []</c>, como con <see cref="Enabled"/> = false.
+    /// </summary>
+    public int? MinProcessorCount { get; set; }
+
+    /// <summary>Mínimo efectivo de núcleos según el SO.</summary>
+    public int EffectiveMinProcessorCount(Factum.Agent.Common.HostOs os) =>
+        MinProcessorCount ?? (os == Factum.Agent.Common.HostOs.Linux ? 4 : 0);
 
     /// <summary>Corrige, campo por campo, los valores inválidos al default (con un warning). Devuelve this.</summary>
     public VideoPostprocessOptions Normalize(ILogger? log)
@@ -204,6 +213,11 @@ public sealed class VideoPostprocessOptions
         {
             Warn(nameof(ProgressIntervalSeconds), ProgressIntervalSeconds, DefaultProgressIntervalSeconds);
             ProgressIntervalSeconds = DefaultProgressIntervalSeconds;
+        }
+        if (MinProcessorCount is < 0)
+        {
+            Warn(nameof(MinProcessorCount), MinProcessorCount, "el default del SO");
+            MinProcessorCount = null;
         }
         return this;
     }

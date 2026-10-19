@@ -15,6 +15,8 @@ import { getAgentState, type AgentStateResponse } from './agent-api'
 import { readConfig, writeConfig } from './config'
 import { readDistConfig } from './updater/dist-config'
 import { updateManager } from './updater/update-manager'
+import { isInstalled, runningAppImage } from './linux/desktop-integration'
+import { canonicalAppImagePath } from './linux/paths'
 
 export interface MigracionPortable {
   schema: 1
@@ -33,10 +35,26 @@ export interface LocalConfigNotice {
   error?: string
 }
 
+/** Estado de la instalación en Linux (tatana-linux D-T6, D-T18). */
+export interface TatanaLinuxInfo {
+  /** Corre desde `~/Applications/Tatana.AppImage`. */
+  installed: boolean
+  /** `$APPIMAGE` (el archivo que corre), si es un AppImage. */
+  appImagePath?: string
+  canonicalPath: string
+  /** Hay bandeja (StatusNotifierWatcher): cerrar esconde; si no, minimiza. */
+  trayAvailable: boolean
+}
+
 export interface TatanaAppInfo {
   appVersion: string
   agentVersion?: string
   clientUrl?: string
+  /** `process.platform` */
+  platform: NodeJS.Platform
+  packaged: boolean
+  /** Solo en Linux. */
+  linux?: TatanaLinuxInfo
   notices: { migration?: MigracionPortable; localConfig?: LocalConfigNotice }
 }
 
@@ -89,6 +107,13 @@ class AppInfoService extends EventEmitter {
   private agentState: AgentStateResponse | null = null
   private timer: NodeJS.Timeout | null = null
   private last = ''
+  private trayAvailable = true
+
+  /** Lo fija `index.ts` después de consultar DBus (D-T18). */
+  setTrayAvailable(v: boolean): void {
+    this.trayAvailable = v
+    this.publish()
+  }
 
   get(): TatanaAppInfo {
     const notices: TatanaAppInfo['notices'] = {}
@@ -97,10 +122,23 @@ class AppInfoService extends EventEmitter {
     const lc = localConfigNotice(this.agentState)
     if (lc && readConfig().dismissedLocalConfigNotice !== localConfigSignature(lc)) notices.localConfig = lc
     const clientUrl = readDistConfig()?.client_url
+    const appImagePath = runningAppImage()
     return {
       appVersion: app.getVersion(),
       ...(this.agentState?.version ? { agentVersion: this.agentState.version } : {}),
       ...(clientUrl ? { clientUrl } : {}),
+      platform: process.platform,
+      packaged: app.isPackaged,
+      ...(process.platform === 'linux'
+        ? {
+            linux: {
+              installed: isInstalled(),
+              ...(appImagePath ? { appImagePath } : {}),
+              canonicalPath: canonicalAppImagePath(),
+              trayAvailable: this.trayAvailable,
+            },
+          }
+        : {}),
       notices,
     }
   }

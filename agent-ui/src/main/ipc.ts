@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { app, ipcMain, shell } from 'electron'
 import { spawn } from 'child_process'
 import * as http from 'http'
 import * as https from 'https'
@@ -7,6 +7,13 @@ import { agentProcess } from './agent-process'
 import { confirmSessionShutdown } from './session-shutdown'
 import { appInfo, type NoticeId } from './app-info'
 import { updateManager } from './updater/update-manager'
+import { getAgentState, getHealth } from './agent-api'
+import { canonicalAppImagePath } from './linux/paths'
+import { installOffer, installOnPc, isInstalled, openInstalled } from './linux/desktop-integration'
+import { execute as executePreparePc, logPath as prepareLogPath, readPreparacion, simulate as simulatePreparePc } from './linux/prepare-pc'
+
+/** Linux empaquetado (tatana-linux D-T19): sin pantalla "Librerías" ni instalación por shell. */
+const LINUX_PACKAGED = process.platform === 'linux' && app.isPackaged
 
 // ── Config ─────────────────────────────────────────────────────────────────────
 ipcMain.handle('tatana:get-config', () => readConfig())
@@ -36,8 +43,7 @@ ipcMain.handle('tatana:agent-status', () => ({ running: agentProcess.isRunning()
 ipcMain.handle('tatana:restart-agent', async () => {
   // Grabación de la sesión en curso (grabacion-sesion-completa §10): mismo diálogo que la bandeja.
   if (!(await confirmSessionShutdown())) return { ok: false }
-  agentProcess.stop()
-  setTimeout(() => agentProcess.start(), 600)
+  await agentProcess.restart()
   return { ok: true }
 })
 
@@ -143,7 +149,7 @@ function check(cmd: string): Promise<{ ok: boolean; version: string }> {
 }
 
 ipcMain.handle('tatana:get-libraries', async () =>
-  Promise.all(
+  LINUX_PACKAGED ? [] : Promise.all(
     LIBRARIES.map(async (lib) => {
       const { ok, version } = await check(lib.checkCmd)
       return { id: lib.id, name: lib.name, description: lib.description, installed: ok, version: ok ? version : undefined }
@@ -164,6 +170,7 @@ function stream(cmd: string, sender: Electron.WebContents, channel: string): Pro
 }
 
 ipcMain.handle('tatana:install-library', async (e, id: string) => {
+  if (LINUX_PACKAGED) return
   const lib = LIBRARIES.find((l) => l.id === id)
   if (!lib) return
   const cmd = lib.install[process.platform] ?? lib.install['linux']
@@ -171,8 +178,63 @@ ipcMain.handle('tatana:install-library', async (e, id: string) => {
 })
 
 ipcMain.handle('tatana:update-library', async (e, id: string) => {
+  if (LINUX_PACKAGED) return
   const lib = LIBRARIES.find((l) => l.id === id)
   if (!lib) return
   const cmd = lib.update[process.platform] ?? lib.update['linux']
   await stream(cmd, e.sender, `tatana:lib-progress:${id}`)
 })
+
+// ── Linux: "Esta PC" (tatana-linux §10.G) ─────────────────────────────────────
+
+const IS_LINUX = process.platform === 'linux'
+
+ipcMain.handle('tatana:get-linux-status', async () => {
+  const health = IS_LINUX ? await getHealth(readConfig().agentPort) : null
+  return {
+    health: health?.linux ?? null,
+    preparation: IS_LINUX ? readPreparacion() : null,
+    installed: IS_LINUX && isInstalled(),
+    canonicalPath: IS_LINUX ? canonicalAppImagePath() : '',
+    // Aditivo a §10.G: qué ofrece la tarjeta de instalación (D-T6).
+    offer: IS_LINUX && app.isPackaged ? installOffer() : { kind: 'none' },
+  }
+})
+
+ipcMain.handle('tatana:simulate-prepare-pc', () => (IS_LINUX ? simulatePreparePc() : null))
+
+ipcMain.handle('tatana:prepare-pc', (e) => {
+  if (!IS_LINUX) return null
+  const sender = e.sender
+  return executePreparePc((paso) => {
+    if (!sender.isDestroyed()) sender.send('tatana:prepare-pc-step', paso)
+  })
+})
+
+ipcMain.handle('tatana:open-prepare-log', async () => {
+  if (!IS_LINUX) return
+  await shell.openPath(prepareLogPath())
+})
+
+/**
+ * "Instalar (recomendado)" / "Reemplazar la instalada" / "Abrir la instalada"
+ * (D-T6). Relanza Tatana: antes corta el agente sin huérfanos y nunca con una
+ * grabación en curso.
+ */
+export async function runInstallOnPc(): Promise<{ ok: boolean; error?: string }> {
+  if (!IS_LINUX || !app.isPackaged) return { ok: false, error: 'Solo disponible en Tatana para Linux.' }
+  const state = await getAgentState(readConfig().agentPort, 2000)
+  if (state && state.operations.length > 0) {
+    return { ok: false, error: 'Hay una grabación u operación en curso. Terminala y volvé a intentar.' }
+  }
+  if (!(await confirmSessionShutdown())) return { ok: false, error: 'Se canceló para no cortar la grabación de la sesión.' }
+  const beforeRelaunch = () => agentProcess.stopAndWait()
+  const offer = installOffer()
+  if (offer.kind === 'open') {
+    await openInstalled(beforeRelaunch)
+    return { ok: true }
+  }
+  return installOnPc({ autostart: readConfig().autostart, beforeRelaunch })
+}
+
+ipcMain.handle('tatana:install-on-pc', () => runInstallOnPc())

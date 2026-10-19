@@ -26,7 +26,7 @@ public static class IosSelfTest
             .AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; })
             .SetMinimumLevel(LogLevel.Information));
         var log = loggerFactory.CreateLogger("autoprueba-ios");
-        var isWindows = OperatingSystem.IsWindows();
+        var os = HostOsInfo.Current;
 
         string dir;
         try
@@ -39,7 +39,7 @@ public static class IosSelfTest
             Console.WriteLine($"FALLA  no se pudo crear la carpeta de la autoprueba '{folder}': {ex.Message}");
             return 1;
         }
-        Console.WriteLine($"Autoprueba de iPhone de Tatana en {dir} ({(isWindows ? "Windows" : "macOS/Linux")})");
+        Console.WriteLine($"Autoprueba de iPhone de Tatana en {dir} ({os switch { HostOs.Windows => "Windows", HostOs.MacOS => "macOS", _ => "Linux" }})");
 
         // 1. Python con pymobiledevice3.
         var python = IosHelper.ResolvePython();
@@ -65,7 +65,7 @@ public static class IosSelfTest
         if (python is not null)
         {
             var modules = new List<string>();
-            if (isWindows) modules.AddRange(["win32security", "lzfse", "pymobiledevice3.osu.win_util"]);
+            if (os == HostOs.Windows) modules.AddRange(["win32security", "lzfse", "pymobiledevice3.osu.win_util"]);
             modules.AddRange([
                 "pymobiledevice3.remote.userspace_tunnel",
                 "pymobiledevice3.services.dvt.instruments.screenshot",

@@ -13,6 +13,10 @@ export type UpdatePhase =
 export type UpdateReason =
   | 'firma_invalida' | 'clave_desconocida' | 'manifiesto_invalido' | 'no_coincide_con_manifiesto'
   | 'hash_no_coincide' | 'sin_canal' | 'sin_claves' | 'no_empaquetado' | 'instalacion_fallida'
+  /** Linux (tatana-linux D-T6): corre fuera de `~/Applications/Tatana.AppImage`. */
+  | 'no_instalado'
+  /** Linux: empaquetado pero sin `process.env.APPIMAGE` (p. ej. `--appimage-extract`). */
+  | 'sin_appimage'
 
 export interface UpdateState {
   phase: UpdatePhase

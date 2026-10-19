@@ -46,11 +46,14 @@ public static class IosErrors
 
     /// <summary>Texto exacto de §4.1 para el código, según el SO. <paramref name="detail"/> solo lo
     /// usan <c>ios_capture_failed</c> (detalle del helper) y <c>ios_recording_empty</c> (motivo).</summary>
-    public static string MessageFor(string code, bool isWindows, string? detail = null) => code switch
+    public static string MessageFor(string code, HostOs os, string? detail = null) => code switch
     {
-        AppleServiceMissing => isWindows
-            ? "No se encontró el servicio de dispositivos de Apple en esta PC. Instalá la app \"Apple Devices\" desde Microsoft Store (o iTunes) y volvé a conectar el iPhone."
-            : "No se pudo hablar con el servicio de dispositivos de macOS (usbmuxd). Desconectá y volvé a conectar el iPhone.",
+        AppleServiceMissing => os switch
+        {
+            HostOs.Windows => "No se encontró el servicio de dispositivos de Apple en esta PC. Instalá la app \"Apple Devices\" desde Microsoft Store (o iTunes) y volvé a conectar el iPhone.",
+            HostOs.Linux => "No se encontró el servicio de iPhone (usbmuxd) en esta PC. Abrí Tatana, tocá \"Preparar esta PC\" y volvé a conectar el iPhone.",
+            _ => "No se pudo hablar con el servicio de dispositivos de macOS (usbmuxd). Desconectá y volvé a conectar el iPhone.",
+        },
         DeviceNotFound =>
             "El iPhone no está conectado o no responde. Revisá el cable USB y que el iPhone esté desbloqueado.",
         NotTrusted =>
@@ -63,34 +66,43 @@ public static class IosErrors
             "No se pudo preparar el iPhone para las capturas (imagen de desarrollador). Revisá que esta PC tenga internet y que el iPhone esté desbloqueado, y reintentá.",
         TunnelFailed =>
             "No se pudo abrir la conexión de servicios con el iPhone. Desconectá y volvé a conectar el cable con el iPhone desbloqueado.",
-        AdminRequired => isWindows
-            ? "Windows no dejó a Tatana abrir la conexión con el iPhone. Cerrá Tatana y abrilo con clic derecho → \"Ejecutar como administrador\"."
-            : "macOS no dejó a Tatana abrir la conexión con el iPhone. Revisá los permisos y reintentá.",
-        ToolsMissing => isWindows
-            ? "Tatana no encuentra sus herramientas de iPhone (Python o ffmpeg). Descargá e instalá de nuevo Tatana."
-            : "Tatana no encuentra Python con pymobiledevice3 o ffmpeg en esta Mac.",
+        AdminRequired => os switch
+        {
+            HostOs.Windows => "Windows no dejó a Tatana abrir la conexión con el iPhone. Cerrá Tatana y abrilo con clic derecho → \"Ejecutar como administrador\".",
+            HostOs.Linux => "Linux no dejó a Tatana abrir la conexión con el iPhone. Abrí Tatana, tocá \"Preparar esta PC\" y reintentá.",
+            _ => "macOS no dejó a Tatana abrir la conexión con el iPhone. Revisá los permisos y reintentá.",
+        },
+        ToolsMissing => os switch
+        {
+            HostOs.Windows => "Tatana no encuentra sus herramientas de iPhone (Python o ffmpeg). Descargá e instalá de nuevo Tatana.",
+            HostOs.Linux => "Tatana no encuentra sus herramientas de iPhone (Python o ffmpeg). Descargá Tatana de nuevo desde la página de Factum.",
+            _ => "Tatana no encuentra Python con pymobiledevice3 o ffmpeg en esta Mac.",
+        },
         RecordingEmpty =>
             "No se pudo guardar la grabación del iPhone: " + (string.IsNullOrWhiteSpace(detail) ? ReasonNoFrames : detail.Trim()),
-        AirplayUnavailable => isWindows
-            ? "AirPlay no está disponible en Tatana para Windows. Usá \"Solo pantalla\", \"Pantalla + micrófono de PC\" o \"Grabación nativa del iPhone\"."
-            : "uxplay no encontrado. Instalá: brew install uxplay",
+        AirplayUnavailable => os switch
+        {
+            HostOs.Windows => "AirPlay no está disponible en Tatana para Windows. Usá \"Solo pantalla\", \"Pantalla + micrófono de PC\" o \"Grabación nativa del iPhone\".",
+            HostOs.Linux => "AirPlay no está disponible en esta PC: hace falta uxplay 1.73 o posterior con el servicio avahi activo. Usá \"Solo pantalla\", \"Pantalla + micrófono de PC\" o \"Grabación nativa del iPhone\".",
+            _ => "uxplay no encontrado. Instalá: brew install uxplay",
+        },
         // CaptureFailed y cualquier código desconocido.
         _ => string.IsNullOrWhiteSpace(detail)
             ? "No se pudo capturar la pantalla del iPhone."
             : "No se pudo capturar la pantalla del iPhone: " + Trim(detail, DetailMax),
     };
 
-    public static IosException Create(string code, bool isWindows, string? detail = null) =>
-        new(code, MessageFor(code, isWindows, detail));
+    public static IosException Create(string code, HostOs os, string? detail = null) =>
+        new(code, MessageFor(code, os, detail));
 
     public static IosException Create(string code, string? detail = null) =>
-        Create(code, OperatingSystem.IsWindows(), detail);
+        Create(code, HostOsInfo.Current, detail);
 
     /// <summary>Error que manda el helper. Un código desconocido se trata como <c>ios_capture_failed</c>.</summary>
-    public static IosException FromHelper(string code, string? detail, bool isWindows)
+    public static IosException FromHelper(string code, string? detail, HostOs os)
     {
         var known = AllCodes.Contains(code) && code != RecordingEmpty ? code : CaptureFailed;
-        return Create(known, isWindows, detail);
+        return Create(known, os, detail);
     }
 
     /// <summary>
@@ -138,18 +150,18 @@ public static class IosErrors
     /// <c>ios_recording_empty</c> con el motivo: el texto del error que lo causó (en minúscula
     /// inicial) o, sin código, <paramref name="fallbackReason"/>.
     /// </summary>
-    public static IosException RecordingEmptyFrom(IosException? cause, string fallbackReason, bool isWindows)
+    public static IosException RecordingEmptyFrom(IosException? cause, string fallbackReason, HostOs os)
     {
         if (cause is not null && cause.Code == RecordingEmpty) return cause;
         var reason = cause is null ? fallbackReason : LowerFirst(cause.Message);
-        return Create(RecordingEmpty, isWindows, reason);
+        return Create(RecordingEmpty, os, reason);
     }
 
     // "El iPhone está bloqueado…" → "el iPhone está bloqueado…". No toca nombres propios.
     internal static string LowerFirst(string text)
     {
         if (string.IsNullOrEmpty(text)) return text;
-        string[] properNouns = ["Windows", "Tatana", "AirPlay", "Apple", "macOS", "iPhone", "uxplay", "Python"];
+        string[] properNouns = ["Windows", "Linux", "Tatana", "AirPlay", "Apple", "macOS", "iPhone", "uxplay", "Python"];
         if (properNouns.Any(p => text.StartsWith(p, StringComparison.Ordinal))) return text;
         return char.ToLowerInvariant(text[0]) + text[1..];
     }

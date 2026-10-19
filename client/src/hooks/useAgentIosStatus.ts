@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { agent, type AgentHealth, type AirplayUnavailableReason, type AppleServiceState } from "@/lib/agent";
+import { agent, type AgentHealth, type AgentOs, type AirplayUnavailableReason, type AppleServiceState } from "@/lib/agent";
 
 /**
  * Estado de iPhone que informa Tatana en `/health.ios` (ios-herramientas-windows, SDD §9.3).
@@ -17,6 +17,8 @@ export interface AgentIosStatusState {
   airplayAvailable: boolean;
   airplayReason: AirplayUnavailableReason | null;
   supportsDeveloperMode: boolean;
+  /** SO de Tatana (`/health.os`, tatana-linux); `null` con Tatana caído o anterior. */
+  os: AgentOs | null;
 }
 
 const POLL_MS = 10_000;
@@ -26,12 +28,15 @@ const UNKNOWN: AgentIosStatusState = {
   airplayAvailable: true,
   airplayReason: null,
   supportsDeveloperMode: false,
+  os: null,
 };
 
 function fromHealth(h: AgentHealth): AgentIosStatusState {
   const supportsDeveloperMode = h.capabilities?.includes("ios_developer_mode_v1") ?? false;
-  if (!h.ios) return { ...UNKNOWN, supportsDeveloperMode };
+  const os = h.os ?? null;
+  if (!h.ios) return { ...UNKNOWN, supportsDeveloperMode, os };
   return {
+    os,
     appleService: h.ios.apple_service,
     airplayAvailable: h.ios.airplay_available,
     airplayReason: h.ios.airplay_available ? null : h.ios.airplay_unavailable_reason ?? null,
@@ -41,7 +46,8 @@ function fromHealth(h: AgentHealth): AgentIosStatusState {
 
 function sameState(a: AgentIosStatusState, b: AgentIosStatusState): boolean {
   return a.appleService === b.appleService && a.airplayAvailable === b.airplayAvailable
-    && a.airplayReason === b.airplayReason && a.supportsDeveloperMode === b.supportsDeveloperMode;
+    && a.airplayReason === b.airplayReason && a.supportsDeveloperMode === b.supportsDeveloperMode
+    && a.os === b.os;
 }
 
 export function useAgentIosStatus(enabled = true): AgentIosStatusState {

@@ -44,11 +44,12 @@
 		reverse_proxy backend:8080
 	}
 
-	# Canal de Tatana: los manifiestos sin caché (una versión nueva se ve enseguida); el exe y el
-	# .blockmap tienen nombre con versión y no cambian nunca.
+	# Canal de Tatana: los manifiestos sin caché (una versión nueva se ve enseguida); el exe, el
+	# .blockmap y el AppImage tienen nombre con versión y no cambian nunca. Linux (tatana-linux §9.3):
+	# latest-linux.yml y tatana-update-linux.json, también sin caché.
 	handle_path /tatana/updates/* {
 		root * /srv/tatana-updates
-		@manifiestos path /latest.yml /tatana-update.json
+		@manifiestos path /latest.yml /tatana-update.json /latest-linux.yml /tatana-update-linux.json
 		header @manifiestos Cache-Control "no-cache"
 		file_server
 	}

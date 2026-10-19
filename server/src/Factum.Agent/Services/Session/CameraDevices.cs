@@ -141,13 +141,20 @@ public sealed partial class CameraDevices
         return list;
     }
 
-    private static List<CameraDevice> ListLinux()
+    private static List<CameraDevice> ListLinux() => ListLinux("/dev", "/sys/class/video4linux");
+
+    /// <summary>
+    /// Cámaras V4L2 (tatana-linux D-T15): un nodo <c>&lt;devDir&gt;/videoN</c> por cámara, quedándose solo con los
+    /// de captura (<c>&lt;sysDir&gt;/videoN/index</c> = <c>0</c>; el <c>1</c> de UVC es el de metadatos). Sin
+    /// archivo <c>index</c>, el nodo se incluye. Puro respecto de las dos raíces (testeable con un árbol falso).
+    /// </summary>
+    internal static List<CameraDevice> ListLinux(string devDir, string sysDir)
     {
         try
         {
-            return Directory.EnumerateFiles("/dev", "video*").Order(StringComparer.Ordinal).Select(path =>
+            return CaptureNodes(devDir, sysDir).Select(path =>
             {
-                var sys = Path.Combine("/sys/class/video4linux", Path.GetFileName(path), "name");
+                var sys = Path.Combine(sysDir, Path.GetFileName(path), "name");
                 string name;
                 try { name = File.Exists(sys) ? File.ReadAllText(sys).Trim() : path; }
                 catch { name = path; }
@@ -159,6 +166,32 @@ public sealed partial class CameraDevices
             return [];
         }
     }
+
+    /// <summary>Rutas de los nodos de captura (<c>/dev/videoN</c> con <c>index</c> 0 o sin <c>index</c>), ordenadas.</summary>
+    internal static List<string> CaptureNodes(string devDir, string sysDir)
+    {
+        if (!Directory.Exists(devDir)) return [];
+        return Directory.EnumerateFileSystemEntries(devDir, "video*")
+            .Where(p => IsVideoNodeName(Path.GetFileName(p)))
+            .Order(StringComparer.Ordinal)
+            .Where(path =>
+            {
+                var indexFile = Path.Combine(sysDir, Path.GetFileName(path), "index");
+                try
+                {
+                    return !File.Exists(indexFile) || File.ReadAllText(indexFile).Trim() == "0";
+                }
+                catch
+                {
+                    return true;
+                }
+            })
+            .ToList();
+    }
+
+    // "video0", "video12"; no "video-foo".
+    private static bool IsVideoNodeName(string name) =>
+        name.Length > 5 && name.StartsWith("video", StringComparison.Ordinal) && name[5..].All(char.IsAsciiDigit);
 
     // ffmpeg -list_devices sale con código ≠ 0: es normal. Devuelve el stderr.
     private async Task<string> RunListAsync(string ffmpeg, string[] args)

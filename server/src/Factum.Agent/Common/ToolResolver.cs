@@ -7,7 +7,15 @@ namespace Factum.Agent.Common;
 
 public enum ToolSource { Portable, Path, Homebrew }
 
-public sealed record ToolSpec(string Key, string ToolDir, string UnixName, string? WinName);
+public sealed record ToolSpec(string Key, string ToolDir, string UnixName, string? WinName)
+{
+    /// <summary>
+    /// Subruta del ejecutable dentro de <c>tools/&lt;dir&gt;/</c> fuera de Windows, si no es <see cref="UnixName"/>
+    /// (tatana-linux D-T21: el Python portátil de Linux deja el ejecutable en <c>bin/python3</c>). El paso del
+    /// PATH sigue usando <see cref="UnixName"/>.
+    /// </summary>
+    public string? UnixPortablePath { get; init; }
+}
 
 public sealed record ToolResolution(string Path, ToolSource Source);
 
@@ -31,7 +39,10 @@ public static class AgentTools
     public static readonly ToolSpec Adb     = new("adb",     "platform-tools", "adb",     "adb.exe");
     public static readonly ToolSpec Scrcpy  = new("scrcpy",  "scrcpy",         "scrcpy",  "scrcpy.exe");
     public static readonly ToolSpec Ffmpeg  = new("ffmpeg",  "ffmpeg",         "ffmpeg",  "ffmpeg.exe");
-    public static readonly ToolSpec Python  = new("python",  "python-embed",   "python3", "python.exe");
+    public static readonly ToolSpec Python  = new("python",  "python-embed",   "python3", "python.exe")
+    {
+        UnixPortablePath = "bin/python3",
+    };
     public static readonly ToolSpec Uxplay  = new("uxplay",  "uxplay",         "uxplay",  "uxplay.exe");
     public static readonly ToolSpec Qvh     = new("qvh",     "qvh",            "qvh",     null);
     public static readonly ToolSpec Rife    = new("rife",    "rife",           "rife-ncnn-vulkan", "rife-ncnn-vulkan.exe");
@@ -48,8 +59,9 @@ public static class ToolResolver
         // 1. Nombre según el SO.
         var name = env.IsWindows ? (spec.WinName ?? spec.UnixName) : spec.UnixName;
 
-        // 2. Portátil: tools/<dir>/<name> junto al exe.
-        var portable = Path.Combine(env.BaseDirectory, "tools", spec.ToolDir, name);
+        // 2. Portátil: tools/<dir>/<name> junto al exe (fuera de Windows, la subruta portátil si la hay).
+        var portableName = env.IsWindows ? name : spec.UnixPortablePath ?? name;
+        var portable = Path.Combine(env.BaseDirectory, "tools", spec.ToolDir, portableName);
         if (File.Exists(portable))
             return new ToolResolution(Path.GetFullPath(portable), ToolSource.Portable);
 

@@ -602,7 +602,7 @@ export default function Dashboard() {
   useEffect(() => () => registerInPlace(null), []);
   const chipDevice = mode === "wizard" && step >= 2 ? selDevice : null;
   // ios-herramientas-windows §9.4: servicio de Apple y AirPlay según `/health.ios`.
-  const { appleService, airplayAvailable, airplayReason } = useAgentIosStatus(agentOnline);
+  const { appleService, airplayAvailable, airplayReason, os: agentOs } = useAgentIosStatus(agentOnline);
   const airplayUnavailableReason = airplayAvailable ? null : airplayReason ?? "uxplay_not_found";
 
   // Tatana se cerró o se volvió a abrir: se revalida la identidad (estado de los avisos del paso 3/5).
@@ -1712,6 +1712,7 @@ export default function Dashboard() {
                               onRefresh={refreshDevices}
                               onOpenGuide={() => setGuideOpen(true)}
                               appleServiceMissing={appleService === "missing"}
+                              agentOs={agentOs}
                             />
                           )}
 

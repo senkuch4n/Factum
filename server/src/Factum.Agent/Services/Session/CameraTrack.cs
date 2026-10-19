@@ -154,6 +154,8 @@ public sealed class CameraTrack : ICameraTrack
             video = _backend == CameraArgs.BackendMac
                 ? (dev.Name.Contains(':') && dev.Index is { } idx ? idx.ToString(System.Globalization.CultureInfo.InvariantCulture) : dev.Name)
                 : dev.Id;
+            if (_spec.WithAudio && _backend == CameraArgs.BackendLinux)
+                mic = _micDevice; // tatana-linux D-T14: nombre de una source de PulseAudio, o null = "default"
             if (_spec.WithAudio && _backend == CameraArgs.BackendWindows)
             {
                 try { mic = await MicCapture.ResolveWindowsDeviceAsync(ffmpeg, _micDevice, _log, CancellationToken.None); }
@@ -168,11 +170,12 @@ public sealed class CameraTrack : ICameraTrack
             ? null
             : CameraArgs.DefaultMode(_backend, _opt.CameraWidth, _opt.CameraHeight, _opt.CameraFps);
         var fallback = false;
+        var alsaAudio = false;
         for (var attempt = 1; ; attempt++)
         {
             var args = CameraArgs.Build(new CameraArgsInput(_backend, video, _spec.WithAudio, mic, mode,
                 _opt.CameraWidth, _opt.CameraHeight, _opt.CameraFps, _opt.CameraCrf, segmentSeconds, startNumber,
-                stagingDir));
+                stagingDir) { LinuxAlsaAudio = alsaAudio });
             var (start, failure, lines) = await LaunchAsync(ffmpeg, args, startNumber, fallback);
             if (start is not null)
             {
@@ -186,6 +189,14 @@ public sealed class CameraTrack : ICameraTrack
                 return start;
             }
             DeleteStartLeftovers(startNumber);
+            if (ShouldRetryWithAlsa(_backend, _spec.WithAudio, alsaAudio, lines))
+            {
+                // tatana-linux D-T14: ffmpeg sin libpulse → se relanza una vez con ALSA (no cuenta como intento de modo).
+                alsaAudio = true;
+                attempt--;
+                _log.LogWarning("Cámara: ffmpeg no soporta PulseAudio; se reintenta el audio con ALSA");
+                continue;
+            }
             if (attempt == 1 && failure!.RetryMode)
             {
                 if (_backend == CameraArgs.BackendMac)
@@ -209,6 +220,10 @@ public sealed class CameraTrack : ICameraTrack
             throw new CameraStartException(detail, CameraArgs.FailureText(detail));
         }
     }
+
+    /// <summary>Relanzar con ALSA: v4l2 con audio, todavía en PulseAudio y ffmpeg dijo <c>Unknown input format</c>.</summary>
+    internal static bool ShouldRetryWithAlsa(string backend, bool withAudio, bool alreadyAlsa, IReadOnlyList<string> lines) =>
+        backend == CameraArgs.BackendLinux && withAudio && !alreadyAlsa && MicCapture.IsUnknownInputFormat(lines);
 
     private ProcessStartInfo Psi(string ffmpeg, List<string> args)
     {

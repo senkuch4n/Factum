@@ -175,26 +175,26 @@ public static class IosHelper
         var r = await ProcessRunner.RunArgumentListAsync(python, argv, ct, PythonEnvironment, timeout);
         if (r.Success) return r.Stdout;
 
-        var error = ErrorFromStderr(r.Stderr, r.ExitCode, OperatingSystem.IsWindows());
+        var error = ErrorFromStderr(r.Stderr, r.ExitCode, HostOsInfo.Current);
         log.LogWarning("Error de iPhone {Code}: {Detail}", error.Code, DetailForLog(r.Stderr) ?? $"exit {r.ExitCode}");
         log.LogDebug("Helper de iPhone ({Sub}) salió con {Exit}. stderr:\n{Stderr}", subcommand, r.ExitCode, r.Stderr);
         throw error;
     }
 
     /// <summary>Error del stderr del helper (testeable).</summary>
-    internal static IosException ErrorFromStderr(string stderr, int exitCode, bool isWindows)
+    internal static IosException ErrorFromStderr(string stderr, int exitCode, HostOs os)
     {
         var lines = stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         for (var i = lines.Length - 1; i >= 0; i--)
         {
             if (IosErrors.TryParseHelperError(lines[i], out var code, out var detail))
-                return IosErrors.FromHelper(code, detail, isWindows);
+                return IosErrors.FromHelper(code, detail, os);
         }
         if (exitCode == ProcessRunner.TimeoutExitCode)
-            return IosErrors.Create(IosErrors.CaptureFailed, isWindows, "el iPhone no respondió a tiempo");
+            return IosErrors.Create(IosErrors.CaptureFailed, os, "el iPhone no respondió a tiempo");
         if (exitCode == -1 && lines.Any(l => l.StartsWith("No se encontró", StringComparison.Ordinal)))
-            return IosErrors.Create(IosErrors.ToolsMissing, isWindows);
-        return IosErrors.Create(IosErrors.CaptureFailed, isWindows, LastLine(stderr) ?? $"código de salida {exitCode}");
+            return IosErrors.Create(IosErrors.ToolsMissing, os);
+        return IosErrors.Create(IosErrors.CaptureFailed, os, LastLine(stderr) ?? $"código de salida {exitCode}");
     }
 
     // "detail" de la última línea TATANA_ERROR o, si no hay, el último renglón de stderr.

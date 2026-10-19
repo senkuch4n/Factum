@@ -1,0 +1,197 @@
+# Factum — prueba de humo de Tatana para Linux (SDD tatana-linux §9.1, D13 niveles 1 y 2).
+# Job "armar" (ubuntu-24.04): verifica el lock de Python de Linux, arma el payload del agente con
+#   deploy/linux/armar-tatana-linux.sh desde un árbol limpio, lo mete en agent-ui/resources/agent y arma el AppImage
+#   con electron-builder. Lo sube como artifact (3 días): es el que se usa en la QA con hardware (§11).
+# Job "humo" (ubuntu-24.04): ci/tatana-linux/prueba-humo.sh con la UI en Xvfb montada con FUSE.
+# Job "distros" (contenedores): "PC vieja con distro vieja" — ubuntu:22.04 y debian:12 (con UI y --no-sandbox) y
+#   Fedora (best effort: continue-on-error) — con solo lo que un escritorio garantiza.
+# En PRs a develop/main solo si cambia Tatana, agent-ui o el empaquetado de Linux, y a mano (workflow_dispatch).
+name: Tatana Linux (humo)
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - server/src/Factum.Agent/**
+      - agent-ui/**
+      - packaging/linux/**
+      - deploy/linux/**
+      - ci/tatana-linux/**
+      - .github/workflows/tatana-linux.yml
+
+concurrency:
+  group: tatana-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  armar:
+    name: Armar el AppImage (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      # Python con pip propio (sin PEP 668) para el lock y el armado.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: agent-ui/package-lock.json
+      - name: Verificar el lock de Python de Linux
+        run: python3 -I packaging/linux/ios-linux/generar-lock.py --check
+      - name: Armar el payload del agente (linux-x64)
+        run: |
+          # Árbol limpio del commit (ningún archivo local ni appsettings.Local.json).
+          mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/out"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/src"
+          bash deploy/linux/armar-tatana-linux.sh --version 0.0.0-ci --src "$RUNNER_TEMP/src" --salida "$RUNNER_TEMP/out"
+      - name: Agente en agent-ui/resources/agent
+        run: |
+          rm -rf agent-ui/resources/agent
+          mkdir -p agent-ui/resources/agent
+          tar -xzf "$RUNNER_TEMP/out/Tatana-Agent-v0.0.0-ci-linux-x64.tar.gz" -C agent-ui/resources/agent
+          test -x agent-ui/resources/agent/Factum.Agent
+      - name: AppImage
+        working-directory: agent-ui
+        run: |
+          npm ci
+          npx electron-vite build
+          npx electron-builder --linux AppImage --x64 --publish never
+          ls -l dist/
+          AIS=(dist/Tatana-*-x86_64.AppImage)
+          AI="${AIS[0]}"
+          test -f "$AI"
+          echo "APPIMAGE=$(basename "$AI")" >>"$GITHUB_ENV"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tatana-appimage
+          path: agent-ui/dist/${{ env.APPIMAGE }}
+          if-no-files-found: error
+          retention-days: 3
+
+  humo:
+    name: Prueba de humo (ubuntu-24.04)
+    needs: armar
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            ci/tatana-linux
+            packaging/linux
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tatana-appimage
+          path: ${{ runner.temp }}/artefacto
+      - name: Xvfb y FUSE
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb xauth fuse3 jq >/dev/null
+          ls -l /dev/fuse || echo "sin /dev/fuse: se usa APPIMAGE_EXTRACT_AND_RUN"
+      - name: Prueba de humo
+        env:
+          SALIDA_LOGS: ${{ runner.temp }}/logs-humo
+        run: |
+          AIS=("$RUNNER_TEMP"/artefacto/Tatana-*-x86_64.AppImage)
+          bash ci/tatana-linux/prueba-humo.sh "${AIS[0]}" --distro ubuntu --gestor apt
+      - name: Subir logs si falló
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tatana-linux-humo-logs
+          path: ${{ runner.temp }}/logs-humo/
+          if-no-files-found: ignore
+          retention-days: 3
+
+  distros:
+    name: Distro ${{ matrix.imagen }}
+    needs: armar
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    continue-on-error: ${{ matrix.best_effort }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - imagen: ubuntu:22.04
+            distro: ubuntu
+            gestor: apt
+            ui: true
+            best_effort: false
+          - imagen: debian:12
+            distro: debian
+            gestor: apt
+            ui: true
+            best_effort: false
+          - imagen: fedora:latest
+            distro: fedora
+            gestor: dnf
+            ui: false
+            best_effort: true
+    container:
+      image: ${{ matrix.imagen }}
+    steps:
+      # Lo que un escritorio garantiza y un contenedor mínimo no (E7): libicu, libssl, libudev, procps, curl y jq.
+      - name: Bibliotecas del escritorio
+        env:
+          GESTOR: ${{ matrix.gestor }}
+          UI: ${{ matrix.ui }}
+        run: |
+          if [ "$GESTOR" = apt ]; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            ICU="$(apt-cache search --names-only '^libicu[0-9]+$' | awk '{print $1}' | sort -V | tail -1)"
+            apt-get install -y -qq ca-certificates "$ICU" libssl3 libudev1 procps curl jq git >/dev/null
+            if [ "$UI" = true ]; then
+              ASOUND=libasound2
+              apt-cache show libasound2t64 >/dev/null 2>&1 && ASOUND=libasound2t64
+              apt-get install -y -qq libgtk-3-0 libnss3 libgbm1 "$ASOUND" libxss1 xauth xvfb >/dev/null
+            fi
+          else
+            dnf install -y -q libicu openssl-libs systemd-libs procps-ng curl jq git >/dev/null
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            ci/tatana-linux
+            packaging/linux
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tatana-appimage
+          path: ${{ runner.temp }}/artefacto
+      - name: Prueba de humo en ${{ matrix.imagen }}
+        env:
+          DISTRO: ${{ matrix.distro }}
+          GESTOR: ${{ matrix.gestor }}
+          UI: ${{ matrix.ui }}
+          SALIDA_LOGS: ${{ runner.temp }}/logs-distro
+          # Sin /dev/fuse en el contenedor: el runtime extrae y corre.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          EXTRA=(--distro "$DISTRO" --gestor "$GESTOR")
+          if [ "$UI" = true ]; then EXTRA+=(--no-sandbox); else EXTRA+=(--sin-ui); fi
+          AIS=("$RUNNER_TEMP"/artefacto/Tatana-*-x86_64.AppImage)
+          bash ci/tatana-linux/prueba-humo.sh "${AIS[0]}" "${EXTRA[@]}"
+        shell: bash
+      - name: Subir logs si falló
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tatana-linux-distro-logs-${{ matrix.distro }}
+          path: ${{ runner.temp }}/logs-distro/
+          if-no-files-found: ignore
+          retention-days: 3

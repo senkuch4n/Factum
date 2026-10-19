@@ -9,7 +9,8 @@ namespace Factum.Agent.Services;
 // (with_mic). SDD grabacion-android-windows §6.4.
 //
 // - Windows: dshow, con el dispositivo de Agent:MicDevice o el primero que lista Windows.
-// - macOS: avfoundation :0. Linux: alsa default.
+// - macOS: avfoundation :0. Linux: pulse <Agent:MicDevice o default>, con fallback a alsa default
+//   si el ffmpeg no trae libpulse (tatana-linux D-T14).
 // - Salida en .mka (Matroska): si hay que matar a ffmpeg el archivo sigue siendo legible
 //   (con .m4a quedaba sin moov y el mux fallaba).
 // - Se cierra limpio mandando "q" por stdin, en los tres SO.
@@ -46,6 +47,56 @@ internal sealed class MicCapture
         var ffmpeg = ToolResolver.Find(AgentTools.Ffmpeg)?.Path
             ?? throw new InvalidOperationException(ErrorNoFfmpeg);
 
+        IReadOnlyList<string> input;
+        if (OperatingSystem.IsWindows())
+        {
+            var device = await ResolveWindowsDeviceAsync(ffmpeg, configuredDevice, log, ct);
+            input = ["-f", "dshow", "-i", "audio=" + device];
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            input = ["-f", "avfoundation", "-i", ":0"];
+        }
+        else
+        {
+            input = LinuxInputArgs(configuredDevice, alsa: false);
+        }
+
+        var (capture, failure, unknownFormat) = await LaunchAsync(ffmpeg, input, audioPath, log, ct);
+        if (capture is null && unknownFormat && OperatingSystem.IsLinux())
+        {
+            // tatana-linux D-T14: un ffmpeg sin libpulse (el de la distro por PATH) → ALSA default.
+            log.LogWarning("ffmpeg no soporta PulseAudio ('{Last}'); se reintenta el micrófono con ALSA", failure);
+            (capture, failure, _) = await LaunchAsync(ffmpeg, LinuxInputArgs(null, alsa: true), audioPath, log, ct);
+        }
+        if (capture is null) throw new InvalidOperationException(ErrorOpenPrefix + failure);
+
+        log.LogInformation("Captura de audio (mic PC) iniciada: {Path}", audioPath);
+        return capture;
+    }
+
+    /// <summary>
+    /// Entrada de ffmpeg para el micrófono en Linux (tatana-linux D-T14): <c>-f pulse -i &lt;Agent:MicDevice o
+    /// "default"&gt;</c> (PulseAudio o PipeWire con su capa de Pulse). Con <paramref name="alsa"/>, el fallback
+    /// <c>-f alsa -i default</c> (el nombre de una <i>source</i> de Pulse no sirve en ALSA).
+    /// </summary>
+    internal static IReadOnlyList<string> LinuxInputArgs(string? configuredDevice, bool alsa) => alsa
+        ? ["-f", "alsa", "-i", "default"]
+        : ["-f", "pulse", "-i", string.IsNullOrWhiteSpace(configuredDevice) ? "default" : configuredDevice.Trim()];
+
+    /// <summary>true si ffmpeg no conoce el formato de entrada (p. ej. <c>Unknown input format: 'pulse'</c>).</summary>
+    internal static bool IsUnknownInputFormat(IEnumerable<string> stderrLines) =>
+        stderrLines.Any(l => l.Contains("Unknown input format", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Argumentos completos de ffmpeg para grabar el mic a <paramref name="audioPath"/> (testeable).</summary>
+    internal static IReadOnlyList<string> BuildArgs(IReadOnlyList<string> input, string audioPath) =>
+        ["-hide_banner", "-nostats", "-y", .. input, "-c:a", "aac", "-b:a", "128k", audioPath];
+
+    // Arranca ffmpeg y espera la ventana de detección temprana (DP4). Si murió enseguida, devuelve el
+    // último renglón útil del stderr y si fue por formato de entrada desconocido.
+    private static async Task<(MicCapture? Capture, string Failure, bool UnknownFormat)> LaunchAsync(
+        string ffmpeg, IReadOnlyList<string> input, string audioPath, ILogger log, CancellationToken ct)
+    {
         var psi = new ProcessStartInfo
         {
             FileName               = ffmpeg,
@@ -56,39 +107,16 @@ internal sealed class MicCapture
             RedirectStandardError  = true,
             StandardErrorEncoding  = Encoding.UTF8,
         };
-        psi.ArgumentList.Add("-hide_banner");
-        psi.ArgumentList.Add("-nostats");
-        psi.ArgumentList.Add("-y");
-
-        if (OperatingSystem.IsWindows())
-        {
-            var device = await ResolveWindowsDeviceAsync(ffmpeg, configuredDevice, log, ct);
-            psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("dshow");
-            psi.ArgumentList.Add("-i"); psi.ArgumentList.Add("audio=" + device);
-        }
-        else if (OperatingSystem.IsMacOS())
-        {
-            psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("avfoundation");
-            psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(":0");
-        }
-        else
-        {
-            psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("alsa");
-            psi.ArgumentList.Add("-i"); psi.ArgumentList.Add("default");
-        }
-        psi.ArgumentList.Add("-c:a"); psi.ArgumentList.Add("aac");
-        psi.ArgumentList.Add("-b:a"); psi.ArgumentList.Add("128k");
-        psi.ArgumentList.Add(audioPath);
+        foreach (var a in BuildArgs(input, audioPath)) psi.ArgumentList.Add(a);
 
         var tail = new LineTail(TailSize);
         Process? proc;
         try { proc = Process.Start(psi); }
         catch (System.ComponentModel.Win32Exception ex)
         {
-            throw new InvalidOperationException(ErrorOpenPrefix + ex.Message);
+            return (null, ex.Message, false);
         }
-        if (proc is null)
-            throw new InvalidOperationException(ErrorOpenPrefix + "no se pudo iniciar ffmpeg");
+        if (proc is null) return (null, "no se pudo iniciar ffmpeg", false);
 
         // Drenar los pipes: si se llenan, ffmpeg se bloquea y la captura se congela.
         proc.OutputDataReceived += (_, e) => { if (e.Data != null) log.LogDebug("ffmpeg (mic): {Line}", e.Data); };
@@ -107,13 +135,13 @@ internal sealed class MicCapture
         {
             proc.WaitForExit(); // termina de vaciar stderr
             var last = tail.LastNonEmpty() ?? $"código de salida {proc.ExitCode}";
+            var unknown = IsUnknownInputFormat(tail.Snapshot());
             proc.Dispose();
             TryDelete(audioPath);
-            throw new InvalidOperationException(ErrorOpenPrefix + last);
+            return (null, last, unknown);
         }
 
-        log.LogInformation("Captura de audio (mic PC) iniciada: {Path}", audioPath);
-        return new MicCapture(proc, audioPath, log);
+        return (new MicCapture(proc, audioPath, log), string.Empty, false);
     }
 
     // Manda "q" por stdin, espera 5 s y, si no terminó, Kill(entireProcessTree). Nunca lanza.

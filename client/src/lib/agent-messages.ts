@@ -6,7 +6,7 @@
 
 import {
   AgentError, cachedLocalNetworkPermission,
-  type AirplayUnavailableReason, type IosDeveloperModeStatus,
+  type AgentOs, type AirplayUnavailableReason, type IosDeveloperModeStatus,
 } from "./agent";
 import { formatBytes } from "./format";
 import type { AgentIdentity } from "@/hooks/useAgentIdentity";
@@ -21,6 +21,40 @@ export const AGENT_LNA_DENIED_MESSAGE =
 export const AGENT_OUTDATED_MESSAGE =
   "Tu Tatana es de una versión anterior y no puede guardar la evidencia en esta PC. Actualizalo y reintentá.";
 
+/* ── Descarga de Tatana por SO (tatana-linux §10.E, F16) ── */
+
+/** SO de la PC según el navegador: Linux (sin Android), Windows u otro. `null` fuera del navegador. */
+export type BrowserOs = "linux" | "windows" | "other";
+
+export function browserOs(): BrowserOs | null {
+  if (typeof navigator === "undefined") return null;
+  const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
+  const platform = uaData?.platform ?? "";
+  const ua = navigator.userAgent ?? "";
+  if (/android/i.test(platform) || /android/i.test(ua)) return "other";
+  if (/linux/i.test(platform) || /linux/i.test(ua)) return "linux";
+  if (/windows/i.test(platform) || /windows/i.test(ua)) return "windows";
+  return "other";
+}
+
+/** Enlaces de descarga horneados en el build. Vacíos = no configurados (instalación local). */
+export function tatanaDownloadUrls(): { windows: string | null; linux: string | null } {
+  // Referencias literales: Next las reemplaza en el build (una búsqueda dinámica no se inlinea).
+  const windows = process.env.NEXT_PUBLIC_TATANA_DOWNLOAD_URL || null;
+  const linux = process.env.NEXT_PUBLIC_TATANA_DOWNLOAD_URL_LINUX || null;
+  return { windows, linux };
+}
+
+/**
+ * Enlace de descarga para el SO del navegador: Linux (sin Android) → el de Linux;
+ * cualquier otro → el de Windows. En Linux sin enlace de Linux configurado devuelve
+ * `null` (no se ofrece el instalador de Windows a una PC Linux).
+ */
+export function tatanaDownloadUrl(os: BrowserOs | null = browserOs()): string | null {
+  const urls = tatanaDownloadUrls();
+  return os === "linux" ? urls.linux : urls.windows;
+}
+
 /** Texto para Tatana caído (distingue el permiso de red local denegado, §9.3). */
 export function agentUnreachableMessage(): string {
   return cachedLocalNetworkPermission() === "denied" ? AGENT_LNA_DENIED_MESSAGE : AGENT_OFFLINE_MESSAGE;
@@ -32,7 +66,7 @@ export function agentUnreachableMessage(): string {
  * reiniciarlo; un Tatana anterior a esa HU no, y hay que instalar el nuevo.
  */
 export function agentMinVersionMessage(identity?: Pick<AgentIdentity, "info" | "versionIsReal">): string {
-  const url = process.env.NEXT_PUBLIC_TATANA_DOWNLOAD_URL;
+  const url = tatanaDownloadUrl();
   const version = identity?.versionIsReal && identity.info?.version ? identity.info.version : null;
   if (version) {
     return url
@@ -137,8 +171,8 @@ export function agentErrorMessage(err: unknown, ctx: { name?: string; action: Ag
     case "empty_evidence":
       return `${ctx.name ?? "El archivo"} está vacío (0 bytes) y no se guarda como evidencia.`;
     case "origin_not_allowed": {
-      // Build arg opcional (despliegue-nube, DT17): vacío en la instalación local.
-      const url = process.env.NEXT_PUBLIC_TATANA_DOWNLOAD_URL;
+      // Build arg opcional (despliegue-nube, DT17): vacío en la instalación local. Según el SO (tatana-linux).
+      const url = tatanaDownloadUrl();
       return url
         ? `El Tatana de esta PC no está habilitado para esta dirección. Descargá e instalá la versión actual desde ${url} y reintentá.`
         : "Tatana no acepta pedidos desde esta página. Pedí que agreguen esta dirección a la configuración de Tatana (Agent:AllowedOrigins).";
@@ -203,14 +237,28 @@ export function agentErrorMessage(err: unknown, ctx: { name?: string; action: Ag
 export const IOS_APPLE_SERVICE_MISSING_TITLE = "Falta el servicio de Apple en esta PC";
 export const IOS_APPLE_SERVICE_MISSING_MESSAGE =
   'Para que Factum vea el iPhone, instalá la app "Apple Devices" desde Microsoft Store (o iTunes) y volvé a conectar el iPhone.';
+export const IOS_APPLE_SERVICE_MISSING_MESSAGE_LINUX =
+  'Para que Factum vea el iPhone, abrí Tatana, tocá "Preparar esta PC" y volvé a conectar el iPhone.';
+
+/** Falta el servicio de Apple según el SO de Tatana (`/health.os`). Windows/macOS o desconocido: el texto de siempre. */
+export function iosAppleServiceMissingMessage(os: AgentOs | null | undefined): string {
+  return os === "linux" ? IOS_APPLE_SERVICE_MISSING_MESSAGE_LINUX : IOS_APPLE_SERVICE_MISSING_MESSAGE;
+}
 
 export const AIRPLAY_UNAVAILABLE_BADGE = "No disponible en esta PC";
 
 /** Motivo de AirPlay no disponible; sin motivo, el genérico de uxplay. */
 export function airplayUnavailableText(reason: AirplayUnavailableReason | null | undefined): string {
-  return reason === "not_supported_on_windows"
-    ? "AirPlay no está disponible en Tatana para Windows."
-    : "Falta el receptor AirPlay en esta PC.";
+  switch (reason) {
+    case "not_supported_on_windows":
+      return "AirPlay no está disponible en Tatana para Windows.";
+    case "uxplay_without_mp4":
+      return "La versión de uxplay de esta PC no puede grabar (hace falta la 1.73 o posterior).";
+    case "avahi_not_running":
+      return 'El servicio avahi no está activo en esta PC: abrí Tatana y tocá "Preparar esta PC".';
+    default:
+      return "Falta el receptor AirPlay en esta PC.";
+  }
 }
 
 /** Resultado de "Activar Modo Desarrollador" (§4.3). */

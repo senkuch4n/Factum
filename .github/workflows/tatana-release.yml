@@ -1,5 +1,5 @@
-# Factum — instalador de Tatana para Windows: arma, prueba, firma y publica
-# (SDD tatana-instalador-autoupdate §8; guía docs/despliegue-nube.md, sección 19).
+# Factum — Tatana para Windows (instalador NSIS) y Linux (AppImage): arma, prueba, firma y publica en una sola release
+# (SDD tatana-instalador-autoupdate §8; tatana-linux D-T9, §9.2; guía docs/despliegue-nube.md, secciones 19 y 20).
 #
 # Modos (D-T23):
 #   - release: push de un tag tatana-vX.Y.Z, o "Run workflow" con publicar=true. SOLO desde un commit que
@@ -9,9 +9,11 @@
 #     una clave Ed25519 EFÍMERA que se genera y se descarta dentro del job "instalador"; nunca toca un
 #     secret ni publica nada. Sirve igual para PRs de forks: ningún job de ensayo usa secrets.
 #
-# Jobs: preparar → payload (ubuntu) → instalador (windows; en ensayo, también firma) →
-#       firmar (ubuntu, environment tatana-release, solo release) → prueba (windows, D11) →
-#       publicar (ubuntu, environment tatana-release, solo release).
+# Jobs: preparar → payload (ubuntu; Windows y Linux) → instalador (windows; en ensayo, también firma) y
+#       appimage (ubuntu; en ensayo, también firma con su propia clave efímera) →
+#       firmar (ubuntu, environment tatana-release, solo release: los dos manifiestos) →
+#       prueba (windows, D11) y prueba-linux (ubuntu) → publicar (ubuntu, environment tatana-release, solo release;
+#       necesita las DOS pruebas: si falla cualquiera no se publica nada y queda vigente lo anterior).
 #
 # Secrets (environment tatana-release): TATANA_FIRMA_CLAVE_PRIVADA, TATANA_PUB_SSH_KEY.
 # Secrets del repo (ya existen): DEPLOY_HOST, DEPLOY_KNOWN_HOSTS.
@@ -46,7 +48,11 @@ on:
       - agent-ui/build/**
       - agent-ui/src/main/updater/**
       - agent-ui/package.json
+      - agent-ui/src/main/linux/**
+      - agent-ui/src/main/agent-process.ts
       - deploy/windows/armar-tatana-portable.sh
+      - deploy/linux/**
+      - packaging/linux/**
 
 # Una publicación a la vez (nunca se cancela a mitad). Los ensayos de PR van en su propio grupo: si no,
 # un PR podría dejar en espera (o desplazar) una release pendiente.
@@ -165,14 +171,23 @@ jobs:
           } >>"$GITHUB_OUTPUT"
           echo "Orígenes: ${ORIGENES[*]}" >>"$GITHUB_STEP_SUMMARY"
 
-      - name: Chequeos del instalador (D-T25, D-T26)
+      - name: Chequeos del instalador (D-T25, D-T26; tatana-linux D-T3)
         run: |
+          # shellcheck disable=SC2016 # JavaScript, no shell: los ${} son de electron-builder.
           node -e '
             const b = require("./agent-ui/package.json").build ?? {};
             const errores = [];
             if (b.appId !== "com.factum.tatana") errores.push("build.appId tiene que ser com.factum.tatana para siempre (D-T26)");
             if (b.nsis?.deleteAppDataOnUninstall !== false) errores.push("build.nsis.deleteAppDataOnUninstall tiene que ser false para siempre (D-T25)");
             if (b.nsis?.perMachine !== false) errores.push("build.nsis.perMachine tiene que ser false (sin admin)");
+            // tatana-linux D-T3: AppImage x64 con el runtime estático (sin libfuse2) y el nombre del canal.
+            const t = (b.linux?.target ?? []).map((x) => (typeof x === "string" ? { target: x } : x));
+            if (!t.some((x) => x.target === "AppImage" && (x.arch ?? []).includes("x64")))
+              errores.push("build.linux.target tiene que incluir AppImage x64 (tatana-linux D-T3)");
+            if (b.appImage?.artifactName !== "Tatana-${version}-x86_64.${ext}")
+              errores.push("build.appImage.artifactName tiene que ser Tatana-${version}-x86_64.${ext} (tatana-linux §10.C)");
+            if (b.toolsets?.appimage !== "1.0.3")
+              errores.push("build.toolsets.appimage tiene que ser 1.0.3 (runtime estático, sin libfuse2; tatana-linux D-T3)");
             if (errores.length) { for (const e of errores) console.log("::error::" + e); process.exit(1); }
           '
 
@@ -247,12 +262,26 @@ jobs:
           git archive HEAD | tar -x -C "$RUNNER_TEMP/src"
           bash deploy/windows/armar-tatana-portable.sh --version "$VERSION" --src "$RUNNER_TEMP/src" \
             --salida "$RUNNER_TEMP/out" --origenes "$ORIGENES" --client-url "$CLIENT_URL"
+      - name: Armar el payload de Linux (tatana-linux §6.1)
+        env:
+          VERSION: ${{ needs.preparar.outputs.version }}
+          ORIGENES: ${{ needs.preparar.outputs.origenes }}
+        run: |
+          python3 -I packaging/linux/ios-linux/generar-lock.py --check
+          bash deploy/linux/armar-tatana-linux.sh --version "$VERSION" --src "$RUNNER_TEMP/src" \
+            --salida "$RUNNER_TEMP/out" --origenes "$ORIGENES"
       - name: Agente base 0.0.1 (para la prueba)
         run: |
           dotnet publish "$RUNNER_TEMP/src/server/src/Factum.Agent/Factum.Agent.csproj" -c Release -r win-x64 \
             --self-contained true -p:Version=0.0.1 -o "$RUNNER_TEMP/base-publish" --nologo -v quiet
           mkdir -p "$RUNNER_TEMP/base"
           cp "$RUNNER_TEMP/base-publish/Factum.Agent.exe" "$RUNNER_TEMP/base/"
+      - name: Agente base 0.0.1 de Linux (para la prueba)
+        run: |
+          dotnet publish "$RUNNER_TEMP/src/server/src/Factum.Agent/Factum.Agent.csproj" -c Release -r linux-x64 \
+            --self-contained true -p:Version=0.0.1 -o "$RUNNER_TEMP/base-publish-linux" --nologo -v quiet
+          mkdir -p "$RUNNER_TEMP/base-linux"
+          cp "$RUNNER_TEMP/base-publish-linux/Factum.Agent" "$RUNNER_TEMP/base-linux/"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: payload
@@ -263,6 +292,18 @@ jobs:
         with:
           name: agente-base
           path: ${{ runner.temp }}/base/Factum.Agent.exe
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: payload-linux
+          path: ${{ runner.temp }}/out/Tatana-Agent-v${{ needs.preparar.outputs.version }}-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agente-base-linux
+          path: ${{ runner.temp }}/base-linux/Factum.Agent
           if-no-files-found: error
           retention-days: 7
 
@@ -355,11 +396,8 @@ jobs:
         run: |
           npm ci
           if ($LASTEXITCODE -ne 0) { throw 'npm ci' }
-          # El postinstall ya parchó multiUser.nsh de electron-builder (0xC0000005 en System.dll,
-          # PR #9769). Se vuelve a correr para que el log lo confirme ("ya está parchado"); falla si
-          # cambió la plantilla.
-          node scripts/parchar-electron-builder.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'parche de electron-builder' }
+          # tatana-linux DU1 = a: electron-builder 26.15.3 ya trae el arreglo de multiUser.nsh (0xC0000005 en
+          # System.dll, PR #9769, desde 26.12.0): ya no hay parche propio (scripts/parchar-electron-builder.mjs).
           npm version $env:VERSION --no-git-tag-version --allow-same-version
           npx electron-vite build
           if ($LASTEXITCODE -ne 0) { throw 'electron-vite build' }
@@ -438,9 +476,179 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  appimage:
+    name: AppImage (ubuntu, tatana-linux §9.2)
+    needs: [preparar, payload]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      VERSION: ${{ needs.preparar.outputs.version }}
+      MODO: ${{ needs.preparar.outputs.modo }}
+      ORIGENES: ${{ needs.preparar.outputs.origenes }}
+      CLIENT_URL: ${{ needs.preparar.outputs.client_url }}
+      UPDATE_URLS_HORNEADAS: ${{ needs.preparar.outputs.update_urls_horneadas }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: agent-ui/package-lock.json
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: payload-linux
+          path: ${{ runner.temp }}/payload-linux
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: agente-base-linux
+          path: ${{ runner.temp }}/agente-base-linux
+
+      - name: Agente y herramientas en resources/agent
+        run: |
+          set -euo pipefail
+          A=agent-ui/resources/agent
+          rm -rf "$A"
+          mkdir -p "$A"
+          tar -xzf "$RUNNER_TEMP/payload-linux/Tatana-Agent-v$VERSION-linux-x64.tar.gz" -C "$A"
+          # Lo que es solo del payload no viaja en el AppImage (como version.txt del portátil de Windows).
+          rm -f "$A/version.txt"
+          for f in Factum.Agent appsettings.json tools/platform-tools/adb tools/scrcpy/scrcpy tools/ffmpeg/ffmpeg \
+                   tools/python-embed/bin/python3; do
+            [[ -e "$A/$f" ]] || { echo "::error::falta $f en el payload de Linux"; exit 1; }
+          done
+          for f in Factum.Agent tools/platform-tools/adb tools/scrcpy/scrcpy tools/ffmpeg/ffmpeg; do
+            [[ -x "$A/$f" ]] || { echo "::error::$f no es ejecutable en el payload de Linux"; exit 1; }
+          done
+          [[ ! -e "$A/appsettings.Local.json" ]] || { echo "::error::el payload trae appsettings.Local.json"; exit 1; }
+          MOCK="$(jq -r '.Agent.Mock // false' "$A/appsettings.json")"
+          [[ "$MOCK" == false ]] || { echo "::error::appsettings.json tiene Agent.Mock = $MOCK"; exit 1; }
+          IFS=',' read -r -a LISTA <<<"$ORIGENES"
+          for o in "${LISTA[@]}"; do
+            jq -e --arg o "$o" '.Agent.AllowedOrigins | index($o)' "$A/appsettings.json" >/dev/null \
+              || { echo "::error::AllowedOrigins no incluye $o"; exit 1; }
+          done
+          echo "OK agente $VERSION con orígenes: $(jq -r '.Agent.AllowedOrigins | join(", ")' "$A/appsettings.json")"
+
+      - name: Canal horneado (tatana-dist.json)
+        run: |
+          mkdir -p agent-ui/resources/dist-config
+          jq -n --arg c "$CLIENT_URL" --argjson u "$UPDATE_URLS_HORNEADAS" '{ schema: 1, client_url: $c, update_urls: $u }' \
+            >agent-ui/resources/dist-config/tatana-dist.json
+          cat agent-ui/resources/dist-config/tatana-dist.json
+
+      - name: Clave efímera propia (solo ensayo)
+        if: needs.preparar.outputs.modo == 'ensayo'
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          D="$RUNNER_TEMP/clave-ensayo"
+          mkdir -p "$D"
+          node ops/tatana/generar-clave-firma.mjs --key-id "ensayo-linux-$RUN_ID" --salida "$D/ensayo.pem" --extra-salida "$D/extra.txt"
+          echo "TATANA_EXTRA_UPDATE_KEY=$(tr -d '[:space:]' <"$D/extra.txt")" >>"$GITHUB_ENV"
+          echo "KEY_ID_ENSAYO=ensayo-linux-$RUN_ID" >>"$GITHUB_ENV"
+
+      - name: Release - sin clave extra
+        if: needs.preparar.outputs.modo == 'release'
+        run: |
+          if [[ -n "${TATANA_EXTRA_UPDATE_KEY:-}" ]]; then
+            echo "::error::TATANA_EXTRA_UPDATE_KEY tiene que estar vacía en una release (D-T23)"
+            exit 1
+          fi
+
+      - name: AppImage vX
+        working-directory: agent-ui
+        run: |
+          set -euo pipefail
+          npm ci
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          npx electron-vite build
+          PRIMERA="$(jq -r '.[0]' <<<"$UPDATE_URLS_HORNEADAS")"
+          npx electron-builder --linux AppImage --x64 --publish never "-c.publish.url=$PRIMERA"
+          for f in "Tatana-$VERSION-x86_64.AppImage" latest-linux.yml; do
+            [[ -f "dist/$f" ]] || { echo "::error::falta dist/$f"; exit 1; }
+          done
+          cat dist/latest-linux.yml
+
+      - name: AppImage base 0.0.1 (para la prueba)
+        working-directory: agent-ui
+        run: |
+          set -euo pipefail
+          # Los artifacts no conservan el bit x: se vuelve a poner.
+          install -m 755 "$RUNNER_TEMP/agente-base-linux/Factum.Agent" resources/agent/Factum.Agent
+          npm version 0.0.1 --no-git-tag-version --allow-same-version
+          npx electron-vite build
+          PRIMERA="$(jq -r '.[0]' <<<"$UPDATE_URLS_HORNEADAS")"
+          npx electron-builder --linux AppImage --x64 --publish never "-c.publish.url=$PRIMERA" "-c.directories.output=dist-base"
+          [[ -f dist-base/Tatana-0.0.1-x86_64.AppImage ]] || { echo "::error::falta dist-base/Tatana-0.0.1-x86_64.AppImage"; exit 1; }
+
+      # Ensayo: se firma acá mismo con la clave efímera de este job, que nunca sale de acá. Se firma además un
+      # manifiesto de Windows con la MISMA clave (tatana-update.json) para el caso cruzado de prueba-linux.sh: Linux
+      # tiene que rechazarlo (manifiesto_invalido) aunque la firma sea válida. En release firma el job "firmar".
+      - name: Firmar (solo ensayo, clave efímera)
+        if: needs.preparar.outputs.modo == 'ensayo'
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          C="$RUNNER_TEMP/canal-linux"
+          mkdir -p "$C"
+          cp "agent-ui/dist/Tatana-$VERSION-x86_64.AppImage" agent-ui/dist/latest-linux.yml "$C/"
+          node ops/tatana/armar-payload.mjs --producto tatana-linux --archivo "$C/Tatana-$VERSION-x86_64.AppImage" \
+            --latest "$C/latest-linux.yml" --version "$VERSION" --commit "$SHA" --notas 'Ensayo de CI (no publicable)' \
+            --salida "$RUNNER_TEMP/payload-linux.json"
+          TATANA_FIRMA_CLAVE_PRIVADA="$(cat "$RUNNER_TEMP/clave-ensayo/ensayo.pem")" \
+            node ops/tatana/firmar-manifiesto.mjs --payload "$RUNNER_TEMP/payload-linux.json" --key-id "$KEY_ID_ENSAYO" \
+            --clave-extra "$TATANA_EXTRA_UPDATE_KEY" --salida "$C/tatana-update-linux.json"
+          node ops/tatana/verificar-manifiesto.mjs --manifiesto "$C/tatana-update-linux.json" --producto tatana-linux \
+            --clave-extra "$TATANA_EXTRA_UPDATE_KEY" --version "$VERSION" --archivo "$C/Tatana-$VERSION-x86_64.AppImage" \
+            --payload "$RUNNER_TEMP/payload-linux.json"
+          # Manifiesto cruzado: un "instalador de Windows" de mentira, firmado con esta misma clave.
+          X="$RUNNER_TEMP/cruzado"
+          mkdir -p "$X"
+          head -c 65536 /dev/urandom >"$X/Tatana-Setup-$VERSION.exe"
+          SHA512="$(openssl dgst -sha512 -binary "$X/Tatana-Setup-$VERSION.exe" | base64 -w0)"
+          TAM="$(stat -c %s "$X/Tatana-Setup-$VERSION.exe")"
+          printf 'version: %s\nfiles:\n  - url: Tatana-Setup-%s.exe\n    sha512: %s\n    size: %s\npath: Tatana-Setup-%s.exe\nsha512: %s\n' \
+            "$VERSION" "$VERSION" "$SHA512" "$TAM" "$VERSION" "$SHA512" >"$X/latest.yml"
+          node ops/tatana/armar-payload.mjs --archivo "$X/Tatana-Setup-$VERSION.exe" --latest "$X/latest.yml" \
+            --version "$VERSION" --commit "$SHA" --salida "$X/payload.json"
+          TATANA_FIRMA_CLAVE_PRIVADA="$(cat "$RUNNER_TEMP/clave-ensayo/ensayo.pem")" \
+            node ops/tatana/firmar-manifiesto.mjs --payload "$X/payload.json" --key-id "$KEY_ID_ENSAYO" \
+            --clave-extra "$TATANA_EXTRA_UPDATE_KEY" --salida "$C/tatana-update.json"
+          (cd "$C" && sha256sum "Tatana-$VERSION-x86_64.AppImage" latest-linux.yml tatana-update-linux.json >SHA256SUMS)
+          cat "$C/SHA256SUMS"
+
+      - name: Borrar la clave efímera
+        if: always() && needs.preparar.outputs.modo == 'ensayo'
+        run: rm -rf "$RUNNER_TEMP/clave-ensayo"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: appimage
+          path: |
+            agent-ui/dist/Tatana-${{ needs.preparar.outputs.version }}-x86_64.AppImage
+            agent-ui/dist/latest-linux.yml
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: appimage-base
+          path: agent-ui/dist-base/Tatana-0.0.1-x86_64.AppImage
+          if-no-files-found: error
+          retention-days: 7
+      - if: needs.preparar.outputs.modo == 'ensayo'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canal-linux
+          path: ${{ runner.temp }}/canal-linux/
+          if-no-files-found: error
+          retention-days: 7
+
   firmar:
     name: Firmar (release)
-    needs: [preparar, instalador]
+    needs: [preparar, instalador, appimage]
     if: needs.preparar.outputs.modo == 'release'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -459,6 +667,10 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: instalador
+          path: ${{ runner.temp }}/canal
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: appimage
           path: ${{ runner.temp }}/canal
       - name: Notas
         id: notas
@@ -492,10 +704,20 @@ jobs:
             --version "$VERSION" --commit "$SHA" --notas "$(cat "$RUNNER_TEMP/notas.txt")" --salida "$RUNNER_TEMP/payload.json"
           node ops/tatana/firmar-manifiesto.mjs --payload "$RUNNER_TEMP/payload.json" --key-id "$KEY_ID" \
             --salida "$C/tatana-update.json"
+          # tatana-linux D-T8: mismo sobre y misma clave; producto tatana-linux y el AppImage.
+          node ops/tatana/armar-payload.mjs --producto tatana-linux --archivo "$C/Tatana-$VERSION-x86_64.AppImage" \
+            --latest "$C/latest-linux.yml" --version "$VERSION" --commit "$SHA" --notas "$(cat "$RUNNER_TEMP/notas.txt")" \
+            --salida "$RUNNER_TEMP/payload-linux.json"
+          node ops/tatana/firmar-manifiesto.mjs --payload "$RUNNER_TEMP/payload-linux.json" --key-id "$KEY_ID" \
+            --salida "$C/tatana-update-linux.json"
           unset TATANA_FIRMA_CLAVE_PRIVADA
           node ops/tatana/verificar-manifiesto.mjs --manifiesto "$C/tatana-update.json" --version "$VERSION" \
             --exe "$C/Tatana-Setup-$VERSION.exe" --payload "$RUNNER_TEMP/payload.json"
-          (cd "$C" && sha256sum "Tatana-Setup-$VERSION.exe" "Tatana-Setup-$VERSION.exe.blockmap" latest.yml tatana-update.json >SHA256SUMS)
+          node ops/tatana/verificar-manifiesto.mjs --manifiesto "$C/tatana-update-linux.json" --producto tatana-linux \
+            --version "$VERSION" --archivo "$C/Tatana-$VERSION-x86_64.AppImage" --payload "$RUNNER_TEMP/payload-linux.json"
+          # SHA256SUMS cubre los 7 archivos del canal (tatana-linux §10.D).
+          (cd "$C" && sha256sum "Tatana-Setup-$VERSION.exe" "Tatana-Setup-$VERSION.exe.blockmap" latest.yml tatana-update.json \
+            "Tatana-$VERSION-x86_64.AppImage" latest-linux.yml tatana-update-linux.json >SHA256SUMS)
           cat "$C/SHA256SUMS"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -598,9 +820,71 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  prueba-linux:
+    name: Prueba en Linux (actualización, tatana-linux §9.4)
+    needs: [preparar, payload, appimage, firmar]
+    # "firmar" se saltea en ensayo (firmó "appimage"); en release tiene que haber pasado.
+    if: >-
+      !cancelled() && needs.appimage.result == 'success' &&
+      (needs.firmar.result == 'success' || (needs.firmar.result == 'skipped' && needs.preparar.outputs.modo == 'ensayo'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: ops/tatana
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Xvfb y FUSE
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb xauth fuse3 jq >/dev/null
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: appimage-base
+          path: ${{ runner.temp }}/appimage-base
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: payload-linux
+          path: ${{ runner.temp }}/payload-linux
+      - name: Canal firmado (release)
+        if: needs.preparar.outputs.modo == 'release'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: canal
+          path: ${{ runner.temp }}/canal
+      - name: Canal firmado (ensayo, clave efímera del job appimage)
+        if: needs.preparar.outputs.modo == 'ensayo'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: canal-linux
+          path: ${{ runner.temp }}/canal
+      - name: Prueba de actualización
+        timeout-minutes: 30
+        env:
+          VERSION: ${{ needs.preparar.outputs.version }}
+          SALIDA_LOGS: ${{ runner.temp }}/logs-prueba-linux
+        run: >-
+          bash ops/tatana/prueba-linux.sh
+          --canal "$RUNNER_TEMP/canal"
+          --base "$RUNNER_TEMP/appimage-base/Tatana-0.0.1-x86_64.AppImage"
+          --version "$VERSION"
+          --payload "$RUNNER_TEMP/payload-linux/Tatana-Agent-v$VERSION-linux-x64.tar.gz"
+      - name: Subir logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: logs-prueba-linux
+          path: ${{ runner.temp }}/logs-prueba-linux/
+          if-no-files-found: ignore
+          retention-days: 7
+
   publicar:
     name: Publicar en el VPS y GitHub Release
-    needs: [preparar, prueba]
+    # tatana-linux D-T9: las DOS pruebas. Si falla cualquiera, no se publica nada en ninguna plataforma.
+    needs: [preparar, prueba, prueba-linux]
     if: needs.preparar.outputs.modo == 'release' && vars.TATANA_PUBLICAR_HABILITADO == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -627,7 +911,10 @@ jobs:
         run: |
           C="$RUNNER_TEMP/canal"
           node ops/tatana/verificar-manifiesto.mjs --manifiesto "$C/tatana-update.json" --version "$VERSION" --exe "$C/Tatana-Setup-$VERSION.exe"
+          node ops/tatana/verificar-manifiesto.mjs --manifiesto "$C/tatana-update-linux.json" --producto tatana-linux \
+            --version "$VERSION" --archivo "$C/Tatana-$VERSION-x86_64.AppImage"
           (cd "$C" && sha256sum --check --strict SHA256SUMS)
+          [[ "$(wc -l <"$C/SHA256SUMS")" == 7 ]] || { echo "::error::SHA256SUMS tiene que cubrir 7 archivos"; exit 1; }
 
       - name: Preparar SSH
         env:
@@ -655,8 +942,9 @@ jobs:
             exit 1
           fi
           C="$RUNNER_TEMP/canal"
+          # Exactamente los 8 archivos de tatana-linux §10.D (el VPS rechaza cualquier otra cosa con código 4).
           tar -C "$C" -cf "$RUNNER_TEMP/bundle.tar" "Tatana-Setup-$VERSION.exe" "Tatana-Setup-$VERSION.exe.blockmap" \
-            latest.yml tatana-update.json SHA256SUMS
+            latest.yml tatana-update.json "Tatana-$VERSION-x86_64.AppImage" latest-linux.yml tatana-update-linux.json SHA256SUMS
           ssh -i ~/.ssh/tatana_pub_key -p "$DEPLOY_PORT" \
             -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 \
@@ -668,12 +956,17 @@ jobs:
           UPDATE_URLS: ${{ needs.preparar.outputs.update_urls }}
         run: |
           C="$RUNNER_TEMP/canal"
-          TAM="$(stat -c %s "$C/Tatana-Setup-$VERSION.exe")"
+          largo() { curl -fsSIL --retry 3 --retry-all-errors "$1" | tr -d '\r' | awk 'tolower($1) == "content-length:" { v = $2 } END { print v }'; }
           for URL in $(jq -r '.[]' <<<"$UPDATE_URLS"); do
-            curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o "$RUNNER_TEMP/remoto.json" "${URL}tatana-update.json"
-            cmp -s "$RUNNER_TEMP/remoto.json" "$C/tatana-update.json" || { echo "::error::${URL}tatana-update.json no es el firmado"; exit 1; }
-            LARGO="$(curl -fsSIL --retry 3 --retry-all-errors "${URL}Tatana-Setup-$VERSION.exe" | tr -d '\r' | awk 'tolower($1) == "content-length:" { v = $2 } END { print v }')"
-            [[ "$LARGO" == "$TAM" ]] || { echo "::error::${URL}Tatana-Setup-$VERSION.exe: Content-Length $LARGO, se esperaba $TAM"; exit 1; }
+            for M in tatana-update.json tatana-update-linux.json; do
+              curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o "$RUNNER_TEMP/remoto.json" "${URL}$M"
+              cmp -s "$RUNNER_TEMP/remoto.json" "$C/$M" || { echo "::error::${URL}$M no es el firmado"; exit 1; }
+            done
+            for F in "Tatana-Setup-$VERSION.exe" "Tatana-$VERSION-x86_64.AppImage"; do
+              TAM="$(stat -c %s "$C/$F")"
+              LARGO="$(largo "${URL}$F")"
+              [[ "$LARGO" == "$TAM" ]] || { echo "::error::${URL}$F: Content-Length $LARGO, se esperaba $TAM"; exit 1; }
+            done
             echo "OK $URL"
           done
           echo "Publicado Tatana $VERSION en: $(jq -r 'join(", ")' <<<"$UPDATE_URLS")" >>"$GITHUB_STEP_SUMMARY"
@@ -686,7 +979,8 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           C="$RUNNER_TEMP/canal"
-          ARCHIVOS=("$C/Tatana-Setup-$VERSION.exe" "$C/Tatana-Setup-$VERSION.exe.blockmap" "$C/latest.yml" "$C/tatana-update.json" "$C/SHA256SUMS")
+          ARCHIVOS=("$C/Tatana-Setup-$VERSION.exe" "$C/Tatana-Setup-$VERSION.exe.blockmap" "$C/latest.yml" "$C/tatana-update.json"
+            "$C/Tatana-$VERSION-x86_64.AppImage" "$C/latest-linux.yml" "$C/tatana-update-linux.json" "$C/SHA256SUMS")
           if gh release view "tatana-v$VERSION" >/dev/null 2>&1; then
             gh release upload "tatana-v$VERSION" "${ARCHIVOS[@]}" --clobber
           else
