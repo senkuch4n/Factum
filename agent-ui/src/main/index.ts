@@ -294,6 +294,9 @@ async function checkLinuxSetup(startHidden: boolean): Promise<void> {
 // `--install-update` = "Reiniciar y actualizar"; sin argumentos, muestra la ventana.
 if (!app.requestSingleInstanceLock()) {
   app.quit()
+} else if (hasArg(process.argv, '--quit')) {
+  // "Salir" sin ninguna instancia corriendo: no hay nada que cerrar (no se arranca Tatana).
+  app.quit()
 } else {
   app.on('second-instance', (_e, argv) => {
     if (hasArg(argv, '--quit')) void requestQuit()

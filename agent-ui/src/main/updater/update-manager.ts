@@ -23,7 +23,7 @@ import { createHash } from 'crypto'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { agentProcess } from '../agent-process'
-import { isInstalled, runningAppImage } from '../linux/desktop-integration'
+import { isInstalled, relaunchFrom, runningAppImage } from '../linux/desktop-integration'
 import { canonicalAppImagePath } from '../linux/paths'
 import { installAppImage } from './appimage-install'
 import { enterMaintenance, type AgentOperation } from '../agent-api'
@@ -546,9 +546,13 @@ export class UpdateManager extends EventEmitter {
     }
     updaterLog.info(`v${pending.payload.version} instalada en ${canonical}.`)
     this.pending = null
-    if (opts.relaunch) app.relaunch({ execPath: canonical, args: [] })
     // `exit` y no `quit`: el agente ya está cortado y el `close` de la ventana no frena la salida.
-    setImmediate(() => app.exit(0))
+    // Relanzar con `relaunchFrom` (relaunch.ts), no con `app.relaunch`: dentro de un AppImage el
+    // relauncher de Electron corre desde el montaje FUSE que se desmonta al salir y nunca lanza.
+    setImmediate(() => {
+      if (opts.relaunch) relaunchFrom(canonical, [], (m) => updaterLog.info(m))
+      else app.exit(0)
+    })
     return { ok: true }
   }
 

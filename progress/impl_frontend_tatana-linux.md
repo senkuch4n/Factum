@@ -136,3 +136,57 @@ Invocados `ui-ux-pro-max`, `senior-frontend`, `3d-web-experience` y `web-design-
 ### Para el orquestador / backend
 
 - Nada que tocar en `ci/tatana-linux/prueba-humo.sh`: el chequeo de la L193 es correcto según la SDD.
+
+---
+
+## Reintento 2 — paso 6 de `prueba-linux.sh`: `/health no llegó a la versión 0.9.0 en 180 s` (run 39191591887)
+
+### Causa real: `app.relaunch()` no relanza nunca desde un AppImage
+
+**Evidencia de los logs** (`tatana-updater.log`, `app.log`):
+
+- 03:03:32.076 `Instalando v0.9.0 (relanzar=true)` → 03:03:34.032 `v0.9.0 instalada en …/Tatana.AppImage`. El reemplazo funcionó en 2 s.
+- Después, **ningún proceso nuevo** escribe nada durante 3 minutos.
+- 03:06:32: vence el `esperar_health` y `terminar` llama a `cerrar_app`, que corre `"$CANONICA" --quit >>app.log`. A las 03:06:33 aparece `Tatana v0.9.0` y `Actualizado a v0.9.0` (pid 9472).
+- **El pid 9472 no es el relanzado. Es ese `--quit` de la limpieza.** Sus líneas de Chromium (`bus.cc`, `viz_main_impl`, `libnotify`) quedan en `app.log`, y eso solo puede pasar con un proceso que lanzó el script con stderr a `app.log`. El relauncher de Electron manda stdout y stderr a `/dev/null` (`relauncher_linux.cc`, `LaunchProgram`). Como no había otra instancia, el `--quit` tomó la instancia única y arrancó Tatana entero. El `FATAL … Failed to shutdown` de las 03:07:02 es ese mismo proceso, que se quedó sin X cuando se mató el Xvfb.
+- Conclusión: el proceso viejo salió y el relanzado **no existió nunca**. La canónica estaba bien, porque la v0.9.0 arrancó sin problema apenas alguien la lanzó.
+
+**Mecanismo** (código de Electron 33.4.11, `shell/browser/relauncher.cc` y `relauncher_linux.cc`): `app.relaunch` lanza un helper `--type=relauncher` con `CHILD_PROCESS_EXE` = `/proc/self/exe`. Ese ejecutable es el binario **adentro del montaje FUSE del AppImage viejo** (`/tmp/.mount_Tatan…/tatana`). El helper espera la muerte del padre (`PR_SET_PDEATHSIG`) y recién ahí lanza el programa. Pero cuando muere el padre, el runtime del AppImage desmonta el squashfs. El helper ya no puede cargar su propio código (FUSE desconectado), muere o se queda trabado, y no lanza nada. La SDD (D-T6, D-T7) prescribía `app.relaunch({ execPath: <canónica> })`, y eso es justamente lo que no funciona en un AppImage.
+
+No era la instancia única: el `--install-update` del paso 6 le pasó el pedido a la instancia vieja y salió (las líneas del pid 9069 de las 03:03:32). Tampoco era la espera del agente: `stopAndWait` y la instalación terminaron en 2 s.
+
+### Arreglo
+
+- **`agent-ui/src/main/linux/relaunch.ts`** (nuevo, puro, sin Electron). `spawnRelaunch()` lanza `/bin/sh -c <script>` despegado (`detached` = `setsid`, `stdio: 'ignore'`). El shell vive en el disco, no en el montaje. El script:
+  - cierra los fds 3–9 heredados del runtime viejo (pipe de keepalive), así no sostienen su montaje;
+  - espera a que salga el pid viejo. En Linux lee `/proc/<pid>/stat` y toma un zombie como muerto. Sin `/proc`, usa `kill -0`;
+  - espera como máximo 30 s y después hace `exec` del AppImage de todos modos.
+  
+  Esperar la salida libera el `requestSingleInstanceLock()`, que es el problema (1) que D-T7 le marcaba a electron-updater. `relaunchEnv()` restaura `XDG_CURRENT_DESKTOP` desde `ORIGINAL_XDG_CURRENT_DESKTOP` (Electron lo pisa) y saca `APPIMAGE`/`APPDIR`/`ARGV0`/`OWD`, que el runtime nuevo vuelve a fijar. Si `/bin/sh` no existe devuelve `false` y el caller cae a `app.relaunch`: un ENOENT de `spawn` llegaría asíncrono, cuando la app ya salió, por eso se chequea antes.
+- **`agent-ui/src/main/linux/desktop-integration.ts`**: `relaunchFrom()` usa `spawnRelaunch({ waitPid: process.pid, … })`, queda `app.relaunch` como respaldo, y después `app.exit(0)`. Así quedan arreglados también "Instalar en esta PC" y "Abrir la instalada" (D-T6), que relanzaban igual desde un AppImage montado y tenían el mismo defecto latente.
+- **`agent-ui/src/main/updater/update-manager.ts`** (`installLinux`, D-T7): con `relaunch` llama a `relaunchFrom(canonical, [], updaterLog.info)` en lugar de `app.relaunch`, y deja en el log `Relanzando … cuando salga el proceso N.`. Sin `relaunch` ("Salir") sigue con `app.exit(0)`.
+- **`agent-ui/src/main/index.ts`**: un `--quit` que toma la instancia única (no hay ninguna Tatana corriendo) hace `app.quit()` y no arranca la app. D-T13 / §9.1 (e): "Salir" sin nada abierto no hace nada. Esto era lo que hacía que `cerrar_app` (y `terminar`) levantaran una Tatana nueva cuando no había ninguna, y lo que confundió el diagnóstico.
+- **`ops/tatana/prueba-linux.sh` L143** (excepción autorizada por el orquestador): `tr '\0' '\n' 2>/dev/null <"$d/cmdline"`. En bash la redirección `<` falla antes de que se aplique un `2>` puesto después, y por eso salía el warning cuando el proceso desaparecía entre el glob y la lectura. Va con §9.4 (la prueba no tiene que ensuciar la salida) y no cambia la lógica: el script en sí no tenía nada mal respecto de la falla del paso 6.
+- Desvío de la letra de la SDD (D-T6/D-T7 dicen `app.relaunch({ execPath })`): se mantiene la intención, relanzar desde la canónica después de salir, pero con otro mecanismo, porque el prescripto no puede funcionar en un AppImage. **Sugerencia para el architect:** actualizar D-T6/D-T7 de la SDD.
+
+### Verificación
+
+- `npx tsc --noEmit -p tsconfig.web.json` → OK; `npx tsc --noEmit -p tsconfig.node.json` → OK.
+- `npm test` → **81/81 pass**. Hay 10 nuevos en `src/main/linux/relaunch.test.ts`:
+  - armado del comando (args posicionales, tope por defecto y no negativo);
+  - `relaunchEnv`;
+  - `sh -n` del script;
+  - fallback sin `/bin/sh`;
+  - opciones de `spawn` (`detached`, `stdio: 'ignore'`, entorno limpio);
+  - de integración con procesos reales: espera a que salga el pid viejo y recién ahí lanza (con una ruta con espacio y argumentos con espacio); lanza enseguida con un pid ya muerto; lanza al vencer el tope con un proceso colgado.
+- El script corrido a mano en `debian:12-slim` (dash, con `/proc`): espera la salida del pid y lanza con `--hidden`, y toma un **zombie** como muerto (estado `Z` → lanza enseguida).
+- `bash -n ops/tatana/prueba-linux.sh` → OK. No hay `shellcheck` local.
+- No se armó el AppImage localmente. Lo confirma el próximo ensayo de `tatana-release.yml` (job "Prueba en Linux"), donde el paso 6 tiene que mostrar `Relanzando …/Tatana.AppImage cuando salga el proceso N.` en `tatana-updater.log` y `Tatana v0.9.0` a los pocos segundos.
+
+### Skills (reintento 2)
+
+Invocados `ui-ux-pro-max`, `senior-frontend`, `3d-web-experience` y `web-design-guidelines`. Resultado: **sin hallazgos aplicables**. El cambio es solo del proceso main y de un script de CI: no hay JSX, CSS ni animaciones, y no se agrega 3D. De `senior-frontend` se aplicó el criterio de siempre: la lógica testeable va en un módulo puro aparte, con `spawn` y `exists` inyectables.
+
+### Contrato
+
+Sin cambios: ni `/health`, ni `update-state.json`, ni los campos de §10.

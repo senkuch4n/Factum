@@ -13,6 +13,7 @@ import { dirname, join } from 'path'
 import semver from 'semver'
 import { desktopEntryText } from './desktop-entry'
 import { replaceFile } from './replace-file'
+import { spawnRelaunch } from './relaunch'
 import { autostartPath, canonicalAppImagePath, desktopEntryPath, iconPath } from './paths'
 
 export interface InstalacionLinux {
@@ -176,11 +177,20 @@ export async function openInstalled(beforeRelaunch: () => Promise<void>): Promis
 }
 
 /**
- * `app.relaunch({ execPath })` + salir. El runtime del AppImage relanzado vuelve
- * a fijar `APPIMAGE` al montar. `app.exit` (no `quit`): el caller ya cortó el
- * agente, y así el `close` de la ventana (que esconde) no frena la salida.
+ * Relanzar desde `execPath` y salir. En un AppImage NO se usa `app.relaunch`: su
+ * relauncher corre desde el montaje FUSE de esta instancia, que se desmonta al
+ * salir, y nunca lanza nada (ver `relaunch.ts`). Un `/bin/sh` despegado espera a
+ * que salga este proceso (libera la instancia única) y hace `exec` del AppImage;
+ * el runtime relanzado vuelve a fijar `APPIMAGE` al montar. Si no se puede lanzar,
+ * cae a `app.relaunch`. `app.exit` (no `quit`): el caller ya cortó el agente, y así
+ * el `close` de la ventana (que esconde) no frena la salida.
  */
-export function relaunchFrom(execPath: string, extraArgs: string[] = []): void {
-  app.relaunch({ execPath, args: extraArgs })
+export function relaunchFrom(execPath: string, extraArgs: string[] = [], log: (msg: string) => void = console.log): void {
+  if (spawnRelaunch({ waitPid: process.pid, execPath, args: extraArgs })) {
+    log(`Relanzando ${execPath} cuando salga el proceso ${process.pid}.`)
+  } else {
+    log(`No se pudo lanzar el relanzador; se usa app.relaunch (${execPath}).`)
+    app.relaunch({ execPath, args: extraArgs })
+  }
   app.exit(0)
 }

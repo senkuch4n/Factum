@@ -140,7 +140,7 @@ procesos_tatana() {
   for d in /proc/[0-9]*; do
     exe="$(readlink "$d/exe" 2>/dev/null)" || exe=""
     exe="${exe% (deleted)}"
-    arg0="$(tr '\0' '\n' <"$d/cmdline" 2>/dev/null | head -1)"
+    arg0="$(tr '\0' '\n' 2>/dev/null <"$d/cmdline" | head -1)"
     for x in "$exe" "$arg0"; do
       case "$x" in
         */.mount_Tatan*|*/appimage_extracted_*) echo "${d#/proc/} $x"; break ;;

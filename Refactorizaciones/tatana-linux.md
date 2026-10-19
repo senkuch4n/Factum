@@ -1133,3 +1133,11 @@ pantalla, con micrófono, grabación nativa) andan igual. La HU suponía que Ubu
 - **DU1 = a):** todo `agent-ui` pasa a `electron-builder@26.15.3` (Windows incluido) y se borra el parche NSIS.
 - **DU2 = a):** AirPlay sale deshabilitado con `uxplay_without_mp4` donde el uxplay de la distro sea < 1.73;
   empaquetar uxplay queda para una HU aparte si los peritos lo piden.
+
+### Corrección post-CI (2026-10-19, reintento 2)
+
+- **D-T6 / D-T7:** `app.relaunch({ execPath })` no relanza desde un AppImage (el helper `--type=relauncher` corre
+  desde el montaje FUSE, que se desmonta al salir el proceso viejo). Se relanza con `src/main/linux/relaunch.ts`: un
+  `/bin/sh` despegado (`setsid`) que espera la salida del pid viejo (tope 30 s) y hace `exec` de la canónica;
+  `app.relaunch` queda como respaldo. Aplica a la actualización, "Instalar en esta PC" y "Abrir la instalada".
+- **D-T13:** `--quit` sin otra instancia corriendo sale sin arrancar la app.

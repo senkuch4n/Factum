@@ -39,3 +39,14 @@ Ninguno.
 - Contrato sin cambios; nada en `ci/` tocado.
 - Verificado por mí: `tsc -p tsconfig.web.json` OK, `tsc -p tsconfig.node.json` OK, `npm test` 71/71 pass (incluye los 3 casos nuevos de ensure-file).
 - Observación: la confirmación real queda para el próximo run de tatana-linux.yml (ubuntu-24.04).
+
+## Re-chequeo reintento 2
+
+**Veredicto:** APROBADA
+
+- tsc web y node: OK. `npm test` agent-ui: 81/81. `bash -n ops/tatana/prueba-linux.sh`: OK.
+- `relaunch.ts`: `/bin/sh -c` con script constante; pid, tope, ejecutable y args van como posicionales (`"$@"`), nunca interpolados, así que no hay inyección. `spawn` con `detached` + `stdio: 'ignore'` + `unref`; el sh espera la salida del pid viejo con tope de 30 s y hace `exec`, por lo que no queda ningún proceso colgado. Si `/bin/sh` no existe o `spawn` tira, `relaunchFrom` cae a `app.relaunch`. Es un respaldo razonable.
+- `update-manager.ts` y `desktop-integration.ts`: el relanzado solo ocurre en la rama Linux/AppImage, y `app.exit(0)` se conserva.
+- `index.ts`: `--quit` sin instancia previa sale sin arrancar la app. Con instancia corriendo, el lock falla y sigue valiendo `second-instance`. `--install-update` y el arranque normal no cambian, y Windows y macOS no se ven afectados (el "Salir" del NSIS con la app abierta usa el camino de siempre).
+- Contrato §10 sin cambios.
+- Observación: las pruebas cubren el comando y el entorno. El relanzado real desde el AppImage solo lo valida el ensayo de release.
