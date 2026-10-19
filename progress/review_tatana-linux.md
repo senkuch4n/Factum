@@ -28,3 +28,14 @@ Ninguno.
 - `agent-ui/tsconfig.*.tsbuildinfo` figuran modificados (artefactos versionados); conviene no incluirlos en el commit.
 - Los workflows de GitHub Actions (tatana-linux.yml, tatana-release.yml en ensayo) y el AppImage en una PC real no se pudieron correr localmente; quedan para el PR y la QA manual (§11).
 - `StartupWMClass`/`desktopName` pendiente de confirmar con xprop en la QA, como deja la SDD.
+
+## Re-chequeo reintento 1
+
+**Veredicto:** APROBADA
+
+- Causa y arreglo coherentes con la SDD (D-T5: `tatana.json` en userData; humo (e): existe a los 20 s). `ensureConfigFile()` se llama en `ready` (agent-ui/src/main/index.ts L312), después del chequeo de requisitos y antes de `readConfig()` y de lanzar el agente, así que si `/health` responde el archivo ya existe.
+- Solo Linux empaquetado (`LINUX_PACKAGED`): Windows y macOS sin cambios de comportamiento.
+- `ensureFile`: no pisa un `tatana.json` existente (ni uno corrupto), escritura atómica `.tmp` + rename, descarta `.tmp` huérfano, re-chequea existencia antes del rename (carrera entre instancias; además hay single-instance lock). Error no fatal (try/catch en config.ts).
+- Contrato sin cambios; nada en `ci/` tocado.
+- Verificado por mí: `tsc -p tsconfig.web.json` OK, `tsc -p tsconfig.node.json` OK, `npm test` 71/71 pass (incluye los 3 casos nuevos de ensure-file).
+- Observación: la confirmación real queda para el próximo run de tatana-linux.yml (ubuntu-24.04).

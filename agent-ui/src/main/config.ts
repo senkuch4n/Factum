@@ -3,6 +3,7 @@ import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { readDistConfig } from './updater/dist-config'
 import { applyAutostart } from './linux/desktop-integration'
+import { ensureFile } from './linux/ensure-file'
 
 export interface TatanaConfig {
   serverUrl: string
@@ -42,6 +43,22 @@ export function readConfig(): TatanaConfig {
     }
   } catch {}
   return defaults()
+}
+
+/**
+ * Linux empaquetado (tatana-linux D-T5): `tatana.json` existe desde el primer
+ * arranque, con los defaults, en `${XDG_CONFIG_HOME:-~/.config}/Tatana/`. Antes
+ * solo se escribía ante el primer cambio (la oferta de instalación, que espera
+ * a que cargue la ventana), así que en un arranque lento todavía no estaba
+ * aunque el agente ya respondiera. Se llama antes de lanzar el agente. No es
+ * fatal: con la carpeta sin permisos la app sigue con los defaults en memoria.
+ */
+export function ensureConfigFile(): void {
+  try {
+    ensureFile(configPath(), JSON.stringify(readConfig(), null, 2))
+  } catch (err) {
+    console.error('[Tatana] No se pudo crear tatana.json:', err)
+  }
 }
 
 export function writeConfig(patch: Partial<TatanaConfig>): TatanaConfig {

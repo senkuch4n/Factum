@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Tray, Menu, Notification, dialog, nativeImage, shell } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
-import { readConfig, writeConfig, applyLoginItem } from './config'
+import { readConfig, writeConfig, applyLoginItem, ensureConfigFile } from './config'
 import { agentProcess } from './agent-process'
 import { appInfo } from './app-info'
 import { updateManager } from './updater/update-manager'
@@ -308,6 +308,8 @@ if (!app.requestSingleInstanceLock()) {
 
     app.setAppUserModelId('com.factum.tatana')
 
+    // D-T5: en Linux tatana.json existe desde el primer arranque (antes de lanzar el agente).
+    if (LINUX_PACKAGED) ensureConfigFile()
     const config = readConfig()
     applyLoginItem(config)
 

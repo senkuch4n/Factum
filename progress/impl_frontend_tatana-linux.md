@@ -102,3 +102,37 @@ cd client && npx tsc --noEmit            → sin errores
 - `ui-styling`: Tailwind + variables CSS existentes (`--bg-surface`, `--btn-secondary-*`, `focus-ring`); en la web, tokens `fx-*` existentes (`text-fx-accent-text`, `outline-fx-focus`).
 - `mblode-agent-skills-ui-animation`: fundido solo de `opacity`, 200 ms entrada / 120 ms salida (asimétrico), curva `cubic-bezier(0.22, 1, 0.36, 1)`, `useReducedMotion` → 0 ms; spinners con `motion-reduce:animate-none`.
 - `web-design-guidelines` (autochequeo final sobre los archivos tocados): íconos decorativos con `aria-hidden`; foco visible en todos los botones nuevos y en los de la Sidebar (se sumó `focus-ring` + `aria-current`); `aria-describedby` del botón apuntando a la explicación (corregido); interruptor con `role="switch"`; textos de carga con "…"; fechas con `toLocaleString('es-AR')`; detalles largos con `break-words`; rutas y comandos con `translate="no"` y `select-text`; enlaces de descarga con texto explícito ("Descargar Tatana para Linux", no "acá"), `hover` y aviso de pestaña nueva para lectores de pantalla.
+
+---
+
+## Reintento 1 — `(e) no se creó ~/.config/Tatana/tatana.json` (CI run 39190686347)
+
+### Causa real
+
+- **La ruta estaba bien.** `userData` = `$XDG_CONFIG_HOME/Tatana` (el `app.setPath` de `index.ts` va antes de `ready`, no depende de `name: tatana-agent`). Prueba: el artefacto `tatana-linux-humo-logs/tatana-logs/tatana-updater.log` salió de `$XDG_CONFIG_HOME/Tatana/logs/`, y en `ubuntu:22.04` y `debian:12` (mismo script, mismo AppImage) el chequeo dio OK.
+- **El archivo solo se escribía ante un cambio.** `config.ts` no escribía nada en el arranque: `tatana.json` se creaba recién con el primer `writeConfig`, que en Linux es `writeConfig({ linuxInstallOffered: true })` dentro de `offerLinuxInstall`, colgado de `did-finish-load` de la ventana. Es una carrera con el chequeo del CI.
+- **Por qué falló solo en ubuntu-24.04 (FUSE):** el arranque fue lento. El chequeo corrió a las 02:40:22.20. El main de Electron recién arrancó a las 02:40:18.4, ~16 s después de lanzar el AppImage (primera línea de `app.log`; el updater loguea a las 02:40:19.1). La GPU del renderer todavía estaba arrancando a las 02:40:22.71 (`viz_main_impl … Exiting GPU process`, después cae a software). Para entonces el agente ya respondía `/health`, pero la ventana no había terminado de cargar, así que la oferta de instalación (y con ella `tatana.json`) todavía no había corrido. En los contenedores con extract-and-run el arranque es más rápido y llegaba a tiempo.
+- **El chequeo del CI no está mal.** La SDD (§ CI, (e)) pide que a los 20 s "`~/.config/Tatana/tatana.json` existe", y D-T5 pone `tatana.json` en `userData` en Linux. La app es la que no lo garantizaba. **No hay que tocar nada en `ci/`.**
+
+### Arreglo
+
+- `agent-ui/src/main/linux/ensure-file.ts` (nuevo, puro, sin Electron): `ensureFile(path, content): boolean`. Si el archivo ya existe no hace nada. Si no, crea la carpeta (`recursive`) y lo escribe de forma atómica (`.tmp` + `rename`); descarta un `.tmp` huérfano y, si otra instancia lo sembró mientras tanto, no lo pisa.
+- `agent-ui/src/main/config.ts`: `ensureConfigFile()` siembra `tatana.json` con `readConfig()` (los defaults) usando `ensureFile`. Si falla (carpeta sin permisos) lo loguea y sigue con los defaults en memoria, sin que sea fatal.
+- `agent-ui/src/main/index.ts`: en `ready`, solo en `LINUX_PACKAGED`, `ensureConfigFile()` corre después del chequeo de requisitos (D-T2) y **antes** de `readConfig()`/`applyLoginItem` y de lanzar el agente. Así, si `/health` responde, `tatana.json` ya existe y el orden del humo (e) queda garantizado.
+- **Decisión: solo Linux empaquetado.** Persistir los defaults congela `serverUrl` (el `client_url` horneado) en el archivo. En Linux eso ya pasaba de todos modos en el primer arranque, por el `writeConfig` de la oferta de instalación, así que el comportamiento no cambia. En Windows/macOS quedan como estaban, para no salir del scope.
+- Sin cambios en el contrato: los campos de `TatanaConfig` son los mismos y los nombres de §10.F no cambian.
+
+### Verificación
+
+- `npx tsc --noEmit -p tsconfig.web.json` → OK.
+- `npx tsc --noEmit -p tsconfig.node.json` → OK.
+- `npm test` (tsx --test updater + linux) → **71/71 pass**. Incluye el nuevo `src/main/linux/ensure-file.test.ts` con 3 casos: crea archivo y carpetas que faltan; no pisa un `tatana.json` existente; un `.tmp` huérfano no lo frena.
+- No se armó el AppImage localmente; lo confirma el próximo run de `tatana-linux.yml` (job "Prueba de humo (ubuntu-24.04)").
+
+### Skills (reintento)
+
+Invocados `ui-ux-pro-max`, `senior-frontend`, `3d-web-experience` y `web-design-guidelines`. Resultado: **sin hallazgos aplicables**. El cambio es solo del proceso main (sin JSX, CSS ni animaciones) y no agrega 3D. De `senior-frontend` se aplicó un criterio: lo testeable va en un módulo puro aparte, porque `tsx --test` no importa `electron`.
+
+### Para el orquestador / backend
+
+- Nada que tocar en `ci/tatana-linux/prueba-humo.sh`: el chequeo de la L193 es correcto según la SDD.
