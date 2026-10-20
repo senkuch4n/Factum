@@ -1,0 +1,115 @@
+# Factum en la fiscalía — compose BASE de los dos planes (SDD instalacion-fiscalia, D3). Sale de
+# deploy/cloud/docker-compose.yml (Mongo con usuario y clave, datos en bind mounts) y de
+# deploy/windows/docker-compose.yml (imágenes locales con pull_policy: never).
+# Se usa SIEMPRE a través de los scripts (comun/_comun.sh, función fc), que pasan --project-directory,
+# -p, --env-file <carpeta>/config/.env y suman encima:
+#   compose.servidor.yml  (plan A: Caddy con https://factum.internal en 80/443)
+#   compose.una-pc.yml    (plan B: web y API solo en 127.0.0.1)
+#   compose.superadmin.yml (solo durante la instalación, para crear el primer superadmin)
+#
+# Reglas: ningún servicio de este archivo publica puertos (los publica el archivo del plan); Mongo en
+# la red "datos" (interna); ningún secreto literal; tags exactos (armar-paquete-fiscalia.sh lee el de
+# mongo de ACÁ: es la única fuente).
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  mongo:
+    image: mongo:7.0.43
+    pull_policy: never
+    command: ["mongod", "--wiredTigerCacheSizeGB", "${FACTUM_MONGO_CACHE_GB:-0.5}"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${FACTUM_MONGO_ROOT_PASSWORD:?Falta FACTUM_MONGO_ROOT_PASSWORD en config/.env}
+      # Lo usa mongo-init/01-usuario-app.js (el mismo de la nube) en el primer arranque.
+      FACTUM_MONGO_APP_PASSWORD: ${FACTUM_MONGO_APP_PASSWORD:?Falta FACTUM_MONGO_APP_PASSWORD en config/.env}
+    volumes:
+      - ${FACTUM_DATOS:?Falta FACTUM_DATOS en config/.env}/mongo:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d:ro
+    networks: [datos]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+    logging: *logging
+
+  backend:
+    image: factum-backend:${FACTUM_VERSION:?Falta FACTUM_VERSION en config/.env}
+    pull_policy: never
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      MongoDb__ConnectionString: mongodb://factum_app:${FACTUM_MONGO_APP_PASSWORD}@mongo:27017/factum?authSource=factum
+      MongoDb__DatabaseName: factum
+      Jwt__Secret: ${FACTUM_JWT_SECRET:?Falta FACTUM_JWT_SECRET en config/.env}
+      Jwt__ExpiryHours: ${FACTUM_JWT_EXPIRY_HOURS:-2}
+      Jwt__SessionMaxHours: ${FACTUM_SESION_TOPE_HORAS:-12}
+      # Varios peritos comparten la instalación: cuentas propias (DNI + contraseña), nunca "dev".
+      Auth__Mode: local
+      Auth__AllowDevOutsideDevelopment: "false"
+      Storage__DataDirectory: /data
+      Integrations__Support__Enabled: "false"
+      Tatana__MinVersion: ${FACTUM_TATANA_VERSION_MINIMA:-}
+      Timestamping__Urls: ${FACTUM_SELLADO_URLS:-}
+      Timestamping__Enabled: ${FACTUM_SELLADO_HABILITADO:-true}
+      Timestamping__TimeoutSeconds: ${FACTUM_SELLADO_TIMEOUT_SEGUNDOS:-10}
+      Timestamping__MaxAttempts: ${FACTUM_SELLADO_MAX_INTENTOS:-12}
+      Report__ClockSkewWarningSeconds: ${FACTUM_RELOJ_UMBRAL_SEGUNDOS:-60}
+      Recording__SessionMode: ${FACTUM_GRABACION_SESION_MODO:-optional_off}
+      Recording__SegmentMinutes: ${FACTUM_GRABACION_SESION_TRAMO_MINUTOS:-30}
+    volumes:
+      - ${FACTUM_DATOS}/backend:/data
+      # Identidad de la fiscalía, textos del informe y zona horaria (el mismo archivo que la
+      # instalación de Windows). Sintaxis larga para que Docker no cree una CARPETA si falta.
+      - type: bind
+        source: ${FACTUM_HOME:?Falta FACTUM_HOME en config/.env}/config/appsettings.Local.json
+        target: /app/appsettings.Local.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FACTUM_HOME}/config/branding
+        target: /app/branding
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [web, datos]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 40s
+    restart: unless-stopped
+    logging: *logging
+
+  frontend:
+    # El plan A la reemplaza por factum-frontend-servidor (horneada con https://factum.internal).
+    image: factum-frontend:${FACTUM_VERSION}
+    pull_policy: never
+    networks: [web]
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    logging: *logging
+
+networks:
+  web: {}
+  datos:
+    internal: true # Mongo sin entrada ni salida fuera de Docker; solo el backend lo ve

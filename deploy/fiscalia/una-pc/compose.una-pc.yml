@@ -1,0 +1,14 @@
+# Plan B — todo en una PC (se suma a comun/docker-compose.yml). Web y API solo en 127.0.0.1, como la
+# instalación de Windows: nadie de la red llega. El frontend está horneado con http://localhost:8080,
+# así que los puertos 3000/8080 no se cambian (FACTUM_PUERTO_WEB/API existen solo para pruebas del compose).
+services:
+  backend:
+    ports:
+      - "127.0.0.1:${FACTUM_PUERTO_API:-8080}:8080"
+    environment:
+      Cors__AllowedOrigins__0: http://localhost:3000
+      Cors__AllowedOrigins__1: http://127.0.0.1:3000
+
+  frontend:
+    ports:
+      - "127.0.0.1:${FACTUM_PUERTO_WEB:-3000}:3000"

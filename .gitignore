@@ -61,3 +61,5 @@ deploy/cloud/dist/
 
 # graphify: grafo local del repo (se regenera, no va al repo)
 graphify-out/
+# Paquete para la fiscalía armado por deploy/fiscalia/armar-paquete-fiscalia.sh
+deploy/fiscalia/dist/

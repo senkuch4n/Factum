@@ -1,0 +1,37 @@
+# Plan A — servidor de la fiscalía (se suma a comun/docker-compose.yml). Solo Caddy publica puertos
+# (80 y 443, en todas las interfaces: los peritos entran por la red). Backend, frontend y Mongo no se exponen.
+# FACTUM_PUERTO_HTTP/HTTPS existen solo para probar el compose en otra máquina; en la fiscalía quedan 80/443.
+services:
+  caddy:
+    image: caddy:2.11.7 # mismo tag que deploy/cloud/docker-compose.yml
+    pull_policy: never
+    ports:
+      - "${FACTUM_PUERTO_HTTP:-80}:80"
+      - "${FACTUM_PUERTO_HTTPS:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # caddy-data guarda la CA interna (root.crt): perderla obliga a reinstalar el certificado en
+      # todas las PCs de los peritos. Entra en el backup.
+      - ${FACTUM_DATOS}/caddy-data:/data
+      - ${FACTUM_DATOS}/caddy-config:/config
+    networks: [web]
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  backend:
+    environment:
+      # Un solo nombre: la web y la API comparten origen (como en la nube).
+      Cors__AllowedOrigins__0: https://factum.internal
+
+  frontend:
+    # Horneada con NEXT_PUBLIC_BACKEND_URL=https://factum.internal (armar-paquete-fiscalia.sh).
+    image: factum-frontend-servidor:${FACTUM_VERSION}

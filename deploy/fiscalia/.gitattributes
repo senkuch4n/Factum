@@ -1,0 +1,6 @@
+# Los scripts corren en PCs Linux: siempre LF.
+*.sh text eol=lf
+*.py text eol=lf
+Caddyfile text eol=lf
+*.yml text eol=lf
+*.txt text eol=lf
