@@ -456,6 +456,10 @@ Lo publica el workflow de la sección 19; la primera vez hay que publicar una ve
 tiene Tatana, o tiene uno que no acepta el dominio o que está por debajo de la versión mínima (sección 19.6), la web le
 muestra ese link.
 
+Para Linux (sección 20), otra variable: `FACTUM_TATANA_DESCARGA_URL_LINUX` = `https://<DOMINIO>/descargas/tatana/`
+(la página con los requisitos y los dos enlaces, que el VPS genera en cada publicación). La web elige el enlace según
+el sistema del perito y ofrece el otro como secundario. Vacía = la web no muestra el enlace de Linux.
+
 **10.3 En la PC del perito** [A mano]
 
 1. Descargar `Tatana-Setup-Windows.exe` desde el link de la web.
@@ -572,6 +576,7 @@ Usá exactamente el mismo `<IP>` (o nombre) que cargues en `DEPLOY_HOST`.
 | `FACTUM_URL_PUBLICA` | Variables | Ya cargada (sección 7) |
 | `FACTUM_AGENT_URL` | Variables | Opcional; por defecto `http://localhost:8765` |
 | `FACTUM_TATANA_DESCARGA_URL` | Variables | Sección 10.2 |
+| `FACTUM_TATANA_DESCARGA_URL_LINUX` | Variables | Sección 10.2 (Linux) |
 | `FACTUM_DEPLOY_HABILITADO` | Variables | `true`, recién en el paso 11.7 |
 
 Cuando termines la prueba del paso 11.6, borrá la privada de la Mac (o guardala en tu gestor de contraseñas):
@@ -977,17 +982,23 @@ Después actualizá `FACTUM_MONGO_APP_PASSWORD` (y `FACTUM_MONGO_ROOT_PASSWORD`)
 
 ## 19. Publicar una versión de Tatana
 
-El instalador de Tatana para la nube lo arma, lo prueba, lo firma y lo publica el workflow
-`.github/workflows/tatana-release.yml`. **Nunca se publica solo**: lo disparás vos con un tag o con "Run workflow". Las
-releases salen **solo de commits que están en `main`** (P3); desde otras ramas solo hay ensayo.
+El instalador de Tatana para Windows **y** el AppImage para Linux (sección 20) los arma, los prueba, los firma y los
+publica el workflow `.github/workflows/tatana-release.yml`, con **la misma versión** y en la misma release. **Nunca se
+publica solo**: lo disparás vos con un tag o con "Run workflow". Las releases salen **solo de commits que están en
+`main`** (P3); desde otras ramas solo hay ensayo.
 
 ```
  tag tatana-vX.Y.Z (o Run workflow)
-   → preparar (versión, orígenes, chequeos) → payload (agente + herramientas, ubuntu)
-   → instalador (NSIS, windows) → firmar (clave Ed25519, environment tatana-release)
+   → preparar (versión, orígenes, chequeos) → payload (agente + herramientas de Windows y de Linux, ubuntu)
+   → instalador (NSIS, windows) y appimage (AppImage, ubuntu)
+   → firmar (clave Ed25519, environment tatana-release: tatana-update.json y tatana-update-linux.json)
    → prueba (windows: migra un portátil, instala, actualiza, desinstala; comprueba que no se pierde evidencia)
-   → publicar (SSH como tatana-pub al VPS + GitHub Release)
+     y prueba-linux (ubuntu: instala la 0.0.1, rechaza firmas malas y el manifiesto de Windows, no instala con una
+     operación en curso, actualiza sin perder evidencia y sale sin dejar procesos)
+   → publicar (SSH como tatana-pub al VPS + GitHub Release), solo si pasaron LAS DOS pruebas
 ```
+
+Si falla cualquiera de las dos pruebas, **no se publica nada** en ninguna plataforma y queda vigente lo anterior.
 
 ### 19.1 Clave de firma (una vez) [A mano, en la Mac]
 
@@ -1054,6 +1065,21 @@ Después redesplegá (o `compose.sh up -d --force-recreate caddy`) para que Cadd
 Si `publicar-tatana-forzado.sh` cambia en el repo, la copia del servidor no se actualiza sola: repetí el `scp` y
 `sudo bash /tmp/preparar-servidor.sh --solo-tatana`.
 
+**Con Linux (tatana-linux), antes de la primera release que lo incluya** [A mano, una vez]: el script del VPS pasa a
+exigir **exactamente 8 archivos** (los 4 de Windows, el AppImage, `latest-linux.yml`, `tatana-update-linux.json` y
+`SHA256SUMS`) y genera la página `/descargas/tatana/index.html`. Copiá el nuevo y desplegá el `Caddyfile` nuevo (deploy
+normal):
+
+```bash
+# En la Mac, desde la raíz del repo actualizado:
+scp deploy/cloud/scripts/preparar-servidor.sh deploy/cloud/scripts/publicar-tatana-forzado.sh admin@<IP>:/tmp/
+ssh admin@<IP> 'sudo bash /tmp/preparar-servidor.sh --solo-tatana && ls -l /srv/factum/bin/publicar-tatana-forzado.sh'
+# Tiene que quedar root:root 755.
+```
+
+Si no lo copiás, la release falla en "Publicar en el VPS" con el código 4 **sin publicar nada** (lo vigente sigue
+igual): copiá el script y relanzá la release con una versión nueva.
+
 ### 19.3 Environment, secrets y variables en GitHub (una vez) [A mano]
 
 1. Repo › **Settings › Environments › New environment** › `tatana-release`. En **Deployment branches and tags**:
@@ -1085,7 +1111,9 @@ después de cargar el secret (o guardalo en el gestor de contraseñas).
 - A mano: **Actions › Tatana release › Run workflow**, con una versión y **sin** tildar "publicar", desde cualquier rama.
 
 El ensayo firma con una clave descartable que se genera y se borra dentro del run (nunca usa los secrets) y corre la
-misma prueba de Windows. No publica nada. Revisá el resumen del job "Prueba en Windows".
+misma prueba de Windows y la de Linux (el job "appimage" usa su propia clave descartable). No publica nada. Revisá el
+resumen de los jobs "Prueba en Windows" y "Prueba en Linux". Los artifacts `appimage`, `appimage-base` y `canal-linux`
+del run sirven para probar la actualización en una PC Linux (sección 20.9).
 
 ### 19.5 Publicar
 
@@ -1101,14 +1129,17 @@ misma prueba de Windows. No publica nada. Revisá el resumen del job "Prueba en 
 
    - **Actions › Tatana release › Run workflow**, rama `main`, versión `1.4.0`, tildar **publicar** y, si querés,
      notas.
-4. Seguí el run. Si la prueba de Windows falla, **no se publica nada**. Si pasa, el job "Publicar" sube los archivos,
-   comprueba desde afuera que `https://<DOMINIO>/tatana/updates/tatana-update.json` es el firmado y crea el GitHub
-   Release `tatana-v1.4.0` (archivo histórico).
+4. Seguí el run. Si la prueba de Windows o la de Linux falla, **no se publica nada**. Si pasan las dos, el job
+   "Publicar" sube los 8 archivos, comprueba desde afuera que `tatana-update.json` y `tatana-update-linux.json` son los
+   firmados y que el instalador y el AppImage tienen el tamaño correcto, y crea el GitHub Release `tatana-v1.4.0`
+   (archivo histórico, con los archivos de las dos plataformas).
 5. Comprobalo vos:
 
    ```bash
    curl -fsS https://<DOMINIO>/tatana/updates/tatana-update.json -o /tmp/tatana-update.json
    node ops/tatana/verificar-manifiesto.mjs --manifiesto /tmp/tatana-update.json
+   curl -fsS https://<DOMINIO>/tatana/updates/tatana-update-linux.json -o /tmp/tatana-update-linux.json
+   node ops/tatana/verificar-manifiesto.mjs --manifiesto /tmp/tatana-update-linux.json --producto tatana-linux
    ```
 
 Las PCs la reciben solas en las próximas horas (al arrancar Tatana o cada 6 h) y la instalan al reiniciar Tatana o al
@@ -1149,6 +1180,120 @@ y **reinstalá Tatana a mano** en cada PC (sección 10.3; la evidencia no se toc
 - Versión instalada: ventana de Tatana (barra lateral) o `http://localhost:8765/health` (`version`).
 - Log del actualizador: `%APPDATA%\Tatana\logs\tatana-updater.log`; estado: `%APPDATA%\Tatana\update-state.json`.
 - Log del instalador y la migración del portátil: `%APPDATA%\Tatana\logs\instalador.log`.
+- Linux: `~/.config/Tatana/logs/tatana-updater.log`, `~/.config/Tatana/update-state.json` y, de "Preparar esta PC",
+  `~/.config/Tatana/logs/preparacion-linux.log` y `~/.config/Tatana/preparacion-linux.json` (sección 20).
+
+## 20. Tatana en Linux
+
+Tatana también corre en PCs con Linux: un único archivo **AppImage** (`Tatana-Linux-x86_64.AppImage`) que trae todo lo
+que necesita (la ventana, el agente, adb, scrcpy, ffmpeg y el Python para iPhone, con versiones fijas). Se actualiza
+solo desde el mismo canal firmado que Windows y con la misma versión.
+
+### 20.1 Requisitos (lo que se publica en la página de descarga)
+
+- PC de 64 bits Intel o AMD (x86-64) con SSE3. **No** sirve en PCs de 32 bits ni ARM.
+- Linux con **glibc 2.35 o posterior**: Ubuntu 22.04 o 24.04, Linux Mint 21 o 22, Debian 12, Pop!_OS o Zorin 22.04 o
+  posterior. Fedora 36 o posterior funciona **sin garantía** (best effort: solo se prueba en CI). Ubuntu 20.04 y
+  Debian 11 quedan afuera.
+- Escritorio gráfico (X11 o Wayland) con systemd y polkit, y **FUSE 3** (`fusermount3`, viene instalado en esas
+  distros). No hace falta `libfuse2`.
+- 4 GB de RAM (8 GB recomendados para grabar la sesión completa), 10 GB libres e internet para la configuración
+  inicial.
+
+### 20.2 Descarga
+
+`https://<DOMINIO>/descargas/tatana/` muestra los requisitos, los dos enlaces (Windows y Linux) con su SHA-256 y cómo
+abrir el AppImage. El archivo directo es `https://<DOMINIO>/descargas/tatana/Tatana-Linux-x86_64.AppImage` (con su
+`.sha256`). Para verificarlo: `sha256sum Tatana-Linux-x86_64.AppImage` y comparar con el `.sha256`.
+
+### 20.3 Marcarlo como ejecutable y abrirlo [A mano, en la PC del perito]
+
+Una sola vez, sobre el archivo descargado:
+
+- **GNOME** (Ubuntu; Archivos/Nautilus): clic derecho › **Propiedades** › activá **Ejecutable como programa**.
+- **KDE** (Dolphin): clic derecho › **Propiedades** › **Permisos** › marcá **Es ejecutable**.
+- **Cinnamon** (Linux Mint; Nemo): clic derecho › **Propiedades** › **Permisos** › marcá **Permitir ejecutar el
+  archivo como un programa**.
+- Terminal: `chmod +x Tatana-Linux-x86_64.AppImage`.
+
+Después, doble clic. En Ubuntu 24.04 la ventana abre aunque el sistema restrinja los "user namespaces" (la primera vez
+corre sin el sandbox de Chromium; "Preparar esta PC" lo recupera).
+
+### 20.4 Instalar en esta PC
+
+La primera vez, Tatana ofrece **Instalar (recomendado)**: se copia a `~/Applications/Tatana.AppImage` (sin la versión
+en el nombre), aparece en el menú de aplicaciones con su ícono y arranca solo al iniciar sesión. El archivo descargado
+no se borra (puede estar en un pendrive): ya se puede borrar a mano. **Sin instalar, Tatana no se actualiza** (la
+ventana lo explica).
+
+### 20.5 Preparar esta PC
+
+Después de instalar, Tatana abre la vista **Esta PC** con el botón **Preparar esta PC**. Pide la contraseña de
+administrador **una sola vez** (la ventana de polkit del sistema) y corre un script versionado
+(`packaging/linux/preparar-pc.sh`, embebido en Tatana; su SHA-256 queda en el log) que:
+
+- instala `usbmuxd` (el servicio que reconoce el iPhone) y `avahi` (descubrimiento en la red para AirPlay), con `apt`
+  o `dnf`; `uxplay` solo si el repositorio trae la 1.73 o posterior;
+- escribe `/etc/udev/rules.d/70-factum-tatana.rules`, que da acceso a los Android por USB al usuario de la sesión
+  (sin grupos ni cerrar sesión);
+- si hay firewall activo (`ufw` o `firewalld`), abre mDNS y los puertos de AirPlay (TCP 7000, 7001 y 7100; UDP 6000,
+  6001 y 7011);
+- solo si la distro no da acceso a la cámara por sesión, agrega al usuario al grupo `video` (en ese caso hay que cerrar
+  sesión y volver a entrar; Tatana lo avisa);
+- en Ubuntu 23.10 o posterior, instala `/etc/apparmor.d/factum-tatana` para que la ventana use su sandbox.
+
+Abajo, **Chequeos de esta PC** muestra (sin contraseña) si están iPhone por USB, Android por USB, AirPlay, cámara,
+micrófono y la protección de la ventana. **Volver a revisar** los actualiza.
+
+Errores: si se cierra el pedido de contraseña, "Sin la contraseña, Tatana no puede reconocer iPhone ni Android por
+USB." y **Reintentar**. Sin internet: "Hace falta internet para instalar los paquetes del sistema.". Si la PC no tiene
+polkit, Tatana muestra un comando `sudo bash ~/.config/Tatana/preparar-pc.sh --ejecutar --usuario <login>` para
+copiar y correr en una terminal.
+
+### 20.6 Distro sin soporte
+
+Con otro gestor de paquetes (Arch/pacman, openSUSE/zypper, …) Tatana no ejecuta nada y muestra la lista de lo que hay
+que hacer (paquetes `usbmuxd` y `avahi` y el contenido de los dos archivos) con **Copiar para soporte técnico**.
+
+### 20.7 Problemas frecuentes
+
+- **Con doble clic no pasa nada**: falta FUSE 3. `sudo apt install fuse3` (o `sudo dnf install fuse3`), o probá desde
+  una terminal `./Tatana-Linux-x86_64.AppImage --appimage-extract-and-run`. Si dice que la PC tiene una versión de
+  Linux anterior a la que necesita Tatana, la distro no cumple el requisito de glibc (20.1).
+- **No hay ícono en la bandeja** (GNOME sin la extensión de AppIndicator): cerrar la ventana la minimiza. Si Tatana
+  arrancó oculto al iniciar sesión, abrilo desde el menú de aplicaciones.
+- **AirPlay deshabilitado**: Tatana graba AirPlay con la opción `-mp4` de uxplay, que existe desde **uxplay 1.73**.
+  Ubuntu 22.04/24.04, Debian 12 y Mint traen versiones anteriores: "Espejo AirPlay" aparece deshabilitado con el
+  motivo. Los modos por USB (Solo pantalla, con micrófono de la PC, Grabación nativa) andan igual.
+- **Comprobar la PC desde una terminal**:
+  `~/Applications/Tatana.AppImage --appimage-extract >/dev/null && squashfs-root/resources/agent/Factum.Agent --autoprueba-linux /tmp/al`
+  (todo tiene que decir `OK`; después borrá `squashfs-root`).
+
+### 20.8 Qué deja en la PC y cómo sacarlo
+
+Tatana no tiene desinstalador automático. Lo que queda:
+
+| Qué | Dónde | Cómo sacarlo |
+|---|---|---|
+| Tatana | `~/Applications/Tatana.AppImage`, `~/.local/share/applications/factum-tatana.desktop`, `~/.config/autostart/factum-tatana.desktop`, `~/.local/share/icons/hicolor/512x512/apps/factum-tatana.png` | Borrar los archivos |
+| Config y logs | `~/.config/Tatana/` | Borrar la carpeta |
+| Datos de trabajo del agente | `~/.local/share/Tatana/data/` | **Evidencia**: respaldarla antes |
+| ZIP de cada caso | `~/Factum/Evidencia/` | **Evidencia**: no se borra con Tatana |
+| Regla de Android | `/etc/udev/rules.d/70-factum-tatana.rules` | `sudo rm` + `sudo udevadm control --reload-rules` |
+| Perfil de AppArmor | `/etc/apparmor.d/factum-tatana` | `sudo apparmor_parser -R /etc/apparmor.d/factum-tatana && sudo rm /etc/apparmor.d/factum-tatana` |
+| Paquetes | `usbmuxd`, `avahi-daemon`/`avahi`, `uxplay` | `sudo apt remove …` / `sudo dnf remove …` (otros programas pueden usarlos) |
+| Firewall | reglas "Factum Tatana AirPlay" | `sudo ufw status numbered` y `sudo ufw delete <n>`; en firewalld, `--remove-service=mdns` y `--remove-port=…` con `--permanent` y `--reload` |
+| Grupo `video` | solo si se agregó | `sudo gpasswd -d <usuario> video` |
+
+Borrar el AppImage **no toca la evidencia**: vive en `~/.local/share/Tatana/data` y `~/Factum/Evidencia`.
+
+### 20.9 Probar una actualización con artifacts de ensayo
+
+Del mismo run de "Tatana release" en ensayo, bajá `appimage-base` (0.0.1) y `canal-linux` (confían en la misma clave
+descartable). Copiá la base sobre `~/Applications/Tatana.AppImage`, serví el canal con
+`cd canal-linux && python3 -m http.server 8099` y abrí Tatana con
+`TATANA_UPDATE_URLS=http://127.0.0.1:8099/ ~/Applications/Tatana.AppImage`. Al terminar, volvé a dejar el AppImage
+publicado.
 
 ---
 

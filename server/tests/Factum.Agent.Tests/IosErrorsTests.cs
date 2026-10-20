@@ -44,17 +44,17 @@ public sealed class IosErrorsTests
     [MemberData(nameof(Textos))]
     public void Texto_exacto_por_SO(string code, string windows, string mac)
     {
-        Assert.Equal(windows, IosErrors.MessageFor(code, isWindows: true));
-        Assert.Equal(mac, IosErrors.MessageFor(code, isWindows: false));
+        Assert.Equal(windows, IosErrors.MessageFor(code, HostOs.Windows));
+        Assert.Equal(mac, IosErrors.MessageFor(code, HostOs.MacOS));
     }
 
     [Fact]
     public void Capture_failed_con_detalle_recortado_a_200_y_en_una_linea()
     {
         Assert.Equal("No se pudo capturar la pantalla del iPhone: DTX timeout",
-            IosErrors.MessageFor(IosErrors.CaptureFailed, true, "DTX timeout"));
+            IosErrors.MessageFor(IosErrors.CaptureFailed, HostOs.Windows, "DTX timeout"));
         var largo = new string('x', 500);
-        var msg = IosErrors.MessageFor(IosErrors.CaptureFailed, true, "linea1\r\nlinea2 " + largo);
+        var msg = IosErrors.MessageFor(IosErrors.CaptureFailed, HostOs.Windows, "linea1\r\nlinea2 " + largo);
         Assert.StartsWith("No se pudo capturar la pantalla del iPhone: linea1 linea2 x", msg);
         Assert.Equal("No se pudo capturar la pantalla del iPhone: ".Length + 200, msg.Length);
         Assert.DoesNotContain('\n', msg);
@@ -63,18 +63,18 @@ public sealed class IosErrorsTests
     [Fact]
     public void Recording_empty_con_motivo_del_error_que_lo_causo()
     {
-        var cause = IosErrors.Create(IosErrors.Locked, isWindows: true);
-        var e = IosErrors.RecordingEmptyFrom(cause, IosErrors.ReasonNoFrames, isWindows: true);
+        var cause = IosErrors.Create(IosErrors.Locked, HostOs.Windows);
+        var e = IosErrors.RecordingEmptyFrom(cause, IosErrors.ReasonNoFrames, HostOs.Windows);
         Assert.Equal(IosErrors.RecordingEmpty, e.Code);
         Assert.Equal("No se pudo guardar la grabación del iPhone: el iPhone está bloqueado. Desbloquealo y reintentá.", e.Message);
 
-        var sinCodigo = IosErrors.RecordingEmptyFrom(null, IosErrors.ReasonNoFrames, isWindows: true);
+        var sinCodigo = IosErrors.RecordingEmptyFrom(null, IosErrors.ReasonNoFrames, HostOs.Windows);
         Assert.Equal("No se pudo guardar la grabación del iPhone: no se capturó ningún cuadro de la pantalla.", sinCodigo.Message);
-        var timeout = IosErrors.RecordingEmptyFrom(null, IosErrors.ReasonTimeout, isWindows: false);
+        var timeout = IosErrors.RecordingEmptyFrom(null, IosErrors.ReasonTimeout, HostOs.MacOS);
         Assert.Equal("No se pudo guardar la grabación del iPhone: la grabación no terminó de escribirse a tiempo.", timeout.Message);
 
         // Nombres propios no se pasan a minúscula.
-        var admin = IosErrors.RecordingEmptyFrom(IosErrors.Create(IosErrors.AdminRequired, true), "x", true);
+        var admin = IosErrors.RecordingEmptyFrom(IosErrors.Create(IosErrors.AdminRequired, HostOs.Windows), "x", HostOs.Windows);
         Assert.StartsWith("No se pudo guardar la grabación del iPhone: Windows no dejó", admin.Message);
     }
 
@@ -83,7 +83,7 @@ public sealed class IosErrorsTests
     {
         foreach (var code in IosErrors.AllCodes)
         {
-            var text = IosErrors.MessageFor(code, isWindows: true, detail: null);
+            var text = IosErrors.MessageFor(code, HostOs.Windows, detail: null);
             Assert.DoesNotContain("brew", text, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("Terminal", text, StringComparison.Ordinal);
             Assert.DoesNotContain("/usr/", text, StringComparison.Ordinal);
@@ -134,7 +134,7 @@ public sealed class IosErrorsTests
         Assert.Equal("ios_capture_failed", code);
         Assert.Equal("iPhone de José", detail);
         Assert.Equal("No se pudo capturar la pantalla del iPhone: iPhone de José",
-            IosErrors.FromHelper(code, detail, isWindows: true).Message);
+            IosErrors.FromHelper(code, detail, HostOs.Windows).Message);
     }
 
     [Theory]
@@ -156,6 +156,48 @@ public sealed class IosErrorsTests
             "TATANA_ERROR {\"code\": \"algo_nuevo\", \"detail\": \"x\"}", out var code, out var detail));
         Assert.Equal(IosErrors.CaptureFailed, code);
         Assert.Equal("x", detail);
-        Assert.Equal(IosErrors.CaptureFailed, IosErrors.FromHelper("algo_nuevo", "x", true).Code);
+        Assert.Equal(IosErrors.CaptureFailed, IosErrors.FromHelper("algo_nuevo", "x", HostOs.Windows).Code);
+    }
+
+    // tatana-linux §5.4: textos exactos de Linux.
+    public static TheoryData<string, string> TextosLinux => new()
+    {
+        { IosErrors.AppleServiceMissing,
+          "No se encontró el servicio de iPhone (usbmuxd) en esta PC. Abrí Tatana, tocá \"Preparar esta PC\" y volvé a conectar el iPhone." },
+        { IosErrors.AdminRequired,
+          "Linux no dejó a Tatana abrir la conexión con el iPhone. Abrí Tatana, tocá \"Preparar esta PC\" y reintentá." },
+        { IosErrors.ToolsMissing,
+          "Tatana no encuentra sus herramientas de iPhone (Python o ffmpeg). Descargá Tatana de nuevo desde la página de Factum." },
+        { IosErrors.AirplayUnavailable,
+          "AirPlay no está disponible en esta PC: hace falta uxplay 1.73 o posterior con el servicio avahi activo. Usá \"Solo pantalla\", \"Pantalla + micrófono de PC\" o \"Grabación nativa del iPhone\"." },
+        { IosErrors.Locked, "El iPhone está bloqueado. Desbloquealo y reintentá." },
+    };
+
+    [Theory]
+    [MemberData(nameof(TextosLinux))]
+    public void Texto_exacto_Linux(string code, string linux)
+    {
+        Assert.Equal(linux, IosErrors.MessageFor(code, HostOs.Linux));
+    }
+
+    [Fact]
+    public void Ningun_texto_de_Linux_menciona_macOS_brew_Terminal_ni_iTunes()
+    {
+        foreach (var code in IosErrors.AllCodes)
+        {
+            var text = IosErrors.MessageFor(code, HostOs.Linux, detail: null);
+            Assert.DoesNotContain("macOS", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("brew", text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Terminal", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("iTunes", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("Mac", text, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void LowerFirst_no_toca_Linux()
+    {
+        var admin = IosErrors.RecordingEmptyFrom(IosErrors.Create(IosErrors.AdminRequired, HostOs.Linux), "x", HostOs.Linux);
+        Assert.StartsWith("No se pudo guardar la grabación del iPhone: Linux no dejó", admin.Message);
     }
 }

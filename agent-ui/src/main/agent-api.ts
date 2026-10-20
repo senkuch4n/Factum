@@ -158,3 +158,100 @@ export async function exitMaintenance(port: number): Promise<boolean> {
   const res = await request(port, 'DELETE', '/agent/maintenance')
   return res.kind === 'response' && (res.status === 204 || res.status === 200)
 }
+
+// ── /health (tatana-linux §10.A) ─────────────────────────────────────────────
+// snake_case_lower como lo serializa el agente; los `null` no viajan.
+
+export type AgentOs = 'windows' | 'macos' | 'linux'
+
+export type AgentLinuxCheckId =
+  | 'usbmuxd' | 'android_usb' | 'avahi' | 'uxplay' | 'camera' | 'microphone' | 'sandbox'
+
+export type AgentLinuxCheckStatus = 'ok' | 'missing' | 'outdated' | 'warning' | 'not_applicable'
+
+export interface AgentLinuxCheck {
+  id: AgentLinuxCheckId
+  status: AgentLinuxCheckStatus
+  /** `true` solo para `usbmuxd` y `android_usb`. */
+  required: boolean
+  /** Castellano corto (cuando no está `ok`). */
+  detail?: string
+}
+
+export interface AgentLinuxStatus {
+  distro_id: string
+  distro_version?: string
+  distro_name?: string
+  distro_like?: string
+  glibc_version?: string
+  package_manager: 'apt' | 'dnf' | 'pacman' | 'zypper' | 'unknown'
+  setup_supported: boolean
+  setup_state: 'ok' | 'incomplete'
+  /** Siempre los 7, en el orden de `AgentLinuxCheckId`. */
+  checks: AgentLinuxCheck[]
+}
+
+/** Lo que Electron lee de `/health` (el resto de los campos no se tipa acá). */
+export interface AgentHealth {
+  version?: string
+  os?: AgentOs
+  /** Solo en Linux. */
+  linux?: AgentLinuxStatus
+}
+
+const CHECK_IDS: ReadonlySet<string> = new Set(['usbmuxd', 'android_usb', 'avahi', 'uxplay', 'camera', 'microphone', 'sandbox'])
+const CHECK_STATUSES: ReadonlySet<string> = new Set(['ok', 'missing', 'outdated', 'warning', 'not_applicable'])
+const PACKAGE_MANAGERS: ReadonlySet<string> = new Set(['apt', 'dnf', 'pacman', 'zypper', 'unknown'])
+
+function optStr(v: unknown): string | undefined {
+  return typeof v === 'string' && v ? v : undefined
+}
+
+function toLinuxStatus(raw: unknown): AgentLinuxStatus | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Record<string, unknown>
+  if (typeof r.distro_id !== 'string') return undefined
+  const checks = Array.isArray(r.checks)
+    ? r.checks.flatMap((c): AgentLinuxCheck[] => {
+        if (!c || typeof c !== 'object') return []
+        const x = c as Record<string, unknown>
+        if (typeof x.id !== 'string' || !CHECK_IDS.has(x.id)) return []
+        if (typeof x.status !== 'string' || !CHECK_STATUSES.has(x.status)) return []
+        const detail = optStr(x.detail)
+        return [{
+          id: x.id as AgentLinuxCheckId,
+          status: x.status as AgentLinuxCheckStatus,
+          required: x.required === true,
+          ...(detail ? { detail } : {}),
+        }]
+      })
+    : []
+  const opt = (k: string) => (optStr(r[k]) ? { [k]: r[k] as string } : {})
+  return {
+    distro_id: r.distro_id,
+    ...opt('distro_version'),
+    ...opt('distro_name'),
+    ...opt('distro_like'),
+    ...opt('glibc_version'),
+    package_manager: (typeof r.package_manager === 'string' && PACKAGE_MANAGERS.has(r.package_manager)
+      ? r.package_manager : 'unknown') as AgentLinuxStatus['package_manager'],
+    setup_supported: r.setup_supported === true,
+    setup_state: r.setup_state === 'ok' ? 'ok' : 'incomplete',
+    checks,
+  }
+}
+
+/** `GET /health`. `null` si el agente no responde. */
+export async function getHealth(port: number, timeoutMs = TIMEOUT_MS): Promise<AgentHealth | null> {
+  const res = await request(port, 'GET', '/health', undefined, timeoutMs)
+  if (res.kind !== 'response' || res.status !== 200) return null
+  const raw = res.body as Record<string, unknown> | null
+  if (!raw || typeof raw !== 'object') return null
+  const os = raw.os === 'windows' || raw.os === 'macos' || raw.os === 'linux' ? raw.os : undefined
+  const linux = toLinuxStatus(raw.linux)
+  return {
+    ...(typeof raw.version === 'string' ? { version: raw.version } : {}),
+    ...(os ? { os } : {}),
+    ...(linux ? { linux } : {}),
+  }
+}

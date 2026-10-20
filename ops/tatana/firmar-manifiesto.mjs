@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Firma el payload y escribe tatana-update.json (SDD tatana-instalador-autoupdate §7, §13.C).
+// Firma el payload y escribe tatana-update.json o tatana-update-linux.json (SDD tatana-instalador-autoupdate §7,
+// §13.C; tatana-linux §10.C: el producto sale del payload, que tiene que ser válido para ese producto).
 //
 //   TATANA_FIRMA_CLAVE_PRIVADA="$(cat clave.pem)" \
 //   node ops/tatana/firmar-manifiesto.mjs --payload payload.json --key-id tatana-2026-10 \
@@ -11,7 +12,7 @@
 // - Firma los BYTES EXACTOS de --payload (no se re-serializa) y verifica lo escrito.
 import { readFileSync, writeFileSync } from 'node:fs'
 import {
-  KEY_ID, fail, loadPrivateKeyFromEnv, parseArgs, parseExtraKey, payloadError, readTrustedKeys, signEnvelope,
+  KEY_ID, PRODUCTS, fail, loadPrivateKeyFromEnv, parseArgs, parseExtraKey, payloadError, readTrustedKeys, signEnvelope,
   spkiOf, verifyEnvelopeText,
 } from './_lib.mjs'
 
@@ -36,11 +37,12 @@ try {
 } catch {
   fail(`${a.payload} no es JSON`)
 }
-const err = payloadError(payload)
+const product = PRODUCTS.includes(payload?.product) ? payload.product : 'tatana-windows'
+const err = payloadError(payload, product)
 if (err) fail(err)
 
 const envelope = signEnvelope(payloadBytes, keyId, privateKey)
-const check = verifyEnvelopeText(envelope, keys)
+const check = verifyEnvelopeText(envelope, keys, product)
 if (!check.ok) fail(`el sobre recién firmado no verifica (${check.reason}: ${check.detail})`)
 writeFileSync(a.salida, envelope)
-console.log(`OK ${a.salida}: Tatana ${payload.version} firmado con "${keyId}"`)
+console.log(`OK ${a.salida}: Tatana ${payload.version} (${product}) firmado con "${keyId}"`)

@@ -12,9 +12,12 @@ ARG NEXT_PUBLIC_AGENT_URL=http://localhost:8765
 # Opcional: link de descarga de Tatana que muestra el mensaje `origin_not_allowed`.
 # Vacío (instalación local) = se muestra el texto de siempre.
 ARG NEXT_PUBLIC_TATANA_DOWNLOAD_URL=
+# Opcional (tatana-linux §10.E): página de descarga de Tatana para Linux. Vacío = sin enlace para Linux.
+ARG NEXT_PUBLIC_TATANA_DOWNLOAD_URL_LINUX=
 ENV NEXT_PUBLIC_BACKEND_URL=$NEXT_PUBLIC_BACKEND_URL \
     NEXT_PUBLIC_AGENT_URL=$NEXT_PUBLIC_AGENT_URL \
     NEXT_PUBLIC_TATANA_DOWNLOAD_URL=$NEXT_PUBLIC_TATANA_DOWNLOAD_URL \
+    NEXT_PUBLIC_TATANA_DOWNLOAD_URL_LINUX=$NEXT_PUBLIC_TATANA_DOWNLOAD_URL_LINUX \
     NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

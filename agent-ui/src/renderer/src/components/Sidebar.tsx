@@ -1,12 +1,16 @@
 import { motion } from 'framer-motion'
-import { LayoutDashboard, Package, Settings, Wifi, WifiOff, Server } from 'lucide-react'
+import { LayoutDashboard, Package, Settings, Wifi, WifiOff, Server, Monitor } from 'lucide-react'
 import { SelloMark } from './SelloMark'
 
-type View = 'dashboard' | 'libraries' | 'settings'
+type View = 'dashboard' | 'libraries' | 'settings' | 'linux'
 
 interface Props {
   view: View
   onView: (v: View) => void
+  /** Ítem "Esta PC" (solo Linux, tatana-linux §8.3). */
+  showLinux?: boolean
+  /** "Librerías" se oculta en Linux empaquetado (D-T19). */
+  showLibraries?: boolean
   agentRunning: boolean
   serverConnected: boolean
   /** `app.getVersion()` (la que compara el actualizador). */
@@ -17,12 +21,16 @@ interface Props {
 
 const NAV: { id: View; label: string; icon: React.ElementType }[] = [
   { id: 'dashboard',  label: 'Dashboard',   icon: LayoutDashboard },
+  { id: 'linux',      label: 'Esta PC',     icon: Monitor },
   { id: 'libraries',  label: 'Librerías',   icon: Package },
   { id: 'settings',   label: 'Configuración', icon: Settings },
 ]
 
-export function Sidebar({ view, onView, agentRunning, serverConnected, appVersion, agentVersion }: Props) {
+export function Sidebar({
+  view, onView, showLinux = false, showLibraries = true, agentRunning, serverConnected, appVersion, agentVersion,
+}: Props) {
   const version = appVersion ?? __TATANA_VERSION__
+  const items = NAV.filter(({ id }) => (id !== 'linux' || showLinux) && (id !== 'libraries' || showLibraries))
   return (
     <aside
       className="w-[210px] flex-shrink-0 flex flex-col h-full border-r"
@@ -52,13 +60,15 @@ export function Sidebar({ view, onView, agentRunning, serverConnected, appVersio
         >
           Menú
         </p>
-        {NAV.map(({ id, label, icon: Icon }) => {
+        {items.map(({ id, label, icon: Icon }) => {
           const active = view === id
           return (
             <motion.button
               key={id}
+              type="button"
               onClick={() => onView(id)}
-              className="relative w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition-colors"
+              aria-current={active ? 'page' : undefined}
+              className="focus-ring relative w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition-colors"
               style={{
                 background: active ? 'rgba(37,99,235,0.09)' : 'transparent',
                 color: active ? 'var(--blue)' : 'var(--text-secondary)',

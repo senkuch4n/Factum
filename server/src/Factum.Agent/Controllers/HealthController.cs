@@ -2,6 +2,7 @@ using Factum.Agent.Common;
 using Factum.Agent.Models;
 using Factum.Agent.Services;
 using Factum.Agent.Services.Ios;
+using Factum.Agent.Services.Linux;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -10,7 +11,7 @@ namespace Factum.Agent.Controllers;
 [ApiController]
 [Route("/")]
 public sealed class HealthController(IOptions<AgentOptions> opts, IIosService ios,
-    ToolInventory inventory, ICaseZipService zips, AppleServiceProbe probe) : ControllerBase
+    ToolInventory inventory, ICaseZipService zips, AppleServiceProbe probe, LinuxHostProbe linuxProbe) : ControllerBase
 {
     // tools: adb/scrcpy/ffmpeg/python/uxplay con found/source/path/version (SDD grabacion-android-windows
     // §4.2; ios-herramientas-windows §4.2 suma uxplay y python.pymobiledevice3_version). La
@@ -26,6 +27,10 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
             // tatana-instalador-autoupdate D12/D-T1: la versión real (antes, siempre "2.0.0").
             version = AgentVersion.Current,
             mock = opts.Value.Mock,
+            // tatana-linux §10.A: SO del agente ("windows" | "macos" | "linux") y, solo en Linux, distro + chequeos
+            // de "Esta PC" (null fuera de Linux: no viaja por WhenWritingNull).
+            os = HostOsInfo.JsonName(HostOsInfo.Current),
+            linux = linuxProbe.GetStatus(),
             ios_available = ios.IsAvailable,
             tools = inventory.Snapshot(),
             ios = new

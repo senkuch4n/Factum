@@ -103,13 +103,31 @@ export function parseExtraKey(raw) {
   return { keyId, spkiDerBase64 }
 }
 
-/** Reglas del payload (§13.C). Devuelve un texto de error o null. */
-export function payloadError(p) {
+/** Productos del canal de actualización (tatana-linux §10.C): mismo sobre y misma clave, un manifiesto por SO. */
+export const PRODUCTS = ['tatana-windows', 'tatana-linux']
+
+/** Nombre del archivo del canal según el producto (§10.C). */
+export function expectedFile(product, version) {
+  return product === 'tatana-linux' ? `Tatana-${version}-x86_64.AppImage` : `Tatana-Setup-${version}.exe`
+}
+
+/** Valida --producto: devuelve el producto o termina con código 2. */
+export function productArg(value) {
+  const product = value ?? 'tatana-windows'
+  if (!PRODUCTS.includes(product)) fail(`--producto tiene que ser ${PRODUCTS.join(' o ')}`, 2)
+  return product
+}
+
+/**
+ * Reglas del payload (§13.C; tatana-linux §10.C). `product` es el producto ESPERADO: un manifiesto de Windows no
+ * sirve como de Linux ni al revés. Devuelve un texto de error o null.
+ */
+export function payloadError(p, product = 'tatana-windows') {
   if (typeof p !== 'object' || p === null || Array.isArray(p)) return 'el payload no es un objeto JSON'
   if (p.schema !== 1) return 'payload.schema tiene que ser 1'
-  if (p.product !== 'tatana-windows') return 'payload.product tiene que ser "tatana-windows"'
+  if (p.product !== product) return `payload.product tiene que ser "${product}"`
   if (typeof p.version !== 'string' || !RELEASE_VERSION.test(p.version)) return 'payload.version tiene que ser X.Y.Z'
-  if (p.file !== `Tatana-Setup-${p.version}.exe`) return `payload.file tiene que ser Tatana-Setup-${p.version}.exe`
+  if (p.file !== expectedFile(product, p.version)) return `payload.file tiene que ser ${expectedFile(product, p.version)}`
   if (!Number.isSafeInteger(p.size) || p.size <= 0) return 'payload.size tiene que ser un entero > 0'
   if (decodeBase64Strict(p.sha512)?.length !== 64) return 'payload.sha512 tiene que ser base64 de 64 bytes'
   if (typeof p.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(p.sha256)) return 'payload.sha256 tiene que ser hex en minúsculas'
@@ -132,8 +150,11 @@ export function signEnvelope(payloadBytes, keyId, privateKey) {
   )
 }
 
-/** Misma lógica que verifyEnvelope de manifest.ts: { ok, payload } | { ok: false, reason, detail }. */
-export function verifyEnvelopeText(text, keys) {
+/**
+ * Misma lógica que verifyEnvelope de manifest.ts: { ok, payload } | { ok: false, reason, detail }. `product` es el
+ * producto esperado (default Windows, como siempre).
+ */
+export function verifyEnvelopeText(text, keys, product = 'tatana-windows') {
   let env
   try {
     env = JSON.parse(text.replace(/^﻿/, ''))
@@ -163,7 +184,7 @@ export function verifyEnvelopeText(text, keys) {
   } catch {
     return { ok: false, reason: 'manifiesto_invalido', detail: 'el payload no es JSON' }
   }
-  const err = payloadError(payload)
+  const err = payloadError(payload, product)
   if (err) return { ok: false, reason: 'manifiesto_invalido', detail: err }
   return { ok: true, keyId: env.key_id, payload, payloadBytes }
 }

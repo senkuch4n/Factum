@@ -4,12 +4,15 @@ import { join, dirname, delimiter } from 'path'
 import { app } from 'electron'
 import { EventEmitter } from 'events'
 import { readConfig } from './config'
+import { dataDir as linuxDataDir } from './linux/paths'
+import { sweep } from './linux/process-sweep'
 
 /**
  * Carpeta de datos del agente (D-T3). Empaquetado en Windows es la MISMA que
  * usaba Tatana portátil (`%LOCALAPPDATA%\Tatana\data`), así la evidencia no se
  * migra ni se copia; `%APPDATA%` es roaming y no sirve para evidencia. En
- * macOS/Linux (dev) sigue en `<userData>/agent-data`. `tatana.json.agentDataDir`
+ * macOS/Linux (dev) sigue en `<userData>/agent-data`. Empaquetado en Linux
+ * (tatana-linux D-T5): `${XDG_DATA_HOME:-~/.local/share}/Tatana/data`. `tatana.json.agentDataDir`
  * la pisa si no está vacío.
  */
 export function agentDataDir(): string {
@@ -18,6 +21,7 @@ export function agentDataDir(): string {
   if (app.isPackaged && process.platform === 'win32' && process.env['LOCALAPPDATA']) {
     return join(process.env['LOCALAPPDATA'], 'Tatana', 'data')
   }
+  if (app.isPackaged && process.platform === 'linux') return linuxDataDir()
   return join(app.getPath('userData'), 'agent-data')
 }
 
@@ -44,6 +48,12 @@ export class AgentProcessManager extends EventEmitter {
   }
 
   stop(): void {
+    // Linux (tatana-linux D-T17): el agente corre en su propio grupo (`detached`)
+    // y un `kill` simple deja huérfanos (adb, scrcpy, ffmpeg…): se corta el árbol entero.
+    if (process.platform === 'linux') {
+      void this.stopAndWait()
+      return
+    }
     this.shouldRun = false
     if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null }
     if (this.process) {
@@ -58,11 +68,31 @@ export class AgentProcessManager extends EventEmitter {
   }
 
   /**
+   * "Reiniciar agente .NET". En Linux espera a que el árbol anterior termine
+   * antes de lanzar el nuevo: el barrido de `/proc` (D-T17) no puede pisar al
+   * agente nuevo, y el puerto queda libre. En Windows/macOS, como siempre.
+   */
+  async restart(): Promise<void> {
+    if (process.platform === 'linux') {
+      await this.stopAndWait()
+      this.start()
+      return
+    }
+    this.stop()
+    setTimeout(() => this.start(), 600)
+  }
+
+  /**
    * Detiene el agente y espera a que salga (D-T12, antes de instalar). En
-   * Windows mata el árbol (`taskkill /T /F`: adb, scrcpy, python…). Resuelve en
-   * `close` o al timeout.
+   * Windows mata el árbol (`taskkill /T /F`: adb, scrcpy, python…). En Linux,
+   * D-T17: SIGTERM + espera, `adb kill-server`, SIGKILL al grupo y barrido de
+   * `/proc`. Resuelve en `close` o al timeout (en Linux, después del barrido).
    */
   stopAndWait(timeoutMs = 10000): Promise<void> {
+    if (process.platform === 'linux') {
+      this.linuxStopping ??= this.stopAndWaitLinux(timeoutMs).finally(() => { this.linuxStopping = null })
+      return this.linuxStopping
+    }
     this.shouldRun = false
     if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null }
     const proc = this.process
@@ -88,6 +118,43 @@ export class AgentProcessManager extends EventEmitter {
         proc.kill('SIGTERM')
       }
     })
+  }
+
+  private linuxStopping: Promise<void> | null = null
+
+  /** D-T17, en orden: (1) SIGTERM y hasta 10 s, (2) `adb kill-server`, (3) SIGKILL al grupo, (4) barrido. */
+  private async stopAndWaitLinux(timeoutMs: number): Promise<void> {
+    this.shouldRun = false
+    if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null }
+    const binDir = this.binaryDir()
+    const proc = this.process
+    const pid = proc?.pid
+
+    // (1) SIGTERM al agente: cierra su grabación de sesión y sus hijos como hoy.
+    if (proc && pid !== undefined && proc.exitCode === null && proc.signalCode === null) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, timeoutMs)
+        proc.once('close', () => { clearTimeout(timer); resolve() })
+        try { proc.kill('SIGTERM') } catch { clearTimeout(timer); resolve() }
+      })
+    }
+    this.process = null
+    this.emit('status', 'stopped' satisfies AgentStatus)
+
+    if (binDir) {
+      // (2) El servidor de adb se desacopla con setsid: no está en el grupo.
+      const adb = join(binDir, 'tools', 'platform-tools', 'adb')
+      if (existsSync(adb)) await runQuiet(adb, ['kill-server'], 5000)
+    }
+    // (3) Lo que quede del grupo del agente (spawn con `detached`: grupo = pid).
+    if (pid !== undefined) {
+      try { process.kill(-pid, 'SIGKILL') } catch { /* el grupo ya no existe */ }
+    }
+    // (4) Barrido de /proc: procesos propios con el ejecutable bajo binDir/.
+    if (binDir) {
+      const swept = await sweep(binDir)
+      if (swept.length) this.emit('log', `[Tatana] Se cerraron ${swept.length} procesos que quedaban del agente.`)
+    }
   }
 
   /** Carpeta de `Factum.Agent(.exe)` (o null si no está), para D-T12. */
@@ -174,6 +241,8 @@ export class AgentProcessManager extends EventEmitter {
       stdio: ['ignore', 'pipe', 'pipe'],
       env,
       cwd,
+      // Linux (D-T17): sesión y grupo propios, para cortar el árbol entero al salir.
+      detached: process.platform === 'linux',
     })
 
     this.process.stdout?.on('data', (d) => this.emit('log', String(d).trimEnd()))
@@ -197,6 +266,22 @@ export class AgentProcessManager extends EventEmitter {
       this.emit('status', 'stopped' satisfies AgentStatus)
     })
   }
+}
+
+/** Corre un comando sin salida, con tope de tiempo; nunca tira. */
+function runQuiet(cmd: string, args: string[], timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    let child: ChildProcess
+    try {
+      child = spawn(cmd, args, { stdio: 'ignore' })
+    } catch {
+      resolve()
+      return
+    }
+    const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch { /* ya salió */ } resolve() }, timeoutMs)
+    child.on('error', () => { clearTimeout(timer); resolve() })
+    child.on('close', () => { clearTimeout(timer); resolve() })
+  })
 }
 
 export const agentProcess = new AgentProcessManager()

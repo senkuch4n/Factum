@@ -117,7 +117,7 @@ public sealed class IosHelperTests : IDisposable
     {
         const string stderr = "Traceback (most recent call last):\n  File \"x\", line 1\npymobiledevice3.exceptions.PasscodeRequiredError\n" +
                               "TATANA_ERROR {\"code\": \"ios_locked\", \"detail\": \"PasscodeRequiredError\"}\n";
-        var e = IosHelper.ErrorFromStderr(stderr, 2, isWindows: true);
+        var e = IosHelper.ErrorFromStderr(stderr, 2, HostOs.Windows);
         Assert.Equal(IosErrors.Locked, e.Code);
         Assert.Equal("El iPhone está bloqueado. Desbloquealo y reintentá.", e.Message);
     }
@@ -125,7 +125,7 @@ public sealed class IosHelperTests : IDisposable
     [Fact]
     public void Error_sin_TATANA_ERROR_es_capture_failed_con_el_ultimo_renglon()
     {
-        var e = IosHelper.ErrorFromStderr("algo\nModuleNotFoundError: No module named 'foo'\n", 1, isWindows: true);
+        var e = IosHelper.ErrorFromStderr("algo\nModuleNotFoundError: No module named 'foo'\n", 1, HostOs.Windows);
         Assert.Equal(IosErrors.CaptureFailed, e.Code);
         Assert.Equal("No se pudo capturar la pantalla del iPhone: ModuleNotFoundError: No module named 'foo'", e.Message);
     }
@@ -165,7 +165,7 @@ public sealed class IosHelperTests : IDisposable
     [InlineData("AfcFileNotFoundError: DCIM/100APPLE/IMG_1.MOV", IosErrors.CaptureFailed)]
     public void Clasifica_afc_pull(string stderr, string code)
     {
-        Assert.Equal(code, IosService.ClassifyAfcError(stderr, isWindows: true).Code);
+        Assert.Equal(code, IosService.ClassifyAfcError(stderr, HostOs.Windows).Code);
     }
 
     [Fact]

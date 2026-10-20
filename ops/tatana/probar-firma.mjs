@@ -5,7 +5,8 @@
 //   node ops/tatana/probar-firma.mjs
 //
 // generar → armar payload → firmar → verificar ok → alterar un byte → verificar falla, y los rechazos
-// (clave que no es de confianza, key_id desconocido, --salida dentro del repo, exe distinto).
+// (clave que no es de confianza, key_id desconocido, --salida dentro del repo, exe distinto). tatana-linux §10.C:
+// el manifiesto de Linux (AppImage, product "tatana-linux") y los cruzados (Linux rechaza Windows y al revés).
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs'
@@ -92,6 +93,35 @@ try {
   // 6. Exe distinto al firmado.
   writeFileSync(exe, Buffer.concat([bytes, Buffer.from('!')]))
   expect('exe distinto', run('verificar-manifiesto.mjs', ['--manifiesto', man, '--clave-extra', extra, '--exe', exe]), 1, /tamaño|sha/)
+
+  // 7. Linux (tatana-linux §10.C): AppImage + latest-linux.yml → tatana-update-linux.json.
+  const img = join(T, 'Tatana-1.4.0-x86_64.AppImage')
+  writeFileSync(img, Buffer.from('\x7fELF' + 'y'.repeat(120000)))
+  const imgBytes = readFileSync(img)
+  const imgSha512 = createHash('sha512').update(imgBytes).digest('base64')
+  const latestLinux = join(T, 'latest-linux.yml')
+  writeFileSync(latestLinux, `version: 1.4.0\nfiles:\n  - url: Tatana-1.4.0-x86_64.AppImage\n    sha512: ${imgSha512}\n    size: ${imgBytes.length}\n    blockMapSize: 1234\npath: Tatana-1.4.0-x86_64.AppImage\nsha512: ${imgSha512}\nreleaseDate: '2026-10-18T15:00:00.000Z'\n`)
+  const payloadLinux = join(T, 'payload-linux.json')
+  expect('armar payload de Linux', run('armar-payload.mjs', ['--producto', 'tatana-linux', '--archivo', img, '--latest', latestLinux, '--version', '1.4.0', '--commit', commit, '--salida', payloadLinux]), 0)
+  const pl = JSON.parse(readFileSync(payloadLinux, 'utf8'))
+  if (pl.product === 'tatana-linux' && pl.file === 'Tatana-1.4.0-x86_64.AppImage') ok('payload de Linux con product y file de Linux')
+  else mal(`payload de Linux con product=${pl.product} file=${pl.file}`)
+  expect('producto desconocido', run('armar-payload.mjs', ['--producto', 'tatana-mac', '--archivo', img, '--latest', latestLinux, '--version', '1.4.0', '--commit', commit, '--salida', join(T, 'px.json')]), 2, /--producto/)
+  expect('AppImage con producto Windows', run('armar-payload.mjs', ['--archivo', img, '--latest', latestLinux, '--version', '1.4.0', '--commit', commit, '--salida', join(T, 'px.json')]), 1, /Tatana-Setup-1\.4\.0\.exe/)
+  expect('exe con producto Linux', run('armar-payload.mjs', ['--producto', 'tatana-linux', '--exe', exe, '--latest', latest, '--version', '1.4.0', '--commit', commit, '--salida', join(T, 'px.json')]), 1, /AppImage/)
+  const manLinux = join(T, 'tatana-update-linux.json')
+  expect('firmar Linux', run('firmar-manifiesto.mjs', ['--payload', payloadLinux, '--key-id', 'prueba-1', '--salida', manLinux, '--clave-extra', extra], { TATANA_FIRMA_CLAVE_PRIVADA: priv }), 0, /tatana-linux/)
+  expect('verificar Linux ok', run('verificar-manifiesto.mjs', ['--manifiesto', manLinux, '--producto', 'tatana-linux', '--clave-extra', extra, '--version', '1.4.0', '--archivo', img, '--payload', payloadLinux]), 0, /firma válida.*tatana-linux/)
+  // Cruzados: el manifiesto de un SO nunca sirve para el otro (manifiesto_invalido).
+  expect('Windows rechaza el manifiesto de Linux', run('verificar-manifiesto.mjs', ['--manifiesto', manLinux, '--clave-extra', extra]), 1, /manifiesto_invalido.*tatana-windows/)
+  expect('Linux rechaza el manifiesto de Windows', run('verificar-manifiesto.mjs', ['--manifiesto', man, '--producto', 'tatana-linux', '--clave-extra', extra]), 1, /manifiesto_invalido.*tatana-linux/)
+  // file con otro nombre (firmado igual): se rechaza al verificar.
+  const raro = join(T, 'payload-raro.json')
+  writeFileSync(raro, JSON.stringify({ ...pl, file: 'Tatana-1.4.0.AppImage' }, null, 2) + '\n')
+  expect('firmar Linux con file raro', run('firmar-manifiesto.mjs', ['--payload', raro, '--key-id', 'prueba-1', '--salida', join(T, 'raro.json'), '--clave-extra', extra], { TATANA_FIRMA_CLAVE_PRIVADA: priv }), 1, /x86_64\.AppImage/)
+  // AppImage distinto al firmado.
+  writeFileSync(img, Buffer.concat([imgBytes, Buffer.from('!')]))
+  expect('AppImage distinto', run('verificar-manifiesto.mjs', ['--manifiesto', manLinux, '--producto', 'tatana-linux', '--clave-extra', extra, '--archivo', img]), 1, /tamaño|sha/)
 } finally {
   rmSync(T, { recursive: true, force: true })
 }

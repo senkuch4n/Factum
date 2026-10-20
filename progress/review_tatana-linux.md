@@ -1,0 +1,52 @@
+# Review — tatana-linux (HU #91)
+
+**Veredicto:** APROBADA
+
+## Verificación propia
+- `dotnet build Factum.Agent`: 0 warnings, 0 errores. `dotnet test Factum.Agent.Tests`: 979/979.
+- `npx tsc --noEmit` en `client/`; `-p tsconfig.web.json` y `-p tsconfig.node.json` en `agent-ui/`: limpios.
+- `npm test` en agent-ui: 68/68. `node ops/tatana/probar-firma.mjs` y `probar-preparar-pc.sh`: OK.
+- `./ops/harness/verify.sh`: exit 0. No se corrió preparar-pc.sh en modo real; sin procesos vivos de la HU.
+
+## Checkpoints
+- C1: [x] verify.sh exit 0 (estado de Project y rama no re-verificados por el reviewer)
+- C2: [x] HU, SDD y Contrato compartido presentes; §10.A (os/linux/checks, snake_case, glibc_version), §10.C (producto/file) y §10.E (variable Linux) coinciden entre C#, client/src/lib/agent.ts, agent-ui/agent-api.ts y ops/tatana/_lib.mjs
+- C3: [x] Lados dentro de la SDD; main/preload/renderer respetado; sin Mongo; sin debug (los console.log son salida de CLIs ops)
+- C4: [x] builds, tsc y tests reales y limpios
+- C5: [x] progress impl_backend e impl_frontend existen; el frontend deja constancia de ui-ux-pro-max, senior-frontend, 3d-web-experience y web-design-guidelines
+
+## Puntos especiales
+- Contrato: consistente en los 4 lados.
+- Windows/macOS: tests de manifest/updater en verde; `validatePayload` con producto esperado por plataforma (Windows sigue igual); `verifyEnvelope` con default `expectedProduct()`; electron-builder 26.15.3 fijado en package.json y lock (app-builder-lib 26.15.3); sin postinstall ni parchar-electron-builder.mjs ni referencias restantes; release sin el paso del parche.
+- preparar-pc.sh: viaja embebido y por stdin (sin archivo temporal), `main()` al final, verifica root y coincidencia con PKEXEC_UID, usuario validado con getent, escritura atómica de solo los dos archivos listados, sin eval ni interpolación en comandos, SHA-256 del script registrado en el log y en preparacion-linux.json, PATH fijo, salida con prefijo TATANA_ neutralizado en el log.
+- Versiones fijas con SHA-256 en deploy/linux/armar-tatana-linux.sh y lock con hashes (verificado por generar-lock.py --check según el informe).
+
+## Cambios requeridos
+Ninguno.
+
+## Observaciones no bloqueantes
+- `agent-ui/tsconfig.*.tsbuildinfo` figuran modificados (artefactos versionados); conviene no incluirlos en el commit.
+- Los workflows de GitHub Actions (tatana-linux.yml, tatana-release.yml en ensayo) y el AppImage en una PC real no se pudieron correr localmente; quedan para el PR y la QA manual (§11).
+- `StartupWMClass`/`desktopName` pendiente de confirmar con xprop en la QA, como deja la SDD.
+
+## Re-chequeo reintento 1
+
+**Veredicto:** APROBADA
+
+- Causa y arreglo coherentes con la SDD (D-T5: `tatana.json` en userData; humo (e): existe a los 20 s). `ensureConfigFile()` se llama en `ready` (agent-ui/src/main/index.ts L312), después del chequeo de requisitos y antes de `readConfig()` y de lanzar el agente, así que si `/health` responde el archivo ya existe.
+- Solo Linux empaquetado (`LINUX_PACKAGED`): Windows y macOS sin cambios de comportamiento.
+- `ensureFile`: no pisa un `tatana.json` existente (ni uno corrupto), escritura atómica `.tmp` + rename, descarta `.tmp` huérfano, re-chequea existencia antes del rename (carrera entre instancias; además hay single-instance lock). Error no fatal (try/catch en config.ts).
+- Contrato sin cambios; nada en `ci/` tocado.
+- Verificado por mí: `tsc -p tsconfig.web.json` OK, `tsc -p tsconfig.node.json` OK, `npm test` 71/71 pass (incluye los 3 casos nuevos de ensure-file).
+- Observación: la confirmación real queda para el próximo run de tatana-linux.yml (ubuntu-24.04).
+
+## Re-chequeo reintento 2
+
+**Veredicto:** APROBADA
+
+- tsc web y node: OK. `npm test` agent-ui: 81/81. `bash -n ops/tatana/prueba-linux.sh`: OK.
+- `relaunch.ts`: `/bin/sh -c` con script constante; pid, tope, ejecutable y args van como posicionales (`"$@"`), nunca interpolados, así que no hay inyección. `spawn` con `detached` + `stdio: 'ignore'` + `unref`; el sh espera la salida del pid viejo con tope de 30 s y hace `exec`, por lo que no queda ningún proceso colgado. Si `/bin/sh` no existe o `spawn` tira, `relaunchFrom` cae a `app.relaunch`. Es un respaldo razonable.
+- `update-manager.ts` y `desktop-integration.ts`: el relanzado solo ocurre en la rama Linux/AppImage, y `app.exit(0)` se conserva.
+- `index.ts`: `--quit` sin instancia previa sale sin arrancar la app. Con instancia corriendo, el lock falla y sigue valiendo `second-instance`. `--install-update` y el arranque normal no cambian, y Windows y macOS no se ven afectados (el "Salir" del NSIS con la app abierta usa el camino de siempre).
+- Contrato §10 sin cambios.
+- Observación: las pruebas cubren el comando y el entorno. El relanzado real desde el AppImage solo lo valida el ensayo de release.

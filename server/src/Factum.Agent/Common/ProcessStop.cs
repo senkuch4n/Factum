@@ -135,9 +135,23 @@ public static class ProcessStop
         }
     }
 
-    // Unix: `kill -2` (SIGINT) o `kill -15` (SIGTERM).
+    /// <summary>
+    /// true si la señal se manda con <c>kill(2)</c> directo (<see cref="UnixSignals"/>): solo Linux
+    /// (tatana-linux D-T16). macOS sigue con el ejecutable <c>kill</c>, sin cambios de comportamiento.
+    /// </summary>
+    internal static bool UsesNativeSignals(HostOs os) => os == HostOs.Linux;
+
+    /// <summary>Número de señal de <c>"-2"</c>/<c>"-15"</c> (cualquier otro valor → SIGINT).</summary>
+    internal static int SignalNumber(string signal) => signal == "-15" ? UnixSignals.SIGTERM : UnixSignals.SIGINT;
+
+    // Unix: SIGINT o SIGTERM. Linux: kill(2) por P/Invoke; macOS: `kill -2` / `kill -15`.
     private static async Task SendSignalAsync(int pid, string signal, CancellationToken ct)
     {
+        if (UsesNativeSignals(HostOsInfo.Current))
+        {
+            UnixSignals.TrySend(pid, SignalNumber(signal));
+            return;
+        }
         try
         {
             using var kill = Process.Start(new ProcessStartInfo

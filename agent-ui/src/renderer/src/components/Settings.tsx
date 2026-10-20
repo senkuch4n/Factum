@@ -5,9 +5,14 @@ import { Save, CheckCircle2, XCircle, Loader2, Power, Link } from 'lucide-react'
 interface Props {
   config: TatanaConfig | null
   onSave: (config: TatanaConfig) => void
+  appInfo?: TatanaAppInfo | null
+  onView?: (v: 'linux') => void
 }
 
-export function Settings({ config, onSave }: Props) {
+export function Settings({ config, onSave, appInfo, onView }: Props) {
+  const isLinux = appInfo?.platform === 'linux'
+  // tatana-linux D-T18: en Linux el autoarranque necesita la instalación canónica.
+  const autostartBlocked = isLinux && appInfo?.packaged === true && appInfo.linux?.installed === false
   const [serverUrl, setServerUrl] = useState('')
   const [agentPort, setAgentPort] = useState(8765)
   const [autostart, setAutostart] = useState(false)
@@ -135,14 +140,32 @@ export function Settings({ config, onSave }: Props) {
       <Section icon={Power} title="Inicio automático">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-              Iniciar con Windows / macOS
+            <p id="autostart-label" className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+              {isLinux ? 'Iniciar al entrar a la sesión' : 'Iniciar con Windows / macOS'}
             </p>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-              Tatana y el agente arrancan al prender la PC
+            <p id="autostart-help" className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+              {autostartBlocked
+                ? 'Primero instalá Tatana en esta PC: el arranque automático usa la copia instalada.'
+                : 'Tatana y el agente arrancan al prender la PC'}
             </p>
+            {autostartBlocked && onView && (
+              <button
+                type="button"
+                onClick={() => onView('linux')}
+                className="focus-ring mt-1.5 text-xs font-medium underline underline-offset-2 rounded"
+                style={{ color: 'var(--blue)' }}
+              >
+                Ir a «Esta PC»
+              </button>
+            )}
           </div>
-          <Toggle value={autostart} onChange={setAutostart} />
+          <Toggle
+            value={autostart && !autostartBlocked}
+            onChange={setAutostart}
+            disabled={autostartBlocked}
+            labelledBy="autostart-label"
+            describedBy="autostart-help"
+          />
         </div>
       </Section>
 
@@ -194,11 +217,25 @@ function Section({ icon: Icon, title, children }: { icon: React.ElementType; tit
   )
 }
 
-function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+function Toggle({
+  value, onChange, disabled = false, labelledBy, describedBy,
+}: {
+  value: boolean
+  onChange: (v: boolean) => void
+  disabled?: boolean
+  labelledBy?: string
+  describedBy?: string
+}) {
   return (
     <button
+      type="button"
+      role="switch"
+      aria-checked={value}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      disabled={disabled}
       onClick={() => onChange(!value)}
-      className="relative w-11 h-6 rounded-full transition-colors flex-shrink-0"
+      className="focus-ring relative w-11 h-6 rounded-full transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
       style={{ background: value ? 'var(--blue)' : 'var(--bg-elevated)', border: '1px solid var(--border-md)' }}
     >
       <motion.span

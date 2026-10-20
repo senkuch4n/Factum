@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using Factum.Agent.Common;
 
 namespace Factum.Agent.Services.Ios;
 
@@ -21,7 +22,7 @@ public sealed class DvtRecorder : IAsyncDisposable
 
     private readonly Process _proc;
     private readonly ILogger _log;
-    private readonly bool _isWindows;
+    private readonly HostOs _os;
     private readonly Queue<string> _tail = new();
     private readonly object _gate = new();
     private readonly TaskCompletionSource<bool> _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -37,7 +38,7 @@ public sealed class DvtRecorder : IAsyncDisposable
         _proc = proc;
         OutputPath = outputPath;
         _log = log;
-        _isWindows = OperatingSystem.IsWindows();
+        _os = HostOsInfo.Current;
     }
 
     public static async Task<DvtRecorder> StartAsync(string python, string helperPath, string udid,
@@ -85,7 +86,7 @@ public sealed class DvtRecorder : IAsyncDisposable
             try { await rec._stderrPump.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None); } catch { }
             ct.ThrowIfCancellationRequested();
             var error = rec.HelperError()
-                ?? IosErrors.Create(IosErrors.TunnelFailed, rec._isWindows);
+                ?? IosErrors.Create(IosErrors.TunnelFailed, rec._os);
             log.LogWarning("Error de iPhone {Code}: {Detail}", error.Code, rec.LastStderrLine() ?? "sin READY");
             log.LogDebug("DVT recorder sin READY. stderr:\n{Stderr}", rec.Tail());
             proc.Dispose();
@@ -136,13 +137,13 @@ public sealed class DvtRecorder : IAsyncDisposable
 
         IosException error;
         if (timedOut)
-            error = IosErrors.RecordingEmptyFrom(null, IosErrors.ReasonTimeout, _isWindows);
+            error = IosErrors.RecordingEmptyFrom(null, IosErrors.ReasonTimeout, _os);
         else if (HelperError() is { } cause)
-            error = IosErrors.RecordingEmptyFrom(cause, IosErrors.ReasonNoFrames, _isWindows);
+            error = IosErrors.RecordingEmptyFrom(cause, IosErrors.ReasonNoFrames, _os);
         else if (frames > 0 && ffmpegExit != 0)
-            error = IosErrors.RecordingEmptyFrom(null, "ffmpeg no pudo cerrar el archivo de video.", _isWindows);
+            error = IosErrors.RecordingEmptyFrom(null, "ffmpeg no pudo cerrar el archivo de video.", _os);
         else
-            error = IosErrors.RecordingEmptyFrom(null, IosErrors.ReasonNoFrames, _isWindows);
+            error = IosErrors.RecordingEmptyFrom(null, IosErrors.ReasonNoFrames, _os);
 
         _log.LogWarning("Error de iPhone {Code}: {Detail}", error.Code,
             $"exit {exitCode}, {frames} cuadros, ffmpeg {ffmpegExit}, archivo {(fileOk ? "ok" : "vacío")}");
@@ -190,7 +191,7 @@ public sealed class DvtRecorder : IAsyncDisposable
         string? line;
         lock (_gate) line = _errorLine;
         return IosErrors.TryParseHelperError(line, out var code, out var detail)
-            ? IosErrors.FromHelper(code, detail, _isWindows)
+            ? IosErrors.FromHelper(code, detail, _os)
             : null;
     }
 

@@ -9,6 +9,11 @@
  * NUNCA con operaciones en curso (D5): `POST /agent/maintenance` es atómico y
  * devuelve 409 si hay algo corriendo. `autoInstallOnAppQuit = false`: nada se
  * instala en el apagado de Windows.
+ *
+ * Linux (tatana-linux D-T6, D-T7, D-T8): el manifiesto es `tatana-update-linux.json`
+ * (`product: "tatana-linux"`), electron-updater lee `latest-linux.yml` y la
+ * instalación es propia (`appimage-install.ts`), sin `quitAndInstall`. Solo
+ * con la instalación canónica (`~/Applications/Tatana.AppImage`).
  */
 import { app, net, Notification, powerMonitor } from 'electron'
 import { autoUpdater, type UpdateDownloadedEvent, type UpdateInfo } from 'electron-updater'
@@ -18,13 +23,16 @@ import { createHash } from 'crypto'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { agentProcess } from '../agent-process'
+import { isInstalled, relaunchFrom, runningAppImage } from '../linux/desktop-integration'
+import { canonicalAppImagePath } from '../linux/paths'
+import { installAppImage } from './appimage-install'
 import { enterMaintenance, type AgentOperation } from '../agent-api'
 import { readDistConfig } from './dist-config'
 import { allTrustedKeys } from './trusted-keys'
 import { updaterLog } from './logger'
 import { MANIFEST_NO_CACHE_HEADERS, classifyManifestStatus, manifestRequestOptions } from './manifest-request'
 import {
-  decide, matchesUpdateInfo, parseEnvelope, sanitizeUpdateUrls, verifyEnvelope,
+  decide, expectedProduct, manifestFileName, matchesUpdateInfo, parseEnvelope, sanitizeUpdateUrls, verifyEnvelope,
   type TrustedKey, type UpdatePayload,
 } from './manifest'
 import { loadUpdateState, saveUpdateState, type UpdateReason, type UpdateState } from './state'
@@ -165,6 +173,8 @@ export class UpdateManager extends EventEmitter {
   private getPort: () => number = () => 8765
   private installing = false
   private initialized = false
+  /** Linux: archivo descargado y verificado + su payload firmado, hasta instalar (D-T7). */
+  private pending: { file: string; payload: UpdatePayload } | null = null
 
   constructor() {
     super()
@@ -232,8 +242,11 @@ export class UpdateManager extends EventEmitter {
     const dist = readDistConfig()
     this.urls = sanitizeUpdateUrls(dist?.update_urls ?? [], process.env['TATANA_UPDATE_URLS'])
 
+    const linux = process.platform === 'linux'
     const disabledReason: UpdateReason | null =
       !app.isPackaged ? 'no_empaquetado'
+      : linux && !runningAppImage() ? 'sin_appimage'
+      : linux && !isInstalled() ? 'no_instalado'
       : this.keys.length === 0 ? 'sin_claves'
       : this.urls.length === 0 ? 'sin_canal'
       : null
@@ -324,7 +337,7 @@ export class UpdateManager extends EventEmitter {
 
   private async tryUrl(url: string): Promise<UrlOutcome> {
     // 1. Manifiesto.
-    const fetched = await fetchManifest(url + 'tatana-update.json')
+    const fetched = await fetchManifest(url + manifestFileName(expectedProduct()))
     if (!fetched.ok) return { kind: 'network' }
 
     // 2. Firma. Si falla se prueba la URL siguiente: un canal adulterado no tapa a otro sano.
@@ -367,11 +380,13 @@ export class UpdateManager extends EventEmitter {
     // 5. Descarga (sha512 lo verifica electron-updater).
     this.set({ phase: 'downloading', availableVersion: payload.version, percent: 0, sourceUrl: url })
     let downloadedFile: string | null = null
+    this.pending = null
+    const ext = process.platform === 'linux' ? '.appimage' : '.exe'
     const onDownloaded = (e: UpdateDownloadedEvent) => { downloadedFile = e.downloadedFile }
     autoUpdater.once('update-downloaded', onDownloaded)
     try {
       const paths = await autoUpdater.downloadUpdate()
-      downloadedFile ??= paths?.find((p) => p.toLowerCase().endsWith('.exe')) ?? paths?.[0] ?? null
+      downloadedFile ??= paths?.find((p) => p.toLowerCase().endsWith(ext)) ?? paths?.[0] ?? null
     } catch (err) {
       updaterLog.warn(`${url}: falló la descarga de v${payload.version}:`, err)
       this.set({ phase: 'checking' }, { clear: ['percent'] })
@@ -389,7 +404,8 @@ export class UpdateManager extends EventEmitter {
       return { kind: 'rejected', reason: 'hash_no_coincide' }
     }
 
-    // 7. Lista.
+    // 7. Lista. (Linux instala desde este archivo: se conserva hasta instalar.)
+    if (downloadedFile) this.pending = { file: downloadedFile, payload }
     this.set({ phase: 'ready', availableVersion: payload.version, sourceUrl: url, verifiedAt: nowIso(), checkedAt: nowIso() },
       { clear: ['percent', 'reason'] })
     updaterLog.info(`v${payload.version} descargada y verificada: se instala al reiniciar Tatana.`)
@@ -469,6 +485,8 @@ export class UpdateManager extends EventEmitter {
       this.set({ phase: 'installing' }, { clear: ['busyOperations', 'backgroundOperations'] })
       updaterLog.info(`Instalando v${this.state.availableVersion} (relanzar=${opts.relaunch}).`)
 
+      if (process.platform === 'linux') return await this.installLinux(opts)
+
       const binDir = agentProcess.binaryDir()
       await agentProcess.stopAndWait()
       if (process.platform === 'win32' && binDir) {
@@ -502,6 +520,40 @@ export class UpdateManager extends EventEmitter {
     } finally {
       this.installing = false
     }
+  }
+
+  /**
+   * Linux (D-T7): agente cortado sin huérfanos (D-T17), AppImage verificado y
+   * reemplazado de forma atómica, relanzar (si corresponde) y salir. El estado
+   * `installing` persistido hace que el relanzado arranque oculto y avise.
+   */
+  private async installLinux(opts: { relaunch: boolean }): Promise<InstallResult> {
+    const pending = this.pending
+    if (!pending || pending.payload.version !== this.state.availableVersion) {
+      this.failInstall(new Error('no hay un AppImage descargado para esta versión'))
+      return { ok: false, reason: 'error' }
+    }
+    await agentProcess.stopAndWait()
+    const canonical = canonicalAppImagePath()
+    const r = await installAppImage({
+      downloadedFile: pending.file,
+      canonicalPath: canonical,
+      expected: { size: pending.payload.size, sha512: pending.payload.sha512 },
+    })
+    if (!r.ok) {
+      this.failInstall(new Error(r.error))
+      return { ok: false, reason: 'error' }
+    }
+    updaterLog.info(`v${pending.payload.version} instalada en ${canonical}.`)
+    this.pending = null
+    // `exit` y no `quit`: el agente ya está cortado y el `close` de la ventana no frena la salida.
+    // Relanzar con `relaunchFrom` (relaunch.ts), no con `app.relaunch`: dentro de un AppImage el
+    // relauncher de Electron corre desde el montaje FUSE que se desmonta al salir y nunca lanza.
+    setImmediate(() => {
+      if (opts.relaunch) relaunchFrom(canonical, [], (m) => updaterLog.info(m))
+      else app.exit(0)
+    })
+    return { ok: true }
   }
 
   private failInstall(err: unknown): void {

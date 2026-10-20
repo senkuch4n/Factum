@@ -4,6 +4,7 @@ using System.Text.Json;
 using Factum.Agent.Common;
 using Factum.Agent.Models;
 using Factum.Agent.Services.Ios;
+using Factum.Agent.Services.Linux;
 using Factum.Agent.WebSockets;
 using Microsoft.Extensions.Options;
 
@@ -34,7 +35,8 @@ public interface IIosService
 
     // ios-herramientas-windows §6.6: AirPlay (uxplay) disponible en esta PC; en Windows nunca (D1 b).
     bool AirplayAvailable { get; }
-    // "not_supported_on_windows" | "uxplay_not_found"; null si AirPlay está disponible.
+    // "not_supported_on_windows" | "uxplay_not_found" | (Linux) "uxplay_without_mp4" | "avahi_not_running";
+    // null si AirPlay está disponible.
     string? AirplayUnavailableReason { get; }
     // §4.3: "enabled" | "restarting" | "manual_required".
     Task<string> EnableDeveloperModeAsync(string udid, CancellationToken ct = default);
@@ -77,6 +79,7 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
 
     private readonly bool _mock;
     private readonly bool _isWindows = OperatingSystem.IsWindows();
+    private readonly HostOs _os = HostOsInfo.Current;
     private readonly string? _micDevice;
     private readonly string? _mockRecordingSource;
     private readonly IVideoPostprocessService _post;
@@ -182,27 +185,34 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
 
     public bool IsAvailable => _mock || IosHelper.ResolvePython() is not null;
 
-    public bool AirplayAvailable => _mock || (!_isWindows && FindBinary(AgentTools.Uxplay) is not null);
+    public bool AirplayAvailable => _mock || AirplayReasonCore() is null;
 
-    public string? AirplayUnavailableReason =>
-        _mock ? null
-        : _isWindows ? "not_supported_on_windows"
-        : FindBinary(AgentTools.Uxplay) is null ? "uxplay_not_found"
-        : null;
+    public string? AirplayUnavailableReason => _mock ? null : AirplayReasonCore();
+
+    // Windows: nunca (D1 b). macOS: uxplay encontrado. Linux (tatana-linux D-T25): uxplay encontrado, con -mp4
+    // (UxPlay ≥ 1.73) y avahi corriendo.
+    private string? AirplayReasonCore()
+    {
+        if (_isWindows) return "not_supported_on_windows";
+        var uxplay = FindBinary(AgentTools.Uxplay);
+        if (_os != HostOs.Linux) return uxplay is null ? AirplayRules.UxplayNotFound : null;
+        var mp4 = uxplay is not null && UxplayProbe.Shared.Get(uxplay)?.SupportsMp4 == true;
+        return AirplayRules.LinuxReason(uxplay is not null, mp4, File.Exists(AirplayRules.AvahiSocketPath));
+    }
 
     private string RequirePython() =>
-        IosHelper.ResolvePython() ?? throw IosErrors.Create(IosErrors.ToolsMissing, _isWindows);
+        IosHelper.ResolvePython() ?? throw IosErrors.Create(IosErrors.ToolsMissing, _os);
 
     private string RequireFfmpeg() =>
-        FindBinary(AgentTools.Ffmpeg) ?? throw IosErrors.Create(IosErrors.ToolsMissing, _isWindows);
+        FindBinary(AgentTools.Ffmpeg) ?? throw IosErrors.Create(IosErrors.ToolsMissing, _os);
 
-    private IosException AirplayUnavailableError() => IosErrors.Create(IosErrors.AirplayUnavailable, _isWindows);
+    private IosException AirplayUnavailableError() => IosErrors.Create(IosErrors.AirplayUnavailable, _os);
 
     // §6.5: las operaciones con UDID no lanzan Python si falta el servicio de Apple.
     private async Task EnsureAppleServiceAsync(CancellationToken ct)
     {
         if (await _probe.GetStateAsync(ct) == AppleServiceState.Missing)
-            throw IosErrors.Create(IosErrors.AppleServiceMissing, _isWindows);
+            throw IosErrors.Create(IosErrors.AppleServiceMissing, _os);
     }
 
     private Task<string> RunHelperAsync(string subcommand, IEnumerable<string> args, TimeSpan timeout,
@@ -325,7 +335,7 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
         }
         catch (JsonException) { }
         if (status is not ("enabled" or "restarting" or "manual_required"))
-            throw IosErrors.Create(IosErrors.CaptureFailed, _isWindows, "respuesta inesperada del helper");
+            throw IosErrors.Create(IosErrors.CaptureFailed, _os, "respuesta inesperada del helper");
 
         // El iPhone se reinicia: el DDI se desmonta y hay que volver a prepararlo.
         if (status == "restarting") _prepared.TryRemove(udid, out _);
@@ -418,7 +428,7 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
         await RunHelperAsync("screenshot", ["--udid", udid, "--output", outputPath], ScreenshotTimeout, ct);
         // El helper ya lo verifica, pero el éxito real es el archivo: exit 0 Y PNG > 0 bytes.
         if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
-            throw IosErrors.Create(IosErrors.CaptureFailed, _isWindows, "el archivo de la captura quedó vacío");
+            throw IosErrors.Create(IosErrors.CaptureFailed, _os, "el archivo de la captura quedó vacío");
         return outputPath;
     }
 
@@ -501,6 +511,7 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
         psi.ArgumentList.Add("-n");   psi.ArgumentList.Add(receiverName);
         psi.ArgumentList.Add("-nh");
         psi.ArgumentList.Add("-mp4"); psi.ArgumentList.Add(stem);
+        foreach (var a in AirplayRules.ExtraArgs(_os)) psi.ArgumentList.Add(a);
 
         var proc = Process.Start(psi) ?? throw new InvalidOperationException("No se pudo iniciar uxplay");
         try
@@ -602,6 +613,7 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
             psi.ArgumentList.Add("-n");   psi.ArgumentList.Add(receiverName);
             psi.ArgumentList.Add("-nh");
             psi.ArgumentList.Add("-mp4"); psi.ArgumentList.Add(stem);
+            foreach (var a in AirplayRules.ExtraArgs(_os)) psi.ArgumentList.Add(a);
 
             var proc = Process.Start(psi) ?? throw new InvalidOperationException("No se pudo iniciar uxplay");
 
@@ -776,8 +788,9 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
             {
                 if (!AirplayAvailable) throw AirplayUnavailableError();
                 if (!await TryStartAirplayRecorderAsync(session, ct))
-                    throw new IosException(IosErrors.AirplayUnavailable,
-                        "No se pudo iniciar el receptor AirPlay. Instalá uxplay: brew install uxplay");
+                    throw new IosException(IosErrors.AirplayUnavailable, _os == HostOs.Linux
+                        ? "No se pudo iniciar el receptor AirPlay (uxplay). Revisá \"Chequeos de esta PC\" en Tatana y reintentá."
+                        : "No se pudo iniciar el receptor AirPlay. Instalá uxplay: brew install uxplay");
                 _session = session;
                 return;
             }
@@ -867,7 +880,7 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
             {
                 TryDelete(session.OutputPath);
                 if (session.Mic is { } failedMic) TryDelete(failedMic.AudioPath);
-                throw result.Error ?? IosErrors.RecordingEmptyFrom(null, IosErrors.ReasonNoFrames, _isWindows);
+                throw result.Error ?? IosErrors.RecordingEmptyFrom(null, IosErrors.ReasonNoFrames, _os);
             }
 
             // with_mic: mux audio PC en el MP4
@@ -887,7 +900,7 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
         if (!File.Exists(session.OutputPath) || new FileInfo(session.OutputPath).Length == 0)
         {
             TryDelete(session.OutputPath);
-            throw IosErrors.RecordingEmptyFrom(session.StartError, IosErrors.ReasonNoFrames, _isWindows);
+            throw IosErrors.RecordingEmptyFrom(session.StartError, IosErrors.ReasonNoFrames, _os);
         }
 
         // Variantes solo para grabaciones DVT/burst (airplay ya es 30fps nativo). Start abre el
@@ -936,16 +949,24 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
             return;
         }
 
-        try
+        if (_os == HostOs.Linux)
         {
-            using var sig = Process.Start(new ProcessStartInfo
-            {
-                FileName = "kill", Arguments = $"-{signal} {proc.Id}",
-                UseShellExecute = false, CreateNoWindow = true,
-            });
-            sig?.WaitForExit();
+            // tatana-linux D-T16: kill(2) directo en Linux; macOS sigue con el ejecutable `kill`.
+            UnixSignals.TrySend(proc.Id, signal);
         }
-        catch { }
+        else
+        {
+            try
+            {
+                using var sig = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "kill", Arguments = $"-{signal} {proc.Id}",
+                    UseShellExecute = false, CreateNoWindow = true,
+                });
+                sig?.WaitForExit();
+            }
+            catch { }
+        }
 
         using var t = new CancellationTokenSource(timeout);
         using var l = CancellationTokenSource.CreateLinkedTokenSource(ct, t.Token);
@@ -995,6 +1016,7 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
         psi.ArgumentList.Add("-n");   psi.ArgumentList.Add(receiverName);
         psi.ArgumentList.Add("-nh");  // sin @hostname en el nombre
         psi.ArgumentList.Add("-mp4"); psi.ArgumentList.Add(mp4Stem);
+        foreach (var a in AirplayRules.ExtraArgs(_os)) psi.ArgumentList.Add(a);
 
         var proc = Process.Start(psi);
         if (proc is null) return false;
@@ -1135,7 +1157,7 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
         {
             _log.LogWarning("iOS burst: sin frames");
             if (session.Mic is { } m) TryDelete(m.AudioPath);
-            throw IosErrors.RecordingEmptyFrom(session.StartError, IosErrors.ReasonNoFrames, _isWindows);
+            throw IosErrors.RecordingEmptyFrom(session.StartError, IosErrors.ReasonNoFrames, _os);
         }
 
         var ffmpeg   = RequireFfmpeg();
@@ -1166,7 +1188,7 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
             TryDelete(session.OutputPath);
             if (session.Mic is { } m) TryDelete(m.AudioPath);
             throw IosErrors.RecordingEmptyFrom(session.StartError,
-                "no se pudo armar el video con los cuadros capturados.", _isWindows);
+                "no se pudo armar el video con los cuadros capturados.", _os);
         }
     }
 
@@ -1278,26 +1300,26 @@ public sealed class IosService : IIosService, IOperationSource, IRecordingStateS
         var r = await RunPymobiledevice3Async(["afc", "pull", "--udid", udid, "-i", remote, outPath], ct);
         if (!r.Success)
         {
-            var error = ClassifyAfcError(r.Stderr, _isWindows);
+            var error = ClassifyAfcError(r.Stderr, _os);
             _log.LogWarning("Error de iPhone {Code}: {Detail}", error.Code, IosHelper.LastLine(r.Stderr) ?? $"exit {r.ExitCode}");
             _log.LogDebug("afc pull falló. stderr:\n{Stderr}", r.Stderr);
             throw error;
         }
         if (!File.Exists(outPath) || new FileInfo(outPath).Length == 0)
-            throw IosErrors.Create(IosErrors.CaptureFailed, _isWindows, "el archivo extraído del iPhone quedó vacío");
+            throw IosErrors.Create(IosErrors.CaptureFailed, _os, "el archivo extraído del iPhone quedó vacío");
 
         _log.LogInformation("iOS on_device: extraído {Remote} → {Local}", remote, outPath);
         return outPath;
     }
 
     // §6.8: clasificación de un `afc pull` que falló (por el stderr del CLI).
-    internal static IosException ClassifyAfcError(string stderr, bool isWindows)
+    internal static IosException ClassifyAfcError(string stderr, HostOs os)
     {
         if (stderr.Contains("ConnectionFailedToUsbmuxd", StringComparison.Ordinal))
-            return IosErrors.Create(IosErrors.AppleServiceMissing, isWindows);
+            return IosErrors.Create(IosErrors.AppleServiceMissing, os);
         if (stderr.Contains("PasscodeRequired", StringComparison.Ordinal))
-            return IosErrors.Create(IosErrors.Locked, isWindows);
-        return IosErrors.Create(IosErrors.CaptureFailed, isWindows,
+            return IosErrors.Create(IosErrors.Locked, os);
+        return IosErrors.Create(IosErrors.CaptureFailed, os,
             "no se pudo extraer la grabación del iPhone (" + (IosHelper.LastLine(stderr) ?? "afc pull") + ")");
     }
 

@@ -1,6 +1,7 @@
 # Factum — verificación de PRs a develop y main (SDD despliegue-nube §6.7, DT18).
 # .NET: build y tests de backend y Tatana (los tests no usan Mongo) y prueba del comando forzado que
-# publica Tatana. Node: tsc de client/ y agent-ui/, tests del actualizador y de las herramientas de firma.
+# publica Tatana; "Preparar esta PC" de Linux (simulación) y shellcheck de los scripts de Linux (tatana-linux §9.5).
+# Node: tsc de client/ y agent-ui/, tests del actualizador, de src/main/linux y de las herramientas de firma.
 name: Verificar
 
 on:
@@ -41,6 +42,20 @@ jobs:
       # tatana-instalador-autoupdate B20: el comando forzado que publica Tatana en el VPS (raíz temporal).
       - name: publicar-tatana-forzado.sh
         run: bash ops/tatana/probar-publicar-forzado.sh
+      # tatana-linux §9.5: "Preparar esta PC" (solo --simular, con raíces falsas: no toca el sistema).
+      - name: preparar-pc.sh
+        run: |
+          bash -n packaging/linux/preparar-pc.sh
+          bash packaging/linux/tests/probar-preparar-pc.sh
+      # tatana-linux §9.5: shellcheck de los scripts de Linux (el runner de Ubuntu lo trae).
+      - name: shellcheck (Linux)
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -S warning packaging/linux/preparar-pc.sh deploy/linux/armar-tatana-linux.sh \
+              ci/tatana-linux/prueba-humo.sh ops/tatana/prueba-linux.sh
+          else
+            echo "::notice::shellcheck no está en el runner: se saltea"
+          fi
 
   node:
     name: TypeScript (client + agent-ui)

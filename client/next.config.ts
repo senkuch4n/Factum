@@ -8,6 +8,8 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_BACKEND_URL: process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080",
     NEXT_PUBLIC_AGENT_URL: process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:8765",
     NEXT_PUBLIC_TATANA_DOWNLOAD_URL: process.env.NEXT_PUBLIC_TATANA_DOWNLOAD_URL || "",
+    // tatana-linux §10.E: página de descarga de Linux (vacía = sin enlace para Linux).
+    NEXT_PUBLIC_TATANA_DOWNLOAD_URL_LINUX: process.env.NEXT_PUBLIC_TATANA_DOWNLOAD_URL_LINUX || "",
   },
 };
 

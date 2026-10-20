@@ -193,4 +193,50 @@ public sealed class ToolResolverTests : IDisposable
         Assert.Null(ToolResolver.Find(AgentTools.Scrcpy, UnixEnv(Dir("bin2"), fallback: [Dir("brew2")])));
         Assert.Null(ToolResolver.Find(AgentTools.Scrcpy, UnixEnv(null)));
     }
+
+    // tatana-linux D-T21: el Python portátil de Linux (python-build-standalone) vive en bin/python3.
+    [Fact]
+    public void Unix_python_portatil_en_bin_python3()
+    {
+        var exe = Touch(Dir("app", "tools", "python-embed", "bin"), "python3");
+
+        var r = ToolResolver.Find(AgentTools.Python, UnixEnv(null));
+
+        Assert.NotNull(r);
+        Assert.Equal(ToolSource.Portable, r!.Source);
+        Assert.Equal(Path.GetFullPath(exe), r.Path);
+    }
+
+    [Fact]
+    public void Unix_python3_suelto_en_python_embed_ya_no_es_portatil_y_cae_al_PATH()
+    {
+        Touch(Dir("app", "tools", "python-embed"), "python3");
+        var pathDir = Dir("bin1");
+        var inPath = Touch(pathDir, "python3");
+
+        var r = ToolResolver.Find(AgentTools.Python, UnixEnv(pathDir));
+
+        Assert.Equal(ToolSource.Path, r!.Source);
+        Assert.Equal(Path.GetFullPath(inPath), r.Path);
+    }
+
+    [Fact]
+    public void Windows_python_portatil_sigue_en_python_embed_python_exe()
+    {
+        Touch(Dir("app", "tools", "python-embed", "bin"), "python3");
+        var exe = Touch(Dir("app", "tools", "python-embed"), "python.exe");
+
+        var r = ToolResolver.Find(AgentTools.Python, WinEnv(null));
+
+        Assert.Equal(ToolSource.Portable, r!.Source);
+        Assert.Equal(Path.GetFullPath(exe), r.Path);
+    }
+
+    [Fact]
+    public void Herramientas_sin_subruta_portatil_no_cambian()
+    {
+        Assert.Null(AgentTools.Adb.UnixPortablePath);
+        Assert.Null(AgentTools.Ffmpeg.UnixPortablePath);
+        Assert.Equal("bin/python3", AgentTools.Python.UnixPortablePath);
+    }
 }

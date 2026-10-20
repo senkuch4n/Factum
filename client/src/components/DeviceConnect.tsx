@@ -2,11 +2,12 @@
 
 import { Button } from "primereact/button";
 import { Tag } from "primereact/tag";
-import { Smartphone, RefreshCw, Wifi, ChevronRight, Cpu, Fingerprint, Signal, AlertTriangle, HelpCircle, Loader2 } from "lucide-react";
-import type { Device } from "@/lib/agent";
+import { Smartphone, RefreshCw, Wifi, ChevronRight, Cpu, Fingerprint, Signal, AlertTriangle, HelpCircle, Loader2, Download } from "lucide-react";
+import type { AgentOs, Device } from "@/lib/agent";
 import { FxBanner } from "@/components/feedback/FxBanner";
 import { StepHeader } from "@/components/wizard/StepHeader";
-import { IOS_APPLE_SERVICE_MISSING_MESSAGE, IOS_APPLE_SERVICE_MISSING_TITLE } from "@/lib/agent-messages";
+import { IOS_APPLE_SERVICE_MISSING_TITLE, iosAppleServiceMissingMessage, tatanaDownloadUrls } from "@/lib/agent-messages";
+import { useBrowserOs } from "@/hooks/useBrowserOs";
 
 interface Props {
   devices: Device[];
@@ -17,12 +18,14 @@ interface Props {
   onOpenGuide?: () => void;
   /** Tatana informa que falta el servicio de dispositivos de Apple (`/health.ios.apple_service = "missing"`). */
   appleServiceMissing?: boolean;
+  /** SO de Tatana (`/health.os`): elige el texto de "falta el servicio de Apple" (tatana-linux). */
+  agentOs?: AgentOs | null;
 }
 
 const FADE_IN = "motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]";
 
 /** Paso 1: elegir el dispositivo conectado por USB. */
-export function DeviceConnect({ devices, agentOnline, loading, onSelect, onRefresh, onOpenGuide, appleServiceMissing = false }: Props) {
+export function DeviceConnect({ devices, agentOnline, loading, onSelect, onRefresh, onOpenGuide, appleServiceMissing = false, agentOs = null }: Props) {
   return (
     <div className="space-y-6">
       <div className="pt-2 pb-2 text-center">
@@ -53,6 +56,7 @@ export function DeviceConnect({ devices, agentOnline, loading, onSelect, onRefre
           <p className="m-0 mt-0.5 font-normal text-fx-text">
             Abrí la aplicación Tatana y esperá unos segundos; el estado se actualiza solo.
           </p>
+          <TatanaDownloadLinks />
           {onOpenGuide && (
             <Button
               type="button"
@@ -71,7 +75,7 @@ export function DeviceConnect({ devices, agentOnline, loading, onSelect, onRefre
       {agentOnline && appleServiceMissing && (
         <FxBanner tone="warn" role="status" icon={<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}>
           <p className="m-0 font-semibold">{IOS_APPLE_SERVICE_MISSING_TITLE}</p>
-          <p className="m-0 mt-0.5 font-normal text-fx-text">{IOS_APPLE_SERVICE_MISSING_MESSAGE}</p>
+          <p className="m-0 mt-0.5 font-normal text-fx-text">{iosAppleServiceMissingMessage(agentOs)}</p>
           {onOpenGuide && (
             <Button
               type="button"
@@ -186,5 +190,49 @@ export function DeviceConnect({ devices, agentOnline, loading, onSelect, onRefre
         </ul>
       )}
     </div>
+  );
+}
+
+const OS_LABEL = { windows: "Windows", linux: "Linux" } as const;
+
+/**
+ * "Descargar Tatana para <SO>" + enlace secundario al otro SO (tatana-linux F17).
+ * Solo con enlaces configurados en el build; sin ninguno no se muestra nada.
+ */
+function TatanaDownloadLinks() {
+  const os = useBrowserOs();
+  if (os === null) return null;
+  const urls = tatanaDownloadUrls();
+  const primary: keyof typeof OS_LABEL = os === "linux" ? "linux" : "windows";
+  const secondary: keyof typeof OS_LABEL = primary === "linux" ? "windows" : "linux";
+  const primaryUrl = urls[primary];
+  const secondaryUrl = urls[secondary];
+  if (!primaryUrl && !secondaryUrl) return null;
+  return (
+    <p className="m-0 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-normal">
+      {primaryUrl && (
+        <a
+          href={primaryUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 font-semibold text-fx-accent-text underline underline-offset-2 rounded-sm hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fx-focus"
+        >
+          <Download className="h-4 w-4" aria-hidden="true" />
+          Descargar Tatana para {OS_LABEL[primary]}
+          <span className="sr-only"> (se abre en otra pestaña)</span>
+        </a>
+      )}
+      {secondaryUrl && (
+        <a
+          href={secondaryUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-fx-text-2 underline underline-offset-2 rounded-sm hover:text-fx-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fx-focus"
+        >
+          {`Descargar Tatana para ${OS_LABEL[secondary]}`}
+          <span className="sr-only"> (se abre en otra pestaña)</span>
+        </a>
+      )}
+    </p>
   );
 }

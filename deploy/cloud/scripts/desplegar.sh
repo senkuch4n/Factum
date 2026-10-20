@@ -96,6 +96,7 @@ else
     --build-arg "NEXT_PUBLIC_BACKEND_URL=$URL_PUBLICA" \
     --build-arg "NEXT_PUBLIC_AGENT_URL=${FACTUM_AGENT_URL:-http://localhost:8765}" \
     --build-arg "NEXT_PUBLIC_TATANA_DOWNLOAD_URL=${FACTUM_TATANA_DESCARGA_URL:-}" \
+    --build-arg "NEXT_PUBLIC_TATANA_DOWNLOAD_URL_LINUX=${FACTUM_TATANA_DESCARGA_URL_LINUX:-}" \
     --label "factum.url_publica=$URL_PUBLICA" \
     "$FACTUM_REPO/client"
 fi

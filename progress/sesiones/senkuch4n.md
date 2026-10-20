@@ -302,3 +302,36 @@ retoma leyendo esto y `node ops/harness/hu.mjs ver`.
 - 2026-10-14 — #80 revisión post-QA: aprobada. Servicios reiniciados; relanzado QA para verificar H-1/H-2/H-3 y bajos.
 - 2026-10-14 — QA re-prueba #80: 15 OK / 0 FALLA / 1 no verificable (desconexión por cable). Nuevo B-9 baja (panel web usa duración de video vs. informe lo grabado). Esperando OK del usuario.
 - 2026-10-14 — #80 (fase 1) OK del usuario -> aprobada; commit, push y PR contra develop. B-9 pasa a #85.
+- 2026-10-14 — Cierre de sesión: PR #87 abierto (CI en curso, sin mergear). Servicios locales detenidos. Pendientes: merge #87, promoción a main y Tatana 1.7.0 a pedido; backlog #81, #85, #86.
+- 2026-10-15 — instalado graphify (code-only, graphify-out/ gitignoreado) y sección en AGENTS.md; caveman ya activo vía proxy
+- 2026-10-15 — PR #88 (chore/graphify-arnes → develop): sección graphify en AGENTS.md + gitignore
+- 2026-10-15 — #87 y #88 mergeados a develop. Tomada #85, rama feat/grabacion-sesion-completa-f2, afinando; lanzado afinador.
+- 2026-10-15 — #85 afinada -> docs/hu-grabacion-sesion-completa-f2.md (10 dudas). Por validar.
+- 2026-10-15 — #85 D8: el usuario no tiene iPhone ahora -> propuesta D8=C (cámara + B-9 ahora; iPhone a HU nueva, D6/D7 se mudan). Validación pendiente del usuario.
+- 2026-10-15 — #85 validada (todas recomendadas; D8=C: iPhone pasa a #89 con D6/D7). en_arquitectura; lanzado architect.
+- 2026-10-15 — #85 arquitectura_lista -> Refactorizaciones/grabacion-sesion-completa-f2.md. Pendiente DU1 (marca con cable desconectado). Hallado bug MicCapture :0 en macOS (fuera de alcance).
+- 2026-10-15 — #85 DU1=A validada. Alta #90 microfono-default-macos. implementando; lanzados implementer-backend y -frontend.
+- 2026-10-15 — #85 implementer-frontend done -> progress/impl_frontend_grabacion-sesion-completa-f2.md. Esperando backend.
+- 2026-10-15 — #85 implementer-backend done -> progress/impl_backend_grabacion-sesion-completa-f2.md (agent 882 tests OK). en_revision; lanzado reviewer.
+- 2026-10-15 — #85 reviewer: aprobada -> progress/review_grabacion-sesion-completa-f2.md (sin cambios requeridos; obs.: marca entre dos tramos de cámara, probar en QA). QA §16.2 requiere cámara real y usuario presente: esperando que el usuario esté listo.
+- 2026-10-18 — Alta #91 tatana-linux (AppImage + configuración inicial con sudo; Android + iPhone; distro desconocida, posible PC vieja). Tomada; afinado adelantado mientras #85 sigue en_revision (rama feat/tatana-linux al cerrar #85). Lanzado afinador.
+- 2026-10-18 — #85 OK del usuario sin QA manual §16.2 (Samsung no conectado; queda pendiente antes de promover a main) -> aprobada; commit dbc789c, PR #92 contra develop.
+- 2026-10-18 — Rama feat/tatana-linux desde origin/develop para #91 (afinador en curso).
+- 2026-10-18 — PR #92 (#85) mergeado a develop; feat/tatana-linux actualizada.
+- 2026-10-18 — #91 afinada -> docs/hu-tatana-linux.md (15 dudas). Por validar.
+- 2026-10-18 — #91 validada (todas recomendadas; Fedora best effort; PC con Ubuntu del usuario para QA; distro + config inicial en /health). en_arquitectura; lanzado architect.
+- 2026-10-18 — #91 arquitectura_lista -> Refactorizaciones/tatana-linux.md. Pendientes DU1 (electron-builder 26.15.3 para todo agent-ui) y DU2 (AirPlay deshabilitado: uxplay -mp4 desde 1.73). Hallazgo: glibc mínima 2.35 (scrcpy 4.1).
+- 2026-10-18 — #91 DU1=a, DU2=a validadas. implementando; lanzados implementer-backend y -frontend.
+- 2026-10-18 — #91 implementer-frontend done -> progress/impl_frontend_tatana-linux.md. Esperando backend.
+- 2026-10-18 — #91 implementer-backend done -> progress/impl_backend_tatana-linux.md (sacó el paso del parche NSIS de tatana-release.yml). en_revision; lanzado reviewer.
+- 2026-10-18 — #91 reviewer: aprobada -> progress/review_tatana-linux.md (sin cambios requeridos; obs.: no commitear tsbuildinfo, workflows y AppImage real quedan para CI/QA). QA §11 requiere la PC Ubuntu del usuario.
+- 2026-10-19 — #91 commit f89d7ed, push y PR #93 en borrador contra develop (CI de Linux para el AppImage). Variable FACTUM_TATANA_DESCARGA_URL_LINUX creada en GitHub. Pendiente: CI verde, QA §11 en la PC Ubuntu, pasos del VPS (usuario).
+- 2026-10-19 — #91 CI PR #93: humo ubuntu-24.04 FALLA (e) no se crea ~/.config/Tatana/tatana.json (resto OK). rechazada_reintentando (1); relanzado implementer-frontend.
+- 2026-10-19 — #91 reintento 1 frontend done (tatana.json se siembra en ready en Linux empaquetado; 71/71 tests). en_revision; reviewer sobre el delta.
+- 2026-10-19 — #91 re-chequeo reintento 1: aprobada. Commit + push al PR #93; esperando CI.
+- 2026-10-19 — #91 CI PR #93 (730c839): humo ubuntu-24.04 OK; falla 'Prueba en Linux (actualización §9.4)' paso 6: instalada 0.9.0 a 03:03:34 pero la app relanzada recién arranca 03:06:33 (>180 s). rechazada_reintentando (2, último); relanzado implementer-frontend.
+- 2026-10-19 — #91 reintento 2 frontend done (relanzado propio con sh despegado; app.relaunch no anda desde AppImage; --quit sin instancia no arranca; 81/81). SDD D-T6/D-T7 actualizada. en_revision; reviewer sobre el delta.
+- 2026-10-19 — #91 re-chequeo reintento 2: aprobada. Commit + push al PR #93; esperando CI.
+- 2026-10-19 — #91 CI PR #93 (561a9e4) todo verde (humo Linux/Windows, distros, release ensayo con actualización Linux). AppImage en artifact tatana-appimage del run 39194241258 (vence 2026-10-22). Esperando QA §11 del usuario en su PC Ubuntu.
+- 2026-10-20 — #91 QA §11 paso 0 (PC del usuario): Ubuntu 24.04.4, glibc 2.39, x86_64, i7-2600 (2011, 4c/8t, sin AVX2), 15 GB RAM; ya tiene usbmuxd, avahi-daemon y fuse3; sin libfuse2 ni uxplay.
+- 2026-10-20 — Pedido del usuario: subir #91 a develop antes de terminar la QA §11 (queda pendiente en su PC Ubuntu). -> aprobada; PR #93 listo y mergeado.

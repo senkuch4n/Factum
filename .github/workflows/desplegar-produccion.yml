@@ -8,7 +8,7 @@
 #
 # Secrets: DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS, DEPLOY_HOST.
 # Variables: FACTUM_URL_PUBLICA (obligatoria), FACTUM_AGENT_URL, FACTUM_TATANA_DESCARGA_URL,
-#            DEPLOY_PORT, DEPLOY_USER, FACTUM_DEPLOY_HABILITADO.
+#            FACTUM_TATANA_DESCARGA_URL_LINUX (tatana-linux §10.E), DEPLOY_PORT, DEPLOY_USER, FACTUM_DEPLOY_HABILITADO.
 # Los valores de vars/secrets llegan a los "run:" por env:, nunca interpolados en el script.
 name: Desplegar producción
 
@@ -94,6 +94,7 @@ jobs:
             NEXT_PUBLIC_BACKEND_URL=${{ vars.FACTUM_URL_PUBLICA }}
             NEXT_PUBLIC_AGENT_URL=${{ vars.FACTUM_AGENT_URL || 'http://localhost:8765' }}
             NEXT_PUBLIC_TATANA_DOWNLOAD_URL=${{ vars.FACTUM_TATANA_DESCARGA_URL }}
+            NEXT_PUBLIC_TATANA_DOWNLOAD_URL_LINUX=${{ vars.FACTUM_TATANA_DESCARGA_URL_LINUX }}
           tags: |
             ${{ env.REGISTRO }}/factum-frontend:sha-${{ github.sha }}
             ${{ env.REGISTRO }}/factum-frontend:latest

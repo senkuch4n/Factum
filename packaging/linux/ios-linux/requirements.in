@@ -1,0 +1,14 @@
+# Entrada humana del lock de Python de Tatana para Linux (SDD tatana-linux §6.2).
+# El lock (requirements-linux.lock) se genera con:  python3 -I packaging/linux/ios-linux/generar-lock.py
+#
+# Misma versión de pymobiledevice3 que Windows y la Mac (D-T22). Las versiones de las dependencias salen
+# de ../../portable/ios-win/requirements-win.lock como constraints, así las dos plataformas usan las mismas.
+# Cambiarla exige rearmar los dos locks y cambiar IosHelper.ExpectedPymobiledevice3Version.
+pymobiledevice3==10.7.4
+# hexdump solo existe como sdist: se reutiliza ../../portable/ios-win/hexdump.txt (mismo hash).
+
+# Dependencias que aplican en Linux y no en la Mac que arma: pip --platform evalúa los marcadores con los de
+# la máquina que arma y no las ve (A3 de ios-herramientas-windows). generar-lock.py falla si falta alguna.
+av>=14.0.0
+lzfse>=0.4.2
+sslpsk-pmd3>=1.0.3

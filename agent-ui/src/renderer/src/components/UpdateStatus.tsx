@@ -49,6 +49,13 @@ function lineFor(s: TatanaUpdateState): Line | null {
     case 'error':
       return { icon: AlertTriangle, text: 'No se pudo instalar la actualización', tone: 'error' }
     case 'disabled':
+      // Linux (tatana-linux D-T6): sin instalar o fuera del AppImage, se explica por qué no se actualiza.
+      if (s.reason === 'no_instalado') {
+        return { icon: Info, text: 'Instalá Tatana en esta PC para recibir actualizaciones', tone: 'warn' }
+      }
+      if (s.reason === 'sin_appimage') {
+        return { icon: Info, text: 'Las actualizaciones automáticas necesitan el AppImage de Tatana', tone: 'neutral' }
+      }
       // Sin línea en producción; en dev se aclara por qué no hay actualizaciones.
       return import.meta.env.DEV
         ? { icon: Info, text: 'Actualizaciones desactivadas', tone: 'neutral' }
@@ -179,6 +186,12 @@ export function UpdateStatusLine({ state }: { state: TatanaUpdateState | null })
       {state.phase === 'ready' && !isBusy && !backgroundNotice && (
         <p className="mt-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
           También se instala sola la próxima vez que se abra Tatana o al iniciar sesión.
+        </p>
+      )}
+
+      {state.phase === 'disabled' && state.reason === 'no_instalado' && (
+        <p className="mt-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
+          Abrí «Esta PC» y tocá «Instalar (recomendado)».
         </p>
       )}
 

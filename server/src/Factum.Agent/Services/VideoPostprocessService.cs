@@ -108,6 +108,8 @@ public sealed partial class VideoPostprocessService : IVideoPostprocessService, 
     private readonly TimeProvider _time;
     private readonly string? _ffmpeg;
     private readonly string? _rife;
+    private readonly int _processorCount;
+    private readonly int _minProcessors;
 
     private readonly SemaphoreSlim _queue = new(1, 1);
     private readonly object _gate = new();
@@ -120,13 +122,18 @@ public sealed partial class VideoPostprocessService : IVideoPostprocessService, 
     public VideoPostprocessService(IOptions<AgentOptions> opts, IAgentEventSink sink, IAgentDiskProbe probe,
         ILogger<VideoPostprocessService> log, TimeProvider time)
         : this(opts.Value, sink, probe, log, time,
-            ToolResolver.Find(AgentTools.Ffmpeg)?.Path, ToolResolver.Find(AgentTools.Rife)?.Path)
+            ToolResolver.Find(AgentTools.Ffmpeg)?.Path, ToolResolver.Find(AgentTools.Rife)?.Path,
+            Environment.ProcessorCount, HostOsInfo.Current)
     {
     }
 
-    /// <summary>Para tests: herramientas explícitas (rife = null para no depender de la PC).</summary>
+    /// <summary>
+    /// Para tests: herramientas explícitas (rife = null para no depender de la PC). Sin <paramref name="processorCount"/>
+    /// no se aplica el mínimo de núcleos (D-T20), así los tests no dependen de los núcleos del runner.
+    /// </summary>
     internal VideoPostprocessService(AgentOptions opts, IAgentEventSink sink, IAgentDiskProbe? probe,
-        ILogger? log, TimeProvider? time, string? ffmpegPath, string? rifePath)
+        ILogger? log, TimeProvider? time, string? ffmpegPath, string? rifePath, int? processorCount = null,
+        HostOs? os = null)
     {
         _log = log ?? NullLogger.Instance;
         _root = Path.GetFullPath(opts.DataDirectory);
@@ -138,8 +145,13 @@ public sealed partial class VideoPostprocessService : IVideoPostprocessService, 
         _time = time ?? TimeProvider.System;
         _ffmpeg = ffmpegPath;
         _rife = rifePath;
+        _processorCount = processorCount ?? int.MaxValue;
+        _minProcessors = _o.EffectiveMinProcessorCount(os ?? HostOsInfo.Current);
         _pump = Task.Run(PumpEventsAsync);
     }
+
+    /// <summary>true si hay núcleos suficientes para las variantes (D-T20). Puro.</summary>
+    internal static bool HasEnoughProcessors(int processorCount, int minProcessors) => processorCount >= minProcessors;
 
     // ── Trabajo ───────────────────────────────────────────────────────────────
 
@@ -168,6 +180,14 @@ public sealed partial class VideoPostprocessService : IVideoPostprocessService, 
     public IReadOnlyList<string> Start(string originalPath, TimeSpan? durationHint)
     {
         if (!_o.Enabled) return [];
+        if (!HasEnoughProcessors(_processorCount, _minProcessors))
+        {
+            // tatana-linux D-T20: en una PC chica no se generan variantes (no se satura durante la sesión).
+            _log.LogInformation(
+                "Post-proceso de video omitido: la PC tiene {Count} núcleo(s) y hacen falta {Min} (Agent:VideoPostprocess:MinProcessorCount)",
+                _processorCount, _minProcessors);
+            return [];
+        }
         if (_ffmpeg is null)
         {
             if (Interlocked.Exchange(ref _ffmpegMissingLogged, 1) == 0)
