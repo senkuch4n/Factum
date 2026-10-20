@@ -1,0 +1,49 @@
+# Factum en la fiscalía (plan A) — proxy HTTPS con la CA INTERNA de Caddy (SDD instalacion-fiscalia, D2).
+# Variante de deploy/cloud/Caddyfile: sin Let's Encrypt (sin internet ni dominio público), sin
+# /tatana/updates ni /descargas, y sin HSTS (si un día hay que regenerar la CA, el navegador tiene
+# que poder mostrar la advertencia en vez de bloquear la página).
+#
+# La raíz de la CA queda en /data/caddy/pki/authorities/local/root.crt (datos/caddy-data en el host).
+# instalar-servidor.sh la exporta a ca-factum-fiscalia.crt y preparar-pc-perito.sh la instala en cada PC.
+# Se entra SIEMPRE por el nombre (https://factum.internal), nunca por la IP: el certificado es para el nombre.
+{
+	# Dentro del contenedor no hay a quién instalarle la CA: se hace en cada PC con preparar-pc-perito.sh.
+	skip_install_trust
+	pki {
+		ca local {
+			name "Factum Fiscalia"
+		}
+	}
+}
+
+(seguridad) {
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'"
+		Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://localhost:8765 http://127.0.0.1:8765; media-src 'self' blob: http://localhost:8765 http://127.0.0.1:8765; font-src 'self' data:; connect-src 'self' http://localhost:8765 ws://localhost:8765 http://127.0.0.1:8765 ws://127.0.0.1:8765; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		# La web usa la cámara y el micrófono del navegador: por eso hace falta HTTPS fuera de localhost.
+		Permissions-Policy "camera=(self), microphone=(self), geolocation=(), payment=(), usb=()"
+		-Server
+	}
+}
+
+factum.internal {
+	tls internal
+	import seguridad
+	encode zstd gzip
+
+	@backend path /api/* /health /health/*
+	handle @backend {
+		# Tope de defensa: generate/finish acepta hasta 256 MiB (Report:MaxGenerateUploadBytes).
+		request_body {
+			max_size 300MB
+		}
+		reverse_proxy backend:8080
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

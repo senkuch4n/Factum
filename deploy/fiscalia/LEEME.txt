@@ -1,0 +1,19 @@
+FACTUM - Paquete para la fiscalía (Linux, 64 bits, sin internet)
+
+Antes de empezar, abrí la guía "instalacion-fiscalia.md" (con cualquier editor
+de texto o el navegador): explica cada paso, qué llevar y qué hacer si algo falla.
+
+Dos planes (se puede tener uno, el otro o los dos):
+
+  PLAN A - Servidor en la red (los peritos entran desde su PC a https://factum.internal)
+    1. En el servidor:          sudo bash servidor/instalar-servidor.sh
+       (deja ca-factum-fiscalia.crt en esta carpeta: copialo al pendrive)
+    2. En cada PC de perito:    sudo bash perito/preparar-pc-perito.sh <IP del servidor>
+
+  PLAN B - Todo en una PC (http://localhost:3000, sin red ni certificados)
+    1. En esa PC:               sudo bash una-pc/instalar-una-pc.sh
+
+Docker: si la PC no lo tiene, los instaladores lo instalan desde el paquete (sin
+internet): herramientas/instalar-docker-offline.sh (guía, sección 2.3).
+No borres ni edites los archivos de este paquete: se verifican con SHA256SUMS.
+Backup, restaurar y diagnóstico quedan instalados en <carpeta>/scripts/.

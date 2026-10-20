@@ -1,0 +1,10 @@
+# Primer superadmin (igual que deploy/cloud/compose.bootstrap.yml). Los scripts lo suman SOLO si
+# FACTUM_SUPERADMIN_0_DNI tiene valor en config/.env: un DNI vacío hace que el backend no arranque.
+# El instalador lo usa en el primer arranque y después vacía esas claves (el usuario ya quedó en la base;
+# si ya existe, el backend no lo modifica).
+services:
+  backend:
+    environment:
+      Auth__Local__BootstrapSuperadmins__0__Dni: ${FACTUM_SUPERADMIN_0_DNI:?Falta FACTUM_SUPERADMIN_0_DNI}
+      Auth__Local__BootstrapSuperadmins__0__Name: ${FACTUM_SUPERADMIN_0_NOMBRE:?Falta FACTUM_SUPERADMIN_0_NOMBRE}
+      Auth__Local__BootstrapSuperadmins__0__TemporaryPassword: ${FACTUM_SUPERADMIN_0_TEMPORAL:?Falta FACTUM_SUPERADMIN_0_TEMPORAL}

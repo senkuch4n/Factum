@@ -1,0 +1,27 @@
+TATANA EN DOCKER - paquete sin internet
+=======================================
+
+Tatana (el agente que habla con el celular por USB) corriendo en un contenedor Docker, para PCs Linux donde
+el AppImage de Tatana no anda (glibc vieja, sin FUSE, distro rara). La web de Factum no cambia: sigue
+hablando con http://localhost:8765.
+
+Guía completa: docs/tatana-docker.md del repo de Factum.
+
+0. Diagnóstico (no cambia nada):        ./diagnostico-distro.sh
+   Dice si conviene Tatana nativo (AppImage) o Tatana en Docker.
+
+1. Instalar, con el usuario del perito (SIN sudo; el script la pide cuando hace falta):
+     Plan A (servidor de la fiscalía):  ./instalar-tatana-docker.sh --origen https://factum.internal
+     Plan B (todo en esta PC):          ./instalar-tatana-docker.sh
+   Requisito: Docker andando (si no está: instalar-docker-offline.sh del paquete de la fiscalía).
+
+2. Ver cómo está:                       ./estado-tatana-docker.sh
+3. Desinstalar (NO borra evidencia):    ./desinstalar-tatana-docker.sh [--borrar-imagen]
+
+La evidencia queda en ~/Factum/Evidencia. Los datos del agente en ~/.local/share/tatana-docker.
+Tatana en Docker arranca solo al prender la PC. No abrir Tatana nativo a la vez (usan el mismo puerto).
+
+Contenido:
+  imagen-tatana-docker-vX.Y.Z.tar.gz   imagen de Docker (docker save) - IMAGEN.txt dice su nombre
+  SHA256SUMS                           para verificar la copia: sha256sum -c SHA256SUMS
+  *.sh                                 scripts de arriba (comun.sh lo usan los demás)

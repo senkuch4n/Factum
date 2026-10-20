@@ -1,0 +1,16 @@
+# Modo sin AVX (se suma encima de docker-compose.yml + compose.<plan>.yml cuando config/.env tiene
+# FACTUM_MONGO_SIN_AVX=1; lo hace comun/_comun.sh, función fc). MongoDB 5+ necesita una CPU con AVX y sin
+# eso muere al arrancar; MongoDB 4.4 no lo pide. El backend (MongoDB.Driver 3.4) soporta servidores 4.x y
+# no usa transacciones ni funciones de Mongo 5+.
+#
+# Diferencias con mongo 7: el shell se llama "mongo" (no "mongosh") y no tiene process.env, así que el
+# usuario de la aplicación se crea con mongo-init-sin-avx/ (lee la clave con _getEnv).
+# Tag exacto: armar-paquete-fiscalia.sh lo lee de ACÁ (fuente única) y lo guarda en imagenes/mongo-4.4.tar.
+services:
+  mongo:
+    image: mongo:4.4.29
+    volumes:
+      # Mismo destino que en docker-compose.yml: compose reemplaza ese montaje por este.
+      - ./mongo-init-sin-avx:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mongo", "--quiet", "--eval", "db.adminCommand('ping').ok"]
