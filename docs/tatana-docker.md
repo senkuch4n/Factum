@@ -101,6 +101,7 @@ Reinstalar (otra versión u otros orígenes) es correr el script de nuevo: no se
 | Datos | `~/.local/share/tatana-docker/{agent-data,home,lockdown}` montados en la **misma ruta** | Las rutas que muestra Tatana coinciden con las del host. `lockdown/` guarda los pareos del iPhone entre reinicios. |
 | Evidencia | `~/Factum/Evidencia` montada en la misma ruta (`Agent__EvidenceDirectory`) | La misma carpeta que usa Tatana nativo. |
 | Hora | `/etc/localtime` de solo lectura + `TZ` del host | La hora de los registros forenses es la de la PC. |
+| Audio | `Agent__Recording__AudioPlayback=false` (en la imagen) | El contenedor no tiene dispositivo de audio: scrcpy graba con `--no-audio-playback`. El audio interno del Android 11+ queda igual en el video, pero no suena en la PC mientras se graba. |
 | SELinux | `--security-opt label=disable` | En Fedora/RHEL, sin esto el contenedor no puede abrir `/dev/bus/usb`. En el resto no cambia nada. |
 
 ## 4. Uso diario y problemas

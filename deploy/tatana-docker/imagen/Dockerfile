@@ -33,8 +33,12 @@ LABEL org.opencontainers.image.title="Tatana en Docker (Factum.Agent)" \
 
 # El agente lee appsettings.json del directorio de trabajo (ContentRoot), como en el AppImage.
 WORKDIR /opt/tatana
+# Agent__Recording__AudioPlayback=false: el contenedor no tiene dispositivo de audio y scrcpy (aun con --no-window)
+# intenta reproducir el audio del celular y muere al arrancar. Con false pasa --no-audio-playback: el audio se graba
+# igual en el MKV, solo no suena en la PC.
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
-    TATANA_PUERTO=8765
+    TATANA_PUERTO=8765 \
+    Agent__Recording__AudioPlayback=false
 
 # Con --network host, 127.0.0.1 es el del host: es el mismo /health que ve la web.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

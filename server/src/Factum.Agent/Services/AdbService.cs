@@ -199,6 +199,8 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
             "--video-bit-rate", "4M",
             audioArg,
         };
+        // Sin audio (--no-audio) no hay nada que reproducir: el flag sobra.
+        if (!o.AudioPlayback && audioArg != "--no-audio") args.Add("--no-audio-playback");
         if (o.StayAwake) args.Add("--stay-awake");
         return args;
     }
