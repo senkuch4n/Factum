@@ -38,6 +38,33 @@ public sealed class AdbRecordingArgsTests
     }
 
     [Fact]
+    public void BuildScrcpyArgs_PorDefecto_ReproduceAudio()
+    {
+        var args = AdbService.BuildScrcpyArgs("S1", "/x.mkv", "--audio-source=output", new RecordingOptions());
+        Assert.DoesNotContain("--no-audio-playback", args);
+    }
+
+    [Theory]
+    [InlineData("no_window", "--no-window")]
+    [InlineData("no_video_playback", "--no-video-playback")]
+    public void BuildScrcpyArgs_SinAudioPlayback_AgregaNoAudioPlayback(string mode, string windowFlag)
+    {
+        var o = new RecordingOptions { WindowMode = mode, AudioPlayback = false };
+        var args = AdbService.BuildScrcpyArgs("S1", "/x.mkv", "--audio-source=output", o);
+        Assert.Contains(windowFlag, args);
+        Assert.Contains("--audio-source=output", args);
+        Assert.Single(args, a => a == "--no-audio-playback");
+    }
+
+    [Fact]
+    public void BuildScrcpyArgs_SinAudioPlayback_ConNoAudio_NoLoAgrega()
+    {
+        var o = new RecordingOptions { AudioPlayback = false };
+        var args = AdbService.BuildScrcpyArgs("S1", "/x.mkv", "--no-audio", o);
+        Assert.DoesNotContain("--no-audio-playback", args);
+    }
+
+    [Fact]
     public void UniqueDiscardPath_AgregaSufijo()
     {
         var existing = new HashSet<string> { Path.Combine("d", "a.mkv"), Path.Combine("d", "a_1.mkv") };

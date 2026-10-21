@@ -252,6 +252,12 @@ public sealed class RecordingOptions
     public bool StayAwake { get; set; } = true;
     /// <summary><c>"no_window"</c> → <c>--no-window</c>; <c>"no_video_playback"</c> → <c>--no-video-playback</c> (lo anterior).</summary>
     public string WindowMode { get; set; } = WindowModeNoWindow;
+    /// <summary>
+    /// false → <c>--no-audio-playback</c>: el audio del celular se graba igual en el MKV pero no suena en la PC. Con
+    /// <c>--no-window</c> scrcpy 4.1 igual reproduce el audio y, en una PC sin dispositivo de audio (Tatana en Docker),
+    /// muere al arrancar ("Could not initialize SDL audio"). Default true (como antes); la imagen Docker lo pone en false.
+    /// </summary>
+    public bool AudioPlayback { get; set; } = true;
     /// <summary>Tolerancia = max(min, grabado × porcentaje / 100) (Duda 3 A).</summary>
     public double ToleranceMinSeconds { get; set; } = DefaultToleranceMinSeconds;
     public double TolerancePercent { get; set; } = DefaultTolerancePercent;
