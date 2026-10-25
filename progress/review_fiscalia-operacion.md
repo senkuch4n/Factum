@@ -1,4 +1,4 @@
-# Review — fiscalia-operacion (#95) — segunda revisión (tras reintento 1)
+# Review — fiscalia-operacion (#95) — veredicto vigente: APROBADO (tercera revisión, delta de CI)
 
 **APROBADO**
 
@@ -57,3 +57,24 @@ El bloqueante 1 quedó resuelto en todos los caminos y no se rompió nada de lo 
 - `sumar-actualizador.sh` se publica suelto en el canal sin firma propia; mitiga que verifica el manifiesto firmado antes de instalar, pero quien lo baje por primera vez confía en el servidor (documentado como PC nueva, con aviso).
 - En `recuperar()` (actualizador), si coexisten `tatana-docker` y `tatana-docker-anterior` y el nuevo tarda >30 s en responder al reiniciar la PC, se descarta el nuevo y se vuelve al anterior; es conservador y seguro, solo anotarlo.
 - Los caddy-logs (`/tatana/*`) guardan hostname de PC y versiones, sin datos de evidencia; OK.
+
+
+---
+
+## Tercera revisión (delta de CI) — `5d3d9fd..HEAD`
+
+**APROBADO** (veredicto vigente)
+
+Revisé el diff completo del delta (11 archivos). Cada cambio ataca la causa raíz y no debilita las garantías aprobadas.
+
+- `actualizar.sh` (paso 2): el `du` con `pipefail`/`set -e` cortaba el script en silencio cuando el paquete no trae `imagenes/` (caso `--imagenes-de`, DU-3=A). Ahora `KB_IMG` solo se mide si existe el directorio, y `du`/`df`/`tar` en sustituciones llevan `|| true` con validación numérica. No toca backup previo, vuelta atrás, ni limpieza. Efecto lateral aceptable: si `du`/`df` del backup fallan, el chequeo de espacio se saltea (antes abortaba sin mensaje); anotado abajo.
+- `comun.sh`: bajo systemd no hay `HOME`; ahora `HOME` -> `getent` -> `/root`. Verifiqué con `env -u HOME` y `set -u` que ya no explota (`DATOS=/root/.local/share/tatana-docker`). Root sigue tomando DATOS/EVIDENCIA reales de `/etc/factum-tatana-docker/instalacion.env` (`leer_instalacion_root`), así que no hay riesgo de escribir en rutas equivocadas ni de tocar datos del perito. Era un bug real que hubiera dejado el actualizador muerto en todas las PCs.
+- `estado-tatana-docker.sh`: distingue "no se pudo preguntar a systemd" de "timer inactivo"; solo mensaje.
+- Pruebas: CA en 644 (certutil corre como perito), logs legibles para el artifact, `version_health` toma la primera clave `version` (la del agente), `dbus` y `serial-getty` enmascarado en la imagen de 20.04. La única relajación de un chequeo es aceptar systemd `starting` además de `running`/`degraded` en 20.04, con `list-jobs` guardado como evidencia: es una condición de entorno de contenedor, no de producto, y los chequeos de comportamiento (timer en `list-timers`, corrida feliz, vuelta atrás con `systemctl start`, `systemd-analyze verify`) siguen intactos. Ningún chequeo de "nunca durante captura", rollback o conservación de datos fue tocado ni quitado.
+- Composite action `.github/actions/dotnet-10`: `setup-dotnet` primero (con `continue-on-error`), y solo si falla, `dotnet-install.sh` desde `builds.dotnet.microsoft.com` por HTTPS con versión explícita y `--azure-feed` oficial. Acción pineada por SHA como antes; YAML válido. Usada en `verificar.yml`, `tatana-docker.yml` y `tatana-release.yml` (esta última es de release: el cambio es solo la fuente del SDK en un job de build, no toca firma ni publicación).
+- Estado de CI: `gh pr checks 103` todo pass o skipping, incluidos nivel 2, nivel 3 y `actualizar.sh en un servidor de prueba` (los que antes nunca habían corrido). `bash -n` de scripts y parseo YAML de los workflows tocados: OK.
+
+### Observaciones no bloqueantes (delta)
+- Si `du`/`df` fallan al medir el espacio para el backup previo, `actualizar.sh` omite ese chequeo sin avisar; convendría un `aviso` ("no pude medir el espacio"). Menor.
+- El fallback de .NET ejecuta un script descargado sin verificar hash; es el CDN oficial de Microsoft por HTTPS y solo en caso de fallo, pero en `tatana-release.yml` conviene retirarlo cuando se resuelva la caída del espejo.
+- `tatana-release.yml` y `verificar.yml` quedaron tocados fuera del núcleo de #95 (justificado por el 409 de infraestructura); a mencionar en el PR.
