@@ -1,8 +1,10 @@
 # Factum — instrucciones para agentes de IA
 
-Producto comercial de adquisición forense de evidencia digital en
-dispositivos móviles. La identidad del cliente que lo usa (nombre, logo,
-contacto) es configuración, no código. Cualquier agente (Claude Code u otro)
+Software libre de adquisición forense de evidencia digital en dispositivos
+móviles, publicado bajo licencia **GNU GPL-3.0** (ver `LICENSE`). Se puede
+desplegar y ofrecer como servicio; la licencia obliga a entregar el código
+fuente a quien reciba el binario. La identidad del cliente que lo usa (nombre,
+logo, contacto) es configuración, no código. Cualquier agente (Claude Code u otro)
 que trabaje en este repo debería leer esto antes de tocar código. El detalle
 funcional y de arquitectura está en `README.md`, y los casos de uso del
 agente de escritorio en `AGENTE_TATANA.md`.
