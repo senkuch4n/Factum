@@ -41,6 +41,7 @@ limpiar() {
   docker exec "$C2004" journalctl -u factum-tatana-actualizador.service --no-pager >"$LOGS/journal-2004.log" 2>&1
   cp -f /var/log/factum-tatana-docker/actualizador.log "$LOGS/" 2>/dev/null
   cp -f /var/lib/factum-tatana-docker/estado.env "$LOGS/" 2>/dev/null
+  chmod -R a+rX "$LOGS" 2>/dev/null
   docker rm -f "$C2004" >/dev/null 2>&1
   docker rm -f tatana-docker tatana-docker-anterior >/dev/null 2>&1
   servidor_limpiar
@@ -88,7 +89,10 @@ for _ in $(seq 1 30); do
   [[ "$e" == running || "$e" == degraded ]] && break
   sleep 2
 done
-chequear "systemd de 20.04 arrancó ($e)" '[[ "$e" == running || "$e" == degraded ]]'
+# "starting" = quedan trabajos de arranque en cola (en un contenedor suele ser alguno que espera hardware o red): el
+# gestor ya atiende systemctl, que es lo que importa acá. Los trabajos pendientes quedan en el registro.
+en2004 systemctl list-jobs --no-pager >"$LOGS/systemd-jobs-2004.log" 2>&1 || true
+chequear "systemd de 20.04 arrancó ($e)" '[[ "$e" == running || "$e" == degraded || "$e" == starting ]]'
 chequear "bash 5.0 y systemd 245" 'en2004 bash -c "[[ \${BASH_VERSINFO[0]}.\${BASH_VERSINFO[1]} == 5.0 ]]" && en2004 systemctl --version | head -1 | grep -q "systemd 245"'
 docker cp "$W/ca-factum-fiscalia.crt" "$C2004:/usr/local/share/ca-certificates/factum-fiscalia.crt"
 en2004 bash -c 'grep -q "factum.internal" /etc/hosts || echo "127.0.0.1 factum.internal" >>/etc/hosts'

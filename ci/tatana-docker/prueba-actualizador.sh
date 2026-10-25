@@ -47,6 +47,7 @@ limpiar() {
   cp -f /var/lib/factum-tatana-docker/estado.env "$LOGS/" 2>/dev/null
   cp -f "$W"/caddy-logs/tatana.log "$LOGS/caddy-tatana.log" 2>/dev/null
   journalctl -u "$SERVICIO" --no-pager >"$LOGS/journal-actualizador.log" 2>/dev/null
+  chmod -R a+rX "$LOGS" 2>/dev/null # el artifact lo sube el usuario del runner, no root
   servidor_limpiar
 }
 trap limpiar EXIT

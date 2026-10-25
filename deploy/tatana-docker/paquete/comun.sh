@@ -24,8 +24,11 @@
 
 DIR_PAQUETE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTENEDOR="${TATANA_DOCKER_CONTENEDOR:-tatana-docker}"
-DATOS="${TATANA_DOCKER_DATOS:-$HOME/.local/share/tatana-docker}"
-EVIDENCIA="${TATANA_DOCKER_EVIDENCIA:-$HOME/Factum/Evidencia}"
+# Bajo systemd (el actualizador corre como servicio) no hay HOME: con set -u, "$HOME" cortaría el script. Root no usa
+# estos dos valores (los toma de /etc/factum-tatana-docker/instalacion.env con leer_instalacion_root).
+_CASA="${HOME:-$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)}"
+DATOS="${TATANA_DOCKER_DATOS:-${_CASA:-/root}/.local/share/tatana-docker}"
+EVIDENCIA="${TATANA_DOCKER_EVIDENCIA:-${_CASA:-/root}/Factum/Evidencia}"
 INSTALACION_ENV="$DATOS/instalacion.env"
 MARCA_USBMUXD="$DATOS/usbmuxd-del-host-enmascarado"
 REGLA_UDEV="/etc/udev/rules.d/70-factum-tatana.rules"

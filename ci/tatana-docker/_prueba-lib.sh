@@ -41,7 +41,8 @@ servidor_arrancar() { # servidor_arrancar <usuario del perito>
     -v "$W/caddy-logs:/var/log/caddy" -v "$W/caddy-data:/data" "$CADDY_IMG" >/dev/null
   for _ in $(seq 1 30); do [[ -s "$ca" ]] && break; sleep 1; done
   [[ -s "$ca" ]] || { docker logs "$CONTENEDOR_CADDY" | tail -20; echo "ERROR: Caddy no generó su CA" >&2; exit 1; }
-  cp "$ca" "$W/ca-factum-fiscalia.crt"
+  # Caddy la deja en 600: la copia tiene que ser legible para el perito (certutil corre con su usuario).
+  install -m 644 "$ca" "$W/ca-factum-fiscalia.crt"
   if ! bash "$RAIZ/deploy/fiscalia/perito/preparar-pc-perito.sh" 127.0.0.1 --ca "$W/ca-factum-fiscalia.crt" --usuario "$u" \
       >"$LOGS/preparar-pc-perito.log" 2>&1; then
     echo "AVISO: preparar-pc-perito.sh falló (ver $LOGS/preparar-pc-perito.log); se instala la CA a mano"
