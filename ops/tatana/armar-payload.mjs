@@ -7,35 +7,63 @@
 //       --latest dist/latest.yml --version 1.4.0 --commit <40 hex> --salida payload.json [--notas "texto"] [--fecha <ISO>]
 //
 // --exe se sigue aceptando como alias de --archivo. --producto default: tatana-windows.
+//
+// Tatana en Docker (SDD fiscalia-operacion §5.2): sin --latest; la imagen (docker save + gzip), el kit y el nombre:tag
+// que tiene que quedar cargado:
+//
+//   node ops/tatana/armar-payload.mjs --producto tatana-docker --archivo imagen-tatana-docker-v1.5.0.tar.gz \
+//       --kit kit-tatana-docker-v1.5.0.tar.gz --imagen factum-tatana-docker:1.5.0 --version 1.5.0 --commit <40 hex> \
+//       --salida payload-docker.json [--notas "texto"] [--fecha <ISO>]
 import { createHash } from 'node:crypto'
 import { readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename } from 'node:path'
-import { expectedFile, fail, parseArgs, payloadError, productArg } from './_lib.mjs'
+import { expectedFile, expectedImage, expectedKitFile, fail, parseArgs, payloadError, productArg } from './_lib.mjs'
 
 const a = parseArgs(process.argv.slice(2), {
-  allowed: ['producto', 'archivo', 'exe', 'latest', 'version', 'commit', 'salida', 'notas', 'fecha'],
+  allowed: ['producto', 'archivo', 'exe', 'latest', 'version', 'commit', 'salida', 'notas', 'fecha', 'kit', 'imagen'],
 })
 if (a.archivo && a.exe && a.archivo !== a.exe) fail('--archivo y --exe apuntan a archivos distintos', 2)
 a.archivo ??= a.exe
-for (const k of ['archivo', 'latest', 'version', 'commit', 'salida']) if (!a[k]) fail(`falta --${k}`, 2)
 const product = productArg(a.producto)
+const docker = product === 'tatana-docker'
+const requeridos = docker ? ['archivo', 'kit', 'imagen', 'version', 'commit', 'salida'] : ['archivo', 'latest', 'version', 'commit', 'salida']
+for (const k of requeridos) if (!a[k]) fail(`falta --${k}`, 2)
+if (docker && a.latest) fail('--latest no corresponde a tatana-docker', 2)
+if (!docker && (a.kit || a.imagen)) fail('--kit e --imagen son solo de --producto tatana-docker', 2)
 
 const exe = readFileSync(a.archivo)
 const size = statSync(a.archivo).size
 const sha512 = createHash('sha512').update(exe).digest('base64')
 const sha256 = createHash('sha256').update(exe).digest('hex')
 const file = basename(a.archivo)
+const checkFile = () => {
+  if (file !== expectedFile(product, a.version)) fail(`el archivo de ${product} tiene que llamarse ${expectedFile(product, a.version)} (es ${file})`)
+}
+
+let kit = null
+if (docker) {
+  checkFile()
+  if (a.imagen !== expectedImage(a.version)) fail(`--imagen tiene que ser ${expectedImage(a.version)} (es ${a.imagen})`)
+  const kitFile = basename(a.kit)
+  if (kitFile !== expectedKitFile(a.version)) fail(`el kit tiene que llamarse ${expectedKitFile(a.version)} (es ${kitFile})`)
+  const kitBytes = readFileSync(a.kit)
+  kit = { file: kitFile, size: kitBytes.length, sha256: createHash('sha256').update(kitBytes).digest('hex') }
+} else {
+  checkLatest()
+}
 
 // latest.yml de electron-builder: version, files[0].{url,sha512,size}, path, sha512.
-const { top, files } = parseLatestYml(readFileSync(a.latest, 'utf8'))
-if (top.version !== a.version) fail(`latest.yml dice version ${top.version} y se esperaba ${a.version}`)
-if (file !== expectedFile(product, a.version)) fail(`el archivo de ${product} tiene que llamarse ${expectedFile(product, a.version)} (es ${file})`)
-if (top.path !== undefined && top.path !== file) fail(`latest.yml apunta a ${top.path} y el archivo es ${file}`)
-if (top.sha512 !== undefined && top.sha512 !== sha512) fail('el sha512 de latest.yml no coincide con el del archivo')
-if (files.length !== 1) fail(`latest.yml tiene que listar exactamente un archivo (tiene ${files.length})`)
-const [f] = files
-if (f.url !== file || f.sha512 !== sha512 || (f.size !== undefined && Number(f.size) !== size))
-  fail('files[0] de latest.yml no coincide con el archivo (url, sha512 o size)')
+function checkLatest() {
+  const { top, files } = parseLatestYml(readFileSync(a.latest, 'utf8'))
+  if (top.version !== a.version) fail(`latest.yml dice version ${top.version} y se esperaba ${a.version}`)
+  checkFile()
+  if (top.path !== undefined && top.path !== file) fail(`latest.yml apunta a ${top.path} y el archivo es ${file}`)
+  if (top.sha512 !== undefined && top.sha512 !== sha512) fail('el sha512 de latest.yml no coincide con el del archivo')
+  if (files.length !== 1) fail(`latest.yml tiene que listar exactamente un archivo (tiene ${files.length})`)
+  const [f] = files
+  if (f.url !== file || f.sha512 !== sha512 || (f.size !== undefined && Number(f.size) !== size))
+    fail('files[0] de latest.yml no coincide con el archivo (url, sha512 o size)')
+}
 
 // Parser mínimo del YAML plano de electron-builder: claves de primer nivel y la lista "files".
 function parseLatestYml(text) {
@@ -68,6 +96,7 @@ const payload = {
   size,
   sha512,
   sha256,
+  ...(docker ? { image: a.imagen, kit } : {}),
   ...(a.notas && a.notas.trim() ? { notes: a.notas.trim().slice(0, 2000) } : {}),
 }
 const err = payloadError(payload, product)

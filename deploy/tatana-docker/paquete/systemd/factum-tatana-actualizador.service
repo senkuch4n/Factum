@@ -1,0 +1,18 @@
+# Factum — una consulta del actualizador de Tatana en Docker (SDD fiscalia-operacion §7.2, §7.4). La lanza el timer;
+# a mano: sudo systemctl start factum-tatana-actualizador.service (o ./estado-tatana-docker.sh --buscar-ahora).
+# Resultado: /var/lib/factum-tatana-docker/estado.env y /var/log/factum-tatana-docker/actualizador.log.
+[Unit]
+Description=Factum: actualizador de Tatana en Docker
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/factum-tatana-docker/actualizador.env
+
+[Service]
+Type=oneshot
+ExecStart=/opt/factum-tatana-docker/actual/actualizador-tatana-docker.sh --una-vez
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=60min
+PrivateTmp=yes
+NoNewPrivileges=yes

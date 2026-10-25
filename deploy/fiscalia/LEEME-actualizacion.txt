@@ -1,0 +1,9 @@
+FACTUM - Paquete de ACTUALIZACIÓN del servidor de la fiscalía (plan A)
+
+1. Verificar la copia:   sha256sum -c Factum-Fiscalia-Actualizacion-vX.Y.Z.tar.gz.sha256
+2. Descomprimir en el disco del servidor (no en el pendrive):   tar -xzf Factum-Fiscalia-Actualizacion-vX.Y.Z.tar.gz
+3. Actualizar:           cd Factum-Fiscalia-Actualizacion-vX.Y.Z && sudo bash actualizar.sh
+
+Hace un backup previo, carga lo nuevo, levanta Factum y, si no queda funcionando, vuelve solo a la versión anterior.
+Publica Tatana en Docker para las PCs de los peritos (se actualizan solas). Ver: sudo /srv/factum-fiscalia/scripts/estado-peritos.sh
+Guía completa: instalacion-fiscalia.md, sección "Actualizar Factum y Tatana".

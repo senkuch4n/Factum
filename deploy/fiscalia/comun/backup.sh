@@ -32,6 +32,8 @@ done
 
 requiere_docker
 buscar_instalacion "$CARPETA" "$DIR_SCRIPT"
+# Una operación a la vez (SDD fiscalia-operacion §8.7): si lo llama actualizar.sh o restaurar.sh, hereda su candado.
+tomar_candado "$FACTUM_HOME"
 DATOS="$(env_leer "$FACTUM_ENV" FACTUM_DATOS)"
 EXTERNO=1
 [[ -n "$DESTINO" ]] || { DESTINO="$FACTUM_HOME/backups"; EXTERNO=0; }

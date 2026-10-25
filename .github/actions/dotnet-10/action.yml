@@ -1,0 +1,26 @@
+# .NET 10 para los jobs de Linux (PR #103): actions/setup-dotnet y, si no puede bajar el SDK (pasó de forma persistente:
+# HTTP 409 del espejo dotnetorigin.blob.core.windows.net al que cae el enlace aka.ms), el mismo SDK desde el CDN
+# oficial de Microsoft (builds.dotnet.microsoft.com) con su dotnet-install.sh y la versión explícita (con --channel el
+# script vuelve al enlace aka.ms). Uso, después del checkout:  - uses: ./.github/actions/dotnet-10
+name: .NET 10 (con respaldo del CDN oficial)
+description: setup-dotnet 10.0.x y, si falla, dotnet-install.sh desde builds.dotnet.microsoft.com
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      id: dotnet
+      continue-on-error: true
+      with:
+        dotnet-version: 10.0.x
+    - name: .NET 10 desde el CDN oficial (si setup-dotnet falló)
+      if: steps.dotnet.outcome == 'failure'
+      shell: bash
+      run: |
+        set -euo pipefail
+        curl -fsSL --retry 3 -o "$RUNNER_TEMP/dotnet-install.sh" https://builds.dotnet.microsoft.com/dotnet/scripts/v1/dotnet-install.sh
+        V="$(curl -fsSL --retry 3 https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0/latest.version | tr -d '[:space:]')"
+        bash "$RUNNER_TEMP/dotnet-install.sh" --version "$V" --install-dir "$HOME/.dotnet" \
+          --azure-feed https://builds.dotnet.microsoft.com/dotnet
+        echo "$HOME/.dotnet" >>"$GITHUB_PATH"
+        echo "DOTNET_ROOT=$HOME/.dotnet" >>"$GITHUB_ENV"
+        "$HOME/.dotnet/dotnet" --version

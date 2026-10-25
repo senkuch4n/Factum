@@ -9,18 +9,22 @@
 // --producto (default tatana-windows): un manifiesto de otro producto se rechaza (manifiesto_invalido).
 // --archivo (alias --exe): además compara tamaño, sha512 y sha256 del instalador o del AppImage. --payload: los
 // bytes firmados tienen que ser exactamente los de ese archivo. Sale 0 si todo verifica; 1 si no (con el motivo).
+//
+// Tatana en Docker (SDD fiscalia-operacion §5.2): --producto tatana-docker, --archivo = la imagen (.tar.gz) y
+// --kit = kit-tatana-docker-vX.Y.Z.tar.gz (compara nombre, tamaño y SHA-256 con payload.kit).
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { basename } from 'node:path'
 import { fail, parseArgs, parseExtraKey, productArg, readTrustedKeys, verifyEnvelopeText } from './_lib.mjs'
 
 const a = parseArgs(process.argv.slice(2), {
-  allowed: ['manifiesto', 'producto', 'clave-extra', 'version', 'archivo', 'exe', 'payload'],
+  allowed: ['manifiesto', 'producto', 'clave-extra', 'version', 'archivo', 'exe', 'payload', 'kit'],
 })
 if (!a.manifiesto) fail('falta --manifiesto', 2)
 if (a.archivo && a.exe && a.archivo !== a.exe) fail('--archivo y --exe apuntan a archivos distintos', 2)
 a.archivo ??= a.exe
 const product = productArg(a.producto)
+if (a.kit && product !== 'tatana-docker') fail('--kit es solo de --producto tatana-docker', 2)
 const keys = readTrustedKeys()
 if (a['clave-extra']) keys.push(parseExtraKey(a['clave-extra']))
 if (keys.length === 0) fail('no hay claves confiables (trusted-keys.ts vacío y sin --clave-extra)')
@@ -37,4 +41,10 @@ if (a.archivo) {
   if (createHash('sha512').update(exe).digest('base64') !== p.sha512) fail('sha512 del archivo no coincide')
   if (createHash('sha256').update(exe).digest('hex') !== p.sha256) fail('sha256 del archivo no coincide')
 }
-console.log(`OK firma válida (${r.keyId}): Tatana ${p.version} (${p.product}), ${p.file}, ${p.size} bytes, commit ${p.commit.slice(0, 12)}`)
+if (a.kit) {
+  const kit = readFileSync(a.kit)
+  if (basename(a.kit) !== p.kit.file) fail(`el kit se llama ${basename(a.kit)} y el manifiesto dice ${p.kit.file}`)
+  if (kit.length !== p.kit.size) fail(`tamaño del kit ${kit.length} != ${p.kit.size}`)
+  if (createHash('sha256').update(kit).digest('hex') !== p.kit.sha256) fail('sha256 del kit no coincide')
+}
+console.log(`OK firma válida (${r.keyId}): Tatana ${p.version} (${p.product}), ${p.file}, ${p.size} bytes, commit ${p.commit.slice(0, 12)}${p.image ? `, imagen ${p.image}` : ''}`)

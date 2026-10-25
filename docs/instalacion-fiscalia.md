@@ -287,6 +287,10 @@ Deja `factum-<plan>-AAAAMMDD-HHMMSS/` con la base (`mongo.archive.gz`), la evide
 conservan los 10 más nuevos (`FACTUM_BACKUP_CONSERVAR`); en un `--destino` externo no se borra nada.
 **No está cifrado: guardá el pendrive bajo llave.**
 
+`actualizar.sh` (sección 12) hace **siempre** un backup como este antes de tocar nada (backup previo) y dice dónde
+quedó. Backup, restaurar, actualizar e `instalar-servidor.sh --reparar` **nunca corren a la vez**: el que llega
+segundo dice "hay otra operación de Factum en curso" y no hace nada (candado `<carpeta>/.operacion.lock`).
+
 Backup automático diario (opcional), con `sudo crontab -e`:
 
 ```
@@ -386,9 +390,17 @@ Fedora (firewalld): `sudo firewall-cmd --permanent --add-service=http --add-serv
 
 ### 9.6 Actualización automática de Tatana
 
-El AppImage busca actualizaciones en el canal de la nube de Factum. Sin internet no encuentra nada y sigue
-funcionando igual; con internet puede actualizarse solo a una versión más nueva de la nube. No afecta a la
-instalación de la fiscalía.
+En esta fiscalía las PCs de los peritos usan **Tatana en Docker** (no el AppImage): se actualiza **desde el servidor
+de la fiscalía**, no desde la nube. Cuando se aplica un paquete de actualización con Tatana nuevo (sección 12), el
+servidor lo publica en `https://factum.internal/tatana/docker/` y cada PC lo toma sola en los próximos ~40 minutos,
+**solo cuando no está capturando**; si la versión nueva no arranca, la PC vuelve sola a la anterior. Quién tiene qué
+versión: `sudo /srv/factum-fiscalia/scripts/estado-peritos.sh`. En la PC: `./estado-tatana-docker.sh
+--actualizaciones` (guía `docs/tatana-docker.md` §4).
+
+- Una PC que no aparece en `estado-peritos.sh` o que dice "sin consultas recientes (!)": está apagada, sin red o sin
+  el actualizador (las instaladas antes del actualizador: se suma con un comando, sección 12.5).
+- El AppImage no se usa en esta fiscalía. Si alguna vez se instalara, busca actualizaciones en la nube de Factum: sin
+  internet no encuentra nada y sigue funcionando igual.
 
 ### 9.7 El instalador falló a mitad de camino
 
@@ -426,3 +438,120 @@ Sale de un `git archive` limpio de `--ref` (lo no commiteado no entra), construy
 (dos builds del frontend: uno con `https://factum.internal` y otro con `http://localhost:8080`; el emulado tarda),
 las exporta (un `.tar` por imagen, verificado), baja Docker estático y el complemento compose con SHA-256 fijo, arma
 `SHA256SUMS` y el `.tar.gz` en `deploy/fiscalia/dist/`. Los tags quedan en la Mac.
+
+Con `--tatana-docker-release X.Y.Z` (o `--tatana-docker-canal <dir>`) el paquete de instalación también trae Tatana en
+Docker y `instalar-servidor.sh` lo publica en el canal del servidor. El paquete de **actualización** se arma con
+`--actualizacion` (sección 12.1).
+
+---
+
+## 12. Actualizar Factum y Tatana
+
+El servidor (plan A) es **lo único que se actualiza a mano**; las PCs de los peritos toman Tatana del servidor solas.
+Se hace en persona o por **AnyDesk**. Solo plan A (el plan B no se actualiza con este script en esta versión).
+
+### 12.1 Armar el paquete de actualización (en la Mac)
+
+Solo lleva lo que cambia (por AnyDesk varios GB no son viables):
+
+```bash
+# Factum nuevo (web + API) + Tatana en Docker de la release firmada tatana-vX.Y.Z:
+deploy/fiscalia/armar-paquete-fiscalia.sh --actualizacion --version A.B.C --ref <ref> --tatana-docker-release X.Y.Z
+# Solo scripts + canal (la web y la API quedan como están; re-etiqueta las imágenes que ya tiene el servidor):
+deploy/fiscalia/armar-paquete-fiscalia.sh --actualizacion --version A.B.C --imagenes-de <versión instalada> \
+  --tatana-docker-release X.Y.Z
+```
+
+- Tamaño: web ≈ 25 MB + API ≈ 45 MB + Tatana en Docker ≈ 290 MB (solo si se incluye). Con `--imagenes-de` y sin
+  Tatana: menos de 1 MB. Mongo y Caddy no van, salvo `--incluir-base` (solo si cambió su versión en los compose).
+- Tatana en Docker sale del **GitHub Release `tatana-vX.Y.Z`** (lo publica `tatana-docker.yml` desde `main`, firmado).
+  El script lo verifica (firma, imagen y kit) antes de meterlo: un Tatana sin firma válida no entra al paquete.
+- Resultado: `deploy/fiscalia/dist/Factum-Fiscalia-Actualizacion-vA.B.C.tar.gz` + `.sha256`.
+
+### 12.2 Aplicarlo en el servidor
+
+1. Copiar al servidor el `.tar.gz` y su `.sha256` (pendrive, o "Transferencia de archivos" de AnyDesk), **al disco**.
+2. `sha256sum -c Factum-Fiscalia-Actualizacion-vA.B.C.tar.gz.sha256` y `tar -xzf Factum-Fiscalia-Actualizacion-vA.B.C.tar.gz`.
+3. `cd Factum-Fiscalia-Actualizacion-vA.B.C && sudo bash actualizar.sh` (por AnyDesk con la terminal minimizada:
+   `sudo bash actualizar.sh --si`).
+
+Pasos que muestra: `[1/8]` verifica el paquete (SHA256SUMS) y la versión — `[2/8]` requisitos (imágenes, espacio) —
+`[3/8]` **backup previo** (la web se pausa unos minutos) — `[4/8]` imágenes — `[5/8]` archivos (los de antes quedan en
+`/srv/factum-fiscalia/actualizacion-anterior/`) — `[6/8]` levanta y espera que esté sano — `[7/8]` publica Tatana en
+Docker — `[8/8]` limpieza y resumen. Todo queda registrado en `/srv/factum-fiscalia/registro/actualizar-*.log`.
+
+- **Cortar AnyDesk no corta la actualización** (la terminal vive en el escritorio del servidor): reconectar y mirar.
+- Paquete dañado, de otro plan, una versión **menor** o requisitos que faltan: corta en `[1/8]`/`[2/8]` **sin haber
+  tocado nada** y dice por qué (p. ej. "este paquete necesita caddy:X: usá `--incluir-base` al armarlo"). Volver a
+  una versión menor solo con `--permitir-version-menor` (pide escribir MENOR).
+- Si Factum ya está en esa versión pero el paquete trae un Tatana más nuevo: solo publica Tatana (sin backup ni
+  reinicio). `--solo-tatana` fuerza ese modo.
+- `--sin-backup-previo` pide escribir `SIN BACKUP` (con `--si`, además `FACTUM_CONFIRMO_SIN_BACKUP=1`). No se usa.
+
+### 12.3 Si la versión nueva no arranca
+
+`actualizar.sh` **vuelve solo** a la versión anterior (imágenes, compose, Caddyfile y `config/.env` de antes) y
+termina con error diciendo qué falló, "se volvió a vX", la ruta del **backup previo** y el comando:
+
+```bash
+sudo /srv/factum-fiscalia/scripts/restaurar.sh --desde /srv/factum-fiscalia/backups/factum-servidor-AAAAMMDD-HHMMSS
+```
+
+La base **no** se restaura sola: ese comando es solo si la versión nueva llegó a modificar datos antes de fallar. Tatana
+no se publica. Si ni la anterior queda andando: `diagnostico.sh` y la sección 9.7.
+
+### 12.4 Ver qué versión de Tatana tiene cada PC
+
+```bash
+sudo /srv/factum-fiscalia/scripts/estado-peritos.sh            # últimas 72 h (--horas N)
+```
+
+Lista cada PC (nombre e IP), la versión instalada, la disponible, cuándo consultó por última vez y el resultado
+("al día", "esperando a que termine la captura", "la versión nueva no arrancó: volvió a la anterior"…). `(!)` = hace
+más de 2 horas que no consulta. Sale del registro de Caddy del canal (`datos/caddy-logs/tatana.log`): solo se
+registran las consultas de las PCs, no el uso de la web. `diagnostico.sh` muestra el resumen.
+
+Si después de que todas las PCs se actualizaron la web exige un Tatana mínimo nuevo, se ajusta a mano
+`FACTUM_TATANA_VERSION_MINIMA` en `config/.env` (`actualizar.sh` no la cambia).
+
+### 12.5 Checklist de la migración de lo instalado el 2026-10-20
+
+Estado de partida: servidor plan A con Factum `0.0.0-fiscalia-prueba` (Caddy sin canal) y ≥ 4 PCs con Tatana en
+Docker `tatana-docker-prueba:0.0.0-docker-prueba` **sin actualizador**. No se pierden datos ni evidencia.
+
+**Antes (en la Mac):**
+
+- [ ] Release firmada `tatana-vX.Y.Z` con los archivos de Docker (promover `develop` → `main` y empujar el tag: lo
+      decide el usuario; `tatana-docker.yml` arma, prueba, firma y publica).
+- [ ] `deploy/fiscalia/armar-paquete-fiscalia.sh --actualizacion --version 0.1.0 --imagenes-de 0.0.0-fiscalia-prueba
+      --tatana-docker-release X.Y.Z` (≈ 290 MB, casi todo Tatana; la web y la API quedan exactamente como hoy).
+
+**Servidor (una vez, en persona o por AnyDesk):**
+
+- [ ] Copiar el paquete y su `.sha256` al disco del servidor; `sha256sum -c`; descomprimir.
+- [ ] `sudo bash Factum-Fiscalia-Actualizacion-v0.1.0/actualizar.sh`. Hace el backup previo completo en
+      `/srv/factum-fiscalia/backups/`; reemplaza compose/Caddyfile/scripts (los viejos en `actualizacion-anterior/`);
+      `config/.env`, `datos/`, `appsettings.Local.json`, `branding/`, la **CA de Caddy** (los certificados de las PCs
+      siguen valiendo) y el modo sin AVX quedan como estaban; crea `canal-tatana/` y `datos/caddy-logs/`; publica Tatana.
+- [ ] Desde una PC de perito: `https://factum.internal` abre igual; `curl -I https://factum.internal/tatana/docker/tatana-update-docker.json` → 200.
+
+**Cada PC de perito (una vez; un comando, con la sesión del perito, sin sudo — lo pide una vez):**
+
+```bash
+wget -qO /tmp/sumar-actualizador.sh https://factum.internal/tatana/docker/sumar-actualizador.sh \
+  && bash /tmp/sumar-actualizador.sh
+```
+
+- [ ] Termina mostrando "Actualizaciones" con la versión nueva instalada y el timer activo. Si Tatana estaba
+      capturando, corta sin tocar nada: repetir al terminar.
+- [ ] No cambian: `~/.local/share/tatana-docker/` (datos, pareos del iPhone, configuración), `~/Factum/Evidencia`, la
+      regla udev, el usbmuxd enmascarado, `/etc/hosts` ni la CA.
+
+**Al final:**
+
+- [ ] `sudo /srv/factum-fiscalia/scripts/estado-peritos.sh` muestra todas las PCs en la versión publicada.
+- [ ] Una captura de punta a punta desde una PC actualizada.
+
+**Vuelta atrás:** servidor — `actualizacion-anterior/` + el backup previo (o `instalar-servidor.sh --reparar` desde el
+paquete viejo, que sigue en el disco); PC — `./estado-tatana-docker.sh --volver-a-anterior` (vuelve a
+`0.0.0-docker-prueba`) o `desinstalar-tatana-docker.sh` (saca el actualizador sin tocar datos).
