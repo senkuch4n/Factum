@@ -121,7 +121,7 @@ if ((!SOLO_TATANA)); then
   INCLUIDAS=""
   for f in "$PAQ"/imagenes/*.tar.gz; do
     [[ -f "$f" ]] || continue
-    INCLUIDAS="$INCLUIDAS $(tar -xzOf "$f" manifest.json 2>/dev/null | tr ',' '\n' | sed -nE 's/.*"([a-z0-9._/-]+:[A-Za-z0-9._-]+)".*/\1/p' | tr '\n' ' ')"
+    INCLUIDAS="$INCLUIDAS $(tar -xzOf "$f" manifest.json 2>/dev/null | tr ',' '\n' | sed -nE 's/.*"([a-z0-9._/-]+:[A-Za-z0-9._-]+)".*/\1/p' | tr '\n' ' ' || true)"
   done
   incluida() { [[ " $INCLUIDAS " == *" $1 "* ]]; }
   cargada() { docker image inspect "$1" >/dev/null 2>&1; }
@@ -143,16 +143,19 @@ if ((!SOLO_TATANA)); then
     done
   fi
   # Espacio: imágenes (3 × lo comprimido) en la carpeta de Docker; backup (evidencia + 1 GB) en backups/.
-  KB_IMG="$(du -sk "$PAQ/imagenes" 2>/dev/null | cut -f1)"
-  KB_IMG="${KB_IMG:-0}"
+  # Sin imagenes/ (paquete con --imagenes-de) no hay nada que cargar. Ojo con pipefail: un du que falla no puede
+  # cortar el script en silencio (pasó en CI, PR #103).
+  KB_IMG=0
+  if [[ -d "$PAQ/imagenes" ]]; then KB_IMG="$(du -sk "$PAQ/imagenes" 2>/dev/null | cut -f1 || true)"; fi
+  [[ "$KB_IMG" =~ ^[0-9]+$ ]] || KB_IMG=0
   RAIZ_DOCKER="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || true)"
-  LIBRE_D="$(df -Pk "${RAIZ_DOCKER:-/}" 2>/dev/null | awk 'NR == 2 {print $4}')"
+  LIBRE_D="$(df -Pk "${RAIZ_DOCKER:-/}" 2>/dev/null | awk 'NR == 2 {print $4}' || true)"
   if [[ "$LIBRE_D" =~ ^[0-9]+$ ]] && ((LIBRE_D < 3 * KB_IMG)); then
     falta "espacio para las imágenes: hacen falta $((3 * KB_IMG / 1024)) MB en ${RAIZ_DOCKER:-/} y quedan $((LIBRE_D / 1024)) MB"
   fi
   if ((!SIN_BACKUP_PREVIO)); then
-    KB_EVID="$(du -sk "$(env_leer "$FACTUM_ENV" FACTUM_DATOS)/backend" 2>/dev/null | cut -f1)"
-    LIBRE_B="$(df -Pk "$CARPETA/backups" 2>/dev/null | awk 'NR == 2 {print $4}')"
+    KB_EVID="$(du -sk "$(env_leer "$FACTUM_ENV" FACTUM_DATOS)/backend" 2>/dev/null | cut -f1 || true)"
+    LIBRE_B="$(df -Pk "$CARPETA/backups" 2>/dev/null | awk 'NR == 2 {print $4}' || true)"
     if [[ "${KB_EVID:-}" =~ ^[0-9]+$ && "$LIBRE_B" =~ ^[0-9]+$ ]] && ((LIBRE_B < KB_EVID + 1048576)); then
       falta "espacio para el backup previo: hacen falta $(((KB_EVID + 1048576) / 1024)) MB en $CARPETA/backups y quedan $((LIBRE_B / 1024)) MB"
     fi
