@@ -872,3 +872,20 @@ el arranque del wizard reportan al backend quién (DNI), desde qué PC
 - La evidencia capturada (fotos/video) no se sube a ningún servidor externo
   fuera de este sistema; el ZIP final queda cifrado con AES-256 y su
   contraseña se entrega por separado.
+
+## Licencia
+
+Factum es software libre, publicado bajo la **Licencia Pública General de GNU,
+versión 3 (GPL-3.0)** — ver [`LICENSE`](./LICENSE). Copyright © 2026 Joel
+Serrudo.
+
+Esto significa que cualquiera que reciba Factum puede usarlo, estudiarlo,
+modificarlo y redistribuirlo, y tiene derecho a recibir su código fuente. Las
+obras derivadas deben distribuirse también bajo GPL-3.0. La licencia **no**
+impide desplegar Factum ni ofrecerlo como servicio; sí obliga a entregar el
+código fuente a quien reciba el software.
+
+Factum integra o deriva de componentes de terceros bajo licencias compatibles
+(p. ej. herramientas forenses GPL). Los binarios de aplicaciones de terceros
+(como las APK que se usan en una extracción) **no** se redistribuyen con
+Factum: los aporta la institución que lo opera, bajo su propio marco legal.
