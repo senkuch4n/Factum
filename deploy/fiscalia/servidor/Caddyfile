@@ -2,6 +2,9 @@
 # Variante de deploy/cloud/Caddyfile: sin Let's Encrypt (sin internet ni dominio público), sin
 # /tatana/updates ni /descargas, y sin HSTS (si un día hay que regenerar la CA, el navegador tiene
 # que poder mostrar la advertencia en vez de bloquear la página).
+# SDD fiscalia-operacion §8.1: /tatana/* sirve el canal de Tatana en Docker (canal-tatana/ en el host, lo publica
+# actualizar.sh) y SOLO esas consultas se registran (datos/caddy-logs/tatana.log): estado-peritos.sh arma con ellas
+# "qué PC tiene qué versión". El uso de la web y la API no se registra (log_skip).
 #
 # La raíz de la CA queda en /data/caddy/pki/authorities/local/root.crt (datos/caddy-data en el host).
 # instalar-servidor.sh la exporta a ca-factum-fiscalia.crt y preparar-pc-perito.sh la instala en cada PC.
@@ -34,8 +37,27 @@ factum.internal {
 	import seguridad
 	encode zstd gzip
 
+	# Registro solo del canal de Tatana (D5=B): ~4 PCs × 48 consultas/día × ~600 B; 5 × 5 MiB son meses de historia.
+	log {
+		output file /var/log/caddy/tatana.log {
+			roll_size 5MiB
+			roll_keep 5
+		}
+		format json
+	}
+
+	# Canal de Tatana en Docker (SDD fiscalia-operacion §8.1): archivos estáticos que publica actualizar.sh.
+	# La integridad no depende de este servidor: cada PC verifica la firma Ed25519 con sus propias claves.
+	handle_path /tatana/* {
+		root * /srv/canal-tatana
+		@manifiesto path /docker/tatana-update-docker.json
+		header @manifiesto Cache-Control "no-cache"
+		file_server
+	}
+
 	@backend path /api/* /health /health/*
 	handle @backend {
+		log_skip
 		# Tope de defensa: generate/finish acepta hasta 256 MiB (Report:MaxGenerateUploadBytes).
 		request_body {
 			max_size 300MB
@@ -44,6 +66,7 @@ factum.internal {
 	}
 
 	handle {
+		log_skip
 		reverse_proxy frontend:3000
 	}
 }

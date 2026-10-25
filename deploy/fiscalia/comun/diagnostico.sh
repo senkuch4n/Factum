@@ -92,6 +92,22 @@ else
 fi
 if curl -fsS -m 3 http://127.0.0.1:8765/health >/dev/null 2>&1; then ok "Tatana responde en esta PC (localhost:8765)."; else info "Tatana no está corriendo en esta PC (normal en un servidor sin celulares)."; fi
 
+if [[ "$FACTUM_PLAN" == servidor ]]; then
+  echo ""
+  echo "── Tatana en Docker (canal)"
+  CANAL_V="$(tr -d '[:space:]' <"$FACTUM_HOME/canal-tatana/docker/VERSION" 2>/dev/null)"
+  if [[ -z "$CANAL_V" ]]; then
+    info "No hay Tatana en Docker publicado en el canal (se publica con actualizar.sh)."
+  else
+    info "Publicado:   $CANAL_V (https://$FACTUM_NOMBRE_RED/tatana/docker/)"
+    RES="$(bash "$DIR_SCRIPT/estado-peritos.sh" --carpeta "$FACTUM_HOME" --resumen --horas 24 2>/dev/null)"
+    VISTAS="$(printf '%s' "$RES" | sed -nE 's/.*VISTAS=([0-9]+).*/\1/p')"
+    DESACT="$(printf '%s' "$RES" | sed -nE 's/.*DESACTUALIZADAS=([0-9]+).*/\1/p')"
+    info "PCs que consultaron en 24 h: ${VISTAS:-?}; sin la versión publicada: ${DESACT:-?}"
+    info "Detalle: sudo $FACTUM_HOME/scripts/estado-peritos.sh"
+  fi
+fi
+
 echo ""
 echo "── Disco"
 df -h "$DATOS" 2>/dev/null | sed 's/^/      /'

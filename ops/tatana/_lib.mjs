@@ -103,18 +103,32 @@ export function parseExtraKey(raw) {
   return { keyId, spkiDerBase64 }
 }
 
-/** Productos del canal de actualización (tatana-linux §10.C): mismo sobre y misma clave, un manifiesto por SO. */
-export const PRODUCTS = ['tatana-windows', 'tatana-linux']
+/**
+ * Productos del canal de actualización (tatana-linux §10.C): mismo sobre y misma clave, un manifiesto por producto.
+ * tatana-docker (SDD fiscalia-operacion §5.1): la imagen de Tatana en Docker que publica el servidor de la fiscalía.
+ */
+export const PRODUCTS = ['tatana-windows', 'tatana-linux', 'tatana-docker']
 
-/** Nombre del archivo del canal según el producto (§10.C). */
+/** Nombre del archivo del canal según el producto (§10.C; fiscalia-operacion §5.1). */
 export function expectedFile(product, version) {
+  if (product === 'tatana-docker') return `imagen-tatana-docker-v${version}.tar.gz`
   return product === 'tatana-linux' ? `Tatana-${version}-x86_64.AppImage` : `Tatana-Setup-${version}.exe`
+}
+
+/** Kit de Tatana en Docker (scripts sin la imagen) que acompaña a la imagen (fiscalia-operacion §6). */
+export function expectedKitFile(version) {
+  return `kit-tatana-docker-v${version}.tar.gz`
+}
+
+/** Nombre:tag oficial de la imagen que tiene que quedar cargada (fiscalia-operacion §5.1). */
+export function expectedImage(version) {
+  return `factum-tatana-docker:${version}`
 }
 
 /** Valida --producto: devuelve el producto o termina con código 2. */
 export function productArg(value) {
   const product = value ?? 'tatana-windows'
-  if (!PRODUCTS.includes(product)) fail(`--producto tiene que ser ${PRODUCTS.join(' o ')}`, 2)
+  if (!PRODUCTS.includes(product)) fail(`--producto tiene que ser ${PRODUCTS.join(', ')}`, 2)
   return product
 }
 
@@ -134,6 +148,18 @@ export function payloadError(p, product = 'tatana-windows') {
   if (typeof p.released_at !== 'string' || Number.isNaN(Date.parse(p.released_at))) return 'payload.released_at tiene que ser ISO-8601'
   if (typeof p.commit !== 'string' || !/^[0-9a-f]{40}$/.test(p.commit)) return 'payload.commit tiene que ser un SHA de 40 hex'
   if (p.notes !== undefined && p.notes !== null && typeof p.notes !== 'string') return 'payload.notes tiene que ser texto'
+  if (typeof p.notes === 'string' && p.notes.length > 2000) return 'payload.notes tiene más de 2000 caracteres'
+  // fiscalia-operacion §5.1: image y kit son SOLO del producto tatana-docker (no se mezclan formatos).
+  if (product === 'tatana-docker') {
+    if (p.image !== expectedImage(p.version)) return `payload.image tiene que ser ${expectedImage(p.version)}`
+    const k = p.kit
+    if (typeof k !== 'object' || k === null || Array.isArray(k)) return 'payload.kit tiene que ser un objeto'
+    if (k.file !== expectedKitFile(p.version)) return `payload.kit.file tiene que ser ${expectedKitFile(p.version)}`
+    if (!Number.isSafeInteger(k.size) || k.size <= 0) return 'payload.kit.size tiene que ser un entero > 0'
+    if (typeof k.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(k.sha256)) return 'payload.kit.sha256 tiene que ser hex en minúsculas'
+  } else if (p.image !== undefined || p.kit !== undefined) {
+    return `payload.image y payload.kit son solo de tatana-docker, no de ${product}`
+  }
   return null
 }
 

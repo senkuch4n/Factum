@@ -1,0 +1,14 @@
+# Factum — busca actualizaciones de Tatana en Docker en el servidor de la fiscalía (SDD fiscalia-operacion §7.2).
+# 5 minutos después de prender la PC y después cada 30 minutos, con un desfase aleatorio de hasta 10 minutos para que
+# las PCs no consulten todas juntas. Para apagarlo: sudo systemctl disable --now factum-tatana-actualizador.timer
+[Unit]
+Description=Factum: buscar actualizaciones de Tatana en Docker en el servidor de la fiscalía
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+RandomizedDelaySec=10min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

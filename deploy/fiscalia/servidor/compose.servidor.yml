@@ -14,6 +14,10 @@ services:
       # todas las PCs de los peritos. Entra en el backup.
       - ${FACTUM_DATOS}/caddy-data:/data
       - ${FACTUM_DATOS}/caddy-config:/config
+      # Canal de Tatana en Docker (SDD fiscalia-operacion §8.1): lo publica actualizar.sh; Caddy solo lo lee.
+      - ${FACTUM_HOME}/canal-tatana:/srv/canal-tatana:ro
+      # Registro de las consultas al canal (lo lee estado-peritos.sh).
+      - ${FACTUM_DATOS}/caddy-logs:/var/log/caddy
     networks: [web]
     depends_on:
       frontend:

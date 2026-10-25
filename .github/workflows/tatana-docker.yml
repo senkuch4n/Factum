@@ -1,0 +1,446 @@
+# Factum — Tatana en Docker para la fiscalía: arma la imagen y el kit, prueba el actualizador, firma y publica en el
+# GitHub Release tatana-vX.Y.Z (SDD fiscalia-operacion §5.3; guía docs/despliegue-nube.md §19 y docs/tatana-docker.md).
+#
+# Separado de tatana-release.yml (D-T2): una falla de Docker no frena la release de Windows/Linux ni al revés. Misma
+# versión (tag tatana-vX.Y.Z) y mismo GitHub Release. NO publica nada en el VPS (la fiscalía no usa la nube): el
+# servidor de la fiscalía lo toma del Release con armar-paquete-fiscalia.sh --actualizacion --tatana-docker-release.
+#
+# Modos (como tatana-release.yml, D-T23):
+#   - release: push de un tag tatana-vX.Y.Z, o "Run workflow" con publicar=true. SOLO desde un commit que está en main
+#     (P3). Firma con el secret del environment tatana-release; el kit confía EXACTAMENTE en trusted-keys.ts.
+#   - ensayo: PRs y "Run workflow" sin publicar. Clave Ed25519 EFÍMERA (se genera y se descarta en "armar"; solo su
+#     pública sale como artifact), sin secrets ni publicación.
+#
+# Jobs: preparar → armar (imagen + kit; en ensayo también firma) → firmar (release) → prueba (nivel 2: Docker y
+#       systemd reales del runner) y prueba-2004 (nivel 3: Ubuntu 20.04 con systemd) → publicar (release).
+# Los valores de inputs, vars y secrets llegan a los "run:" por env:, nunca interpolados en el script.
+name: Tatana Docker
+
+on:
+  push:
+    tags: ["tatana-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versión X.Y.Z (sin la v)"
+        required: true
+        type: string
+      publicar:
+        description: "Publicar en el GitHub Release (solo desde main). Sin tildar = ensayo."
+        required: false
+        type: boolean
+        default: false
+      notas:
+        description: "Notas de la versión (opcional)"
+        required: false
+        type: string
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - deploy/tatana-docker/**
+      - deploy/linux/**
+      - packaging/linux/**
+      - server/src/Factum.Agent/**
+      - ops/tatana/**
+      - ci/tatana-docker/**
+      - .github/workflows/tatana-docker.yml
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('tatana-docker-ensayo-pr-{0}', github.event.number) || 'tatana-docker-release' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preparar:
+    name: Preparar (versión y modo)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.modo.outputs.version }}
+      modo: ${{ steps.modo.outputs.modo }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Versión y modo
+        id: modo
+        env:
+          EVENTO: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PUBLICAR: ${{ inputs.publicar }}
+        run: |
+          case "$EVENTO" in
+            push)
+              VERSION="${REF_NAME#tatana-v}"
+              MODO=release ;;
+            workflow_dispatch)
+              VERSION="$INPUT_VERSION"
+              if [[ "$INPUT_PUBLICAR" == true ]]; then MODO=release; else MODO=ensayo; fi ;;
+            pull_request)
+              VERSION=0.9.0
+              MODO=ensayo ;;
+            *) echo "::error::Evento no soportado: $EVENTO"; exit 1 ;;
+          esac
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::La versión tiene que ser X.Y.Z (sin prerelease), no '$VERSION'."
+            exit 1
+          fi
+          if [[ "$VERSION" == 0.0.1 ]]; then
+            echo "::error::0.0.1 está reservada para la base de la prueba."
+            exit 1
+          fi
+          if [[ "$MODO" == release ]]; then
+            if [[ "$EVENTO" == workflow_dispatch && "$REF" != refs/heads/main ]]; then
+              echo "::error::Para publicar, lanzá el workflow desde main (o empujá un tag tatana-vX.Y.Z de un commit de main)."
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::El commit ${GITHUB_SHA:0:12} no está en main: las releases de Tatana solo salen de main (P3)."
+              exit 1
+            fi
+          fi
+          echo "version=$VERSION" >>"$GITHUB_OUTPUT"
+          echo "modo=$MODO" >>"$GITHUB_OUTPUT"
+          echo "Tatana en Docker $VERSION — modo $MODO" >>"$GITHUB_STEP_SUMMARY"
+      - name: Release - clave de firma
+        if: steps.modo.outputs.modo == 'release'
+        env:
+          KEY_ID: ${{ vars.TATANA_FIRMA_KEY_ID }}
+        run: |
+          if [[ -z "$KEY_ID" ]]; then
+            echo "::error::Falta la variable TATANA_FIRMA_KEY_ID (guía, sección 19)."
+            exit 1
+          fi
+          # shellcheck disable=SC2016 # JavaScript, no shell
+          KEY_ID="$KEY_ID" node --input-type=module -e '
+            import { readTrustedKeys } from "./ops/tatana/_lib.mjs";
+            const ids = readTrustedKeys().map((k) => k.keyId);
+            if (!ids.includes(process.env.KEY_ID)) {
+              console.log(`::error::TATANA_FIRMA_KEY_ID "${process.env.KEY_ID}" no está en agent-ui/src/main/updater/trusted-keys.ts (hay: ${ids.join(", ") || "ninguna"}).`);
+              process.exit(1);
+            }
+          '
+
+  armar:
+    name: Imagen y kit (ubuntu-24.04, amd64 nativo)
+    needs: preparar
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.preparar.outputs.version }}
+      MODO: ${{ needs.preparar.outputs.modo }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Verificar el lock de Python de Linux
+        run: python3 -I packaging/linux/ios-linux/generar-lock.py --check
+      - name: Agente de Linux (payload del AppImage, árbol limpio)
+        run: |
+          mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/agente"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/src"
+          bash deploy/linux/armar-tatana-linux.sh --version "$VERSION" --src "$RUNNER_TEMP/src" --salida "$RUNNER_TEMP/agente"
+      - name: Clave efímera (solo ensayo)
+        if: needs.preparar.outputs.modo == 'ensayo'
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          D="$RUNNER_TEMP/clave-ensayo"
+          mkdir -p "$D" "$RUNNER_TEMP/clave-publica"
+          node ops/tatana/generar-clave-firma.mjs --key-id "ensayo-docker-$RUN_ID" --salida "$D/ensayo.pem" --extra-salida "$D/extra.txt"
+          cp "$D/extra.txt" "$RUNNER_TEMP/clave-publica/extra.txt"
+          echo "CLAVE_EXTRA=$(tr -d '[:space:]' <"$D/extra.txt")" >>"$GITHUB_ENV"
+          echo "KEY_ID_ENSAYO=ensayo-docker-$RUN_ID" >>"$GITHUB_ENV"
+      - name: Imagen, kit y canal
+        run: |
+          EXTRA=()
+          if [[ "$MODO" == ensayo ]]; then EXTRA=(--clave-extra "$CLAVE_EXTRA"); fi
+          bash deploy/tatana-docker/armar-tatana-docker.sh --version "$VERSION" \
+            --agente-tar "$RUNNER_TEMP/agente/Tatana-Agent-v$VERSION-linux-x64.tar.gz" \
+            --salida "$RUNNER_TEMP/paquete" --canal "$RUNNER_TEMP/canal" "${EXTRA[@]}"
+          ls -l "$RUNNER_TEMP/paquete" "$RUNNER_TEMP/canal"
+      - name: Release - el kit confía exactamente en trusted-keys.ts
+        if: needs.preparar.outputs.modo == 'release'
+        run: |
+          D="$RUNNER_TEMP/kit-check"
+          mkdir -p "$D"
+          tar -xzf "$RUNNER_TEMP/canal/kit-tatana-docker-v$VERSION.tar.gz" -C "$D"
+          node ops/tatana/claves-confiables.mjs --verificar "$D/Tatana-Docker-v$VERSION/claves-confiables.txt"
+          if [[ -n "${CLAVE_EXTRA:-}" ]]; then echo "::error::CLAVE_EXTRA tiene que estar vacía en una release"; exit 1; fi
+      - name: Payload (sin firmar)
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          C="$RUNNER_TEMP/canal"
+          node ops/tatana/armar-payload.mjs --producto tatana-docker --archivo "$C/imagen-tatana-docker-v$VERSION.tar.gz" \
+            --kit "$C/kit-tatana-docker-v$VERSION.tar.gz" --imagen "factum-tatana-docker:$VERSION" --version "$VERSION" \
+            --commit "$SHA" --salida "$C/payload-docker.json"
+      # Ensayo: se firma acá con la clave efímera de este job, que nunca sale de acá. En release firma "firmar".
+      - name: Firmar (solo ensayo, clave efímera)
+        if: needs.preparar.outputs.modo == 'ensayo'
+        run: |
+          C="$RUNNER_TEMP/canal"
+          TATANA_FIRMA_CLAVE_PRIVADA="$(cat "$RUNNER_TEMP/clave-ensayo/ensayo.pem")" \
+            node ops/tatana/firmar-manifiesto.mjs --payload "$C/payload-docker.json" --key-id "$KEY_ID_ENSAYO" \
+            --clave-extra "$CLAVE_EXTRA" --salida "$C/tatana-update-docker.json"
+          node ops/tatana/verificar-manifiesto.mjs --manifiesto "$C/tatana-update-docker.json" --producto tatana-docker \
+            --clave-extra "$CLAVE_EXTRA" --version "$VERSION" --archivo "$C/imagen-tatana-docker-v$VERSION.tar.gz" \
+            --kit "$C/kit-tatana-docker-v$VERSION.tar.gz" --payload "$C/payload-docker.json"
+      - name: Borrar la clave efímera
+        if: always() && needs.preparar.outputs.modo == 'ensayo'
+        run: rm -rf "$RUNNER_TEMP/clave-ensayo"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tatana-docker-paquete
+          path: |
+            ${{ runner.temp }}/paquete/Tatana-Docker-v${{ needs.preparar.outputs.version }}.tar.gz
+            ${{ runner.temp }}/paquete/Tatana-Docker-v${{ needs.preparar.outputs.version }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tatana-docker-canal
+          path: ${{ runner.temp }}/canal/
+          if-no-files-found: error
+          retention-days: 7
+      - if: needs.preparar.outputs.modo == 'ensayo'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: clave-ensayo-publica
+          path: ${{ runner.temp }}/clave-publica/extra.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  firmar:
+    name: Firmar (release)
+    needs: [preparar, armar]
+    if: needs.preparar.outputs.modo == 'release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # La clave de firma vive SOLO en este environment (deployment branches: main + tags tatana-v*).
+    environment: tatana-release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            ops/tatana
+            agent-ui/src/main/updater
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tatana-docker-canal
+          path: ${{ runner.temp }}/canal
+      - name: Notas
+        env:
+          EVENTO: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_NOTAS: ${{ inputs.notas }}
+        run: |
+          NOTAS="$INPUT_NOTAS"
+          if [[ -z "$NOTAS" && "$EVENTO" == push ]]; then
+            git fetch --quiet --depth=1 origin "+refs/tags/$REF_NAME:refs/tags/$REF_NAME" 2>/dev/null || true
+            if [[ "$(git cat-file -t "refs/tags/$REF_NAME" 2>/dev/null)" == tag ]]; then
+              NOTAS="$(git tag -l --format='%(contents:subject)%0a%(contents:body)' "$REF_NAME" | sed '/-----BEGIN/,$d')"
+            fi
+          fi
+          printf '%s' "$NOTAS" >"$RUNNER_TEMP/notas.txt"
+      - name: Payload, firma y verificación
+        env:
+          VERSION: ${{ needs.preparar.outputs.version }}
+          KEY_ID: ${{ vars.TATANA_FIRMA_KEY_ID }}
+          SHA: ${{ github.sha }}
+          TATANA_FIRMA_CLAVE_PRIVADA: ${{ secrets.TATANA_FIRMA_CLAVE_PRIVADA }}
+        run: |
+          set -euo pipefail
+          C="$RUNNER_TEMP/canal"
+          if [[ -z "$TATANA_FIRMA_CLAVE_PRIVADA" ]]; then
+            echo "::error::Falta el secret TATANA_FIRMA_CLAVE_PRIVADA en el environment tatana-release (guía, sección 19)."
+            exit 1
+          fi
+          rm -f "$C/tatana-update-docker.json"
+          node ops/tatana/armar-payload.mjs --producto tatana-docker --archivo "$C/imagen-tatana-docker-v$VERSION.tar.gz" \
+            --kit "$C/kit-tatana-docker-v$VERSION.tar.gz" --imagen "factum-tatana-docker:$VERSION" --version "$VERSION" \
+            --commit "$SHA" --notas "$(cat "$RUNNER_TEMP/notas.txt")" --salida "$C/payload-docker.json"
+          node ops/tatana/firmar-manifiesto.mjs --payload "$C/payload-docker.json" --key-id "$KEY_ID" \
+            --salida "$C/tatana-update-docker.json"
+          unset TATANA_FIRMA_CLAVE_PRIVADA
+          node ops/tatana/verificar-manifiesto.mjs --manifiesto "$C/tatana-update-docker.json" --producto tatana-docker \
+            --version "$VERSION" --archivo "$C/imagen-tatana-docker-v$VERSION.tar.gz" \
+            --kit "$C/kit-tatana-docker-v$VERSION.tar.gz" --payload "$C/payload-docker.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tatana-docker-canal-firmado
+          path: ${{ runner.temp }}/canal/
+          if-no-files-found: error
+          retention-days: 7
+
+  prueba:
+    name: Prueba del actualizador (nivel 2, ubuntu-24.04)
+    needs: [preparar, armar, firmar]
+    # "firmar" se saltea en ensayo (firmó "armar"); en release tiene que haber pasado.
+    if: >-
+      !cancelled() && needs.armar.result == 'success' &&
+      (needs.firmar.result == 'success' || (needs.firmar.result == 'skipped' && needs.preparar.outputs.modo == 'ensayo'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.preparar.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tatana-docker-paquete
+          path: ${{ runner.temp }}/paquete
+      - name: Canal firmado (release)
+        if: needs.preparar.outputs.modo == 'release'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tatana-docker-canal-firmado
+          path: ${{ runner.temp }}/canal
+      - name: Canal firmado (ensayo)
+        if: needs.preparar.outputs.modo == 'ensayo'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tatana-docker-canal
+          path: ${{ runner.temp }}/canal
+      - name: Prueba
+        timeout-minutes: 50
+        env:
+          SALIDA_LOGS: ${{ runner.temp }}/logs-prueba
+        # sudo env PATH=…: el secure_path de sudo taparía el node de setup-node.
+        run: >-
+          sudo env "PATH=$PATH" "SALIDA_LOGS=$SALIDA_LOGS" GITHUB_ACTIONS=true bash ci/tatana-docker/prueba-actualizador.sh
+          --paquete "$RUNNER_TEMP/paquete/Tatana-Docker-v$VERSION.tar.gz"
+          --canal "$RUNNER_TEMP/canal" --version "$VERSION" --usuario "$(id -un)"
+      - name: Subir logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: logs-prueba-tatana-docker
+          path: ${{ runner.temp }}/logs-prueba/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  prueba-2004:
+    name: Prueba en Ubuntu 20.04 con systemd (nivel 3)
+    needs: [preparar, armar, firmar]
+    if: >-
+      !cancelled() && needs.armar.result == 'success' &&
+      (needs.firmar.result == 'success' || (needs.firmar.result == 'skipped' && needs.preparar.outputs.modo == 'ensayo'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.preparar.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tatana-docker-paquete
+          path: ${{ runner.temp }}/paquete
+      - name: Canal firmado (release)
+        if: needs.preparar.outputs.modo == 'release'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tatana-docker-canal-firmado
+          path: ${{ runner.temp }}/canal
+      - name: Canal firmado (ensayo)
+        if: needs.preparar.outputs.modo == 'ensayo'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tatana-docker-canal
+          path: ${{ runner.temp }}/canal
+      - name: Prueba en 20.04
+        timeout-minutes: 50
+        env:
+          SALIDA_LOGS: ${{ runner.temp }}/logs-2004
+        run: >-
+          sudo env "PATH=$PATH" "SALIDA_LOGS=$SALIDA_LOGS" GITHUB_ACTIONS=true bash ci/tatana-docker/prueba-2004.sh
+          --paquete "$RUNNER_TEMP/paquete/Tatana-Docker-v$VERSION.tar.gz"
+          --canal "$RUNNER_TEMP/canal" --version "$VERSION"
+      - name: Subir logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: logs-prueba-tatana-docker-2004
+          path: ${{ runner.temp }}/logs-2004/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publicar:
+    name: GitHub Release (archivos de Docker)
+    needs: [preparar, prueba, prueba-2004]
+    if: needs.preparar.outputs.modo == 'release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: tatana-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            ops/tatana
+            agent-ui/src/main/updater
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tatana-docker-canal-firmado
+          path: ${{ runner.temp }}/canal
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tatana-docker-paquete
+          path: ${{ runner.temp }}/canal
+      - name: Verificar y publicar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.preparar.outputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          C="$RUNNER_TEMP/canal"
+          node ops/tatana/verificar-manifiesto.mjs --manifiesto "$C/tatana-update-docker.json" --producto tatana-docker \
+            --version "$VERSION" --archivo "$C/imagen-tatana-docker-v$VERSION.tar.gz" --kit "$C/kit-tatana-docker-v$VERSION.tar.gz"
+          ARCH=(tatana-update-docker.json "imagen-tatana-docker-v$VERSION.tar.gz" "kit-tatana-docker-v$VERSION.tar.gz"
+            "Tatana-Docker-v$VERSION.tar.gz")
+          (cd "$C" && sha256sum "${ARCH[@]}" >SHA256SUMS-docker && cat SHA256SUMS-docker)
+          ARCHIVOS=()
+          for f in "${ARCH[@]}" SHA256SUMS-docker; do ARCHIVOS+=("$C/$f"); done
+          # El otro workflow (tatana-release.yml) puede haber creado el Release antes: se suben con --clobber.
+          if gh release view "tatana-v$VERSION" >/dev/null 2>&1; then
+            gh release upload "tatana-v$VERSION" "${ARCHIVOS[@]}" --clobber
+          else
+            gh release create "tatana-v$VERSION" "${ARCHIVOS[@]}" --target "$SHA" --title "Tatana v$VERSION" \
+              --notes "Tatana v$VERSION (archivos de Tatana en Docker para la fiscalía)"
+          fi
+          echo "Tatana en Docker $VERSION publicado en el Release tatana-v$VERSION" >>"$GITHUB_STEP_SUMMARY"

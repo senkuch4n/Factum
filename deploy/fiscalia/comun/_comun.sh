@@ -311,3 +311,143 @@ como_usuario() { # como_usuario <usuario> <comando...>: corre como el usuario re
     "$@"
   fi
 }
+
+# ── Versiones (SDD fiscalia-operacion §10.8; misma tabla que la PC: ci/tatana-docker/versiones.txt) ────────────
+# Precedencia semver 2.0. Imprime -1, 0 o 1. Compatible con bash 3.2.
+version_cmp() { # version_cmp A B
+  local LC_ALL=C a="${1%%+*}" b="${2%%+*}" na pa nb pb i x y
+  na="${a%%-*}"
+  nb="${b%%-*}"
+  pa=""
+  pb=""
+  [[ "$a" == *-* ]] && pa="${a#*-}"
+  [[ "$b" == *-* ]] && pb="${b#*-}"
+  local -a A B
+  IFS=. read -r -a A <<<"$na"
+  IFS=. read -r -a B <<<"$nb"
+  for i in 0 1 2; do
+    x="${A[$i]:-0}"
+    y="${B[$i]:-0}"
+    [[ "$x" =~ ^[0-9]+$ ]] || x=0
+    [[ "$y" =~ ^[0-9]+$ ]] || y=0
+    if ((10#$x > 10#$y)); then echo 1; return; fi
+    if ((10#$x < 10#$y)); then echo -1; return; fi
+  done
+  if [[ -z "$pa" && -z "$pb" ]]; then echo 0; return; fi
+  if [[ -z "$pa" ]]; then echo 1; return; fi
+  if [[ -z "$pb" ]]; then echo -1; return; fi
+  IFS=. read -r -a A <<<"$pa"
+  IFS=. read -r -a B <<<"$pb"
+  for ((i = 0; i < ${#A[@]} && i < ${#B[@]}; i++)); do
+    x="${A[$i]}"
+    y="${B[$i]}"
+    if [[ "$x" =~ ^[0-9]+$ && "$y" =~ ^[0-9]+$ ]]; then
+      if ((10#$x > 10#$y)); then echo 1; return; fi
+      if ((10#$x < 10#$y)); then echo -1; return; fi
+    elif [[ "$x" =~ ^[0-9]+$ ]]; then echo -1; return
+    elif [[ "$y" =~ ^[0-9]+$ ]]; then echo 1; return
+    elif [[ "$x" > "$y" ]]; then echo 1; return
+    elif [[ "$x" < "$y" ]]; then echo -1; return
+    fi
+  done
+  if ((${#A[@]} > ${#B[@]})); then echo 1; elif ((${#A[@]} < ${#B[@]})); then echo -1; else echo 0; fi
+}
+
+# ── Una operación a la vez (SDD fiscalia-operacion §8.7) ─────────────────────────────────────────────────────
+# flock -n sobre <carpeta>/.operacion.lock. Lo toman actualizar.sh, backup.sh, restaurar.sh e instalar.sh --reparar.
+# Un script llamado por otro que ya lo tiene (backup previo de actualizar.sh y de restaurar.sh) lo hereda con
+# FACTUM_CANDADO_HEREDADO=1 (el fd 8 abierto pasa al hijo). Sin flock (la Mac de pruebas): aviso y sigue.
+tomar_candado() { # tomar_candado <carpeta de la instalación>
+  [[ "${FACTUM_CANDADO_HEREDADO:-0}" == 1 ]] && return 0
+  if ! command -v flock >/dev/null 2>&1; then
+    aviso "No está flock en esta PC: no se puede impedir que corran dos operaciones de Factum a la vez."
+    return 0
+  fi
+  exec 8>>"$1/.operacion.lock" || morir "no pude abrir $1/.operacion.lock."
+  flock -n 8 || morir "hay otra operación de Factum en curso (actualizar/backup/restaurar): esperá a que termine." \
+    "Si no hay nada corriendo: ps aux | grep -E 'actualizar|backup|restaurar|instalar'"
+  export FACTUM_CANDADO_HEREDADO=1
+}
+
+# ── Archivos de una instalación (paso 6 de instalar.sh y paso 5 de actualizar.sh) ───────────────────────────
+copiar_archivos_instalacion() { # copiar_archivos_instalacion <paquete> <carpeta> <plan> <sin_avx 0|1>
+  local paq="$1" carpeta="$2" plan="$3" sin_avx="$4" s
+  cp "$paq/comun/docker-compose.yml" "$paq/comun/compose.superadmin.yml" "$paq/version.txt" "$carpeta/"
+  rm -rf "$carpeta/mongo-init"
+  cp -R "$paq/comun/mongo-init" "$carpeta/mongo-init"
+  if [[ "$sin_avx" == 1 ]]; then
+    [[ -f "$paq/comun/compose.sin-avx.yml" && -d "$paq/comun/mongo-init-sin-avx" ]] ||
+      morir "al paquete le faltan comun/compose.sin-avx.yml o comun/mongo-init-sin-avx/." "Aplicá el parche sin AVX (parche-sin-avx/LEEME.txt)."
+    cp "$paq/comun/compose.sin-avx.yml" "$carpeta/"
+    rm -rf "$carpeta/mongo-init-sin-avx"
+    cp -R "$paq/comun/mongo-init-sin-avx" "$carpeta/mongo-init-sin-avx"
+  fi
+  if [[ "$plan" == servidor ]]; then
+    cp "$paq/servidor/compose.servidor.yml" "$paq/servidor/Caddyfile" "$carpeta/"
+  else
+    cp "$paq/una-pc/compose.una-pc.yml" "$carpeta/"
+  fi
+  mkdir -p "$carpeta/scripts"
+  for s in _comun.sh backup.sh restaurar.sh diagnostico.sh borrar-caso-prueba.sh estado-peritos.sh; do
+    [[ -f "$paq/comun/$s" ]] && cp "$paq/comun/$s" "$carpeta/scripts/"
+  done
+  chmod 755 "$carpeta"/scripts/*.sh
+  [[ -f "$paq/instalacion-fiscalia.md" ]] && cp "$paq/instalacion-fiscalia.md" "$carpeta/"
+  return 0
+}
+
+# Versión del payload de un tatana-update-docker.json, SIN verificar la firma (eso lo hace cada PC con sus claves).
+version_de_manifiesto() { # version_de_manifiesto <tatana-update-docker.json>
+  local p
+  p="$(tr -d '\n' <"$1" | sed -nE 's/.*"payload"[[:space:]]*:[[:space:]]*"([A-Za-z0-9+/=]+)".*/\1/p')"
+  [[ -n "$p" ]] || return 0
+  { printf '%s' "$p" | base64 -d 2>/dev/null || printf '%s' "$p" | base64 -D 2>/dev/null; } |
+    tr -d '\n' | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p'
+}
+
+# Publica Tatana en Docker en el canal del servidor (<carpeta>/canal-tatana/docker, servido por Caddy en
+# https://factum.internal/tatana/docker/; SDD fiscalia-operacion §8.1, §8.4 paso 7). Nunca publica una versión igual o
+# menor a la publicada (las PCs igual la rechazarían). Deja PUBLICADO=1 si publicó, 0 si ya estaba.
+publicar_canal_tatana() { # publicar_canal_tatana <carpeta tatana-docker/ del paquete> <carpeta de la instalación>
+  local src="$1" canal="$2/canal-tatana/docker" v v_man v_pub f fv
+  PUBLICADO=0
+  v="$(tr -d '[:space:]' <"$src/VERSION" 2>/dev/null || true)"
+  [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || morir "tatana-docker/VERSION del paquete no es X.Y.Z ('$v')."
+  v_man="$(version_de_manifiesto "$src/tatana-update-docker.json")"
+  [[ "$v_man" == "$v" ]] || morir "el manifiesto de Tatana del paquete es de la versión '${v_man:-?}' y VERSION dice $v." "Armá de nuevo el paquete."
+  for f in "imagen-tatana-docker-v$v.tar.gz" "kit-tatana-docker-v$v.tar.gz"; do
+    [[ -f "$src/$f" ]] || morir "al paquete le falta tatana-docker/$f."
+  done
+  mkdir -p "$canal"
+  chmod 755 "$2/canal-tatana" "$canal"
+  v_pub="$(tr -d '[:space:]' <"$canal/VERSION" 2>/dev/null || true)"
+  if [[ -n "$v_pub" && "$(version_cmp "$v" "$v_pub")" != 1 ]]; then
+    ok "Tatana en Docker $v_pub ya publicado (el paquete trae $v: no se publica una igual o menor)."
+    return 0
+  fi
+  for f in "imagen-tatana-docker-v$v.tar.gz" "kit-tatana-docker-v$v.tar.gz"; do
+    cp "$src/$f" "$canal/$f.parcial"
+    chmod 644 "$canal/$f.parcial"
+    mv -f "$canal/$f.parcial" "$canal/$f"
+  done
+  tar -xzOf "$src/kit-tatana-docker-v$v.tar.gz" "Tatana-Docker-v$v/sumar-actualizador.sh" >"$canal/sumar-actualizador.sh.parcial" ||
+    morir "el kit de Tatana $v no trae sumar-actualizador.sh."
+  chmod 644 "$canal/sumar-actualizador.sh.parcial"
+  mv -f "$canal/sumar-actualizador.sh.parcial" "$canal/sumar-actualizador.sh"
+  printf '%s\n' "$v" >"$canal/VERSION.parcial"
+  chmod 644 "$canal/VERSION.parcial"
+  mv -f "$canal/VERSION.parcial" "$canal/VERSION"
+  # El manifiesto se reemplaza ÚLTIMO: una PC que consulta a mitad de camino ve el anterior completo o el nuevo completo.
+  cp "$src/tatana-update-docker.json" "$canal/tatana-update-docker.json.parcial"
+  chmod 644 "$canal/tatana-update-docker.json.parcial"
+  mv -f "$canal/tatana-update-docker.json.parcial" "$canal/tatana-update-docker.json"
+  # Quedan la publicada y la anterior; las más viejas se borran.
+  for f in "$canal"/imagen-tatana-docker-v*.tar.gz "$canal"/kit-tatana-docker-v*.tar.gz; do
+    [[ -f "$f" ]] || continue
+    fv="$(basename "$f" .tar.gz)"
+    fv="${fv##*-v}"
+    [[ "$fv" == "$v" || "$fv" == "$v_pub" ]] || { rm -f -- "$f"; info "Canal: borrado $(basename "$f") (versión vieja)."; }
+  done
+  PUBLICADO=1
+  ok "Tatana en Docker $v publicado en https://$FACTUM_NOMBRE_RED/tatana/docker/${v_pub:+ (antes: $v_pub)}."
+}

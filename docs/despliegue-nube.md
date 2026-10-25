@@ -1000,6 +1000,16 @@ publica solo**: lo disparás vos con un tag o con "Run workflow". Las releases s
 
 Si falla cualquiera de las dos pruebas, **no se publica nada** en ninguna plataforma y queda vigente lo anterior.
 
+**El mismo tag dispara además `.github/workflows/tatana-docker.yml`** (Tatana en Docker para la fiscalía, SDD
+fiscalia-operacion §5.3): arma la imagen `factum-tatana-docker:X.Y.Z` y el kit, prueba el actualizador (Ubuntu 24.04 y
+20.04 con systemd), firma `tatana-update-docker.json` con la **misma clave** (producto `tatana-docker`, environment
+`tatana-release`) y sube al **mismo GitHub Release** `tatana-vX.Y.Z` cinco archivos más: `tatana-update-docker.json`,
+`imagen-tatana-docker-vX.Y.Z.tar.gz`, `kit-tatana-docker-vX.Y.Z.tar.gz`, `Tatana-Docker-vX.Y.Z.tar.gz` (paquete
+completo, para pendrive) y `SHA256SUMS-docker`. **No publica nada en el VPS**: la fiscalía no usa la nube; el servidor
+de la fiscalía lo toma de ese Release con `armar-paquete-fiscalia.sh --actualizacion --tatana-docker-release X.Y.Z`
+(`docs/instalacion-fiscalia.md` §12). Es un workflow aparte: si falla Docker, Windows/Linux se publican igual y al
+revés (se puede relanzar con "Run workflow" sobre `main`).
+
 ### 19.1 Clave de firma (una vez) [A mano, en la Mac]
 
 ```bash
@@ -1132,7 +1142,8 @@ del run sirven para probar la actualización en una PC Linux (sección 20.9).
 4. Seguí el run. Si la prueba de Windows o la de Linux falla, **no se publica nada**. Si pasan las dos, el job
    "Publicar" sube los 8 archivos, comprueba desde afuera que `tatana-update.json` y `tatana-update-linux.json` son los
    firmados y que el instalador y el AppImage tienen el tamaño correcto, y crea el GitHub Release `tatana-v1.4.0`
-   (archivo histórico, con los archivos de las dos plataformas).
+   (archivo histórico, con los archivos de las dos plataformas). `tatana-docker.yml` suma al mismo Release los archivos
+   de Tatana en Docker (crea el Release si todavía no existe; si existe, los sube con `--clobber`).
 5. Comprobalo vos:
 
    ```bash
@@ -1140,6 +1151,10 @@ del run sirven para probar la actualización en una PC Linux (sección 20.9).
    node ops/tatana/verificar-manifiesto.mjs --manifiesto /tmp/tatana-update.json
    curl -fsS https://<DOMINIO>/tatana/updates/tatana-update-linux.json -o /tmp/tatana-update-linux.json
    node ops/tatana/verificar-manifiesto.mjs --manifiesto /tmp/tatana-update-linux.json --producto tatana-linux
+   # Tatana en Docker (del Release):
+   gh release download tatana-v1.4.0 -p 'tatana-update-docker.json' -p '*tatana-docker-v1.4.0.tar.gz' -D /tmp/td
+   node ops/tatana/verificar-manifiesto.mjs --manifiesto /tmp/td/tatana-update-docker.json --producto tatana-docker \
+     --archivo /tmp/td/imagen-tatana-docker-v1.4.0.tar.gz --kit /tmp/td/kit-tatana-docker-v1.4.0.tar.gz
    ```
 
 Las PCs la reciben solas en las próximas horas (al arrancar Tatana o cada 6 h) y la instalan al reiniciar Tatana o al
@@ -1188,6 +1203,10 @@ y **reinstalá Tatana a mano** en cada PC (sección 10.3; la evidencia no se toc
 Tatana también corre en PCs con Linux: un único archivo **AppImage** (`Tatana-Linux-x86_64.AppImage`) que trae todo lo
 que necesita (la ventana, el agente, adb, scrcpy, ffmpeg y el Python para iPhone, con versiones fijas). Se actualiza
 solo desde el mismo canal firmado que Windows y con la misma versión.
+
+Donde el AppImage no anda (glibc vieja, sin FUSE) está **Tatana en Docker** (`docs/tatana-docker.md`). En la fiscalía
+(sin nube) se actualiza desde su servidor: los archivos firmados salen del mismo tag por `tatana-docker.yml` (sección
+19) y el servidor los publica en `https://factum.internal/tatana/docker/` (`docs/instalacion-fiscalia.md` §12).
 
 ### 20.1 Requisitos (lo que se publica en la página de descarga)
 

@@ -38,6 +38,8 @@ DESDE="$(cd "$DESDE" && pwd)"
 
 requiere_docker
 buscar_instalacion "$CARPETA" "$DIR_SCRIPT"
+# Una operación a la vez (SDD fiscalia-operacion §8.7); el backup previo de abajo hereda este candado.
+tomar_candado "$FACTUM_HOME"
 DATOS="$(env_leer "$FACTUM_ENV" FACTUM_DATOS)"
 echo "=== Restaurar Factum: $DESDE → $FACTUM_HOME ($FACTUM_PLAN) ==="
 

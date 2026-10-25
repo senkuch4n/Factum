@@ -14,8 +14,18 @@ Guía completa: docs/tatana-docker.md del repo de Factum.
      Plan A (servidor de la fiscalía):  ./instalar-tatana-docker.sh --origen https://factum.internal
      Plan B (todo en esta PC):          ./instalar-tatana-docker.sh
    Requisito: Docker andando (si no está: instalar-docker-offline.sh del paquete de la fiscalía).
+   En el plan A queda instalado el ACTUALIZADOR AUTOMÁTICO: cada 30 minutos consulta
+   https://factum.internal/tatana/docker/ y, si hay una versión nueva firmada y Tatana no está
+   capturando, se actualiza solo (si la nueva no arranca, vuelve a la anterior). Sin él: --sin-actualizador.
 
-2. Ver cómo está:                       ./estado-tatana-docker.sh
+   PC instalada ANTES del actualizador (sin el pendrive): un comando, con el usuario del perito:
+     wget -qO /tmp/sumar-actualizador.sh https://factum.internal/tatana/docker/sumar-actualizador.sh \
+       && bash /tmp/sumar-actualizador.sh
+
+2. Ver cómo está (incluye "Actualizaciones"):  ./estado-tatana-docker.sh
+   Buscar una versión nueva ya:              ./estado-tatana-docker.sh --buscar-ahora
+   Volver a la versión anterior:             ./estado-tatana-docker.sh --volver-a-anterior
+   Apagar el actualizador:                   sudo systemctl disable --now factum-tatana-actualizador.timer
 3. Desinstalar (NO borra evidencia):    ./desinstalar-tatana-docker.sh [--borrar-imagen]
 
 La evidencia queda en ~/Factum/Evidencia. Los datos del agente en ~/.local/share/tatana-docker.
@@ -25,3 +35,7 @@ Contenido:
   imagen-tatana-docker-vX.Y.Z.tar.gz   imagen de Docker (docker save) - IMAGEN.txt dice su nombre
   SHA256SUMS                           para verificar la copia: sha256sum -c SHA256SUMS
   *.sh                                 scripts de arriba (comun.sh lo usan los demás)
+  actualizador-tatana-docker.sh        el actualizador (lo corre el timer de systemd, como root)
+  verificar-manifiesto-docker.py       verifica la firma de cada actualización (con claves-confiables.txt)
+  estado-agente.py                     pregunta a Tatana si está libre antes de actualizar
+  systemd/                             el timer y el servicio del actualizador

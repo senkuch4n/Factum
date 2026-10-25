@@ -47,12 +47,29 @@ jobs:
         run: |
           bash -n packaging/linux/preparar-pc.sh
           bash packaging/linux/tests/probar-preparar-pc.sh
+      # fiscalia-operacion §14.4: autopruebas de los .py del actualizador, tabla de versiones (bash ↔ Python) y prueba
+      # cruzada del manifiesto (Node firma → Python verifica).
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Tatana en Docker (autopruebas Python, versiones, prueba cruzada)
+        run: |
+          # python3 -I no ve los paquetes de --user: cryptography del sistema (apt).
+          python3 -c 'import cryptography' 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq python3-cryptography >/dev/null; }
+          for py in deploy/tatana-docker/paquete/*.py; do python3 -I "$py" --autoprueba; done
+          bash ci/tatana-docker/probar-versiones.sh
+          bash ci/tatana-docker/prueba-cruzada.sh
+          bash ci/tatana-docker/probar-cambiar-contenedor.sh
+          bash -n deploy/tatana-docker/armar-tatana-docker.sh deploy/tatana-docker/paquete/*.sh ci/tatana-docker/*.sh
       # tatana-linux §9.5: shellcheck de los scripts de Linux (el runner de Ubuntu lo trae).
       - name: shellcheck (Linux)
         run: |
           if command -v shellcheck >/dev/null 2>&1; then
             shellcheck -S warning packaging/linux/preparar-pc.sh deploy/linux/armar-tatana-linux.sh \
               ci/tatana-linux/prueba-humo.sh ops/tatana/prueba-linux.sh
+            # fiscalia-operacion §14.4: Tatana en Docker (kit + actualizador) y sus pruebas.
+            shellcheck -S warning -x deploy/tatana-docker/armar-tatana-docker.sh deploy/tatana-docker/paquete/*.sh \
+              ci/tatana-docker/*.sh
           else
             echo "::notice::shellcheck no está en el runner: se saltea"
           fi

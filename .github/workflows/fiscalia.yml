@@ -1,0 +1,69 @@
+# Factum — prueba del servidor de la fiscalía (plan A): actualizar.sh con vuelta atrás, backup previo, canal de Tatana
+# en Docker y candado (SDD fiscalia-operacion §14.3). En una VM efímera (ubuntu-24.04): instala Factum en
+# /srv/factum-fiscalia-prueba con su propio proyecto de compose y lo borra al terminar.
+name: Fiscalía (servidor)
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - deploy/fiscalia/**
+      - ci/fiscalia/**
+      - .github/workflows/fiscalia.yml
+
+concurrency:
+  group: fiscalia-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    name: Sintaxis y shellcheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: bash -n
+        run: |
+          for s in deploy/fiscalia/*.sh deploy/fiscalia/*/*.sh ci/fiscalia/*.sh; do bash -n "$s"; done
+      - name: shellcheck
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -S warning deploy/fiscalia/comun/actualizar.sh deploy/fiscalia/comun/estado-peritos.sh \
+              deploy/fiscalia/comun/_comun.sh deploy/fiscalia/comun/backup.sh deploy/fiscalia/comun/restaurar.sh \
+              deploy/fiscalia/comun/instalar.sh deploy/fiscalia/comun/diagnostico.sh deploy/fiscalia/armar-paquete-fiscalia.sh \
+              ci/fiscalia/prueba-actualizar.sh
+          else
+            echo "::notice::shellcheck no está en el runner: se saltea"
+          fi
+
+  actualizar:
+    name: actualizar.sh en un servidor de prueba
+    needs: scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Prueba
+        env:
+          SALIDA_LOGS: ${{ runner.temp }}/logs-fiscalia
+        # sudo env PATH=…: el secure_path de sudo taparía el node de setup-node.
+        run: sudo env "PATH=$PATH" "SALIDA_LOGS=$SALIDA_LOGS" GITHUB_ACTIONS=true bash ci/fiscalia/prueba-actualizar.sh
+      - name: Subir logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: logs-fiscalia
+          path: ${{ runner.temp }}/logs-fiscalia/
+          if-no-files-found: ignore
+          retention-days: 7

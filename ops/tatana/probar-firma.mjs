@@ -122,6 +122,66 @@ try {
   // AppImage distinto al firmado.
   writeFileSync(img, Buffer.concat([imgBytes, Buffer.from('!')]))
   expect('AppImage distinto', run('verificar-manifiesto.mjs', ['--manifiesto', manLinux, '--producto', 'tatana-linux', '--clave-extra', extra, '--archivo', img]), 1, /tamaño|sha/)
+
+  // 8. Tatana en Docker (fiscalia-operacion §5.2): imagen + kit + nombre:tag; sin latest.yml.
+  const dimg = join(T, 'imagen-tatana-docker-v1.5.0.tar.gz')
+  const dkit = join(T, 'kit-tatana-docker-v1.5.0.tar.gz')
+  writeFileSync(dimg, Buffer.from('\x1f\x8b' + 'i'.repeat(150000)))
+  writeFileSync(dkit, Buffer.from('\x1f\x8b' + 'k'.repeat(3000)))
+  const payloadDocker = join(T, 'payload-docker.json')
+  const argsDocker = ['--producto', 'tatana-docker', '--archivo', dimg, '--kit', dkit, '--imagen', 'factum-tatana-docker:1.5.0',
+    '--version', '1.5.0', '--commit', commit]
+  expect('armar payload de Docker', run('armar-payload.mjs', [...argsDocker, '--salida', payloadDocker]), 0)
+  const pd = JSON.parse(readFileSync(payloadDocker, 'utf8'))
+  if (pd.product === 'tatana-docker' && pd.image === 'factum-tatana-docker:1.5.0' && pd.kit?.file === 'kit-tatana-docker-v1.5.0.tar.gz' &&
+      pd.kit.size === readFileSync(dkit).length && pd.kit.sha256 === createHash('sha256').update(readFileSync(dkit)).digest('hex'))
+    ok('payload de Docker con image y kit')
+  else mal(`payload de Docker: ${JSON.stringify(pd)}`)
+  expect('Docker con --latest', run('armar-payload.mjs', [...argsDocker, '--latest', latest, '--salida', join(T, 'px.json')]), 2, /--latest/)
+  expect('Docker sin --kit', run('armar-payload.mjs', ['--producto', 'tatana-docker', '--archivo', dimg, '--imagen', 'factum-tatana-docker:1.5.0', '--version', '1.5.0', '--commit', commit, '--salida', join(T, 'px.json')]), 2, /--kit/)
+  expect('Docker con imagen de otro tag', run('armar-payload.mjs', [...argsDocker.slice(0, 7), 'factum-tatana-docker:1.5.1', ...argsDocker.slice(8), '--salida', join(T, 'px.json')]), 1, /factum-tatana-docker:1\.5\.0/)
+  expect('Linux con --kit', run('armar-payload.mjs', ['--producto', 'tatana-linux', '--archivo', img, '--latest', latestLinux, '--kit', dkit, '--version', '1.4.0', '--commit', commit, '--salida', join(T, 'px.json')]), 2, /--kit/)
+  const manDocker = join(T, 'tatana-update-docker.json')
+  expect('firmar Docker', run('firmar-manifiesto.mjs', ['--payload', payloadDocker, '--key-id', 'prueba-1', '--salida', manDocker, '--clave-extra', extra], { TATANA_FIRMA_CLAVE_PRIVADA: priv }), 0, /tatana-docker/)
+  const verDocker = (extraArgs) => run('verificar-manifiesto.mjs', ['--manifiesto', manDocker, '--producto', 'tatana-docker', '--clave-extra', extra, ...extraArgs])
+  expect('verificar Docker ok', verDocker(['--version', '1.5.0', '--archivo', dimg, '--kit', dkit, '--payload', payloadDocker]), 0, /firma válida.*tatana-docker.*factum-tatana-docker:1\.5\.0/)
+  // Cruzados: Docker no sirve como Linux/Windows y al revés.
+  expect('Linux rechaza el manifiesto de Docker', run('verificar-manifiesto.mjs', ['--manifiesto', manDocker, '--producto', 'tatana-linux', '--clave-extra', extra]), 1, /manifiesto_invalido.*tatana-linux/)
+  expect('Windows rechaza el manifiesto de Docker', run('verificar-manifiesto.mjs', ['--manifiesto', manDocker, '--clave-extra', extra]), 1, /manifiesto_invalido.*tatana-windows/)
+  expect('Docker rechaza el manifiesto de Linux', run('verificar-manifiesto.mjs', ['--manifiesto', manLinux, '--producto', 'tatana-docker', '--clave-extra', extra]), 1, /manifiesto_invalido.*tatana-docker/)
+  expect('Docker rechaza el manifiesto de Windows', run('verificar-manifiesto.mjs', ['--manifiesto', man, '--producto', 'tatana-docker', '--clave-extra', extra]), 1, /manifiesto_invalido.*tatana-docker/)
+  expect('--kit con producto Linux', run('verificar-manifiesto.mjs', ['--manifiesto', manLinux, '--producto', 'tatana-linux', '--clave-extra', extra, '--kit', dkit]), 2, /--kit/)
+  // Payloads firmados igual pero con image/kit/file que no corresponden: se niega a firmar (y verificar los rechazaría).
+  const firmarRaro = (desc, cambio, re) => {
+    const f = join(T, 'payload-docker-raro.json')
+    writeFileSync(f, JSON.stringify({ ...pd, ...cambio }, null, 2) + '\n')
+    expect(desc, run('firmar-manifiesto.mjs', ['--payload', f, '--key-id', 'prueba-1', '--salida', join(T, 'raro-docker.json'), '--clave-extra', extra], { TATANA_FIRMA_CLAVE_PRIVADA: priv }), 1, re)
+  }
+  firmarRaro('Docker con image de otro tag', { image: 'factum-tatana-docker:1.4.0' }, /payload\.image/)
+  firmarRaro('Docker con image de otro nombre', { image: 'otra-imagen:1.5.0' }, /payload\.image/)
+  firmarRaro('Docker con file de otro nombre', { file: 'imagen-1.5.0.tar.gz' }, /payload\.file/)
+  firmarRaro('Docker sin kit', { kit: undefined }, /payload\.kit/)
+  firmarRaro('Docker con kit.file raro', { kit: { ...pd.kit, file: 'kit.tar.gz' } }, /payload\.kit\.file/)
+  firmarRaro('Docker con kit.sha256 en mayúsculas', { kit: { ...pd.kit, sha256: pd.kit.sha256.toUpperCase() } }, /payload\.kit\.sha256/)
+  firmarRaro('Docker con kit.size 0', { kit: { ...pd.kit, size: 0 } }, /payload\.kit\.size/)
+  // Un payload de Linux con campos de Docker tampoco (no se mezclan formatos).
+  const rLinux = join(T, 'payload-linux-con-kit.json')
+  writeFileSync(rLinux, JSON.stringify({ ...pl, kit: pd.kit }, null, 2) + '\n')
+  expect('Linux con kit', run('firmar-manifiesto.mjs', ['--payload', rLinux, '--key-id', 'prueba-1', '--salida', join(T, 'raro-linux.json'), '--clave-extra', extra], { TATANA_FIRMA_CLAVE_PRIVADA: priv }), 1, /solo de tatana-docker/)
+  // Kit e imagen distintos a los firmados.
+  writeFileSync(dkit, Buffer.concat([readFileSync(dkit), Buffer.from('!')]))
+  expect('kit alterado', verDocker(['--kit', dkit]), 1, /kit/)
+  writeFileSync(dimg, Buffer.concat([readFileSync(dimg), Buffer.from('!')]))
+  expect('imagen alterada', verDocker(['--archivo', dimg]), 1, /tamaño|sha/)
+
+  // 9. claves-confiables.txt (fiscalia-operacion §6): sale de trusted-keys.ts, con --clave-extra solo para ensayo.
+  const claves = join(T, 'claves-confiables.txt')
+  expect('claves-confiables.txt', run('claves-confiables.mjs', ['--salida', claves]), 0)
+  expect('claves-confiables --verificar ok', run('claves-confiables.mjs', ['--verificar', claves]), 0, /OK/)
+  expect('claves-confiables con extra', run('claves-confiables.mjs', ['--salida', claves, '--clave-extra', extra]), 0)
+  if (readFileSync(claves, 'utf8').includes(`prueba-1 ${extra.slice(extra.indexOf(':') + 1)}`)) ok('la clave extra está en claves-confiables.txt')
+  else mal('la clave extra no está en claves-confiables.txt')
+  expect('claves-confiables --verificar con extra', run('claves-confiables.mjs', ['--verificar', claves]), 1, /exactamente/)
 } finally {
   rmSync(T, { recursive: true, force: true })
 }

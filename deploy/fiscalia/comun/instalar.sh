@@ -214,6 +214,8 @@ if ((REPARAR)); then
     morir "la base de $CARPETA la creó MongoDB 7: MongoDB 4.4 (modo sin AVX) no la puede abrir." \
       "Si la instalación anterior nunca funcionó (no tiene casos): desinstalala con --desinstalar --borrar-datos y volvé a instalar con --sin-avx."
   fi
+  # Una operación a la vez (SDD fiscalia-operacion §8.7): no se repara mientras corre un backup o una actualización.
+  tomar_candado "$CARPETA"
   ok "Modo reparar: se conserva config/.env y los datos."
 else
   ok "Instalación nueva."
@@ -250,9 +252,14 @@ fi
 paso 5 $TOTAL "Carpetas y configuración en $CARPETA"
 umask 077
 mkdir -p "$CARPETA"/{config/branding,datos/mongo,datos/backend,backups,scripts}
-[[ "$PLAN" == servidor ]] && mkdir -p "$CARPETA"/datos/{caddy-data,caddy-config}
+[[ "$PLAN" == servidor ]] && mkdir -p "$CARPETA"/datos/{caddy-data,caddy-config,caddy-logs} "$CARPETA/canal-tatana/docker"
 chmod 700 "$CARPETA/config" "$CARPETA/datos" "$CARPETA/backups"
 chmod 755 "$CARPETA" "$CARPETA/scripts"
+# Plan A (SDD fiscalia-operacion §8.1): canal de Tatana en Docker (lo sirve Caddy, de solo lectura) y su registro.
+if [[ "$PLAN" == servidor ]]; then
+  chmod 755 "$CARPETA/canal-tatana" "$CARPETA/canal-tatana/docker"
+  chmod 700 "$CARPETA/datos/caddy-logs"
+fi
 if ((!REPARAR)); then
   cat >"$ENV_F" <<EOF
 # Factum en la fiscalía — configuración de ESTA instalación. La generó el instalador el $(date '+%Y-%m-%d %H:%M').
@@ -302,25 +309,7 @@ chmod 755 "$CARPETA/config/branding"
 # ══ 6. Archivos ═════════════════════════════════════════════════════════════════════════════
 paso 6 $TOTAL "Copiando los archivos de Factum"
 umask 022
-cp "$PAQ/comun/docker-compose.yml" "$PAQ/comun/compose.superadmin.yml" "$PAQ/version.txt" "$CARPETA/"
-rm -rf "$CARPETA/mongo-init"
-cp -R "$PAQ/comun/mongo-init" "$CARPETA/mongo-init"
-if ((SIN_AVX)); then
-  [[ -f "$PAQ/comun/compose.sin-avx.yml" && -d "$PAQ/comun/mongo-init-sin-avx" ]] ||
-    morir "al paquete le faltan comun/compose.sin-avx.yml o comun/mongo-init-sin-avx/." "Aplicá el parche sin AVX (parche-sin-avx/LEEME.txt)."
-  cp "$PAQ/comun/compose.sin-avx.yml" "$CARPETA/"
-  rm -rf "$CARPETA/mongo-init-sin-avx"
-  cp -R "$PAQ/comun/mongo-init-sin-avx" "$CARPETA/mongo-init-sin-avx"
-fi
-if [[ "$PLAN" == servidor ]]; then
-  cp "$PAQ/servidor/compose.servidor.yml" "$PAQ/servidor/Caddyfile" "$CARPETA/"
-else
-  cp "$PAQ/una-pc/compose.una-pc.yml" "$CARPETA/"
-fi
-cp "$PAQ/comun/_comun.sh" "$PAQ/comun/backup.sh" "$PAQ/comun/restaurar.sh" "$PAQ/comun/diagnostico.sh" \
-  "$PAQ/comun/borrar-caso-prueba.sh" "$CARPETA/scripts/"
-chmod 755 "$CARPETA"/scripts/*.sh
-[[ -f "$PAQ/instalacion-fiscalia.md" ]] && cp "$PAQ/instalacion-fiscalia.md" "$CARPETA/"
+copiar_archivos_instalacion "$PAQ" "$CARPETA" "$PLAN" "$SIN_AVX"
 cargar_instalacion "$CARPETA"
 # En --reparar con un paquete de otra versión: se avisa (la actualización no es parte de esta entrega).
 if [[ "$FACTUM_VERSION_INSTALADA" != "$VERSION" ]]; then
@@ -394,6 +383,12 @@ if [[ "$PLAN" == servidor ]]; then
     else
       aviso "https://$FACTUM_NOMBRE_RED/health no respondió todavía (diagnostico.sh lo vuelve a probar)."
     fi
+  fi
+  # Tatana en Docker para los peritos (SDD fiscalia-operacion §8.2): si el paquete lo trae, se publica en el canal.
+  if [[ -d "$PAQ/tatana-docker" ]]; then
+    publicar_canal_tatana "$PAQ/tatana-docker" "$CARPETA"
+  else
+    info "El paquete no trae Tatana en Docker para el canal (se publica después con actualizar.sh)."
   fi
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
     info "ufw está activo. Docker publica 80/443 por su cuenta, pero si los peritos no llegan:"
