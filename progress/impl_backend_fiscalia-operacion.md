@@ -199,3 +199,44 @@ Igual que antes: sin commits, sin correr `actualizar.sh` ni el actualizador en l
 (volví a bajar la imagen de shellcheck y la borré al terminar). No hice nada sobre las otras observaciones no
 bloqueantes: el primer run de shellcheck/actionlint en CI y `sumar-actualizador.sh` sin firma propia, que ya está
 documentado como el único paso que confía en el TLS del servidor.
+
+## CI del PR #103
+
+**Resultado:** en `426857d` están **verdes `fiscalia.yml`** (run 40229079718) **y `tatana-docker.yml`** (run
+40229079710: armar, nivel 2 y nivel 3). Lo único que sigue rojo en el PR es `setup-dotnet`, que recibe HTTP 409 al
+bajar el SDK 10.0.403 del espejo `dotnetorigin.blob.core.windows.net`. Pasa en `verificar.yml` (job ".NET") y en
+`tatana-release.yml` ("Agente y herramientas"): es infraestructura y los relancé (`gh run rerun --failed`).
+
+Commits (en `feat/fiscalia-operacion`, solo archivos de #95):
+
+| Commit | Qué |
+|---|---|
+| `a0bb4e6` | **Bug real de `actualizar.sh`** (el que vio el coordinador). Con `set -euo pipefail`, `KB_IMG="$(du -sk "$PAQ/imagenes" \| cut -f1)"` fallaba cuando el paquete no trae `imagenes/` y el script terminaba en silencio en `[2/8]`. Eso rompe justo el paquete `--imagenes-de` de la migración (DU-3=A). Los casos 4 a 6 de la prueba usan ese tipo de paquete; los fallos posteriores (instalada 0.0.2 en vez de 0.0.1, `No such image factum-backend:0.0.5`, canal sin 1.2.0) venían en cascada de eso. Ahora `du`/`df`/`tar` en sustituciones no pueden cortar el script; lo reproduje en la Mac con un `bash -c` mínimo. |
+| `2c2746a` | `tatana-docker.yml`: si `setup-dotnet` falla, instala .NET 10 desde el CDN oficial `builds.dotnet.microsoft.com` con su `dotnet-install.sh` y `--version` explícita (con `--channel` vuelve al enlace aka.ms → 409). Con esto "Imagen y kit" pasa. |
+| `a68c998` | **Bug real del actualizador**: bajo systemd no hay `HOME`, y `comun.sh` usaba `$HOME` con `set -u`. El servicio moría antes de consultar (`comun.sh: line 27: HOME: unbound variable` en el journal) y le habría pasado a todas las PCs. Ahora usa `HOME` o, si falta, `getent` o `/root`. Arreglos de prueba: la copia de la CA de Caddy queda 644 (el `certutil` de `preparar-pc-perito.sh` corre como el perito), los logs quedan legibles para subir el artifact, y se acepta systemd de 20.04 en `starting` (guarda `list-jobs`). |
+| `426857d` | Pruebas: `version_health` tomaba la última clave `"version"` de `/health` (las herramientas también la traen); ahora toma la primera. La imagen de 20.04 suma `dbus`, como un escritorio: sin él, `systemctl is-active` de un usuario no root no responde. Enmascaré `serial-getty@ttyS0`. `estado-tatana-docker.sh` ahora distingue "no se pudo preguntarle a systemd" de "timer no activo". |
+
+**Lo que mostró CI del actualizador (nivel 2, Docker y systemd reales):** `firma_invalida`, `clave_desconocida`,
+`manifiesto_invalido` (producto linux), `hash_invalido` (imagen y kit) sin cargar nada en Docker; `esperando_libre` con
+el contenedor intacto y la descarga guardada; `actualizada` con datos, pareos, evidencia, montajes, uid/gid, puerto y
+argumentos iguales; `al_dia` con versión igual y menor; `no_arranca` → vuelve a X y después `version_fallida`;
+`vuelta_manual`; `sin_espacio` sin descargar nada; `sin_servidor` con Tatana respondiendo; `recuperado` después del
+corte entre `rename` y `run`; `estado-peritos.sh` lista el equipo; el desinstalador no deja nada propio y la
+evidencia queda. Nivel 3 (Ubuntu 20.04, bash 5.0, systemd 245): `systemd-analyze verify`, instalación, timer en
+`list-timers`, corrida feliz y vuelta atrás con `systemctl start`.
+
+**Lo que mostró la prueba del servidor (`fiscalia.yml`):** los 7 casos de §14.3 verdes (0.0.2 con backup previo y canal,
+0.0.3 rota con vuelta atrás, paquete dañado, versión menor, `--imagenes-de`, solo Tatana y candado).
+
+**Notas para el orquestador:**
+- `setup-dotnet` (409) sigue fallando en `verificar.yml` y `tatana-release.yml`. Si no se resuelve solo, el mismo
+  fallback de `tatana-docker.yml` se puede copiar ahí. No lo hice porque esos workflows no son de esta HU (en
+  `verificar.yml` solo sumé pasos).
+- `preparar-pc-perito.sh` en las pruebas termina con error solo en su chequeo final de `/health` (el Caddy de prueba no
+  tiene backend: 502); la CA y `/etc/hosts` quedan bien. No es un bug del script.
+- No corrí `actualizar.sh` ni el actualizador en la Mac; no marqué el PR como listo ni lo mergeé.
+
+Después: el 409 de `setup-dotnet` siguió fallando en los reintentos. El respaldo del CDN oficial pasó a una composite
+action, `.github/actions/dotnet-10/action.yml`. La usan los tres jobs de Linux que instalan .NET en este PR:
+`verificar.yml` (.NET), `tatana-release.yml` (Agente y herramientas) y `tatana-docker.yml` (Imagen y kit). En esos
+workflows no se tocó nada más. `tatana-linux.yml` y `tatana-windows.yml` quedan como estaban (no corren en este PR).
