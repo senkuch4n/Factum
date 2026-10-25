@@ -64,12 +64,14 @@ GID_DOCKER="$(stat -c %g /var/run/docker.sock)"
 cat >"$W/img2004/Dockerfile" <<EOF
 FROM ubuntu:20.04
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv sudo ca-certificates util-linux \
+# dbus: como en un Ubuntu de escritorio (sin él, systemctl de un usuario no root no puede preguntarle nada a systemd).
+RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus sudo ca-certificates util-linux \
       coreutils iproute2 procps tzdata && rm -rf /var/lib/apt/lists/*
 # systemd-binfmt enmascarado (igual que en la regla para la Mac): no toca los manejadores binfmt del kernel compartido.
 RUN ln -sf /dev/null /etc/systemd/system/systemd-binfmt.service \
  && ln -sf /dev/null /etc/systemd/system/proc-sys-fs-binfmt_misc.automount \
- && ln -sf /dev/null /etc/systemd/system/getty@tty1.service
+ && ln -sf /dev/null /etc/systemd/system/getty@tty1.service \
+ && ln -sf /dev/null /etc/systemd/system/serial-getty@ttyS0.service
 COPY docker/docker /usr/local/bin/docker
 RUN groupadd -g $GID_DOCKER dockerhost || true \
  && useradd -m -u $PUID -s /bin/bash -G \$(getent group $GID_DOCKER | cut -d: -f1) $PERITO \

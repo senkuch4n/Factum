@@ -45,7 +45,8 @@ servidor_arrancar() { # servidor_arrancar <usuario del perito>
   install -m 644 "$ca" "$W/ca-factum-fiscalia.crt"
   if ! bash "$RAIZ/deploy/fiscalia/perito/preparar-pc-perito.sh" 127.0.0.1 --ca "$W/ca-factum-fiscalia.crt" --usuario "$u" \
       >"$LOGS/preparar-pc-perito.log" 2>&1; then
-    echo "AVISO: preparar-pc-perito.sh falló (ver $LOGS/preparar-pc-perito.log); se instala la CA a mano"
+    # Lo esperable acá es que falle solo su prueba final de /health (el Caddy de prueba no tiene backend: 502).
+    echo "AVISO: preparar-pc-perito.sh terminó con error (ver $LOGS/preparar-pc-perito.log; si es solo la prueba de /health, es el Caddy de prueba sin backend); se asegura la CA a mano"
     install -m 644 "$W/ca-factum-fiscalia.crt" /usr/local/share/ca-certificates/factum-fiscalia.crt
     update-ca-certificates >/dev/null 2>&1 || true
     grep -q 'factum.internal' /etc/hosts || echo "127.0.0.1 factum.internal" >>/etc/hosts
@@ -143,7 +144,8 @@ canal_de_carpeta() { # canal_de_carpeta <carpeta Tatana-Docker-vV> <versión> <d
 estado() { grep "^$1=" /var/lib/factum-tatana-docker/estado.env 2>/dev/null | head -1 | cut -d= -f2-; }
 imagenes_tatana() { docker images --format '{{.Repository}}:{{.Tag}}' | grep '^factum-tatana-docker:' | LC_ALL=C sort | tr '\n' ' '; }
 id_contenedor() { docker inspect -f '{{.Id}}' tatana-docker 2>/dev/null; }
-version_health() { docker exec tatana-docker curl -fsS --max-time 5 http://127.0.0.1:8765/health 2>/dev/null | sed -nE 's/.*"version":"([^"]+)".*/\1/p'; }
+# La PRIMERA clave "version" de /health es la del agente (las herramientas también traen "version" más adelante).
+version_health() { docker exec tatana-docker curl -fsS --max-time 5 http://127.0.0.1:8765/health 2>/dev/null | grep -o '"version":"[^"]*"' | head -1 | cut -d'"' -f4; }
 # Lo que tiene que quedar igual del contenedor después de un cambio: montajes, uid/gid, puerto, red, reinicio, argumentos.
 forma_contenedor() {
   {

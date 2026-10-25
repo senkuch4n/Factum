@@ -43,6 +43,7 @@ mostrar_actualizaciones() {
     timer="$(systemctl is-active "$UNIDAD_TIMER" 2>/dev/null || true)"
     prox="$(systemctl show "$UNIDAD_TIMER" -p NextElapseUSecRealtime --value 2>/dev/null || true)"
     if [[ "$timer" == active ]]; then ok "timer activo; próxima consulta: ${prox:-?}"
+    elif [[ -z "$timer" ]]; then aviso "no se pudo preguntarle a systemd por el timer (probá: systemctl status $UNIDAD_TIMER)"
     else aviso "el timer no está activo ($timer): sudo systemctl enable --now $UNIDAD_TIMER"; fi
   fi
   echo "  Versión instalada: $(clave_de "$est" VERSION_INSTALADA)  ($(clave_de "$est" IMAGEN_INSTALADA))"
