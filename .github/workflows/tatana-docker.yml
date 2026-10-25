@@ -139,8 +139,23 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        id: dotnet
+        continue-on-error: true
         with:
           dotnet-version: 10.0.x
+      # Si setup-dotnet no puede bajar el SDK (pasó: HTTP 409 del espejo dotnetorigin.blob.core.windows.net), el mismo
+      # canal desde el CDN oficial de Microsoft con su dotnet-install.sh.
+      - name: .NET 10 desde el CDN oficial (si setup-dotnet falló)
+        if: steps.dotnet.outcome == 'failure'
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/dotnet-install.sh" https://builds.dotnet.microsoft.com/dotnet/scripts/v1/dotnet-install.sh
+          # Con --version explícita usa el feed indicado (con --channel vuelve al enlace aka.ms que da 409).
+          V="$(curl -fsSL --retry 3 https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0/latest.version | tr -d '[:space:]')"
+          bash "$RUNNER_TEMP/dotnet-install.sh" --version "$V" --install-dir "$HOME/.dotnet" \
+            --azure-feed https://builds.dotnet.microsoft.com/dotnet
+          echo "$HOME/.dotnet" >>"$GITHUB_PATH"
+          echo "DOTNET_ROOT=$HOME/.dotnet" >>"$GITHUB_ENV"
+          "$HOME/.dotnet/dotnet" --version
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
