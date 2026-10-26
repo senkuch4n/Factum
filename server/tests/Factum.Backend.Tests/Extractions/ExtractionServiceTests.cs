@@ -27,7 +27,7 @@ public class ExtractionServiceTests
             Timestamps = new FakeTimestampService { Enabled = sealingEnabled };
             var (caseRepo, _) = CaseLookupProxy.Create(cases);
             Service = new ExtractionService(Repo, caseRepo, Events, TimestampRepo, Timestamps,
-                new ReportTestSupport.FakeSettings(),
+                new ReportTestSupport.FakeSettings(), new FakeReportService(),
                 new FakeTimeProvider(Now), new HttpContextAccessor(), NullLogger<ExtractionService>.Instance);
         }
     }

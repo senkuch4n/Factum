@@ -11,8 +11,36 @@ import { FxBanner } from "@/components/feedback/FxBanner";
 import { useExtractionLive } from "@/hooks/useExtractionLive";
 import { useExtractionRegistration } from "@/hooks/useExtractionRegistration";
 import { ExtractionProgress } from "@/components/extraction/ExtractionProgress";
-import { ExtractionResult } from "@/components/extraction/ExtractionResult";
+import { ExtractionResult, type ReportFeedback } from "@/components/extraction/ExtractionResult";
 import { LinkCaseDialog } from "@/components/extraction/LinkCaseDialog";
+
+/** Base64 (sin el prefijo `data:…;base64,`) de un blob, para mandárselo a Tatana. */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("No se pudo leer el informe"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** Dispara la descarga del blob en el navegador con el nombre sugerido. */
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revocar en un tick posterior: revocar en el acto cancela la descarga.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
 
 export function ExtractionDetailScreen({ id }: { id: string }) {
   const { user, handleLogout } = useAuth({ withHistory: false });
@@ -26,6 +54,9 @@ export function ExtractionDetailScreen({ id }: { id: string }) {
   const [revealing, setRevealing] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const [reportSaved, setReportSaved] = useState(false);
+  const [reportFeedback, setReportFeedback] = useState<ReportFeedback | null>(null);
 
   const loadDto = useCallback(async () => {
     try {
@@ -62,6 +93,65 @@ export function ExtractionDetailScreen({ id }: { id: string }) {
     try { setDto(await api.unlinkExtraction(id)); }
     catch { /* el DTO queda como estaba */ }
     finally { setUnlinking(false); }
+  }
+
+  /**
+   * Genera el informe pericial: baja el DOCX del backend, lo guarda en la
+   * carpeta vía Tatana si la extracción es local y Tatana lo soporta, y lo
+   * descarga siempre en el navegador (informe-extraccion §9.1). El error de
+   * generación no pierde el estado de la página; el aviso distingue "solo
+   * descarga" de "guardado en la carpeta".
+   */
+  async function generateReport() {
+    if (generatingReport) return;
+    setGeneratingReport(true);
+    setReportFeedback(null);
+
+    let blob: Blob;
+    let filename: string;
+    try {
+      ({ blob, filename } = await api.getExtractionReportBlob(id));
+    } catch {
+      setReportFeedback({ tone: "warn", text: "No se pudo generar el informe.", retry: true });
+      setGeneratingReport(false);
+      return;
+    }
+
+    // Guardar en la carpeta: solo si Tatana tiene la extracción local y sabe hacerlo.
+    let savedToFolder = false;
+    let folderFailed = false;
+    if (snapshot) {
+      try {
+        if (await agent.supportsExtractionReport()) {
+          const contentBase64 = await blobToBase64(blob);
+          await agent.writeExtractionReport(id, { contentBase64, filename: "INFORME.docx" });
+          savedToFolder = true;
+        }
+      } catch {
+        folderFailed = true;
+      }
+    }
+
+    // Descarga en el navegador: siempre, y única vía si Tatana no la tiene o es viejo.
+    downloadBlob(blob, filename);
+
+    if (savedToFolder) {
+      setReportSaved(true);
+      setReportFeedback({ tone: "success", text: "Informe guardado en la carpeta de la extracción. También se descargó una copia." });
+      void refreshSnap();
+    } else if (folderFailed) {
+      setReportFeedback({
+        tone: "warn",
+        text: "Se descargó el informe, pero no se pudo guardar en la carpeta de la extracción.",
+        retry: true,
+      });
+    } else {
+      setReportFeedback({
+        tone: "info",
+        text: "Se descargó el informe. No se pudo guardar en la carpeta (la extracción es de otra PC o Tatana es viejo).",
+      });
+    }
+    setGeneratingReport(false);
   }
 
   const running = snapshot?.status === "running";
@@ -113,6 +203,10 @@ export function ExtractionDetailScreen({ id }: { id: string }) {
             onOpenLink={() => setLinkOpen(true)}
             onUnlink={unlink}
             unlinking={unlinking}
+            onGenerateReport={generateReport}
+            generatingReport={generatingReport}
+            reportWritten={reportSaved || !!snapshot?.report_written_at}
+            reportFeedback={reportFeedback}
           />
         )}
       </main>

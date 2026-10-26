@@ -6,6 +6,7 @@ La cadena es **plantilla del usuario (`docs/`, no versionada) → v4 → v6**:
 |---|---|---|
 | `Templates/plantilla_informe_v4.docx` | `build_plantilla_v4.py` | Contenido pericial, placeholders y bloques, sin datos reales. Es la entrada de la v6 y la línea de base de los tests. El backend ya no la usa en runtime. |
 | `Templates/plantilla_informe_v6.docx` | `build_plantilla_v6.py` | La v4 con el diseño "Filete" y la paleta de Factum. **Es la que usa `ReportService`.** |
+| `Templates/plantilla_informe_extraccion_v6.docx` | `build_plantilla_extraccion_v6.py` | Informe pericial de una extracción lógica (informe-extraccion §6). Script hermano que importa `build_plantilla_v6`, hereda sus partes de diseño (styles/numbering/header2/footer1/footer2) de la v6 y solo reescribe el cuerpo (10 secciones propias) y la celda de la causa del encabezado interior. La usa `ReportService.GenerateExtractionReportAsync`. |
 | (no versionada) v5 | `build_plantilla_v5.py` | El diseño anterior (portada con franja, banda interior). El `.docx` se borró del repo, pero el script queda sin cambios: lo importa el v6 y reproduce la v5 desde la v4 byte a byte si alguna vez hace falta. |
 
 La v6 se reconstruye **solo desde la v4 versionada**: no necesita la plantilla

@@ -20,6 +20,12 @@ public interface IExtractionService
     Task<Result<ExtractionDto>> LinkAsync(string id, string? caseId, User officer, CancellationToken ct);
     Task<Result<ExtractionDto>> UnlinkAsync(string id, User officer, CancellationToken ct);
     Task<Result<ExtractionTimestampFilesResponse>> TimestampFilesAsync(string id, User officer, CancellationToken ct);
+
+    /// <summary>
+    /// informe-extraccion §7.4: compone <see cref="GetAsync"/> + <c>IReportService.GenerateExtractionReportAsync</c>.
+    /// 404 si no existe o es de otro dueño; 409 <c>extraction_not_finished</c> si no es terminal. No escribe nada.
+    /// </summary>
+    Task<Result<ExtractionReportResult>> GenerateReportAsync(string id, User officer, CancellationToken ct);
 }
 
 public sealed class ExtractionService(
@@ -29,6 +35,7 @@ public sealed class ExtractionService(
     ICaseTimestampRepository timestampRepo,
     ITimestampService timestamps,
     IReportSettings reportSettings,
+    IReportService reports,
     TimeProvider time,
     IHttpContextAccessor http,
     ILogger<ExtractionService> log) : IExtractionService
@@ -161,6 +168,20 @@ public sealed class ExtractionService(
             : new List<TimestampFileDto>();
         var readme = TimestampReadme.BuildForExtraction(id, Now, reportSettings.Zone, sello);
         return Result.Ok(new ExtractionTimestampFilesResponse(files, readme));
+    }
+
+    public async Task<Result<ExtractionReportResult>> GenerateReportAsync(string id, User officer, CancellationToken ct)
+    {
+        var e = await repo.FindByIdAsync(id, ct);
+        if (e is null || e.Officer.Dni != officer.Dni)
+            return Result.NotFound<ExtractionReportResult>("Extracción no encontrada");
+        if (!ExtractionStatuses.IsTerminal(e.Status))
+            return Result.Fail<ExtractionReportResult>(ErrorKind.Conflict, "La extracción no terminó.",
+                new Dictionary<string, object?> { ["code"] = CodeNotFinished });
+
+        var dto = await ToDtoAsync(e, await SafeFindSelloAsync(e), ct);
+        var report = await reports.GenerateExtractionReportAsync(dto, ct);
+        return Result.Ok(report);
     }
 
     // ── helpers ──

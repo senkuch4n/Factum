@@ -29,6 +29,13 @@ public sealed record ExtractionSealItem(string? Name = null, string? ContentBase
 /// <summary>Cuerpo de <c>PUT /extractions/{id}/seals</c>.</summary>
 public sealed record ExtractionSealsRequest(List<ExtractionSealItem>? Files = null, string? Readme = null);
 
+/// <summary>
+/// Cuerpo de <c>PUT /extractions/{id}/report</c> (informe-extraccion §8.3): el DOCX del informe en base64. El
+/// <c>Filename</c> es informativo; Tatana escribe siempre <c>INFORME.docx</c> + <c>INFORME.docx.sha256</c> en la raíz
+/// de la carpeta de la extracción (U1).
+/// </summary>
+public sealed record ExtractionReportRequest(string? ContentBase64 = null, string? Filename = null);
+
 // extraccion-logica-android §8.2/§8.3 (Contrato compartido, lado Tatana). JSON en snake_case_lower
 // (JsonStringEnumConverter(SnakeCaseLower) + WhenWritingNull en Program.cs del agente). Del lado web:
 // client/src/lib/agent.ts (AgentExtraction*). El `record` (AgentExtractionRecord) usa EXACTAMENTE los nombres del

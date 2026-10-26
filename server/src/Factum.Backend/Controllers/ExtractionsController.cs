@@ -1,6 +1,8 @@
+using Factum.Backend.Common;
 using Factum.Backend.DTOs;
 using Factum.Backend.Models;
 using Factum.Backend.Services.Extractions;
+using Factum.Backend.Services.Reports;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -15,7 +17,8 @@ namespace Factum.Backend.Controllers;
 [Route("api/extractions")]
 [Authorize]
 [Produces("application/json")]
-public sealed class ExtractionsController(IExtractionService service) : ControllerBase
+public sealed class ExtractionsController(IExtractionService service, ILogger<ExtractionsController> logger)
+    : ControllerBase
 {
     private User Officer => (User)HttpContext.Items["User"]!;
 
@@ -69,6 +72,35 @@ public sealed class ExtractionsController(IExtractionService service) : Controll
     {
         var result = await service.UnlinkAsync(id, Officer, ct);
         return result.IsSuccess ? Ok(result.Value) : this.ErrorResult(result);
+    }
+
+    /// <summary>
+    /// informe-extraccion §7.4/§8.2: genera el DOCX del informe pericial de la extracción y lo devuelve como descarga
+    /// (<c>Content-Disposition: attachment</c>), con <c>X-Report-Sha256</c> informativo. 404 si no existe o es de otro
+    /// dueño; 409 <c>extraction_not_finished</c> si no es terminal; 500 si la generación falla (sin filtrar detalles).
+    /// </summary>
+    [HttpGet("{id}/report")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Report(string id, CancellationToken ct)
+    {
+        Result<ExtractionReportResult> result;
+        try
+        {
+            result = await service.GenerateReportAsync(id, Officer, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "No se pudo generar el informe de la extracción {Id}", id);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "No se pudo generar el informe." });
+        }
+        if (!result.IsSuccess) return this.ErrorResult(result);
+
+        var report = result.Value!;
+        Response.Headers["X-Report-Sha256"] = report.Sha256;
+        return File(report.Docx,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document", report.Filename);
     }
 
     /// <summary>§8.5: el <c>.tsr</c> (si el sello está granted) y el LEEME, para que Tatana los copie a <c>sellos/</c>.</summary>

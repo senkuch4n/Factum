@@ -505,7 +505,10 @@ export type IosDeveloperModeStatus = "enabled" | "restarting" | "manual_required
  *   `recording_session_ios_v1` llegan en la fase 2;
  * - `extraction_android_v1`: extracción lógica de Android (`/extractions*`,
  *   `/devices/{serial}/extraction/*` y `/extraction/destinations*`,
- *   extraccion-logica-android §8.1). Sin ella la sección no deja iniciar.
+ *   extraccion-logica-android §8.1). Sin ella la sección no deja iniciar;
+ * - `extraction_report_v1`: `PUT /extractions/{id}/report` escribe `INFORME.docx`
+ *   + `INFORME.docx.sha256` en la raíz de la carpeta preservada (informe-extraccion
+ *   §8.3). Sin ella el cliente cae a descarga-solo del DOCX en el navegador.
  */
 /** SO de la PC donde corre Tatana (`/health.os`, tatana-linux §10.A). Falta en Tatanas anteriores. */
 export type AgentOs = "windows" | "macos" | "linux";
@@ -618,6 +621,23 @@ export interface WriteSealsResponse {
   directory: string;
   written: number;
   unchanged: number;
+}
+
+/** `PUT /extractions/{id}/report` (informe-extraccion §8.3). El `filename` es
+ *  informativo: Tatana siempre escribe `INFORME.docx` en la raíz de la carpeta. */
+export interface WriteExtractionReportRequest {
+  content_base64: string;
+  filename: string;
+}
+
+/** Respuesta de `PUT /extractions/{id}/report`: lo efectivamente escrito. */
+export interface WriteExtractionReportResponse {
+  /** Carpeta preservada de la extracción (raíz, donde quedó `INFORME.docx`). */
+  directory: string;
+  filename: string;
+  /** SHA-256 que Tatana calculó sobre los bytes escritos (va en `INFORME.docx.sha256`). */
+  sha256: string;
+  bytes: number;
 }
 
 /** `GET /cases/{id}/zip/status`. */
@@ -1094,6 +1114,9 @@ export interface AgentExtractionSnapshot {
   manifest_sha256?: string;
   manifest_entries?: number;
   record?: AgentExtractionRecord;
+  /** Momento en que se escribió `INFORME.docx` en la carpeta (informe-extraccion §5).
+   *  Falta en Tatana anterior a `extraction_report_v1` y hasta generar el informe. */
+  report_written_at?: string;
 }
 
 /** Entrada del índice local de Tatana (`GET /extractions`, §8.2.5). */
@@ -1361,6 +1384,11 @@ export const agent = {
   /** `true` si Tatana lee la ficha técnica y el reloj del dispositivo (`device_details_v1`). Mismo caché. */
   async supportsDeviceDetails(): Promise<boolean> {
     return this.hasCapability("device_details_v1");
+  },
+
+  /** `true` si Tatana sabe guardar el informe en la carpeta (`extraction_report_v1`). Mismo caché. */
+  async supportsExtractionReport(): Promise<boolean> {
+    return this.hasCapability("extraction_report_v1");
   },
 
   /**
@@ -1828,6 +1856,21 @@ export const agent = {
   /** Abre la carpeta de la extracción con `ACTA.txt` seleccionado. 409 `reveal_unavailable` en Docker. */
   async revealExtraction(id: string): Promise<void> {
     await agentFetch(`/extractions/${encodeURIComponent(id)}/reveal`, { method: "POST" });
+  },
+  /**
+   * Guarda el informe pericial en la raíz de la carpeta de la extracción como
+   * `INFORME.docx` + `INFORME.docx.sha256` (informe-extraccion §8.3). Requiere
+   * `extraction_report_v1`. Tatana ignora el `filename` del pedido (siempre
+   * escribe `INFORME.docx`) y recalcula el SHA-256 sobre lo que escribió. No
+   * toca `MANIFIESTO.tsv*` ni `sellos/`.
+   */
+  async writeExtractionReport(
+    id: string, body: { contentBase64: string; filename: string },
+  ): Promise<WriteExtractionReportResponse> {
+    return agentJSON<WriteExtractionReportResponse>(
+      `/extractions/${encodeURIComponent(id)}/report`,
+      jsonInit("PUT", { content_base64: body.contentBase64, filename: body.filename }),
+    );
   },
 
   /** Conecta al WebSocket del agente para eventos en tiempo real. */

@@ -107,6 +107,10 @@ public sealed class ExtractionSnapshot
     public bool Registered { get; set; }
     public bool SealsWritten { get; set; }
 
+    // informe-extraccion §5: lo setea WriteReport al escribir INFORME.docx. No es autoridad de nada; solo permite que
+    // el detalle muestre "Informe guardado en la carpeta". Se pisa en cada regeneración. Diarios viejos: null.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public DateTimeOffset? ReportWrittenAt { get; set; }
+
     // Solo en el terminal.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public DateTime? FinishedAt { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public InterruptionSnapshot? Interruption { get; set; }

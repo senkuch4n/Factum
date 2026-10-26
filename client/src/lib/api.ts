@@ -198,6 +198,22 @@ function parseUploadErrorBody(text: string): UploadErrorBody | null {
 }
 
 /**
+ * Nombre de archivo de un header `Content-Disposition` (`filename*=UTF-8''…`
+ * tiene prioridad sobre `filename="…"`). Devuelve `null` si no hay header o no
+ * trae nombre; el llamador decide el fallback.
+ */
+function parseContentDispositionFilename(header: string | null): string | null {
+  if (!header) return null;
+  const star = /filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)/i.exec(header);
+  if (star?.[1]) {
+    try { return decodeURIComponent(star[1].trim()); } catch { /* cae al nombre simple */ }
+  }
+  const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(header);
+  const name = plain?.[1]?.trim();
+  return name ? name.replace(/^["']|["']$/g, "") : null;
+}
+
+/**
  * `fetch` con el token vigente. Ante un 401, si mientras el pedido viajaba
  * otra pestaña (o esta) dejó un token **distinto y no nulo**, reintenta una
  * vez con ese (D14). Los cuerpos que se usan (string, `FormData`, `Blob`) se
@@ -1816,6 +1832,30 @@ export const api = {
     return requestSafe<{ files: TimestampFileItem[]; readme: string }>(
       `/api/extractions/${encodeURIComponent(id)}/timestamp/files`, { cache: "no-store" },
     );
+  },
+  /**
+   * Baja el DOCX del informe pericial de la extracción (informe-extraccion §8.2):
+   * `GET /api/extractions/{id}/report`. Devuelve el blob, el nombre sugerido
+   * (de `Content-Disposition`) y el SHA-256 informativo (`X-Report-Sha256`, o
+   * `null` si no vino o no es un hash de 64 hex). El backend lo genera al vuelo
+   * y no lo persiste; la autoridad de integridad es el `INFORME.docx.sha256` que
+   * calcula Tatana al escribirlo (§4). Errores del backend (`{ error, code }`:
+   * `404`, `409 extraction_not_finished`, `500`) llegan como `ApiError`; una red
+   * caída, como `ApiError(SERVER_UNREACHABLE, 0)`.
+   */
+  async getExtractionReportBlob(id: string): Promise<{ blob: Blob; filename: string; sha256: string | null }> {
+    let sent: Sent;
+    try {
+      sent = await authFetch(`${BACKEND_URL}/api/extractions/${encodeURIComponent(id)}/report`, { cache: "no-store" });
+    } catch {
+      throw new ApiError(SERVER_UNREACHABLE, 0, undefined, null);
+    }
+    if (!sent.res.ok) throw await toApiError(sent.res, sent.sentToken);
+    const blob = await sent.res.blob();
+    const filename = parseContentDispositionFilename(sent.res.headers.get("Content-Disposition"))
+      ?? `informe_extraccion_${id}.docx`;
+    const sha256 = sent.res.headers.get("X-Report-Sha256");
+    return { blob, filename, sha256: sha256 && /^[0-9a-f]{64}$/i.test(sha256) ? sha256 : null };
   },
 
   /* ── Ficha técnica del dispositivo (metadatos-dispositivo, SDD §7.1) ── */

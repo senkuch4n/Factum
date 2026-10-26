@@ -2,7 +2,7 @@
 
 import { Button } from "primereact/button";
 import {
-  Clock, ClockCheck, FolderOpen, Hash, Link2, Link2Off, Smartphone, type LucideIcon,
+  Clock, ClockCheck, FileCheck2, FileText, FolderOpen, Hash, Link2, Link2Off, Smartphone, type LucideIcon,
 } from "lucide-react";
 import type { AgentExtractionSnapshot, AgentDeviceModification } from "@/lib/agent";
 import type { Extraction, ExtractionDeviceModification } from "@/lib/api";
@@ -14,6 +14,14 @@ import { CopyButton } from "@/components/feedback/CopyButton";
 import { FxBanner } from "@/components/feedback/FxBanner";
 import { formatBytes, formatDate, formatTime } from "@/lib/format";
 
+/** Aviso transitorio del resultado de "Generar informe" (lo arma `ExtractionDetailScreen`). */
+export interface ReportFeedback {
+  tone: "success" | "warn" | "info";
+  text: string;
+  /** Si viene, el aviso ofrece un botón "Reintentar" (llama a `onGenerateReport`). */
+  retry?: boolean;
+}
+
 interface Props {
   id: string;
   snapshot: AgentExtractionSnapshot | null;
@@ -24,10 +32,17 @@ interface Props {
   onOpenLink: () => void;
   onUnlink: () => void;
   unlinking: boolean;
+  /** Genera el informe: lo descarga y, si Tatana lo tiene local, lo guarda en la carpeta. */
+  onGenerateReport: () => void;
+  generatingReport: boolean;
+  /** `true` si el informe ya quedó en la carpeta (de `report_written_at` o de una generación de esta sesión). */
+  reportWritten: boolean;
+  reportFeedback: ReportFeedback | null;
 }
 
 export function ExtractionResult({
   id, snapshot, dto, canReveal, onReveal, revealing, onOpenLink, onUnlink, unlinking,
+  onGenerateReport, generatingReport, reportWritten, reportFeedback,
 }: Props) {
   const status = snapshot?.status ?? dto?.status ?? "completed";
   const manufacturer = snapshot?.manufacturer ?? dto?.device.manufacturer ?? "";
@@ -118,8 +133,45 @@ export function ExtractionResult({
                   className="min-h-11"
                 />
               )}
+              <Button
+                severity="secondary"
+                size="small"
+                icon={<FileText className="h-3.5 w-3.5" aria-hidden="true" />}
+                label={generatingReport ? "Generando…" : "Generar informe"}
+                onClick={onGenerateReport}
+                disabled={generatingReport || status === "running"}
+                aria-busy={generatingReport}
+                loading={generatingReport}
+                title={status === "running" ? "Disponible al terminar la extracción" : undefined}
+                className="min-h-11"
+              />
               <CopyButton text={folderPath} label="Copiar la ruta de la carpeta" buttonLabel="Copiar ruta" />
             </div>
+            {reportWritten && !reportFeedback && (
+              <p className="m-0 mt-2 inline-flex items-center gap-1.5 text-xs text-fx-text-3">
+                <FileCheck2 className="h-3.5 w-3.5 text-fx-success" aria-hidden="true" />
+                Informe en la carpeta
+              </p>
+            )}
+            {reportFeedback && (
+              <FxBanner
+                tone={reportFeedback.tone}
+                className="mt-2"
+                role={reportFeedback.tone === "warn" ? "alert" : "status"}
+              >
+                <span>{reportFeedback.text}</span>
+                {reportFeedback.retry && (
+                  <button
+                    type="button"
+                    onClick={onGenerateReport}
+                    disabled={generatingReport}
+                    className="ml-1.5 font-semibold underline underline-offset-2 hover:no-underline disabled:opacity-60 fx-focus-ring"
+                  >
+                    Reintentar
+                  </button>
+                )}
+              </FxBanner>
+            )}
           </div>
         </section>
       )}
