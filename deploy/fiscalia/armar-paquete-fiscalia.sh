@@ -148,7 +148,7 @@ fi
 F="$SRC/deploy/fiscalia"
 for f in deploy/fiscalia/comun/docker-compose.yml deploy/fiscalia/comun/compose.sin-avx.yml \
   deploy/fiscalia/comun/mongo-init-sin-avx/01-usuario-app.js deploy/fiscalia/servidor/compose.servidor.yml deploy/fiscalia/servidor/Caddyfile \
-  deploy/fiscalia/una-pc/compose.una-pc.yml deploy/fiscalia/perito/preparar-pc-perito.sh deploy/fiscalia/LEEME.txt \
+  deploy/fiscalia/una-pc/compose.una-pc.yml deploy/fiscalia/perito/preparar-pc-perito.sh deploy/fiscalia/perito/preparar-pc-windows.ps1 deploy/fiscalia/perito/preparar-pc-windows.cmd deploy/fiscalia/LEEME.txt \
   deploy/fiscalia/LEEME-actualizacion.txt deploy/fiscalia/comun/actualizar.sh deploy/fiscalia/comun/estado-peritos.sh \
   deploy/fiscalia/verificar-tar-imagen.py deploy/fiscalia/herramientas/instalar-docker-offline.sh deploy/cloud/mongo-init/01-usuario-app.js deploy/windows/appsettings.Local.example.json \
   docs/instalacion-fiscalia.md client/Dockerfile server/src/Factum.Backend/Dockerfile; do
@@ -349,7 +349,7 @@ else
   cp "$SRC/deploy/cloud/mongo-init/01-usuario-app.js" "$PAQ/comun/mongo-init/"
   cp "$SRC/deploy/windows/appsettings.Local.example.json" "$PAQ/comun/"
   cp "$F/servidor/instalar-servidor.sh" "$F/servidor/compose.servidor.yml" "$F/servidor/Caddyfile" "$PAQ/servidor/"
-  cp "$F/perito/preparar-pc-perito.sh" "$PAQ/perito/"
+  cp "$F/perito/preparar-pc-perito.sh" "$F/perito/preparar-pc-windows.ps1" "$F/perito/preparar-pc-windows.cmd" "$PAQ/perito/"
   cp "$F/una-pc/instalar-una-pc.sh" "$F/una-pc/compose.una-pc.yml" "$PAQ/una-pc/"
   cp "$F/LEEME.txt" "$PAQ/"
   cp "$SRC/docs/instalacion-fiscalia.md" "$PAQ/"
