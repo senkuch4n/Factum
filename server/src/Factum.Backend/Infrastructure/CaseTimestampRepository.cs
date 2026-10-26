@@ -58,6 +58,13 @@ public interface ICaseTimestampRepository
 
     /// <summary>Todos los sellos del caso. Sin el <c>.tsr</c> salvo que se pida.</summary>
     Task<List<CaseTimestamp>> ListByCaseAsync(string caseId, bool includeTsr = false, CancellationToken ct = default);
+
+    /// <summary>
+    /// extraccion-logica-android §6.3: el sello del manifiesto de una extracción (<c>CaseId == ""</c> +
+    /// <c>ExtractionId</c>). Sin el <c>.tsr</c> salvo que se pida. null si la extracción no tiene sello.
+    /// </summary>
+    Task<CaseTimestamp?> FindByExtractionAsync(string extractionId, bool includeTsr = false,
+        CancellationToken ct = default);
 }
 
 public sealed class CaseTimestampRepository : ICaseTimestampRepository
@@ -100,6 +107,14 @@ public sealed class CaseTimestampRepository : ICaseTimestampRepository
                         Name = "ix_case_timestamps_due",
                         PartialFilterExpression = Builders<CaseTimestamp>.Filter.Eq(t => t.Status, TimestampStatuses.Pending),
                     }),
+                // extraccion-logica-android §6.3: buscar el sello por extracción. Parcial: solo los docs que lo tienen.
+                new CreateIndexModel<CaseTimestamp>(
+                    keys.Ascending(t => t.ExtractionId),
+                    new CreateIndexOptions<CaseTimestamp>
+                    {
+                        Name = "ix_case_timestamps_extraction",
+                        PartialFilterExpression = Builders<CaseTimestamp>.Filter.Exists(t => t.ExtractionId),
+                    }),
             ], CancellationToken.None);
             _indexTask.ContinueWith(t => _log.LogWarning("No se pudieron crear los índices de {Col} ({Error}); se reintenta en la próxima escritura",
                 CollectionName, t.Exception?.GetBaseException().GetType().Name), TaskContinuationOptions.OnlyOnFaulted);
@@ -129,6 +144,9 @@ public sealed class CaseTimestampRepository : ICaseTimestampRepository
             .SetOnInsert(t => t.NextAttemptAt, pending.NextAttemptAt);
         if (pending.LeaseId is not null)
             u = u.SetOnInsert(t => t.LeaseUntil, pending.LeaseUntil).SetOnInsert(t => t.LeaseId, pending.LeaseId);
+        // Sello de extracción (§6.3): conserva el ExtractionId al insertar.
+        if (pending.ExtractionId is not null)
+            u = u.SetOnInsert(t => t.ExtractionId, pending.ExtractionId);
         try
         {
             var res = await _col.UpdateOneAsync(
@@ -228,5 +246,14 @@ public sealed class CaseTimestampRepository : ICaseTimestampRepository
     {
         var find = _col.Find(t => t.CaseId == caseId).SortBy(t => t.CreatedAt);
         return includeTsr ? find.ToListAsync(ct) : find.Project<CaseTimestamp>(WithoutTsr).ToListAsync(ct);
+    }
+
+    public Task<CaseTimestamp?> FindByExtractionAsync(string extractionId, bool includeTsr = false,
+        CancellationToken ct = default)
+    {
+        var find = _col.Find(t => t.ExtractionId == extractionId);
+        return includeTsr
+            ? find.FirstOrDefaultAsync(ct)!
+            : find.Project<CaseTimestamp>(WithoutTsr).FirstOrDefaultAsync(ct)!;
     }
 }

@@ -31,6 +31,11 @@ Guía completa: docs/tatana-docker.md del repo de Factum.
 La evidencia queda en ~/Factum/Evidencia. Los datos del agente en ~/.local/share/tatana-docker.
 Tatana en Docker arranca solo al prender la PC. No abrir Tatana nativo a la vez (usan el mismo puerto).
 
+Extraer a un disco USB (sección "Extracciones" de la web): enchufá el disco externo; el escritorio lo monta en
+/media/<usuario>/<etiqueta> (o /run/media/... en Fedora) y el contenedor lo ve solo. En el paso "Destino" tocá
+"Actualizar" si lo enchufaste después de arrancar. Solo se ofrecen la carpeta de evidencia y esos discos. El montaje
+entra al actualizar o reinstalar; no hay que tocar nada a mano.
+
 Contenido:
   imagen-tatana-docker-vX.Y.Z.tar.gz   imagen de Docker (docker save) - IMAGEN.txt dice su nombre
   SHA256SUMS                           para verificar la copia: sha256sum -c SHA256SUMS

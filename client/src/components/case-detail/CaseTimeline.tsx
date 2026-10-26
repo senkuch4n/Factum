@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils";
 import { formatDate, formatTime } from "@/lib/format";
 import { FX_BUTTON_SECONDARY } from "@/lib/prime/pt/shared";
 import {
-  derivedMilestones, derivedTitle, eventDeviceDetail, eventFilename, eventHashChange, eventIcon, eventTimestampDetail,
-  eventTitle, eventTone, type DerivedMilestone, type EventTone,
+  derivedMilestones, derivedTitle, eventDeviceDetail, eventExtractionDetail, eventFilename, eventHashChange, eventIcon,
+  eventTimestampDetail, eventTitle, eventTone, type DerivedMilestone, type EventTone,
 } from "@/lib/case-events";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 
@@ -173,6 +173,7 @@ function RealItemBody({ ev, clockSkewWarningSeconds }: { ev: CaseEvent; clockSke
   const reason = ev.type === "report_failed" || ev.type === "capture_failed" ? ev.detail?.reason : undefined;
   const hashChange = eventHashChange(ev);
   const timestampDetail = eventTimestampDetail(ev);
+  const extractionDetail = eventExtractionDetail(ev);
 
   return (
     <>
@@ -203,6 +204,7 @@ function RealItemBody({ ev, clockSkewWarningSeconds }: { ev: CaseEvent; clockSke
         </p>
       )}
       {deviceDetail && <p className="m-0 mt-0.5 text-xs text-fx-text-2 break-words">{deviceDetail}</p>}
+      {extractionDetail && <p className="m-0 mt-0.5 text-xs text-fx-text-2 break-words">{extractionDetail}</p>}
       <Meta
         actorName={ev.actor_name}
         actorDni={ev.actor_dni}

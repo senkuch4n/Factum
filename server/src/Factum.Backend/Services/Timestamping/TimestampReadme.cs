@@ -182,6 +182,68 @@ public static class TimestampReadme
         return sb.ToString();
     }
 
+    /// <summary>
+    /// extraccion-logica-android §9.5/§10.4: LEEME del sello del MANIFIESTO.tsv de una extracción (CRLF). No hay caso
+    /// ni ZIP: solo el manifiesto. Si todavía no hay sello (<paramref name="sello"/> null/sin granted), explica cómo
+    /// verificar cuando lo haya.
+    /// </summary>
+    public static string BuildForExtraction(string extractionId, DateTime nowUtc, TimeZoneInfo zone,
+        CaseTimestamp? sello)
+    {
+        var sb = new StringBuilder();
+        void L(string line = "") => sb.Append(line).Append(Nl);
+        var granted = sello is { Status: TimestampStatuses.Granted };
+        var host = granted ? KnownAuthorities.HostOf(sello!.TsaUrl) : null;
+        var ca = granted ? KnownAuthorities.CaFileFor(host) : "<certificado raíz de la autoridad del sello>";
+
+        L("VERIFICACIÓN DEL SELLO DE TIEMPO DE LA EXTRACCIÓN (RFC 3161)");
+        L("===========================================================");
+        L();
+        L($"Extracción: {extractionId}");
+        L($"Archivo generado por Factum el {TimestampFormat.Utc(nowUtc)} UTC ({TimestampFormat.Display(nowUtc, zone)}).");
+        L();
+        L("Esta carpeta contiene el sello de tiempo emitido por una autoridad independiente (TSA) sobre el valor");
+        L("hash SHA-256 de MANIFIESTO.tsv. Certifica que ese hash existía en la fecha y hora indicadas, según el");
+        L("reloj de la autoridad. La verificación no necesita Factum ni acceso al servidor; alcanza con OpenSSL.");
+        L();
+        L("1. CERTIFICADO RAÍZ DE LA AUTORIDAD");
+        L("-----------------------------------");
+        L("Descargá el certificado raíz desde el sitio oficial de la autoridad (no desde esta carpeta) y guardalo");
+        L($"en formato PEM como \"{ca}\".");
+        L();
+        L("2. VERIFICAR EL MANIFIESTO");
+        L("--------------------------");
+        L("Ejecutá el comando en la carpeta de la extracción (la que tiene MANIFIESTO.tsv y la carpeta \"sellos\").");
+        L("El resultado esperado es \"Verification: OK\".");
+        L();
+        L($"  openssl ts -verify -data MANIFIESTO.tsv -in sellos/MANIFIESTO.tsv.tsr -CAfile \"{ca}\"");
+        L();
+        if (granted)
+        {
+            var gen = sello!.GenTime ?? DateTime.MinValue;
+            L("3. DATOS DEL SELLO");
+            L("------------------");
+            L($"  SHA-256 de MANIFIESTO.tsv: {sello.Sha256}");
+            L($"  Autoridad: {sello.Authority} ({sello.TsaUrl})");
+            L($"  Fecha y hora certificadas: {TimestampFormat.Utc(gen)} UTC ({TimestampFormat.Display(gen, zone)})");
+            L($"  N.º de serie: {sello.SerialNumber}");
+            L($"  Archivo del sello: \"sellos/MANIFIESTO.tsv.tsr\"");
+        }
+        else
+        {
+            L("3. TODAVÍA SIN SELLO");
+            L("--------------------");
+            L("Esta extracción aún no tiene un sello obtenido (el sellado puede estar desactivado o pendiente). El");
+            L("hash del manifiesto igual queda en MANIFIESTO.tsv.sha256 y en CIERRE.txt, y registrado en Factum.");
+        }
+        L();
+        L("4. QUÉ CERTIFICA Y QUÉ NO");
+        L("-------------------------");
+        L("El sello certifica que el hash del manifiesto existía en la fecha indicada. No certifica quién hizo la");
+        L("extracción. El manifiesto, a su vez, lista el SHA-256 de cada archivo extraído.");
+        return sb.ToString();
+    }
+
     /// <summary>El comando exacto de 3a, 3b o 3c (digest) para un sello.</summary>
     public static string VerifyCommand(CaseTimestamp t, string ca) => t.Target == TimestampTargets.Evidence
         ? VerifyDigest(t.Sha256, t.Filename, ca)

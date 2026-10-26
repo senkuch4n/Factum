@@ -16,6 +16,7 @@
 - Cerrar Tatana con una grabación de la sesión en curso
 - Sumar la cámara del procedimiento a la grabación de la sesión
 - Quitar o reintentar la cámara del procedimiento
+- Extraer lógicamente un Android (extracción forense a una carpeta o disco externo)
 
 ### Caso de uso: Instalar Librerias
 > #### Actor principal: Usuario Factum
@@ -458,3 +459,52 @@ Cámara de la PC grabando el procedimiento sobre el equipo, en archivos propios,
 |1 - Destilda "Sumar cámara del procedimiento" y confirma||
 ||2 - La web llama a `POST …/session/camera/stop`; Tatana guarda el último tramo de cámara y abre el hueco|
 ||3 - Fin de caso de uso|
+
+### Caso de uso: Extraer lógicamente un Android (extracción forense)
+> #### Actor principal: Usuario factum (a través de la web)
+> #### Actor secundario: Dispositivo Android conectado por adb; opcionalmente un disco externo
+
+Extracción lógica de Android (`Refactorizaciones/extraccion-logica-android.md`). Trabajo de **fondo**: el pedido HTTP
+vuelve enseguida y Tatana conduce las fases en su propio `Task`, aunque se cierre la pestaña. Una sola extracción a la
+vez por PC. Se declara como operación larga: el autoupdate no corta mientras `status == running`.
+
+#### Pre-condiciones:
+ - Agente Tatana con la capability `extraction_android_v1` en `GET /health` (si no, la web muestra "Actualizá Tatana
+   para hacer extracciones" y no deja iniciar).
+ - Android conectado y autorizado (`adb get-state` = `device`). iPhone no soportado (`422 platform_not_supported`).
+ - Un destino escribible: una carpeta de la PC o un disco externo de los que lista Tatana (en Docker, limitado por
+   `Agent:Extraction:AllowedRoots`).
+
+#### Post-condiciones:
+ - En el destino queda una carpeta única `Factum_Extraccion_<marca>-<modelo>_<fecha-hora>/` con los datos (crudo +
+   normalizado), los archivos de `/sdcard` elegidos con su ruta original, `MANIFIESTO.tsv` + `.sha256`,
+   `SHA256SUMS.txt`, `ACTA.txt`/`.json`, `CIERRE.txt` y `LEEME.txt`.
+ - Ninguna modificación persistente en el dispositivo: la app auxiliar del registro de llamadas se instala y se
+   **desinstala siempre** (también si falla, se cancela o se corta); `stay_awake` se restaura. Todo queda en el acta
+   con su hora, o "Ninguna: solo lectura".
+ - El contenido **no** llega al servidor: la web registra en el backend solo metadatos y el hash del manifiesto.
+
+**Lo que Tatana modifica en el dispositivo (y revierte):** instalar/desinstalar `app.factum.connector` (solo si se
+eligió "Registro de llamadas") y, durante esa fase, `stay_on_while_plugged_in`. El connector solo se instala si su
+SHA-256 coincide con `connector-lock.json`; si todavía no hay release firmada, la categoría queda deshabilitada.
+
+**Endpoints** (todos bajo `OriginPolicy`/`HostPolicy`; los de navegación de disco respetan `AllowedRoots`):
+
+- `GET /devices/{serial}/extraction/preflight`, `POST /devices/{serial}/extraction/estimate`.
+- `GET /extraction/destinations`, `GET /extraction/destinations/browse?path=`, `POST /extraction/destinations/check`.
+- `POST /extractions` (inicia, 202 con el snapshot), `GET /extractions/current`, `GET /extractions`,
+  `GET /extractions/{id}`, `GET /extractions/{id}/errors`, `POST /extractions/{id}/cancel`,
+  `POST /extractions/{id}/registered`, `PUT /extractions/{id}/seals`, `POST /extractions/{id}/reveal`.
+- WebSocket: `extraction_progress` (≤ 1/s), `extraction_finished`, `extraction_cleanup`.
+
+**Cortes y recuperación:** una desconexión, una autorización revocada o el cierre de Tatana dejan la extracción
+`interrupted` con lo copiado hasheado y el acta parcial. Si la app auxiliar quedó instalada, al reconectar el mismo
+celular Tatana la desinstala y agrega una adenda al acta. No se reanuda: se inicia otra.
+
+|Actor principal|Sistema|
+|--|:--:|
+|1 - Entra a "Extracciones" → "Nueva extracción", elige el Android||
+|2 - Elige categorías, destino y confirma las modificaciones||
+||3 - `POST /extractions`: Tatana valida, crea la carpeta, registra la operación y arranca en segundo plano|
+||4 - Publica el progreso por WebSocket y escribe el diario; al terminar emite `extraction_finished` con el `record`|
+||5 - La web registra el `record` en el backend; si el sellado está activo, el sello vuelve a `sellos/`. Fin|

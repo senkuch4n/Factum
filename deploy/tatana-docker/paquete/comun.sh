@@ -227,6 +227,17 @@ armar_run() { # armar_run <imagen>  (la imagen no entra en RUN: va entre RUN y A
                  /lib/udev/rules.d/51-android.rules; do
       [[ ! -f "$regla" ]] || RUN+=(-v "$regla:$regla:ro")
     done
+    # Discos USB para la extracción (extraccion-logica-android §11.1): udisks2 monta en /media/<usuario>/<etiqueta>
+    # (Ubuntu/Debian) o /run/media/<usuario>/<etiqueta> (Fedora/RHEL). rslave: los discos que se enchufan DESPUÉS de
+    # arrancar el contenedor aparecen solos (propagación del host al contenedor, nunca al revés). AllowedRoots limita
+    # el destino de la extracción a la carpeta de evidencia y a esos discos. Mismas rutas dentro y fuera: la ruta que
+    # muestra la web sirve en el host.
+    local raiz
+    for raiz in /media /run/media; do
+      [[ -d "$raiz" ]] && RUN+=(-v "$raiz:$raiz:rslave")
+    done
+    RUN+=(-e "Agent__Extraction__AllowedRoots__0=$EVIDENCIA" -e "Agent__Extraction__AllowedRoots__1=/media"
+      -e "Agent__Extraction__AllowedRoots__2=/run/media")
   fi
 }
 

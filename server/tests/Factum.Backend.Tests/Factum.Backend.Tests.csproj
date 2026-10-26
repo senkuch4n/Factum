@@ -29,4 +29,11 @@
     <None Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- extraccion-logica-android §12.2: fixture compartido del `record` (Tatana → API); lo referencian los dos
+       proyectos de tests para que el contrato no se desincronice. -->
+  <ItemGroup>
+    <None Include="../Fixtures/extraction-record.json" Link="Fixtures/extraction-record.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

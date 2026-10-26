@@ -18,6 +18,8 @@ on:
       - packaging/linux/**
       - deploy/linux/**
       - ci/tatana-linux/**
+      - ops/connector/**
+      - android/connector/connector-lock.json
       - .github/workflows/tatana-linux.yml
 
 concurrency:
@@ -51,6 +53,10 @@ jobs:
       - name: Verificar el lock de Python de Linux
         run: python3 -I packaging/linux/ios-linux/generar-lock.py --check
       - name: Armar el payload del agente (linux-x64)
+        env:
+          # Para bajar el APK del connector del release privado (extraccion-logica-android §7.6).
+          # Con el lock vacío, bajar-connector.sh no hace nada.
+          GH_TOKEN: ${{ github.token }}
         run: |
           # Árbol limpio del commit (ningún archivo local ni appsettings.Local.json).
           mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/out"

@@ -193,6 +193,12 @@ builder.Services.AddHttpClient<ITimestampAuthorityClient, Rfc3161TimestampClient
 builder.Services.AddSingleton<ITimestampQueueSignal, TimestampQueueSignal>();
 builder.Services.AddSingleton<ITimestampService, TimestampService>();
 builder.Services.AddHostedService<TimestampRetryService>();
+// extraccion-logica-android §6: colección extractions (índices en segundo plano) y su servicio. Solo del dueño;
+// sella el manifiesto (sin caso) al fijar el hash. No guarda contenido extraído.
+builder.Services.AddSingleton<Factum.Backend.Infrastructure.IExtractionRepository,
+    Factum.Backend.Infrastructure.ExtractionRepository>();
+builder.Services.AddScoped<Factum.Backend.Services.Extractions.IExtractionService,
+    Factum.Backend.Services.Extractions.ExtractionService>();
 // Soporte (Faro) opcional: apagado no se instancia ningún HttpClient hacia Faro.
 if (supportSettings.Enabled)
 {

@@ -47,6 +47,13 @@ public interface ITimestampService
     /// </summary>
     Task<CaseTimestamp?> SealNowAsync(Case cas, string target, string filename, string sha256, TimeSpan budget);
 
+    /// <summary>
+    /// extraccion-logica-android §6.3: sello inmediato del MANIFIESTO.tsv de una extracción, SIN caso
+    /// (<c>CaseId == ""</c> + <c>ExtractionId</c>). No registra evento de caso. Devuelve el documento (granted o
+    /// pending) o null si está desactivado o falló Mongo. Nunca lanza. Idempotente por el hash del manifiesto.
+    /// </summary>
+    Task<CaseTimestamp?> SealExtractionManifestAsync(Extraction ext, TimeSpan budget);
+
     /// <summary><c>InReport = true</c>. Nunca lanza.</summary>
     Task MarkZipInReportAsync(string timestampId);
 
@@ -203,6 +210,32 @@ public sealed class TimestampService : ITimestampService
         }
     }
 
+    public async Task<CaseTimestamp?> SealExtractionManifestAsync(Extraction ext, TimeSpan budget)
+    {
+        if (!IsEnabled || string.IsNullOrEmpty(ext.ManifestSha256)) return null;
+        try
+        {
+            var now = Now;
+            var doc = NewPending("", TimestampTargets.ExtractionManifest, "MANIFIESTO.tsv", ext.ManifestSha256!, now,
+                budget + InlineLeaseMargin);
+            doc.ExtractionId = ext.Id;
+            var inserted = await _repo.InsertPendingIfMissingAsync(doc, CancellationToken.None);
+            if (inserted is null)
+                return await _repo.FindByExtractionAsync(ext.Id, false, CancellationToken.None);
+
+            var ip = _http?.HttpContext?.Connection.RemoteIpAddress?.ToString();
+            // cas: null → AttemptAsync no registra ningún evento de caso (es una extracción).
+            var result = await AttemptAsync(inserted, cas: null, budget, ip, inline: true);
+            if (result is { Status: TimestampStatuses.Pending }) _signal.Wake();
+            return result ?? await _repo.FindByIdAsync(inserted.Id, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Extracción {Id}: no se pudo pedir el sello del manifiesto", ext.Id);
+            return null;
+        }
+    }
+
     public async Task MarkZipInReportAsync(string timestampId)
     {
         try { await _repo.MarkInReportAsync(timestampId, CancellationToken.None); }
@@ -228,8 +261,17 @@ public sealed class TimestampService : ITimestampService
     internal async Task<string?> ProcessClaimedAsync(CaseTimestamp claimed)
     {
         Case? cas = null;
-        try { cas = await _cases.FindByIdAsync(claimed.CaseId, CancellationToken.None); }
-        catch (Exception ex) { _log.LogWarning(ex, "Cola de sellos: no se pudo leer el caso {CaseId}", claimed.CaseId); }
+        // extraccion-logica-android §6.3: un sello de extracción lleva CaseId == "" y no tiene caso asociado: no se
+        // busca ni se registra evento de caso.
+        if (string.IsNullOrEmpty(claimed.CaseId))
+        {
+            _log.LogInformation("Cola de sellos: extracción {Id}", claimed.ExtractionId ?? claimed.Id);
+        }
+        else
+        {
+            try { cas = await _cases.FindByIdAsync(claimed.CaseId, CancellationToken.None); }
+            catch (Exception ex) { _log.LogWarning(ex, "Cola de sellos: no se pudo leer el caso {CaseId}", claimed.CaseId); }
+        }
         var result = await AttemptAsync(claimed, cas, _settings.QueueBudget, ip: null, inline: false);
         return result is null || result.Status == TimestampStatuses.Granted ? null : result.LastErrorKind;
     }

@@ -83,7 +83,10 @@ public sealed class HealthController(IOptions<AgentOptions> opts, IIosService io
     internal static readonly string[] Capabilities =
         ["case_evidence_v1", "ios_developer_mode_v1", "real_version_v1", "agent_state_v1", "video_postprocess_v1",
          "recording_state_v1", "event_attribution_v1", "device_preview_v1", "screen_check_v1", "case_seals_v1",
-         "device_details_v1", "recording_session_v1"];
+         "device_details_v1", "recording_session_v1", "extraction_android_v1"];
+    // extraction_android_v1: extracción lógica de Android (extraccion-logica-android §8.1). /extractions*,
+    // /devices/{serial}/extraction/*, /extraction/destinations*, eventos extraction_*. Sin esto la web muestra
+    // "Actualizá Tatana para hacer extracciones" y no deja iniciar.
 
     public const string SessionCameraCapability = "recording_session_camera_v1";
 

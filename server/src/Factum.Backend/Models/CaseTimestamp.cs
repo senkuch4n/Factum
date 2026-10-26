@@ -57,12 +57,18 @@ public sealed class CaseTimestamp
     // ── solo Target = zip ──
     /// <summary>true si el DOCX incluyó este sello.</summary>
     [BsonIgnoreIfNull] public bool? InReport { get; set; }
+
+    // ── extraccion-logica-android §6.3: sello del manifiesto de una extracción (sin caso). CaseId = "". ──
+    /// <summary>Id de la extracción cuando <see cref="Target"/> = <c>extraction_manifest</c>; si no, null.</summary>
+    [BsonIgnoreIfNull] public string? ExtractionId { get; set; }
 }
 
 /// <summary>Valores literales de <see cref="CaseTimestamp.Target"/> (idénticos en Mongo y en el JSON).</summary>
 public static class TimestampTargets
 {
     public const string Evidence = "evidence", Zip = "zip", Report = "report";
+    /// <summary>extraccion-logica-android §6.3: hash del MANIFIESTO.tsv de una extracción (CaseId = "").</summary>
+    public const string ExtractionManifest = "extraction_manifest";
 }
 
 /// <summary>Valores literales de <see cref="CaseTimestamp.Status"/>.</summary>

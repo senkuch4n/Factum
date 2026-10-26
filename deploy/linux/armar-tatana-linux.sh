@@ -290,6 +290,12 @@ else
   echo "  AVISO: esta máquina no es Linux x86-64: no se prueban los dispositivos pulse/v4l2 de ffmpeg (lo hace el CI)."
 fi
 
+# App auxiliar del registro de llamadas (extraccion-logica-android §7.6): entra en tools/connector/ solo si
+# connector-lock.json ya tiene hash. Con el lock vacío no hace nada y el paquete sale sin el connector.
+# GH_TOKEN (en CI: github.token) permite bajar el release del repo privado. Reusa el payload de Docker.
+echo "[6.5/8] App auxiliar (connector)..."
+"$DIR_SCRIPT/../../ops/connector/bajar-connector.sh" "$OUT"
+
 echo "[7/8] Permisos, version.txt y tar..."
 printf '%s\n' "$VERSION" > "$OUT/version.txt"
 chmod 755 "$OUT/Factum.Agent" "$OUT/tools/platform-tools/adb" "$OUT/tools/scrcpy/scrcpy" "$OUT/tools/ffmpeg/ffmpeg"

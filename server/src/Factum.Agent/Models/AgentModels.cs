@@ -67,6 +67,18 @@ public sealed class AgentOptions
     /// <summary>Grabación de la sesión (tramos, espacio, cortes). Ver <see cref="SessionOptions"/>.</summary>
     public SessionOptions Session { get; set; } = new();
 
+    // ── extraccion-logica-android (§13.1) ────────────────────────────────────
+
+    /// <summary>Extracción lógica de Android. Ver <see cref="ExtractionOptions"/>.</summary>
+    public ExtractionOptions Extraction { get; set; } = new();
+
+    /// <summary>
+    /// Solo con <see cref="Mock"/> = true: fuerza el resultado de la extracción simulada (extraccion-logica-android
+    /// §5.12): <c>completed</c> (default) | <c>completed_with_errors</c> | <c>interrupted</c> |
+    /// <c>connector_blocked</c> | <c>cancelled_slow</c>. Solo por env/CLI/appsettings.Local.json.
+    /// </summary>
+    public string? MockExtractionOutcome { get; set; }
+
     /// <summary>
     /// Solo con <see cref="Mock"/> = true: video que se copia como "grabación" Android al detener. No va en
     /// appsettings.json: variable de entorno, CLI o appsettings.Local.json.
@@ -513,6 +525,48 @@ public sealed class SessionOptions
 
     /// <summary>Copia (Normalize no toca las opciones compartidas de IOptions).</summary>
     public SessionOptions Clone() => (SessionOptions)MemberwiseClone();
+}
+
+/// <summary>
+/// Extracción lógica de Android (extraccion-logica-android §13.1). <see cref="Normalize"/> loguea un warning y
+/// vuelve al default de cada campo inválido, como <see cref="RecordingOptions"/>.
+/// </summary>
+public sealed class ExtractionOptions
+{
+    /// <summary>
+    /// Raíces permitidas como destino (Docker). Vacío = sin restricción (nativo). Cada ruta absoluta.
+    /// </summary>
+    public string[] AllowedRoots { get; set; } = [];
+    /// <summary>Casilla "Verificar el hash en el celular" marcada por defecto (D10).</summary>
+    public bool VerifyOnDeviceDefault { get; set; } = true;
+    /// <summary><c>connector</c> (U3=B, solo durante la fase del connector) | <c>always</c> | <c>never</c>.</summary>
+    public string StayAwakePolicy { get; set; } = "connector";
+    /// <summary>Cada cuánto se sondea el progreso de la copia (ms).</summary>
+    public int ProgressIntervalMs { get; set; } = 1000;
+    /// <summary>Ruta a un APK del connector (macOS/desarrollo; siempre se verifica el hash). null = buscar en tools/.</summary>
+    public string? ConnectorApkPath { get; set; }
+    /// <summary>Solo con ASPNETCORE_ENVIRONMENT=Development: permite un APK con otro hash (acta "NO verificada").</summary>
+    public bool AllowUnpinnedConnector { get; set; }
+
+    public static readonly string[] StayAwakePolicies = ["connector", "always", "never"];
+
+    public ExtractionOptions Normalize(ILogger? log)
+    {
+        if (ProgressIntervalMs is < 200 or > 10000)
+        {
+            log?.LogWarning("Agent:Extraction:ProgressIntervalMs inválido ({V}); se usa 1000", ProgressIntervalMs);
+            ProgressIntervalMs = 1000;
+        }
+        if (!StayAwakePolicies.Contains(StayAwakePolicy))
+        {
+            log?.LogWarning("Agent:Extraction:StayAwakePolicy inválido ({V}); se usa connector", StayAwakePolicy);
+            StayAwakePolicy = "connector";
+        }
+        AllowedRoots = AllowedRoots.Where(r => !string.IsNullOrWhiteSpace(r)).ToArray();
+        return this;
+    }
+
+    public ExtractionOptions Clone() => (ExtractionOptions)MemberwiseClone();
 }
 
 public sealed class Device

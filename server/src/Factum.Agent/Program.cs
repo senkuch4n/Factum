@@ -101,6 +101,8 @@ builder.Services.Configure<AgentOptions>(opts =>
     if (!string.IsNullOrWhiteSpace(bindArg)) opts.BindAddress = bindArg.Trim();
     // Solo por CLI: un "InstallMode" en la config no cuenta.
     opts.InstallMode = installMode;
+    // extraccion-logica-android §13.1: saneo de las opciones de extracción (vuelve al default lo inválido).
+    opts.Extraction.Normalize(null);
 });
 
 // ── JSON ──────────────────────────────────────────────────────────────────────
@@ -177,6 +179,13 @@ builder.Services.AddSingleton<ICameraPreview>(sp => sp.GetRequiredService<Camera
 builder.Services.AddSingleton<SessionRecorder>();
 builder.Services.AddSingleton<IOperationSource>(sp => sp.GetRequiredService<SessionRecorder>());
 builder.Services.AddSingleton<SessionRecovery>();
+
+// extraccion-logica-android §13.1: extracción lógica de Android (singleton + IOperationSource).
+builder.Services.AddSingleton<Factum.Agent.Services.Extraction.DestinationService>();
+builder.Services.AddSingleton<Factum.Agent.Services.Extraction.ExtractionService>();
+builder.Services.AddSingleton<IOperationSource>(sp =>
+    sp.GetRequiredService<Factum.Agent.Services.Extraction.ExtractionService>());
+builder.Services.AddSingleton<Factum.Agent.Services.Extraction.ExtractionRecovery>();
 
 // ── Puerto y dirección de escucha (CLI > config > default) ───────────────────
 var port = builder.Configuration.GetValue<int>("Agent:Port", 8765);
@@ -376,6 +385,10 @@ await adb.EnsureServerAsync();
     {
         try { sessionRecorder.ShutdownAsync(TimeSpan.FromSeconds(15)).GetAwaiter().GetResult(); }
         catch (Exception ex) { logger.LogWarning(ex, "Error al cerrar la grabación de la sesión al apagar"); }
+        // extraccion-logica-android §5.9: cierra la extracción en curso con un presupuesto de 15 s.
+        try { app.Services.GetRequiredService<Factum.Agent.Services.Extraction.ExtractionService>()
+            .ShutdownAsync(TimeSpan.FromSeconds(15)).GetAwaiter().GetResult(); }
+        catch (Exception ex) { logger.LogWarning(ex, "Error al cerrar la extracción al apagar"); }
         // grabacion-sesion-completa-f2 §5.9: la vista previa de la cámara no sobrevive al apagado.
         try { cameraPreview.StopAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult(); }
         catch (Exception ex) { logger.LogWarning(ex, "Error al cortar la vista previa de la cámara al apagar"); }
@@ -392,6 +405,14 @@ await adb.EnsureServerAsync();
 
 // Versiones de adb/scrcpy/ffmpeg/python para /health.tools, en segundo plano.
 app.Services.GetRequiredService<ToolInventory>().WarmUp();
+
+// extraccion-logica-android §5.3: recupera las extracciones que quedaron en curso de una corrida anterior.
+var extractions = app.Services.GetRequiredService<Factum.Agent.Services.Extraction.ExtractionService>();
+_ = Task.Run(async () =>
+{
+    try { await app.Services.GetRequiredService<Factum.Agent.Services.Extraction.ExtractionRecovery>().RunAsync(); }
+    catch (Exception ex) { logger.LogWarning(ex, "Error recuperando extracciones al arrancar"); }
+});
 
 var stopping = app.Lifetime.ApplicationStopping;
 var sessions = app.Services.GetRequiredService<SessionRecorder>();
@@ -411,6 +432,9 @@ _ = Task.Run(async () =>
             // grabacion-sesion-completa §5.7: reconexión del mismo celular y restauraciones pendientes.
             try { sessions.OnDevicesPolled(serials); }
             catch (Exception ex) { logger.LogWarning(ex, "Error avisando dispositivos a la grabación de la sesión"); }
+            // extraccion-logica-android §5.5: desconexión a mitad y connector pendiente de desinstalar.
+            try { extractions.OnDevicesPolled(serials); }
+            catch (Exception ex) { logger.LogWarning(ex, "Error avisando dispositivos a la extracción"); }
             if (!serials.SequenceEqual(lastSerials))
             {
                 lastSerials = serials;

@@ -8,8 +8,8 @@
  */
 
 import {
-  AlertCircle, AlertTriangle, Camera, Circle, Clock, ClockAlert, ClockCheck, Cpu, FileCheck, Film, FolderPlus, Image,
-  PauseCircle, Pencil, PlayCircle, RefreshCw, Trash2, Upload, Video, type LucideIcon,
+  AlertCircle, AlertTriangle, Camera, Circle, Clock, ClockAlert, ClockCheck, Cpu, FileCheck, Film, FolderPlus,
+  HardDriveDownload, Image, PauseCircle, Pencil, PlayCircle, RefreshCw, Trash2, Upload, Video, type LucideIcon,
 } from "lucide-react";
 import type { Case, CaseEvent, CaseEventDetail, CaseEventType } from "@/lib/api";
 import { TARGET_LABEL } from "@/lib/timestamps";
@@ -40,6 +40,9 @@ const EVENT_ICON: Record<CaseEventType, LucideIcon> = {
   recording_session_segment_closed: Film,
   recording_session_stopped: PauseCircle,
   recording_session_resumed: PlayCircle,
+  // extraccion-logica-android §10.6: tono neutro (no se transmite nada solo por color).
+  extraction_linked: HardDriveDownload,
+  extraction_unlinked: HardDriveDownload,
 };
 
 /** Ícono del evento; `FolderPlus` para un tipo desconocido (backend más nuevo). */
@@ -228,9 +231,26 @@ export function eventTitle(ev: CaseEvent): string {
     case "recording_session_stopped":
     case "recording_session_resumed":
       return recordingSessionTitle(ev);
+    case "extraction_linked":
+      return "Extracción asociada";
+    case "extraction_unlinked":
+      return "Extracción desasociada";
     default:
       return "Actividad del caso";
   }
+}
+
+/**
+ * Línea secundaria de un evento de extracción (extraccion-logica-android §10.6):
+ * equipo + hash del manifiesto abreviado. `null` para otros tipos o sin datos.
+ */
+export function eventExtractionDetail(ev: CaseEvent): string | null {
+  if (ev.type !== "extraction_linked" && ev.type !== "extraction_unlinked") return null;
+  const d = ev.detail;
+  const parts: string[] = [];
+  if (d?.device_label) parts.push(d.device_label);
+  if (d?.sha256) parts.push(`sha256: ${d.sha256.slice(0, 12)}…`);
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /** "pantalla" / "cámara" de un evento de la sesión. */

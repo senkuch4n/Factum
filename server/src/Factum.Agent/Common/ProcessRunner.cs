@@ -126,6 +126,92 @@ public static class ProcessRunner
             return new ProcessResult(process.ExitCode, stdout.ToString().Trim(), stderr.ToString().Trim());
     }
 
+    // Manda stdout (texto) DIRECTO a un archivo y captura las últimas 4 KiB de stderr, con timeout opcional
+    // (extraccion-logica-android §5.3.1). Para `content query`/`find`/`sha256sum` por adb, que pueden tirar MB
+    // de salida: no se acumula stdout en memoria. Usa ArgumentList (sin shell local). Al cancelar o vencer el
+    // timeout, mata el árbol del proceso. Devuelve (exit code, cola de stderr). Exit = TimeoutExitCode si venció.
+    public static async Task<(int ExitCode, string StderrTail)> RunToFileAsync(string executable,
+        IReadOnlyList<string> args, string outputPath, TimeSpan? timeout = null, CancellationToken ct = default)
+    {
+        const int StderrTailBytes = 4096;
+        var psi = new ProcessStartInfo
+        {
+            FileName               = executable,
+            RedirectStandardOutput = true,
+            RedirectStandardError  = true,
+            UseShellExecute        = false,
+            CreateNoWindow         = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding  = Encoding.UTF8,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+
+        using var process = new Process { StartInfo = psi };
+        var stderr = new StringBuilder();
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data == null) return;
+            lock (stderr)
+            {
+                stderr.AppendLine(e.Data);
+                // Conservar solo la cola: recorta por el frente si creció mucho.
+                if (stderr.Length > StderrTailBytes * 2)
+                    stderr.Remove(0, stderr.Length - StderrTailBytes);
+            }
+        };
+
+        try { process.Start(); }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            return (-1, $"No se encontró '{executable}': {ex.Message}");
+        }
+
+        process.BeginErrorReadLine();
+
+        var copyTask = Task.Run(async () =>
+        {
+            await using var fs = File.Create(outputPath);
+            await process.StandardOutput.BaseStream.CopyToAsync(fs, ct);
+        }, ct);
+
+        try
+        {
+            if (timeout is { } limit)
+            {
+                using var timeoutCts = new CancellationTokenSource(limit);
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+                try
+                {
+                    await process.WaitForExitAsync(linked.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+                    try { process.WaitForExit(5000); } catch (InvalidOperationException) { }
+                    try { await copyTask; } catch { /* el pipe se cortó al matar */ }
+                    ct.ThrowIfCancellationRequested();
+                    return (TimeoutExitCode, Tail(stderr) + $"\nNo terminó en {limit.TotalSeconds:0} s");
+                }
+            }
+            else
+            {
+                await process.WaitForExitAsync(ct);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            try { await copyTask; } catch { /* idem */ }
+            throw;
+        }
+
+        try { await copyTask; } catch (IOException) { /* el proceso cerró stdout */ }
+        process.WaitForExit();
+        return (process.ExitCode, Tail(stderr));
+
+        static string Tail(StringBuilder sb) { lock (sb) return sb.ToString().Trim(); }
+    }
+
     // Copia stdout binario directo a un archivo — necesario para screencap PNG, pull de video, etc.
     public static async Task<int> RunBinaryToFileAsync(string executable, IEnumerable<string> args,
         string outputPath, CancellationToken ct = default)

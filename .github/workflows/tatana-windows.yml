@@ -15,6 +15,8 @@ on:
       - deploy/windows/armar-tatana-portable.sh
       - .github/workflows/tatana-windows.yml
       - ci/tatana-windows/**
+      - ops/connector/**
+      - android/connector/connector-lock.json
 
 concurrency:
   group: tatana-windows-${{ github.ref }}
@@ -42,6 +44,10 @@ jobs:
       - name: Verificar el lock de Python de Windows
         run: python3 -I packaging/portable/ios-win/generar-lock.py --check
       - name: Armar Tatana portátil
+        env:
+          # Para bajar el APK del connector del release privado (extraccion-logica-android §7.6).
+          # Con el lock vacío, bajar-connector.sh no hace nada.
+          GH_TOKEN: ${{ github.token }}
         run: >-
           bash deploy/windows/armar-tatana-portable.sh
           --version 0.0.0-ci

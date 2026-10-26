@@ -145,6 +145,7 @@ enmascarado, `/etc/hosts` ni la CA. La imagen vieja (`tatana-docker-prueba:0.0.0
 | Config | `appsettings.Local.json` montado de solo lectura en `/config` (`--local-config`) | Igual que el AppImage. |
 | Datos | `~/.local/share/tatana-docker/{agent-data,home,lockdown}` montados en la **misma ruta** | Las rutas que muestra Tatana coinciden con las del host. `lockdown/` guarda los pareos del iPhone entre reinicios. |
 | Evidencia | `~/Factum/Evidencia` montada en la misma ruta (`Agent__EvidenceDirectory`) | La misma carpeta que usa Tatana nativo. |
+| Discos USB (extracción) | `-v /media:/media:rslave` y `-v /run/media:/run/media:rslave` (si existen) + `Agent__Extraction__AllowedRoots` = evidencia, `/media`, `/run/media` | Destino de una extracción lógica a un disco externo. `rslave`: un disco enchufado **después** de arrancar el contenedor aparece solo. `AllowedRoots` limita a dónde puede escribir Tatana. Mismas rutas dentro y fuera. |
 | Hora | `/etc/localtime` de solo lectura + `TZ` del host | La hora de los registros forenses es la de la PC. |
 | Audio | `Agent__Recording__AudioPlayback=false` (en la imagen) | El contenedor no tiene dispositivo de audio: scrcpy graba con `--no-audio-playback`. El audio interno del Android 11+ queda igual en el video, pero no suena en la PC mientras se graba. |
 | SELinux | `--security-opt label=disable` | En Fedora/RHEL, sin esto el contenedor no puede abrir `/dev/bus/usb`. En el resto no cambia nada. |
@@ -163,6 +164,17 @@ enmascarado, `/etc/hosts` ni la CA. La imagen vieja (`tatana-docker-prueba:0.0.0
 - **Puerto 8765 ocupado:** Tatana nativo está abierto. No usar los dos a la vez.
 - **No se puede usar Tatana nativo y Docker a la vez** por el puerto y por usbmuxd. Para volver a nativo:
   `./desinstalar-tatana-docker.sh` (ofrece devolver el usbmuxd del host).
+
+### Extraer a un disco USB
+
+La extracción lógica de Android (sección "Extracciones" de la web) puede guardar en un disco externo. udisks2 del
+escritorio monta el disco en `/media/<usuario>/<etiqueta>` (Ubuntu/Debian) o `/run/media/<usuario>/<etiqueta>`
+(Fedora/RHEL), y el contenedor lo ve con el montaje `rslave`. Si enchufás el disco **después** de que arrancó el
+contenedor, aparece solo; en el paso "Destino" del asistente, tocá **Actualizar** y la unidad nueva se lista. Solo se
+ofrecen la carpeta de evidencia y esos discos (`AllowedRoots`). El disco tiene que estar montado con permiso de
+escritura para el usuario del perito (udisks2 lo hace así). Requiere que `/` del host sea un montaje compartido
+(`rshared`), lo normal con systemd (Ubuntu 18.04/20.04 incluidas). El montaje entra solo al **actualizar** a esta
+versión (o al reinstalar); no hace falta tocar `instalacion.env`.
 
 ### Limitaciones conocidas frente al nativo
 

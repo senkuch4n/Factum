@@ -148,6 +148,16 @@ public sealed class InMemoryCaseTimestampRepository : ICaseTimestampRepository
                 .Select(d => includeTsr ? Clone(d) : WithoutTsr(d)).ToList());
     }
 
+    public Task<CaseTimestamp?> FindByExtractionAsync(string extractionId, bool includeTsr = false,
+        CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            var d = _docs.FirstOrDefault(x => x.ExtractionId == extractionId);
+            return Task.FromResult(d is null ? null : includeTsr ? Clone(d) : WithoutTsr(d));
+        }
+    }
+
     /// <summary>Pone un lease vencido a un documento (simula un proceso que murió a mitad de un intento).</summary>
     public void ForceLease(string id, DateTime until, string leaseId)
     {
