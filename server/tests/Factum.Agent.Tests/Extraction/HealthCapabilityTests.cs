@@ -15,4 +15,11 @@ public class HealthCapabilityTests
     {
         Assert.Contains("extraction_android_v1", HealthController.CapabilitiesFor(cameraEnabled: true));
     }
+
+    [Fact]
+    public void ExtractionReportCapability_EnLaLista()
+    {
+        Assert.Contains("extraction_report_v1", HealthController.Capabilities);
+        Assert.Contains("extraction_report_v1", HealthController.CapabilitiesFor(cameraEnabled: true));
+    }
 }

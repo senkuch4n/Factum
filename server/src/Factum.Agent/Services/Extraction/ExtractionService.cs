@@ -298,6 +298,51 @@ public sealed class ExtractionService : IOperationSource
         return (dir, written, unchanged);
     }
 
+    /// <summary>
+    /// informe-extraccion §8.3: escribe el DOCX del informe como <c>INFORME.docx</c> + <c>INFORME.docx.sha256</c> en la
+    /// RAÍZ de la carpeta de la extracción (nombre fijo, U1). Espejo de <see cref="WriteSeals"/>. El hash se calcula
+    /// sobre los bytes que efectivamente se escriben (la huella siempre corresponde al archivo en disco). NO toca el
+    /// MANIFIESTO, su <c>.sha256</c>, el CIERRE ni la carpeta <c>sellos/</c>: el informe es un artefacto posterior al
+    /// cierre (§4). Regenerar sobrescribe (temp + rename).
+    /// </summary>
+    public (string Directory, string Filename, string Sha256, long Bytes) WriteReport(string id,
+        ExtractionReportRequest request)
+    {
+        const long maxReportBytes = 20L * 1024 * 1024; // 20 MiB
+        var doc = GetCurrentDoc(id) ?? _journal.LoadAll().FirstOrDefault(d => d.Snapshot.Id == id)
+            ?? throw new AgentHttpException(404, AgentErrorCodes.ExtractionNotFound, "No existe la extracción.");
+        if (!ExtractionStatuses.IsTerminal(doc.Snapshot.Status))
+            throw new AgentHttpException(409, AgentErrorCodes.ExtractionNotFinished, "La extracción no terminó.");
+
+        byte[] data;
+        try { data = Convert.FromBase64String(request.ContentBase64 ?? ""); }
+        catch (FormatException) { throw new AgentHttpException(400, AgentErrorCodes.InvalidRequest, "El informe no es base64."); }
+        if (data.Length == 0) throw new AgentHttpException(400, AgentErrorCodes.InvalidRequest, "El informe está vacío.");
+        if (data.LongLength > maxReportBytes)
+            throw new AgentHttpException(400, AgentErrorCodes.InvalidRequest, "El informe supera 20 MiB.");
+
+        var dir = doc.FolderPath;
+        var docxPath = AgentFileNames.SafeChild(dir, "INFORME.docx")
+            ?? throw new AgentHttpException(400, AgentErrorCodes.InvalidRequest, "Ruta del informe inválida.");
+        var shaPath = AgentFileNames.SafeChild(dir, "INFORME.docx.sha256")
+            ?? throw new AgentHttpException(400, AgentErrorCodes.InvalidRequest, "Ruta del informe inválida.");
+
+        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data)).ToLowerInvariant();
+
+        Directory.CreateDirectory(dir);
+        var docxPart = docxPath + ".part";
+        File.WriteAllBytes(docxPart, data);
+        File.Move(docxPart, docxPath, overwrite: true);
+
+        var shaPart = shaPath + ".part";
+        File.WriteAllText(shaPart, $"{sha}  INFORME.docx\n", new System.Text.UTF8Encoding(false));
+        File.Move(shaPart, shaPath, overwrite: true);
+
+        doc.Snapshot.ReportWrittenAt = _time.GetUtcNow();
+        _journal.SaveAsync(doc).GetAwaiter().GetResult();
+        return (dir, "INFORME.docx", sha, data.LongLength);
+    }
+
     // ── Preflight / estimate (§5.11, §5.4.6) ───────────────────────────────────
 
     public object Preflight(string serial)

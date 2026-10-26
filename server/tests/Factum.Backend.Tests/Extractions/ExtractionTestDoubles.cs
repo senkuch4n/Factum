@@ -1,7 +1,25 @@
+using Factum.Backend.Common;
+using Factum.Backend.DTOs;
 using Factum.Backend.Infrastructure;
 using Factum.Backend.Models;
+using Factum.Backend.Services.Reports;
 
 namespace Factum.Backend.Tests.Extractions;
+
+/// <summary>IReportService falso para los tests del servicio (no ejercitan la generación real del DOCX).</summary>
+internal sealed class FakeReportService : IReportService
+{
+    public Task<ReportResult> GenerateAsync(Case cas, List<FileInfoDto> files, string caseDir,
+        CancellationToken ct = default) => throw new NotSupportedException();
+
+    public Task<ReportOnlyResult> GenerateReportAsync(Case cas, List<FileInfoDto> evidence,
+        IReadOnlyDictionary<string, string> hashes, string imagesDir, string outputDir, string zipFilename,
+        string zipHash, CancellationToken ct = default, ReportTimestampInfo? timestamps = null) =>
+        throw new NotSupportedException();
+
+    public Task<ExtractionReportResult> GenerateExtractionReportAsync(ExtractionDto ext, CancellationToken ct = default) =>
+        Task.FromResult(new ExtractionReportResult([1, 2, 3], $"informe_extraccion_{ext.FolderName}.docx", "deadbeef"));
+}
 
 /// <summary>Repositorio de extracciones en memoria (filtra por dueño como el real).</summary>
 internal sealed class FakeExtractionRepository : IExtractionRepository

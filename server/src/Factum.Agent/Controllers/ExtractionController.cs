@@ -65,6 +65,14 @@ public sealed class ExtractionController(ExtractionService service, ILogger<Extr
             return Ok(new { directory = dir, written, unchanged });
         });
 
+    [HttpPut("/extractions/{id}/report")]
+    public IActionResult Report(string id, [FromBody] ExtractionReportRequest req) =>
+        Guard(() =>
+        {
+            var (dir, filename, sha256, bytes) = service.WriteReport(id, req ?? new ExtractionReportRequest());
+            return Ok(new { directory = dir, filename, sha256, bytes });
+        });
+
     [HttpPost("/extractions/{id}/reveal")]
     public IActionResult Reveal(string id) => Guard(() => { service.Reveal(id); return NoContent(); });
 

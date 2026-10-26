@@ -32,10 +32,25 @@ public sealed record ReportResult(
 /// </summary>
 public sealed record ReportOnlyResult(string PdfPath, string PdfFilename, string ReportHash);
 
+/// <summary>
+/// Resultado de <see cref="IReportService.GenerateExtractionReportAsync"/> (informe-extraccion §7.1): los bytes del
+/// DOCX en memoria, el nombre sugerido para la descarga y el SHA-256 informativo. La huella de disco la recalcula
+/// Tatana al escribir <c>INFORME.docx.sha256</c>.
+/// </summary>
+public sealed record ExtractionReportResult(byte[] Docx, string Filename, string Sha256);
+
 public interface IReportService
 {
     Task<ReportResult> GenerateAsync(Case cas, List<FileInfoDto> files, string caseDir,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Informe pericial de una extracción lógica (informe-extraccion §7): arma el DOCX SOLO con el
+    /// <paramref name="ext"/> (no necesita contenido ni carpeta), resolviendo la marca por <c>ext.Officer.Dni</c>
+    /// (D7). Devuelve los bytes + el nombre sugerido + el SHA-256. Si Mongo falla al resolver la marca, la generación
+    /// falla sin dejar artefacto. Es stateless: no escribe en Mongo ni en disco (salvo un temp que borra en finally).
+    /// </summary>
+    Task<ExtractionReportResult> GenerateExtractionReportAsync(ExtractionDto ext, CancellationToken ct = default);
 
     /// <summary>
     /// Flujo "evidencia en la PC del perito" (zip-local-informe-servidor §5.7): arma SOLO el DOCX
@@ -302,6 +317,206 @@ public sealed class ReportService : IReportService
         }
     }
 
+    // ── Informe de extracción (informe-extraccion §7) ──────────────────────────
+
+    private const string ExtractionTemplateFileName = "plantilla_informe_extraccion_v6.docx";
+
+    // Placeholders de una línea del informe de extracción (§6.2). Los de imagen ({LOGO_ORGANIZACION:…},
+    // {ISOTIPO_ORGANIZACION:…}) y los marcadores de bloque los reconoce IsKnownPlaceholder aparte.
+    private static readonly HashSet<string> ExtractionKnownPlaceholders = new(StringComparer.Ordinal)
+    {
+        "{ORGANIZACION}", "{CONTACTO}", AttributionSlot,
+        // Portada.
+        "{equipoExtraccion}", "{fechaExtraccion}", "{estadoExtraccion}",
+        // §1 Identificación.
+        "{peritoExtraccion}", "{dniPerito}", "{pcExtraccion}", "{usuarioSoExtraccion}", "{versionTatana}",
+        "{versionFactum}", "{actuacionCaso}",
+        // §2 Tiempos.
+        "{inicioExtraccion}", "{finExtraccion}",
+        // §3 Dispositivo (ficha #79, mismos nombres que inspección) + reloj.
+        "{fechaFichaTecnica}", "{horaFichaTecnica}",
+        "{fichaSistemaOperativo}", "{fichaCompilacion}", "{fichaParcheSeguridad}", "{fichaNumeroSerie}",
+        "{fichaIdentificadorConexion}", "{fichaKernel}", "{fichaOperadorSim}", "{fichaEstadoArranque}",
+        "{fichaZonaHoraria}", "{fichaWifi}", "{descripcionRelojExtraccion}",
+        // §4 Metodología.
+        "{descripcionMetodologia}",
+        // §5 Inventario (totales + fila modelo de la tabla).
+        "{totalesExtraccion}", "{categoriaExtraccion}", "{metodoExtraccion}", "{resultadoExtraccion}",
+        // §6 Integridad.
+        "{hashManifiesto}", "{entradasManifiesto}", "{descripcionSelloExtraccion}", "{hashDispositivoExtraccion}",
+        "{ubicacionCarpeta}", "{descripcionCadenaCustodia}",
+        // §7 Modificaciones · §8 Interrupción · §9 Alcances.
+        "{descripcionModificaciones}", "{descripcionInterrupcion}", "{descripcionAlcances}",
+    };
+
+    private static readonly HashSet<string> ExtractionBlockKeys = new(StringComparer.Ordinal)
+    {
+        "MEMBRETE", "MEMBRETE_CON_LOGO", "MEMBRETE_SIN_LOGO", "ISOTIPO",
+        "actuacionCaso", "fichaTecnica", "selloTiempo", "interrupcion",
+    };
+
+    public async Task<ExtractionReportResult> GenerateExtractionReportAsync(ExtractionDto ext,
+        CancellationToken ct = default)
+    {
+        // Marca del dueño de la extracción (D7), ANTES de escribir nada: si Mongo falla, la generación falla sin
+        // dejar un artefacto a medias.
+        var brand = await brandings.ResolveAsync(ext.Officer.Dni, ct);
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), "factum-informe-extraccion");
+        Directory.CreateDirectory(tmpDir);
+        var tmp = Path.Combine(tmpDir, Guid.NewGuid().ToString("N") + ".docx");
+        try
+        {
+            await GenerateExtractionReportDocxAsync(ext, tmp, brand, ct);
+            var bytes = await File.ReadAllBytesAsync(tmp, ct);
+            var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+            var filename = $"informe_extraccion_{Sanitize(ext.FolderName)}.docx";
+            return new ExtractionReportResult(bytes, filename, sha);
+        }
+        finally
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); }
+            catch (Exception ex) { logger.LogWarning(ex, "No se pudo borrar el temp del informe de extracción"); }
+        }
+    }
+
+    // Espejo de GenerateDocxAsync, sin tabla de hashes de archivos, sin capturas y sin textos del perito: el informe
+    // de extracción se arma solo con el DTO (§7.3). Misma secuencia de pasadas que el informe de inspección.
+    private Task GenerateExtractionReportDocxAsync(ExtractionDto ext, string outputPath, BrandingSnapshot brand,
+        CancellationToken ct)
+    {
+        return Task.Run(() =>
+        {
+            var templatePath = Path.Combine(TemplatesDir, ExtractionTemplateFileName);
+            if (!File.Exists(templatePath))
+                throw new FileNotFoundException("Plantilla del informe de extracción no encontrada", templatePath);
+            File.Copy(templatePath, outputPath, overwrite: true);
+
+            using var doc = WordprocessingDocument.Open(outputPath, isEditable: true);
+            var mainPart = doc.MainDocumentPart!;
+            var body = mainPart.Document.Body!;
+            uint drawId = 100_000;
+
+            var parts = new List<(OpenXmlPart Part, OpenXmlElement Root)> { (mainPart, body) };
+            parts.AddRange(mainPart.HeaderParts.Select(h => ((OpenXmlPart)h, (OpenXmlElement)h.Header)));
+            parts.AddRange(mainPart.FooterParts.Select(f => ((OpenXmlPart)f, (OpenXmlElement)f.Footer)));
+
+            var resolved = new HashSet<Paragraph>();
+            var values = ExtractionReportValues.Placeholders(ext, settings, brand);
+
+            var conditions = new Dictionary<string, bool>(StringComparer.Ordinal)
+            {
+                ["MEMBRETE"] = brand.OrganizationName is not null || brand.Logo is not null || brand.ContactLines.Count > 0,
+                ["MEMBRETE_CON_LOGO"] = brand.Logo is not null,
+                ["MEMBRETE_SIN_LOGO"] = brand.Logo is null,
+                ["ISOTIPO"] = brand.Isotype is not null,
+                ["actuacionCaso"] = !string.IsNullOrWhiteSpace(ext.CaseRef),
+                ["fichaTecnica"] = ext.DeviceDetails is not null,
+                ["selloTiempo"] = ext.ManifestTimestamp is not null,
+                ["interrupcion"] = ext.Interruption is not null || ext.Status == ExtractionStatuses.Cancelled,
+            };
+
+            // B-R1: placeholders desconocidos fuera (con el set del informe de extracción).
+            var warned = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (_, root) in parts)
+                RemoveUnknownPlaceholders(root, warned, ExtractionKnownPlaceholders, ExtractionBlockKeys);
+
+            // B-R2: bloques condicionales.
+            foreach (var (_, root) in parts)
+                ResolveBlocks(root, conditions);
+
+            // B-R2b: colores de marca.
+            BrandColors.Apply(mainPart, brand.PrimaryColor, brand.AccentColor);
+
+            // B-R3: logo (membrete) e isotipo (cierre).
+            foreach (var (part, root) in parts)
+            {
+                ReplaceImagePlaceholder(part, root, LogoPlaceholderRegex, brand.Logo, "logo-organizacion",
+                    DefaultLogoBoxWidthCm, DefaultLogoBoxHeightCm, ref drawId);
+                ReplaceImagePlaceholder(part, root, IsotypePlaceholderRegex, brand.Isotype, "isotipo-organizacion",
+                    DefaultIsotypeBoxCm, DefaultIsotypeBoxCm, ref drawId);
+            }
+
+            // B-R4: {CONTACTO} multilínea (saltos dentro del run) y los textos largos (un párrafo por línea).
+            foreach (var (_, root) in parts)
+                ReplaceMultilinePlaceholder(root, "{CONTACTO}", brand.ContactLines, values, resolved);
+
+            ReplaceParagraphPerLine(body, "{descripcionRelojExtraccion}", ExtractionReportTexts.Clock(ext, settings), resolved);
+            ReplaceParagraphPerLine(body, "{descripcionMetodologia}", ExtractionReportTexts.Methodology(ext), resolved);
+            ReplaceParagraphPerLine(body, "{descripcionSelloExtraccion}",
+                ExtractionReportTexts.SealDescription(ext, settings), resolved);
+            ReplaceParagraphPerLine(body, "{hashDispositivoExtraccion}", ExtractionReportTexts.DeviceHashLine(ext), resolved);
+            ReplaceParagraphPerLine(body, "{descripcionCadenaCustodia}", ExtractionReportTexts.CustodyChain, resolved);
+            ReplaceParagraphPerLine(body, "{descripcionModificaciones}",
+                ExtractionReportTexts.Modifications(ext, settings), resolved);
+            ReplaceParagraphPerLine(body, "{descripcionInterrupcion}",
+                ExtractionReportTexts.Interruption(ext, settings), resolved);
+            ReplaceParagraphPerLine(body, "{descripcionAlcances}", ExtractionReportTexts.Scopes(ext), resolved);
+
+            // B-R5: tabla de categorías (una fila por categoría elegida, clonando la fila modelo).
+            FillCategoryTable(body, ExtractionReportTexts.CategoryRows(ext), resolved);
+
+            // B-R6: texto por run, en una sola pasada. El encabezado interior usa valores recortados.
+            var headerValues = ExtractionHeaderValues(values);
+            foreach (var (part, root) in parts)
+            {
+                var dict = part is HeaderPart ? headerValues : values;
+                foreach (var para in root.Descendants<Paragraph>().ToList())
+                    if (!resolved.Contains(para))
+                        RewriteParagraph(para, TextPlaceholderRegex,
+                            m => dict.TryGetValue(m.Value, out var v) ? v : null, joinAdjacent: true);
+            }
+
+            // B-R8: atribución obligatoria "Realizado con Factum" en el pie (inyectada por código).
+            AddFactumAttributionFooter(mainPart, body, ref drawId);
+
+            // B-R9: avisos + saneo final.
+            WarnLeftovers(parts, resolved, ExtractionKnownPlaceholders, ExtractionBlockKeys);
+            SanitizeAllParts(mainPart);
+            doc.Save();
+        }, ct);
+    }
+
+    // Encabezado interior: {ORGANIZACION} y {equipoExtraccion} recortados con "…" para no pasar de la línea.
+    private static Dictionary<string, string> ExtractionHeaderValues(IReadOnlyDictionary<string, string> values)
+    {
+        var h = new Dictionary<string, string>(values, StringComparer.Ordinal);
+        if (h.TryGetValue("{ORGANIZACION}", out var org))
+            h["{ORGANIZACION}"] = ReportValues.Ellipsize(org, HeaderOrganizationMax);
+        if (h.TryGetValue("{equipoExtraccion}", out var eq))
+            h["{equipoExtraccion}"] = ReportValues.Ellipsize(eq, HeaderCausaMax);
+        return h;
+    }
+
+    // Tabla de categorías (§5): clona la fila modelo {categoriaExtraccion}/{metodoExtraccion}/{resultadoExtraccion}.
+    private void FillCategoryTable(Body body,
+        IReadOnlyList<(string Category, string Method, string Result)> rows, HashSet<Paragraph> resolved)
+    {
+        var model = body.Descendants<TableRow>()
+            .FirstOrDefault(r => r.Descendants<Paragraph>().Any(p => ParagraphText(p).Contains("{categoriaExtraccion}")));
+        if (model is null)
+        {
+            logger.LogWarning("Plantilla: no se encontró la fila {{categoriaExtraccion}} de la tabla de categorías");
+            return;
+        }
+        foreach (var (category, method, result) in rows)
+        {
+            var row = (TableRow)model.CloneNode(true);
+            StripParagraphIds(row);
+            foreach (var para in row.Descendants<Paragraph>().ToList())
+                RewriteParagraph(para, TextPlaceholderRegex, m => m.Value switch
+                {
+                    "{categoriaExtraccion}" => ReportValues.Clean(category),
+                    "{metodoExtraccion}" => ReportValues.Clean(method),
+                    "{resultadoExtraccion}" => ReportValues.Clean(result),
+                    _ => null,
+                });
+            foreach (var p in row.Descendants<Paragraph>()) resolved.Add(p);
+            model.InsertBeforeSelf(row);
+        }
+        model.Remove();
+    }
+
     // ── DOCX (Anexo B, pasadas B-R0 a B-R9, más B-R2b de informe-diseno-modelo) ─
 
     // Placeholders de texto que la plantilla puede traer (A7.1, más el slot de atribución de la
@@ -448,7 +663,7 @@ public sealed class ReportService : IReportService
             // B-R1: placeholders desconocidos fuera, ANTES de insertar valores.
             var warned = new HashSet<string>(StringComparer.Ordinal);
             foreach (var (_, root) in parts)
-                RemoveUnknownPlaceholders(root, warned);
+                RemoveUnknownPlaceholders(root, warned, KnownPlaceholders, BlockKeys);
 
             // Pie de portada con el membrete (footer2 de la v6): se identifica antes de que B-R2 borre
             // los marcadores {#MEMBRETE}…{/MEMBRETE}.
@@ -590,7 +805,7 @@ public sealed class ReportService : IReportService
             AddFactumAttributionFooter(mainPart, body, ref drawId);
 
             // B-R9
-            WarnLeftovers(parts, resolved);
+            WarnLeftovers(parts, resolved, KnownPlaceholders, BlockKeys);
             // B-R9b (informe-formato-fixes §6.1): red de seguridad, nada inválido en XML llega a Save.
             SanitizeAllParts(mainPart);
             doc.Save();
@@ -599,13 +814,16 @@ public sealed class ReportService : IReportService
 
     // ── B-R1: placeholders desconocidos ──────────────────────────────────────
 
-    private void RemoveUnknownPlaceholders(OpenXmlElement root, HashSet<string> warned)
+    // informe-extraccion §7.1: parametrizado con el set que aplica (KnownPlaceholders/BlockKeys para inspección;
+    // ExtractionKnownPlaceholders/ExtractionBlockKeys para extracción); el camino de inspección no cambia.
+    private void RemoveUnknownPlaceholders(OpenXmlElement root, HashSet<string> warned, HashSet<string> known,
+        HashSet<string> blocks)
     {
         foreach (var para in root.Descendants<Paragraph>().ToList())
         {
             RewriteParagraph(para, AnyPlaceholderRegex, m =>
             {
-                if (IsKnownPlaceholder(m.Value)) return null;
+                if (IsKnownPlaceholder(m.Value, known, blocks)) return null;
                 if (warned.Add(m.Value))
                     logger.LogWarning("Plantilla: placeholder desconocido {Placeholder}", m.Value);
                 return string.Empty;
@@ -613,13 +831,13 @@ public sealed class ReportService : IReportService
         }
     }
 
-    private static bool IsKnownPlaceholder(string ph)
+    private static bool IsKnownPlaceholder(string ph, HashSet<string> known, HashSet<string> blocks)
     {
-        if (KnownPlaceholders.Contains(ph)) return true;
+        if (known.Contains(ph)) return true;
         if (LogoPlaceholderRegex.IsMatch(ph) && LogoPlaceholderRegex.Match(ph).Length == ph.Length) return true;
         if (IsotypePlaceholderRegex.IsMatch(ph) && IsotypePlaceholderRegex.Match(ph).Length == ph.Length) return true;
         var marker = BlockMarkerRegex.Match(ph);
-        return marker.Success && BlockKeys.Contains(marker.Groups[2].Value);
+        return marker.Success && blocks.Contains(marker.Groups[2].Value);
     }
 
     // ── B-R2: bloques condicionales {#clave} … {/clave} (§7.3) ──────────────
@@ -1202,7 +1420,7 @@ public sealed class ReportService : IReportService
     // ── B-R9: placeholders conocidos que quedaron sin reemplazar ─────────────
 
     private void WarnLeftovers(IEnumerable<(OpenXmlPart Part, OpenXmlElement Root)> parts,
-        HashSet<Paragraph> resolved)
+        HashSet<Paragraph> resolved, HashSet<string> known, HashSet<string> blocks)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (_, root) in parts)
@@ -1210,7 +1428,7 @@ public sealed class ReportService : IReportService
             {
                 if (resolved.Contains(para)) continue;
                 foreach (Match m in AnyPlaceholderRegex.Matches(ParagraphText(para)))
-                    if (IsKnownPlaceholder(m.Value) && seen.Add(m.Value))
+                    if (IsKnownPlaceholder(m.Value, known, blocks) && seen.Add(m.Value))
                         logger.LogWarning("Informe: el placeholder {Placeholder} quedó sin reemplazar", m.Value);
             }
     }
