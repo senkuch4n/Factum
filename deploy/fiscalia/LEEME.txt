@@ -9,6 +9,8 @@ Dos planes (se puede tener uno, el otro o los dos):
     1. En el servidor:          sudo bash servidor/instalar-servidor.sh
        (deja ca-factum-fiscalia.crt en esta carpeta: copialo al pendrive)
     2. En cada PC de perito:    sudo bash perito/preparar-pc-perito.sh <IP del servidor>
+       PC con Windows:          perito\preparar-pc-windows.cmd (clic derecho > Ejecutar como
+                                administrador; pide la IP). Tatana se instala aparte con su .exe.
 
   PLAN B - Todo en una PC (http://localhost:3000, sin red ni certificados)
     1. En esa PC:               sudo bash una-pc/instalar-una-pc.sh

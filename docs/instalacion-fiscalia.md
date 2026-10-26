@@ -211,6 +211,21 @@ menú) y tocá **"Preparar esta PC"**. Si Tatana ya estaba abierto, cerralo desd
 
 Comprobá que la huella SHA-256 que muestra el script es **la misma** que anotaste en el servidor.
 
+#### PC con Windows 10/11
+
+1. Instalá Tatana con su instalador (`Tatana-Setup-X.Y.Z.exe`).
+2. Copiá la carpeta del paquete (con el `ca-factum-fiscalia.crt`) a la PC, o abrila desde el pendrive.
+3. Clic derecho en `perito\preparar-pc-windows.cmd` → **Ejecutar como administrador** → escribí la IP del
+   servidor. Desde una consola de administrador también vale: `perito\preparar-pc-windows.cmd 192.168.0.10`
+   (`-Simular` muestra lo que haría sin cambiar nada).
+
+Hace lo mismo que el de Linux: agrega `192.168.0.10 factum.internal` al `hosts` (deja una copia
+`.antes-de-factum-fiscalia`) → instala el certificado en las raíces de confianza del equipo (Chrome y Edge) y
+activa en Firefox la política `ImportEnterpriseRoots` → escribe `%APPDATA%\Tatana\appsettings.Local.json` del
+usuario que tiene la sesión abierta, con los mismos `Agent:AllowedOrigins` → prueba
+`https://factum.internal/health`. Después, cerrá el navegador y Tatana (desde la bandeja) y abrilos de nuevo.
+Si Informática da de alta `factum.internal` en el DNS de la red, la línea del `hosts` sobra, pero no molesta.
+
 ### 4.3 Primer superadmin
 
 1. Entrá a `https://factum.internal` con el DNI y la contraseña temporal. La web pide cambiarla.
