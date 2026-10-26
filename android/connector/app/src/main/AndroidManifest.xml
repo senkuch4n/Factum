@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Factum Connector (GNU GPL-3.0-or-later). SDD extraccion-logica-android §7.2. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <!-- Nada más. Sin INTERNET: la app no puede sacar datos del dispositivo por red (D3c). -->
+
+    <application
+        android:label="Factum Connector"
+        android:allowBackup="false"
+        android:hasFragileUserData="false"
+        android:icon="@android:drawable/sym_def_app_icon"
+        tools:ignore="MissingApplicationIcon">
+        <!-- Sin activity launcher: no aparece en el cajón de apps. -->
+        <provider
+            android:name=".CallLogExportProvider"
+            android:authorities="app.factum.connector.calllog"
+            android:exported="true"
+            android:grantUriPermissions="false" />
+    </application>
+</manifest>

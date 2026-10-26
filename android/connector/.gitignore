@@ -1,0 +1,9 @@
+# Factum Connector — artefactos de build de Gradle/Android (no van en git).
+.gradle/
+build/
+app/build/
+local.properties
+*.apk
+*.jks
+*.keystore
+captures/

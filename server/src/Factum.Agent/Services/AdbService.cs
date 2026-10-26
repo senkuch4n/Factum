@@ -840,7 +840,8 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
     // reenviarlos al shell remoto — una ruta con espacios (ej. "WhatsApp Business/Media") se
     // parte en dos argumentos salvo que la citemos nosotros mismos para el shell remoto (las
     // comillas que agrega ProcessRunner.QuoteArg son solo para el parseo local de .NET).
-    private static string RemoteQuote(string s) => "'" + s.Replace("'", "'\\''") + "'";
+    // Movido a Common/AdbShell (extraccion-logica-android §3): compartido con el servicio de extracción.
+    private static string RemoteQuote(string s) => Factum.Agent.Common.AdbShell.RemoteQuote(s);
 
     private static readonly System.Text.RegularExpressions.Regex LsLineRegex = new(
         @"^(?<type>[bcdlpsD-])[rwxsStT@+.-]{9}\S*\s+\S+\s+\S+\s+\S+\s+(?<size>\d+)\s+(?<date>\d{4}-\d{2}-\d{2})\s+(?<time>\d{2}:\d{2})\s+(?<name>.+)$",
@@ -930,20 +931,10 @@ public sealed class AdbService : IAdbService, IOperationSource, IRecordingStateS
     // movidos fuera de su carpeta original). Instagram/Facebook no tienen convención de nombre
     // propia — la mayoría del contenido queda en storage privado de la app, inaccesible sin
     // root — así que solo listamos las carpetas públicas conocidas si existen.
-    private static readonly Dictionary<string, string[]> KnownAppFolders = new()
-    {
-        ["whatsapp"] = [
-            "/sdcard/WhatsApp/Media",
-            "/sdcard/Android/media/com.whatsapp/WhatsApp/Media",
-            "/sdcard/Android/media/com.whatsapp.w4b/WhatsApp Business/Media",
-        ],
-        ["instagram"] = [
-            "/sdcard/Pictures/Instagram", "/sdcard/DCIM/Instagram", "/sdcard/Movies/Instagram",
-        ],
-        ["facebook"] = [
-            "/sdcard/Pictures/Facebook", "/sdcard/DCIM/Facebook", "/sdcard/Movies/Facebook",
-        ],
-    };
+    // Movido a Services/Android/AndroidStorageFolders (extraccion-logica-android §5.4.1): la fuente única,
+    // compartida con el servicio de extracción. Acá se referencia para no cambiar el comportamiento.
+    private static readonly Dictionary<string, string[]> KnownAppFolders =
+        Factum.Agent.Services.Android.AndroidStorageFolders.KnownAppFolders;
 
     private static readonly string[] WhatsappNamePatterns =
         ["IMG-*-WA*", "VID-*-WA*", "PTT-*-WA*", "AUD-*-WA*", "STK-*-WA*", "DOC-*-WA*"];

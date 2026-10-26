@@ -33,6 +33,9 @@
        (funciona con single-file) y IosHelper lo escribe en %TEMP%/tatana al usarlo. -->
   <ItemGroup>
     <EmbeddedResource Include="Services/Ios/ios_helper.py" LogicalName="Factum.Agent.Services.Ios.ios_helper.py" />
+    <!-- Hash fijo del connector (extraccion-logica-android §7.5): ConnectorLock.Load() lo lee al arrancar.
+         Es la ÚNICA fuente del hash que Tatana verifica antes de instalar la app auxiliar. -->
+    <EmbeddedResource Include="../../../android/connector/connector-lock.json" LogicalName="Factum.Agent.connector-lock.json" />
   </ItemGroup>
 
   <!-- Config local de desarrollo (fuera del repo, ej. "Mock": true): no se copia a bin/ ni a

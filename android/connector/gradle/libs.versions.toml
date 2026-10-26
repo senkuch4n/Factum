@@ -1,0 +1,9 @@
+# Versiones fijas del connector (SDD extraccion-logica-android §7.1). AGP y Kotlin en estables
+# compatibles con el wrapper de Gradle 8.13 y JDK 17. Para subirlas: cambiar acá y revalidar en CI.
+[versions]
+agp = "8.9.1"
+kotlin = "2.1.20"
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChartColumn, ClipboardList } from "lucide-react";
+import { ChartColumn, ClipboardList, HardDriveDownload } from "lucide-react";
 import { UserMenu } from "@/components/UserMenu";
 import { ExpertProfileDialog } from "@/components/ExpertProfileDialog";
 import { ChangePasswordDialog } from "@/components/password/ChangePasswordDialog";
@@ -24,7 +24,7 @@ interface AppNavbarProps {
    * modo historial y el wizard sigue con su `center`. Sin esta prop (admin,
    * wizard) el centro queda idéntico a antes.
    */
-  sections?: { activeSection: "inspecciones" | "metricas" };
+  sections?: { activeSection: "inspecciones" | "extracciones" | "metricas" };
   /** Acciones de la página (AgentChip, CTA). */
   actions?: React.ReactNode;
   /** `role` habilita "Administrar cuentas" (superadmin en modo `local`). */
@@ -66,6 +66,7 @@ function BrandMark() {
    subir a `md` si a 640 px se cortaban: se cortaban.) */
 const SECTIONS = [
   { key: "inspecciones", label: "Inspecciones", href: "/dashboard", Icon: ClipboardList },
+  { key: "extracciones", label: "Extracciones", href: "/extracciones", Icon: HardDriveDownload },
   { key: "metricas", label: "Métricas", href: "/metricas", Icon: ChartColumn },
 ] as const;
 
@@ -76,7 +77,7 @@ const SECTION_ICON = "inline-flex h-9 w-9 shrink-0 justify-center md:hidden";
 const SECTION_ACTIVE = "bg-fx-surface-3 font-semibold text-fx-text";
 const SECTION_IDLE = "font-medium text-fx-text-3 hover:text-fx-text";
 
-function SectionTabs({ activeSection }: { activeSection: "inspecciones" | "metricas" }) {
+function SectionTabs({ activeSection }: { activeSection: "inspecciones" | "extracciones" | "metricas" }) {
   // Centrado "seguro": `mx-auto` dentro de un contenedor sin `justify-center`.
   // Si no entra, desborda hacia la derecha y nunca sobre la marca.
   return (

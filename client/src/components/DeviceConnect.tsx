@@ -20,12 +20,19 @@ interface Props {
   appleServiceMissing?: boolean;
   /** SO de Tatana (`/health.os`): elige el texto de "falta el servicio de Apple" (tatana-linux). */
   agentOs?: AgentOs | null;
+  /**
+   * Plataforma que aparece deshabilitada (no seleccionable), con `disabledHint`
+   * como motivo. La usa la extracción lógica para bloquear iPhone
+   * (extraccion-logica-android §10.4.1); sin esta prop no cambia nada.
+   */
+  disabledPlatform?: "ios" | "android";
+  disabledHint?: string;
 }
 
 const FADE_IN = "motion-safe:animate-[fx-fade-in_var(--fx-dur-base)_var(--fx-ease-out)_both]";
 
 /** Paso 1: elegir el dispositivo conectado por USB. */
-export function DeviceConnect({ devices, agentOnline, loading, onSelect, onRefresh, onOpenGuide, appleServiceMissing = false, agentOs = null }: Props) {
+export function DeviceConnect({ devices, agentOnline, loading, onSelect, onRefresh, onOpenGuide, appleServiceMissing = false, agentOs = null, disabledPlatform, disabledHint }: Props) {
   return (
     <div className="space-y-6">
       <div className="pt-2 pb-2 text-center">
@@ -118,47 +125,65 @@ export function DeviceConnect({ devices, agentOnline, loading, onSelect, onRefre
           <ul className="m-0 list-none space-y-2.5 p-0">
             {devices.map(device => {
               const isIOS = device.platform === "ios";
+              const disabled = disabledPlatform === device.platform;
+              const info = (
+                <>
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-fx-md border border-fx-border bg-fx-surface-2">
+                    <Smartphone className="h-5 w-5 text-fx-text-2" strokeWidth={1.5} aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="text-fx-body-sm font-semibold text-fx-text">
+                        {device.manufacturer} {device.model}
+                      </span>
+                      {isIOS && <Tag severity="info" value="iOS" />}
+                    </span>
+                    <span className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-fx-text-3">
+                      <span className="flex items-center gap-1">
+                        <Signal className="h-3 w-3" aria-hidden="true" />
+                        {isIOS ? `iOS ${device.ios_version ?? device.android_version}` : `Android ${device.android_version}`}
+                      </span>
+                      {device.imei && device.imei !== "INGRESAR_MANUALMENTE" && (
+                        <span className="flex items-center gap-1 font-mono" translate="no">
+                          <Fingerprint className="h-3 w-3" aria-hidden="true" />
+                          <span className="sr-only">IMEI </span>
+                          {device.imei}
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1 font-mono" translate="no">
+                        <Cpu className="h-3 w-3" aria-hidden="true" />
+                        <span className="sr-only">Serie </span>
+                        {device.serial.slice(0, 20)}{device.serial.length > 20 ? "…" : ""}
+                      </span>
+                    </span>
+                    {disabled && disabledHint && (
+                      <span className="mt-1.5 block text-xs font-medium text-fx-text-2">{disabledHint}</span>
+                    )}
+                  </span>
+                </>
+              );
               return (
                 <li key={device.serial}>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(device)}
-                    className="fx-card fx-card-interactive group flex w-full min-h-11 items-center gap-4 p-4 text-left"
-                  >
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-fx-md border border-fx-border bg-fx-surface-2">
-                      <Smartphone className="h-5 w-5 text-fx-text-2" strokeWidth={1.5} aria-hidden="true" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex flex-wrap items-center gap-2">
-                        <span className="text-fx-body-sm font-semibold text-fx-text">
-                          {device.manufacturer} {device.model}
-                        </span>
-                        {isIOS && <Tag severity="info" value="iOS" />}
-                      </span>
-                      <span className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-fx-text-3">
-                        <span className="flex items-center gap-1">
-                          <Signal className="h-3 w-3" aria-hidden="true" />
-                          {isIOS ? `iOS ${device.ios_version ?? device.android_version}` : `Android ${device.android_version}`}
-                        </span>
-                        {device.imei && device.imei !== "INGRESAR_MANUALMENTE" && (
-                          <span className="flex items-center gap-1 font-mono" translate="no">
-                            <Fingerprint className="h-3 w-3" aria-hidden="true" />
-                            <span className="sr-only">IMEI </span>
-                            {device.imei}
-                          </span>
-                        )}
-                        <span className="flex items-center gap-1 font-mono" translate="no">
-                          <Cpu className="h-3 w-3" aria-hidden="true" />
-                          <span className="sr-only">Serie </span>
-                          {device.serial.slice(0, 20)}{device.serial.length > 20 ? "…" : ""}
-                        </span>
-                      </span>
-                    </span>
-                    <ChevronRight
-                      className="h-4 w-4 shrink-0 text-fx-text-3 transition-transform duration-fx-fast motion-safe:group-hover:translate-x-0.5"
-                      aria-hidden="true"
-                    />
-                  </button>
+                  {disabled ? (
+                    <div
+                      aria-disabled="true"
+                      className="fx-card flex w-full items-center gap-4 p-4 text-left opacity-60"
+                    >
+                      {info}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onSelect(device)}
+                      className="fx-card fx-card-interactive group flex w-full min-h-11 items-center gap-4 p-4 text-left"
+                    >
+                      {info}
+                      <ChevronRight
+                        className="h-4 w-4 shrink-0 text-fx-text-3 transition-transform duration-fx-fast motion-safe:group-hover:translate-x-0.5"
+                        aria-hidden="true"
+                      />
+                    </button>
+                  )}
                 </li>
               );
             })}

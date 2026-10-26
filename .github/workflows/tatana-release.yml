@@ -53,6 +53,8 @@ on:
       - deploy/windows/armar-tatana-portable.sh
       - deploy/linux/**
       - packaging/linux/**
+      - ops/connector/**
+      - android/connector/connector-lock.json
 
 # Una publicación a la vez (nunca se cancela a mitad). Los ensayos de PR van en su propio grupo: si no,
 # un PR podría dejar en espera (o desplazar) una release pendiente.
@@ -254,6 +256,8 @@ jobs:
           VERSION: ${{ needs.preparar.outputs.version }}
           ORIGENES: ${{ needs.preparar.outputs.origenes }}
           CLIENT_URL: ${{ needs.preparar.outputs.client_url }}
+          # Para bajar el APK del connector del release privado (extraccion-logica-android §7.6).
+          GH_TOKEN: ${{ github.token }}
         run: |
           # Árbol limpio del commit (ningún archivo local ni appsettings.Local.json).
           mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/out"
@@ -264,6 +268,8 @@ jobs:
         env:
           VERSION: ${{ needs.preparar.outputs.version }}
           ORIGENES: ${{ needs.preparar.outputs.origenes }}
+          # Para bajar el APK del connector del release privado (extraccion-logica-android §7.6).
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 -I packaging/linux/ios-linux/generar-lock.py --check
           bash deploy/linux/armar-tatana-linux.sh --version "$VERSION" --src "$RUNNER_TEMP/src" \

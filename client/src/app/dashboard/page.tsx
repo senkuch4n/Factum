@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence, MotionConfig } from "framer-motion";
-import { Loader2, Plus, Play, ChevronRight, ArrowLeft, Smartphone, HelpCircle, LifeBuoy } from "lucide-react";
+import Link from "next/link";
+import { Loader2, Plus, Play, ChevronRight, ArrowLeft, Smartphone, HelpCircle, LifeBuoy, HardDriveDownload } from "lucide-react";
 import { Button } from "primereact/button";
 import {
   api, ApiError, type CaseTimestamp, type CaseTimestampsResponse, type DeviceInput, type EvidenceResponse, type ZipLocation,
@@ -1523,13 +1524,23 @@ export default function Dashboard() {
                     {/* Fecha y botón entran como secciones, después de las palabras del saludo. */}
                     <p className="mt-2 text-fx-body text-fx-text-2 first-letter:uppercase motion-safe:animate-[fx-word-in_600ms_var(--fx-ease-out)_400ms_both]">{formattedDate}</p>
                   </div>
-                  <Button
-                    size="large"
-                    icon={<Plus className="h-5 w-5" aria-hidden="true" />}
-                    label="Nueva inspección"
-                    onClick={startWizard}
-                    className="w-full sm:w-auto min-h-11 shrink-0 motion-safe:animate-[fx-word-in_600ms_var(--fx-ease-out)_500ms_both]"
-                  />
+                  <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center motion-safe:animate-[fx-word-in_600ms_var(--fx-ease-out)_500ms_both]">
+                    {/* Acceso a la extracción lógica de Android (extraccion-logica-android §10.1). */}
+                    <Link
+                      href="/extracciones/nueva"
+                      className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-fx-md border border-fx-border bg-fx-surface-2 px-4 text-fx-body-sm font-semibold text-fx-text no-underline transition-colors duration-fx-fast ease-fx hover:bg-fx-surface-3 fx-focus-ring sm:w-auto"
+                    >
+                      <HardDriveDownload className="h-4 w-4" aria-hidden="true" />
+                      Nueva extracción
+                    </Link>
+                    <Button
+                      size="large"
+                      icon={<Plus className="h-5 w-5" aria-hidden="true" />}
+                      label="Nueva inspección"
+                      onClick={startWizard}
+                      className="w-full min-h-11 sm:w-auto"
+                    />
+                  </div>
                 </div>
               )}
 

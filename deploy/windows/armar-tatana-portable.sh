@@ -251,6 +251,11 @@ else
   echo "  AVISO: el portátil de Windows sale sin AirPlay (decisión D1 de ios-herramientas-windows); ver packaging/windows-uxplay-build.md"
 fi
 
+# App auxiliar del registro de llamadas (extraccion-logica-android §7.6): entra en tools/connector/ solo si
+# connector-lock.json ya tiene hash. Con el lock vacío no hace nada. GH_TOKEN permite bajar del repo privado.
+echo "[6.5/7] App auxiliar (connector)..."
+"$DIR_SCRIPT/../../ops/connector/bajar-connector.sh" "$OUT"
+
 echo "[7/7] Scripts del portátil y zip..."
 # Sin *.ps1: el actualizador sin verificación del portátil (update-portable.ps1) se retiró
 # (SDD tatana-instalador-autoupdate D-T18). Para la nube, Tatana se actualiza con el instalador.

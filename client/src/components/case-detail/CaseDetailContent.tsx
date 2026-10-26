@@ -19,6 +19,7 @@ import { FX_BUTTON_PRIMARY, FX_BUTTON_SECONDARY } from "@/lib/prime/pt/shared";
 import { CopyButton } from "@/components/feedback/CopyButton";
 import { useCaseAgentFlow } from "./useCaseAgentFlow";
 import { CaseTimeline } from "./CaseTimeline";
+import { AssociatedExtractions } from "@/components/extraction/AssociatedExtractions";
 import { CaseVersionHistoryButton } from "./CaseVersionHistoryButton";
 import { TimestampPanel } from "./TimestampPanel";
 import { SessionRecordPanel } from "./SessionRecordPanel";
@@ -76,6 +77,9 @@ export function CaseDetailContent({ cas, onResume }: { cas: Case; onResume: (c: 
 
       {/* grabacion-sesion-completa §9.7: registro audiovisual (solo si la sesión tiene tramos). */}
       <SessionRecordSection cas={cas} />
+
+      {/* extraccion-logica-android §10.6: extracciones lógicas asociadas a este caso. */}
+      <AssociatedExtractions caseId={cas.id} />
 
       {/* versionado-informe (HU6, D7-B): historial de las secciones del informe,
           accesible desde el detalle; solo lectura en casos completados. */}

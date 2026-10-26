@@ -1,0 +1,9 @@
+{
+  "package": "app.factum.connector",
+  "version_name": "1.0.0",
+  "version_code": 1,
+  "sha256": "",
+  "cert_sha256": "",
+  "release_tag": "connector-v1.0.0",
+  "asset": "factum-connector-1.0.0.apk"
+}

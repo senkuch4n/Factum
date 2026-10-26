@@ -502,7 +502,10 @@ export type IosDeveloperModeStatus = "enabled" | "restarting" | "manual_required
  * - `recording_session_v1`: grabación de la sesión completa con la pantalla de
  *   Android, `zip_folder` en el ZIP y `/agent/state.recording_session`
  *   (grabacion-sesion-completa); `recording_session_camera_v1` y
- *   `recording_session_ios_v1` llegan en la fase 2.
+ *   `recording_session_ios_v1` llegan en la fase 2;
+ * - `extraction_android_v1`: extracción lógica de Android (`/extractions*`,
+ *   `/devices/{serial}/extraction/*` y `/extraction/destinations*`,
+ *   extraccion-logica-android §8.1). Sin ella la sección no deja iniciar.
  */
 /** SO de la PC donde corre Tatana (`/health.os`, tatana-linux §10.A). Falta en Tatanas anteriores. */
 export type AgentOs = "windows" | "macos" | "linux";
@@ -682,7 +685,13 @@ export type AgentErrorCode =
   | "session_active" | "session_not_active" | "session_not_found" | "session_file_protected"
   | "session_platform_unsupported" | "session_ios_mode_unsupported"
   // Cámara del procedimiento (grabacion-sesion-completa-f2 §7.6).
-  | "session_camera_unsupported" | "camera_busy" | "camera_preview_unavailable";
+  | "session_camera_unsupported" | "camera_busy" | "camera_preview_unavailable"
+  // Extracción lógica de Android (extraccion-logica-android §8.6). Se reusan
+  // `invalid_request`, `insufficient_storage` y `device_not_found`.
+  | "extraction_in_progress" | "extraction_not_found" | "extraction_not_running" | "extraction_not_finished"
+  | "manifest_mismatch" | "confirmation_required" | "device_busy" | "device_unauthorized"
+  | "platform_not_supported" | "path_not_allowed" | "path_not_found" | "destination_not_writable"
+  | "reveal_unavailable";
 
 /** Cuerpo de error de Tatana (claves literales en snake_case). */
 export interface AgentErrorBody {
@@ -700,6 +709,10 @@ export interface AgentErrorBody {
   screen_state?: "off" | "locked";
   /** 409 `session_active` del start de la sesión: caso de la sesión que ya está grabando. */
   case_id?: string;
+  /** 409 `extraction_in_progress`: id de la extracción vigente (extraccion-logica-android §8.2.4). */
+  extraction_id?: string;
+  /** 507 `insufficient_storage` del inicio de una extracción: bytes que faltan. */
+  missing_bytes?: number;
 }
 
 /** Opciones de captura: `skipScreenCheck` = "Capturar igual" / "Grabar igual" (pulido-post-qa-final §6.1). */
@@ -842,6 +855,264 @@ export class PreviewUnsupportedError extends Error {
 /** URL absoluta de una vista previa (`url` = `/previews/<archivo>`). */
 export function previewFileURL(url: string): string {
   return `${AGENT_URL}${url}`;
+}
+
+/* ── Extracción lógica de Android (extraccion-logica-android, SDD §8.2) ───────
+ * Capability `extraction_android_v1` en `/health.capabilities`: sin ella la
+ * sección no deja iniciar (§8.1). Todo el JSON va en snake_case_lower y los
+ * `null` de Tatana no viajan (campos opcionales).
+ */
+
+export type ExtractionCategoryKey =
+  | "contacts" | "sms_mms" | "call_log" | "calendar" | "apps"
+  | "media" | "downloads" | "documents" | "audio" | "whatsapp_media" | "all_storage" | "custom";
+
+export type ExtractionCategoryKind = "structured" | "files";
+
+export type ExtractionStatus =
+  | "running" | "completed" | "completed_with_errors" | "interrupted" | "cancelled";
+
+export type ExtractionPhase =
+  | "preparing" | "structured" | "inventory" | "copying" | "hashing" | "verifying_device" | "closing" | "done";
+
+export type ExtractionCategoryStatus =
+  | "pending" | "running" | "done" | "done_with_errors" | "not_extracted" | "cancelled";
+
+export type ExtractionReasonCode =
+  | "permission_denied" | "provider_unavailable" | "connector_unavailable" | "connector_install_blocked"
+  | "connector_install_failed" | "connector_conflict" | "path_not_found" | "device_disconnected"
+  | "cancelled" | "error";
+
+export type ExtractionInterruptionReason =
+  | "device_disconnected" | "device_unauthorized" | "agent_stopped" | "destination_error" | "internal_error";
+
+export type ConnectorUnavailableReason = "not_packaged" | "not_released" | "hash_mismatch" | "sdk_too_old";
+
+export type DestinationKind = "internal" | "removable" | "network";
+
+/** `connector` del preflight (§8.2.1). */
+export interface AgentConnectorInfo {
+  available: boolean;
+  version_name?: string;
+  sha256?: string;
+  /** Solo si `available` es `false`. */
+  reason?: ConnectorUnavailableReason;
+}
+
+export interface AgentExtractionFileCategory {
+  key: ExtractionCategoryKey;
+  roots: string[];
+  available: boolean;
+}
+
+/** `GET /devices/{serial}/extraction/preflight` (§8.2.1). */
+export interface AgentExtractionPreflight {
+  serial: string;
+  platform: "android" | "ios";
+  sdk_int?: number;
+  android_version: string;
+  manufacturer: string;
+  model: string;
+  /** Se omiten si no se pudieron leer. */
+  battery_level?: number;
+  battery_charging?: boolean;
+  device_sha256_available: boolean;
+  screen_state: "on" | "off" | "locked" | "unknown";
+  connector: AgentConnectorInfo;
+  file_categories: AgentExtractionFileCategory[];
+}
+
+/** `POST /devices/{serial}/extraction/estimate` (§8.2.2). */
+export interface AgentExtractionEstimateRequest {
+  file_categories: ExtractionCategoryKey[];
+  custom_paths: string[];
+}
+export interface AgentExtractionEstimate {
+  roots: { path: string; category: ExtractionCategoryKey; bytes: number }[];
+  by_category: Partial<Record<ExtractionCategoryKey, number>>;
+  files_bytes: number;
+  structured_bytes: number;
+  total_bytes: number;
+}
+
+/** Una unidad de destino (§8.2.3). */
+export interface AgentDrive {
+  kind: DestinationKind;
+  label: string;
+  root_path: string;
+  free_bytes: number;
+  total_bytes: number;
+  file_system: string;
+  /** Solo con FAT32 (`4294967295`). */
+  max_file_bytes?: number;
+}
+export interface AgentDestinations {
+  restricted: boolean;
+  can_reveal: boolean;
+  default_path: string;
+  drives: AgentDrive[];
+}
+export interface AgentDestinationBrowse {
+  path: string;
+  parent: string | null;
+  entries: { name: string; path: string }[];
+}
+export interface AgentDestinationCheckRequest { path: string; required_bytes: number; }
+export interface AgentDestinationCheck {
+  path: string;
+  ok: boolean;
+  writable: boolean;
+  free_bytes: number;
+  required_bytes: number;
+  margin_bytes: number;
+  missing_bytes?: number;
+  file_system: string;
+  final_folder_preview: string;
+  /** Solo si `ok` es `false`. */
+  reason?: "insufficient_space" | "not_writable" | "path_not_found" | "path_not_allowed";
+  max_file_bytes?: number;
+}
+
+/** Operador informado por la web para el ACTA (§8.2.4). Informativo: el registro con autoridad es el del backend. */
+export interface ExtractionOperator { dni: string; name: string; }
+
+/** `POST /extractions` (§8.2.4). */
+export interface AgentExtractionStartRequest {
+  serial: string;
+  structured_categories: ExtractionCategoryKey[];
+  file_categories: ExtractionCategoryKey[];
+  custom_paths: string[];
+  destination_path: string;
+  verify_on_device: boolean;
+  confirm_device_modifications: boolean;
+  operator: ExtractionOperator;
+  pc_server_probe?: { pc_before: string; server_time: string; pc_after: string };
+  origin_id?: string;
+  client_version?: string;
+}
+
+export interface AgentExtractionCategory {
+  key: ExtractionCategoryKey;
+  kind: ExtractionCategoryKind;
+  status: ExtractionCategoryStatus;
+  /** Estructuradas. */
+  count?: number;
+  /** Archivos. */
+  files_total?: number;
+  files_done?: number;
+  bytes_total?: number;
+  bytes_done?: number;
+  errors?: number;
+  hash_mismatches?: number;
+  /** Si no se extrajo. */
+  reason_code?: ExtractionReasonCode;
+  reason?: string;
+}
+
+export interface AgentExtractionTotals {
+  files_total: number;
+  files_done: number;
+  bytes_total: number;
+  bytes_done: number;
+  errors: number;
+  hash_mismatches: number;
+  /** Media móvil de 10 s; null/ausente si no hay datos o la fase no es de archivos. */
+  bytes_per_second?: number;
+  eta_seconds?: number | null;
+}
+
+export interface AgentDeviceModification {
+  kind: "connector_installed" | "connector_uninstalled" | "stay_awake_set" | "stay_awake_restored";
+  at: string;
+  detail?: string;
+  /** `true` solo si la modificación ocurrió después de cerrar (adenda, §5.5). */
+  after_close?: boolean;
+}
+
+export interface AgentExtractionInterruption {
+  reason_code: ExtractionInterruptionReason;
+  message?: string;
+  at: string;
+}
+
+/**
+ * `record` que arma Tatana con los nombres del DTO de la API (§8.3). La web lo
+ * reenvía **sin tocarlo** a `PUT /api/extractions/{id}` (D-T2) y solo agrega
+ * `pc_server_probe`. `device_details` queda permisivo: la web no lo introspecciona.
+ */
+export interface AgentExtractionRecord {
+  status: ExtractionStatus;
+  hostname: string;
+  os_user: string;
+  agent_version: string;
+  agent_mode?: "installed" | "portable";
+  started_at_pc: string;
+  finished_at_pc?: string;
+  device: { serial: string; manufacturer: string; model: string; platform: string; android_version: string; sdk_int?: number };
+  device_details?: Record<string, unknown> | null;
+  categories: {
+    key: ExtractionCategoryKey; kind: ExtractionCategoryKind; status: ExtractionCategoryStatus;
+    count?: number; files?: number; bytes?: number; errors?: number; hash_mismatches?: number; method?: string;
+  }[];
+  custom_paths_count: number;
+  verify_on_device: boolean;
+  device_sha256_available: boolean;
+  totals: { files: number; bytes: number; errors: number; hash_mismatches: number };
+  destination_path: string;
+  folder_name: string;
+  manifest_sha256?: string;
+  manifest_entries?: number;
+  device_modifications: AgentDeviceModification[];
+  interruption?: AgentExtractionInterruption | null;
+}
+
+/** Snapshot de extracción (§8.2.6): respuestas HTTP y eventos WS. */
+export interface AgentExtractionSnapshot {
+  id: string;
+  status: ExtractionStatus;
+  phase: ExtractionPhase;
+  serial: string;
+  manufacturer: string;
+  model: string;
+  android_version: string;
+  operator: ExtractionOperator;
+  destination_path: string;
+  folder_name: string;
+  folder_path: string;
+  started_at: string;
+  updated_at: string;
+  verify_on_device: boolean;
+  device_sha256_available: boolean;
+  categories: AgentExtractionCategory[];
+  totals: AgentExtractionTotals;
+  device_modifications: AgentDeviceModification[];
+  registered: boolean;
+  seals_written: boolean;
+  /* Campos que solo aparecen en el estado terminal. */
+  finished_at?: string;
+  interruption?: AgentExtractionInterruption;
+  manifest_sha256?: string;
+  manifest_entries?: number;
+  record?: AgentExtractionRecord;
+}
+
+/** Entrada del índice local de Tatana (`GET /extractions`, §8.2.5). */
+export interface AgentExtractionListItem {
+  id: string;
+  status: ExtractionStatus;
+  started_at: string;
+  finished_at?: string;
+  folder_path: string;
+  manufacturer: string;
+  model: string;
+  registered: boolean;
+  seals_written: boolean;
+}
+
+/** `GET /extractions/{id}/errors` (§8.2.5), paginado. */
+export interface AgentExtractionErrorsPage {
+  total: number;
+  items: { device_path: string; category: string; reason: string }[];
 }
 
 /** Capabilities de `/health` de la conexión actual (ver `supportsRecordingState`). */
@@ -1497,6 +1768,66 @@ export const agent = {
   /** "Guardar una copia…": Tatana lo sirve como `attachment`. */
   zipFileURL(caseId: string, caseRef: string, zipFilename: string): string {
     return `${AGENT_URL}${caseBase(caseId)}/zip/file?${zipQuery(caseRef, zipFilename)}`;
+  },
+
+  /* ── Extracción lógica de Android (extraccion-logica-android §8.2) ── */
+
+  async getExtractionPreflight(serial: string, signal?: AbortSignal): Promise<AgentExtractionPreflight> {
+    return agentJSON<AgentExtractionPreflight>(`/devices/${encodeURIComponent(serial)}/extraction/preflight`, { signal });
+  },
+  async estimateExtraction(
+    serial: string, body: AgentExtractionEstimateRequest, signal?: AbortSignal,
+  ): Promise<AgentExtractionEstimate> {
+    return agentJSON<AgentExtractionEstimate>(
+      `/devices/${encodeURIComponent(serial)}/extraction/estimate`, { ...jsonInit("POST", body), signal },
+    );
+  },
+  async getDestinations(signal?: AbortSignal): Promise<AgentDestinations> {
+    return agentJSON<AgentDestinations>("/extraction/destinations", { signal });
+  },
+  async browseDestination(path: string, signal?: AbortSignal): Promise<AgentDestinationBrowse> {
+    return agentJSON<AgentDestinationBrowse>(`/extraction/destinations/browse?path=${encodeURIComponent(path)}`, { signal });
+  },
+  async checkDestination(body: AgentDestinationCheckRequest, signal?: AbortSignal): Promise<AgentDestinationCheck> {
+    return agentJSON<AgentDestinationCheck>("/extraction/destinations/check", { ...jsonInit("POST", body), signal });
+  },
+  /** Inicia una extracción (202 con el snapshot). Sin timeout: dura horas, pero el POST vuelve enseguida. */
+  async startExtraction(body: AgentExtractionStartRequest): Promise<AgentExtractionSnapshot> {
+    return agentJSON<AgentExtractionSnapshot>("/extractions", jsonInit("POST", body));
+  },
+  /** Extracción en curso, o `null` si no hay ninguna. */
+  async getCurrentExtraction(signal?: AbortSignal): Promise<AgentExtractionSnapshot | null> {
+    const r = await agentJSON<{ extraction?: AgentExtractionSnapshot }>("/extractions/current", { signal });
+    return r.extraction ?? null;
+  },
+  /** Índice local de Tatana (últimas 100, más recientes primero). */
+  async listExtractions(signal?: AbortSignal): Promise<AgentExtractionListItem[]> {
+    const r = await agentJSON<{ extractions?: AgentExtractionListItem[] }>("/extractions", { signal });
+    return Array.isArray(r.extractions) ? r.extractions : [];
+  },
+  async getExtraction(id: string, signal?: AbortSignal): Promise<AgentExtractionSnapshot> {
+    return agentJSON<AgentExtractionSnapshot>(`/extractions/${encodeURIComponent(id)}`, { signal });
+  },
+  async getExtractionErrors(id: string, offset = 0, limit = 100, signal?: AbortSignal): Promise<AgentExtractionErrorsPage> {
+    const q = new URLSearchParams({ offset: String(offset), limit: String(limit) }).toString();
+    return agentJSON<AgentExtractionErrorsPage>(`/extractions/${encodeURIComponent(id)}/errors?${q}`, { signal });
+  },
+  async cancelExtraction(id: string): Promise<AgentExtractionSnapshot> {
+    return agentJSON<AgentExtractionSnapshot>(`/extractions/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+  },
+  /** Marca la extracción como registrada en el backend (D11). 409 si el hash no coincide. */
+  async markExtractionRegistered(id: string, manifestSha256: string): Promise<void> {
+    await agentJSON(`/extractions/${encodeURIComponent(id)}/registered`, jsonInit("POST", { manifest_sha256: manifestSha256 }));
+  },
+  /** Copia los `.tsr` del manifiesto + el LEEME a `<carpeta>/sellos/` (idempotente). */
+  async writeExtractionSeals(
+    id: string, body: { files: { name: string; content_base64: string }[]; readme: string | null },
+  ): Promise<WriteSealsResponse> {
+    return agentJSON<WriteSealsResponse>(`/extractions/${encodeURIComponent(id)}/seals`, jsonInit("PUT", body));
+  },
+  /** Abre la carpeta de la extracción con `ACTA.txt` seleccionado. 409 `reveal_unavailable` en Docker. */
+  async revealExtraction(id: string): Promise<void> {
+    await agentFetch(`/extractions/${encodeURIComponent(id)}/reveal`, { method: "POST" });
   },
 
   /** Conecta al WebSocket del agente para eventos en tiempo real. */

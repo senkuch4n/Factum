@@ -1,0 +1,83 @@
+{
+  "status": "completed_with_errors",
+  "hostname": "PC-PERITO-01",
+  "os_user": "perito",
+  "agent_version": "1.9.0",
+  "agent_mode": "installed",
+  "started_at_pc": "2026-10-25T17:30:00.123Z",
+  "finished_at_pc": "2026-10-25T17:58:03.000Z",
+  "device": {
+    "serial": "R58RA3R5AGA",
+    "manufacturer": "samsung",
+    "model": "SM-M127F",
+    "platform": "android",
+    "android_version": "11",
+    "sdk_int": 30
+  },
+  "device_details": {
+    "platform": "android",
+    "agent_version": "1.9.0",
+    "fields": {
+      "serial_number": { "value": "R58RA3R5AGA" },
+      "wifi_ssid": { "reason": "masked" }
+    },
+    "clock_start": {
+      "pc_before": "2026-10-25T17:30:00.000Z",
+      "pc_after": "2026-10-25T17:30:00.200Z",
+      "device_time": "2026-10-25T17:30:00.100Z",
+      "resolution_ms": 1000
+    },
+    "clock_close": {
+      "pc_before": "2026-10-25T17:58:00.000Z",
+      "pc_after": "2026-10-25T17:58:00.200Z",
+      "device_time": "2026-10-25T17:58:00.100Z",
+      "resolution_ms": 1000
+    }
+  },
+  "categories": [
+    {
+      "key": "contacts",
+      "kind": "structured",
+      "status": "done",
+      "count": 22,
+      "method": "content query content://com.android.contacts/{contacts,raw_contacts,data}"
+    },
+    {
+      "key": "media",
+      "kind": "files",
+      "status": "done_with_errors",
+      "files": 812,
+      "bytes": 19922944,
+      "errors": 1,
+      "hash_mismatches": 0,
+      "method": "adb pull -a; sha256sum (toybox)"
+    }
+  ],
+  "custom_paths_count": 0,
+  "verify_on_device": true,
+  "device_sha256_available": true,
+  "totals": {
+    "files": 812,
+    "bytes": 19922944,
+    "errors": 1,
+    "hash_mismatches": 0
+  },
+  "destination_path": "/media/perito/EVIDENCIA_01",
+  "folder_name": "Factum_Extraccion_samsung-SM-M127F_20261025-143000",
+  "manifest_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "manifest_entries": 830,
+  "device_modifications": [
+    {
+      "kind": "connector_installed",
+      "at": "2026-10-25T17:40:00.000Z",
+      "detail": "app.factum.connector 1.0.0 sha256 ...",
+      "after_close": false
+    }
+  ],
+  "interruption": null,
+  "pc_server_probe": {
+    "pc_before": "2026-10-25T17:30:00.000Z",
+    "server_time": "2026-10-25T17:30:00.080Z",
+    "pc_after": "2026-10-25T17:30:00.160Z"
+  }
+}

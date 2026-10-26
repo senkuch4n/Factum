@@ -120,6 +120,13 @@ public sealed class CaseEventDetail
     public double? GapSeconds { get; set; }            // recording_session_resumed
     [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? SegmentLost { get; set; }             // recording_session_stopped
+
+    // ── extraccion-logica-android §6.2 (extraction_linked / extraction_unlinked). Reutiliza Sha256 (hash del
+    //    manifiesto, si hay). Nunca lleva contenido extraído, serial ni nombres de archivos. ──
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ExtractionId { get; set; }          // extraction_linked / extraction_unlinked
+    [BsonIgnoreIfNull, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DeviceLabel { get; set; }           // p. ej. "samsung SM-M127F" (sin serial)
 }
 
 /// <summary>
@@ -162,4 +169,8 @@ public static class CaseEventTypes
     public const string RecordingSessionStopped = "recording_session_stopped";
     /// <summary>Hueco que se cierra (detail.track/at/reason/gap_seconds/segment_index).</summary>
     public const string RecordingSessionResumed = "recording_session_resumed";
+    /// <summary>extraccion-logica-android §6.2: extracción asociada a un caso (detail.extraction_id/sha256/device_label).</summary>
+    public const string ExtractionLinked = "extraction_linked";
+    /// <summary>extraccion-logica-android §6.2: extracción desasociada de un caso (mismo detail).</summary>
+    public const string ExtractionUnlinked = "extraction_unlinked";
 }

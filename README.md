@@ -618,6 +618,42 @@ ya subida al servidor siguen con el flujo anterior (`POST /files` +
 **Regenerar las plantillas v4 y v6** (por ejemplo, si cambia la plantilla de
 origen o el diseño): ver `ops/plantilla/README.md`.
 
+### Extracción lógica de Android
+
+Aparte del wizard de inspección, Factum tiene una **extracción lógica de
+Android** (sección "Extracciones" de la web). El perito elige el celular
+conectado, las categorías (contactos, SMS/MMS, registro de llamadas, calendario,
+apps instaladas y carpetas de `/sdcard`) y un destino (una carpeta de la PC o un
+disco externo que lista Tatana). Tatana conduce el trabajo en segundo plano, aun
+con la pestaña cerrada, y lo declara como operación larga (el autoupdate no corta
+mientras dura). Capability `extraction_android_v1` en `/health`.
+
+- Los datos estructurados salen con `content query` y `pm list packages` (solo
+  lectura). Se guarda la salida **cruda** de cada consulta (evidencia primaria) y
+  una versión **normalizada** JSON marcada como derivada.
+- El **registro de llamadas** sale de una app auxiliar firmada de Factum
+  (`android/connector/`, GPL-3.0): Tatana verifica su SHA-256 contra
+  `connector-lock.json`, la instala con `READ_CALL_LOG`, exporta y la **desinstala
+  siempre** (también si falla o se cancela). Mientras no exista la release firmada
+  del connector, esta categoría queda deshabilitada ("todavía no trae la app
+  auxiliar").
+- Los archivos salen con `adb pull -a` (conserva fechas). Cada archivo queda con
+  SHA-256 calculado en la PC y, si el celular tiene `sha256sum`, también calculado
+  en el dispositivo (se marca si coinciden).
+
+**Lo único que Factum modifica en el dispositivo**: instalar/desinstalar esa app
+auxiliar (si se eligió el registro de llamadas) y, durante esa fase, `stay_awake`
+(se restaura). Todo lo demás es lectura. Las modificaciones quedan en el acta con
+su hora, o "Ninguna: solo lectura".
+
+**Formato de salida** (carpeta abierta, sin cifrar, para procesar con #101):
+`datos/` (crudo y normalizado), `archivos/` (con la ruta original del
+dispositivo), `MANIFIESTO.tsv` + `.sha256`, `SHA256SUMS.txt`, `ACTA.txt`/`.json`,
+`CIERRE.txt`, `LEEME.txt` y `sellos/` (si el sellado está activo). **Ningún byte
+del contenido extraído llega al servidor**: el backend registra solo metadatos y
+el hash del manifiesto (que se sella con RFC 3161 si corresponde). La extracción
+se puede asociar a 0 o 1 caso después, y eso deja un evento en la trazabilidad.
+
 ### Sellado de tiempo (RFC 3161)
 
 Opcional. Con `Timestamping:Urls` configurado, el backend pide a una

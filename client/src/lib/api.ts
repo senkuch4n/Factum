@@ -3,6 +3,7 @@
  */
 
 import { agent } from "./agent";
+import type { AgentExtractionRecord } from "./agent";
 import type { EvidenceErrorCode, UploadCheckResponse, UploadedFileInfo, UploadErrorBody, UploadErrorCode } from "@/types";
 import type { AuthResponse } from "@/types";
 import {
@@ -573,7 +574,11 @@ export type CaseEventType =
   /** grabacion-sesion-completa: hueco nuevo o tramo descartado. */
   | "recording_session_stopped"
   /** grabacion-sesion-completa: hueco que se cierra. */
-  | "recording_session_resumed";
+  | "recording_session_resumed"
+  /** extraccion-logica-android: se asoció una extracción al caso (§6.2). */
+  | "extraction_linked"
+  /** extraccion-logica-android: se desasoció una extracción del caso. */
+  | "extraction_unlinked";
 
 /**
  * Detalle acotado de un `CaseEvent`: cada campo solo aplica a ciertos tipos y el
@@ -645,6 +650,11 @@ export interface CaseEventDetail {
   gap_seconds?: number;
   /** `recording_session_stopped`: el tramo en curso no se pudo recuperar. */
   segment_lost?: boolean;
+  /* ── extraccion-logica-android (§6.2): `sha256` (hash del manifiesto) se reusa ── */
+  /** `extraction_linked` / `extraction_unlinked`: id de la extracción. */
+  extraction_id?: string;
+  /** `extraction_linked` / `extraction_unlinked`: etiqueta del equipo (p. ej. "samsung SM-M127F"), sin serial. */
+  device_label?: string;
 }
 
 /** Un hito de la línea de tiempo del caso (`GET /api/cases/{id}/events`). */
@@ -1261,6 +1271,78 @@ export interface CaseBreakdown {
   buckets: BreakdownBucket[];
 }
 
+/* ── Extracción lógica de Android (extraccion-logica-android, SDD §8.3-§8.5) ──
+ * JSON en snake_case_lower. En estos DTOs los `null` **sí** viajan como `null`
+ * (salvo los `WhenWritingNull` del backend). Fechas ISO-8601 UTC con `Z`.
+ */
+
+export type ExtractionStatus = "running" | "completed" | "completed_with_errors" | "interrupted" | "cancelled";
+
+/** Categoría de una extracción en el DTO del backend (§8.3). */
+export interface ExtractionCategory {
+  key: string;
+  kind: "structured" | "files";
+  status: string;
+  count?: number;
+  files?: number;
+  bytes?: number;
+  errors?: number;
+  hash_mismatches?: number;
+  reason_code?: string;
+  reason?: string;
+  method?: string;
+}
+
+export interface ExtractionDevice {
+  serial: string; manufacturer: string; model: string; platform: string;
+  android_version: string; sdk_int?: number;
+}
+export interface ExtractionTotals { files: number; bytes: number; errors: number; hash_mismatches: number; }
+export interface ExtractionDeviceModification { kind: string; at: string; detail?: string; after_close?: boolean; }
+export interface ExtractionInterruption { reason_code: string; message?: string; at: string; }
+
+/** `ExtractionDto` (§8.4). `device_details` reusa el tipo de `Case.device_details` (#79). */
+export interface Extraction {
+  id: string;
+  status: ExtractionStatus;
+  officer: { dni: string; name: string };
+  hostname: string;
+  os_user: string;
+  agent_version: string;
+  agent_mode: "installed" | "portable" | null;
+  started_at_pc: string;
+  finished_at_pc: string | null;
+  created_at: string;
+  updated_at: string;
+  final_registered_at: string | null;
+  pc_minus_server_ms: number | null;
+  pc_server_margin_ms: number | null;
+  device: ExtractionDevice;
+  device_details: DeviceDetails | null;
+  categories: ExtractionCategory[];
+  custom_paths_count: number;
+  verify_on_device: boolean;
+  device_sha256_available: boolean;
+  totals: ExtractionTotals;
+  destination_path: string;
+  folder_name: string;
+  manifest_sha256: string | null;
+  manifest_entries: number | null;
+  device_modifications: ExtractionDeviceModification[];
+  interruption: ExtractionInterruption | null;
+  case_id: string | null;
+  /** `NroReferencia` del caso asociado, para mostrarlo sin un segundo fetch. */
+  case_ref: string | null;
+  linked_at: string | null;
+  /** `null` si el sellado está apagado o la extracción no tiene hash todavía. */
+  manifest_timestamp: CaseTimestamp | null;
+}
+
+/** `PUT /api/extractions/{id}` (§8.3): el `record` de Tatana + `pc_server_probe`. La web lo reenvía sin tocar. */
+export interface UpsertExtractionRequest extends AgentExtractionRecord {
+  pc_server_probe?: PcServerProbe;
+}
+
 export const api = {
   async login(dni: string, username: string, password: string): Promise<AuthResponse> {
     const data = await request<AuthResponse>("/api/auth/login", {
@@ -1694,6 +1776,46 @@ export const api = {
     const token = getToken();
     const params = token ? `?token=${encodeURIComponent(token)}` : "";
     return `${BACKEND_URL}/api/cases/${caseId}/timestamps/bundle${params}`;
+  },
+
+  /* ── Extracción lógica de Android (extraccion-logica-android, SDD §8.5) ── */
+
+  /**
+   * Extracciones del usuario, por `started_at_pc` desc (máx. 200). Con `caseId`
+   * trae solo las de ese caso; con `unlinked`, solo las sin caso en estado terminal.
+   * 404 en un backend anterior a la HU: el llamador muestra el aviso de §11.3.
+   */
+  async listExtractions(
+    params: { caseId?: string; unlinked?: boolean } = {}, signal?: AbortSignal,
+  ): Promise<{ extractions: Extraction[] }> {
+    const q = new URLSearchParams();
+    if (params.caseId) q.set("case_id", params.caseId);
+    if (params.unlinked) q.set("unlinked", "true");
+    const qs = q.toString();
+    return requestSafe<{ extractions: Extraction[] }>(`/api/extractions${qs ? `?${qs}` : ""}`, { signal });
+  },
+  async getExtraction(id: string, signal?: AbortSignal): Promise<Extraction> {
+    return requestSafe<Extraction>(`/api/extractions/${encodeURIComponent(id)}`, { signal });
+  },
+  /** Registra (upsert) la extracción. El `id` es el GUID que generó Tatana (D-T1). */
+  async upsertExtraction(id: string, body: UpsertExtractionRequest): Promise<Extraction> {
+    return requestSafe<Extraction>(`/api/extractions/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(body) });
+  },
+  /** Asocia la extracción a un caso propio (registra `extraction_linked`). */
+  async linkExtraction(id: string, caseId: string): Promise<Extraction> {
+    return requestSafe<Extraction>(
+      `/api/extractions/${encodeURIComponent(id)}/case`, { method: "PUT", body: JSON.stringify({ case_id: caseId }) },
+    );
+  },
+  /** Desasocia la extracción del caso (idempotente). */
+  async unlinkExtraction(id: string): Promise<Extraction> {
+    return requestSafe<Extraction>(`/api/extractions/${encodeURIComponent(id)}/case`, { method: "DELETE" });
+  },
+  /** Los `.tsr` del manifiesto en base64 + el LEEME, para pasárselos a Tatana. `files` vacío si no está `granted`. */
+  async getExtractionTimestampFiles(id: string): Promise<{ files: TimestampFileItem[]; readme: string }> {
+    return requestSafe<{ files: TimestampFileItem[]; readme: string }>(
+      `/api/extractions/${encodeURIComponent(id)}/timestamp/files`, { cache: "no-store" },
+    );
   },
 
   /* ── Ficha técnica del dispositivo (metadatos-dispositivo, SDD §7.1) ── */

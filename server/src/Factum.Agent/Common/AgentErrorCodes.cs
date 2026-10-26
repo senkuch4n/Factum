@@ -95,4 +95,33 @@ public static class AgentErrorCodes
     public const string CameraBusy = "camera_busy";
     /// <summary>404 de <c>GET /cameras/preview.jpg</c>: todavía no hay imagen.</summary>
     public const string CameraPreviewUnavailable = "camera_preview_unavailable";
+
+    // ── Extracción lógica de Android (extraccion-logica-android §8.6). Se reusan invalid_request,
+    //    insufficient_storage y device_not_found, que ya existen arriba. ──
+    /// <summary>409 de <c>POST /extractions</c>: ya hay una extracción en curso (+ extraction_id).</summary>
+    public const string ExtractionInProgress = "extraction_in_progress";
+    /// <summary>404: la extracción no existe en este Tatana.</summary>
+    public const string ExtractionNotFound = "extraction_not_found";
+    /// <summary>409 de <c>/cancel</c>: la extracción no está corriendo.</summary>
+    public const string ExtractionNotRunning = "extraction_not_running";
+    /// <summary>409 de <c>/registered</c>: la extracción no está en un estado terminal.</summary>
+    public const string ExtractionNotFinished = "extraction_not_finished";
+    /// <summary>409 de <c>/registered</c>: el manifest_sha256 no coincide con el de Tatana.</summary>
+    public const string ManifestMismatch = "manifest_mismatch";
+    /// <summary>400 de <c>POST /extractions</c>: falta confirmar las modificaciones al dispositivo.</summary>
+    public const string ConfirmationRequired = "confirmation_required";
+    /// <summary>409: el mismo serial está grabando o tiene una sesión activa.</summary>
+    public const string DeviceBusy = "device_busy";
+    /// <summary>409: <c>adb get-state</c> no dio <c>device</c> (autorización revocada).</summary>
+    public const string DeviceUnauthorized = "device_unauthorized";
+    /// <summary>422: la plataforma no soporta extracción (iPhone en esta HU).</summary>
+    public const string PlatformNotSupported = "platform_not_supported";
+    /// <summary>403: la ruta de destino queda fuera de <c>Agent:Extraction:AllowedRoots</c> (Docker).</summary>
+    public const string PathNotAllowed = "path_not_allowed";
+    /// <summary>404: la ruta de destino no existe.</summary>
+    public const string PathNotFound = "path_not_found";
+    /// <summary>422: no se puede escribir en el destino.</summary>
+    public const string DestinationNotWritable = "destination_not_writable";
+    /// <summary>409 de <c>/reveal</c>: Tatana en Docker no puede abrir la carpeta.</summary>
+    public const string RevealUnavailable = "reveal_unavailable";
 }

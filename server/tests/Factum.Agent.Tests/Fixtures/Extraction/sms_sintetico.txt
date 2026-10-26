@@ -1,0 +1,4 @@
+Row: 0 _id=1, thread_id=5, address=+5491122334455, date=1699999999999, type=1, body=Hola, cómo estás, todo bien? x=1, y=2
+Row: 1 _id=2, thread_id=5, address=NULL, date=1700000000000, type=2, body=Primera línea
+segunda línea, con coma y Row: adentro
+Row: 2 _id=3, thread_id=6, address=+54110000, date=1700000000001, type=1, body=fin

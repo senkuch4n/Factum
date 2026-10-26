@@ -1,0 +1,3 @@
+Row: 0 _id=10, raw_contact_id=3, mimetype=vnd.android.cursor.item/name, data1=NOMBRE APELLIDO, data2=NOMBRE, data3=APELLIDO
+Row: 1 _id=11, raw_contact_id=3, mimetype=vnd.android.cursor.item/phone_v2, data1=+54 9 11 0000-0000, data2=2, data3=NULL
+Row: 2 _id=12, raw_contact_id=4, mimetype=vnd.android.cursor.item/email_v2, data1=persona@ejemplo.test, data2=1, data3=NULL
